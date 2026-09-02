@@ -1,6 +1,6 @@
 use gpui::{
-    Anchor, Animation, AnimationExt, App, Context, HoverListenerMode, KeybindingKeystroke, Render,
-    Subscription, Task, Window, anchored, deferred,
+    Action as _, Anchor, Animation, AnimationExt, App, Context, HoverListenerMode,
+    KeybindingKeystroke, Render, Subscription, Task, Window, anchored, deferred,
 };
 use settings::{Settings, SettingsStore};
 use std::{rc::Rc, time::Duration};
@@ -234,6 +234,9 @@ impl Render for PendingKeystrokesIndicator {
         };
 
         let button = ButtonLike::new("pending-keystrokes-indicator")
+            .on_click(|_, window, cx| {
+                window.dispatch_action(zed_actions::dev::OpenKeyContextView.boxed_clone(), cx);
+            })
             .child(if cx.reduce_motion() {
                 Icon::new(IconName::CountdownTimer)
                     .size(IconSize::XSmall)
@@ -391,8 +394,8 @@ mod tests {
     use super::*;
     use command_palette::humanize_action_name;
     use gpui::{
-        Action as _, Entity, FocusHandle, KeyBinding, Modifiers, TestAppContext, VisualTestContext,
-        actions, point,
+        Entity, FocusHandle, KeyBinding, Modifiers, TestAppContext, VisualTestContext, actions,
+        point,
     };
 
     actions!(
@@ -438,6 +441,7 @@ mod tests {
     struct TestView {
         focus_handle: FocusHandle,
         indicator: Entity<PendingKeystrokesIndicator>,
+        open_key_context_view_count: Rc<Cell<usize>>,
     }
 
     #[derive(Debug, PartialEq)]
@@ -482,7 +486,11 @@ mod tests {
     fn setup_indicator_test(
         cx: &mut TestAppContext,
         bindings: impl IntoIterator<Item = KeyBinding>,
-    ) -> (Entity<PendingKeystrokesIndicator>, &mut VisualTestContext) {
+    ) -> (
+        Entity<PendingKeystrokesIndicator>,
+        Rc<Cell<usize>>,
+        &mut VisualTestContext,
+    ) {
         cx.update(|cx| {
             settings::init(cx);
             WhichKeySettings::register(cx);
@@ -490,9 +498,14 @@ mod tests {
             cx.bind_keys(bindings);
         });
 
-        let (test_view, cx) = cx.add_window_view(|window, cx| TestView {
-            focus_handle: cx.focus_handle(),
-            indicator: cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)),
+        let open_key_context_view_count = Rc::new(Cell::new(0));
+        let (test_view, cx) = cx.add_window_view({
+            let open_key_context_view_count = open_key_context_view_count.clone();
+            |window, cx| TestView {
+                focus_handle: cx.focus_handle(),
+                indicator: cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)),
+                open_key_context_view_count,
+            }
         });
         let (focus_handle, indicator) = test_view.read_with(cx, |test_view, _| {
             (test_view.focus_handle.clone(), test_view.indicator.clone())
@@ -502,7 +515,7 @@ mod tests {
             window.activate_window();
         });
 
-        (indicator, cx)
+        (indicator, open_key_context_view_count, cx)
     }
 
     fn start_pending_input_and_hover_indicator(cx: &mut VisualTestContext) {
@@ -528,7 +541,7 @@ mod tests {
     }
 
     impl Render for TestView {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             div()
                 .size_full()
                 .key_context("PendingKeystrokesIndicatorTest")
@@ -536,6 +549,12 @@ mod tests {
                 .on_action(|_: &ShorterBinding, _, _| {})
                 .on_action(|_: &LongerBinding, _, _| {})
                 .on_action(|_: &LongestBinding, _, _| {})
+                .on_action(
+                    cx.listener(|this, _: &zed_actions::dev::OpenKeyContextView, _, _| {
+                        this.open_key_context_view_count
+                            .set(this.open_key_context_view_count.get() + 1);
+                    }),
+                )
                 .child(
                     v_flex()
                         .size_full()
@@ -548,7 +567,7 @@ mod tests {
 
     #[gpui::test]
     fn test_indicator_tracks_pending_input(cx: &mut TestAppContext) {
-        let (indicator, cx) = setup_indicator_test(cx, nested_timed_bindings());
+        let (indicator, _, cx) = setup_indicator_test(cx, nested_timed_bindings());
 
         cx.simulate_keystrokes("ctrl-b");
         cx.run_until_parked();
@@ -594,7 +613,7 @@ mod tests {
 
     #[gpui::test]
     fn test_indicator_does_not_apply_which_key_binding_filter(cx: &mut TestAppContext) {
-        let (indicator, cx) = setup_indicator_test(
+        let (indicator, _, cx) = setup_indicator_test(
             cx,
             [
                 KeyBinding::new("g", ShorterBinding, Some("PendingKeystrokesIndicatorTest")),
@@ -628,7 +647,7 @@ mod tests {
     fn test_which_key_disables_popover_but_keeps_indicator_and_hover_pause(
         cx: &mut TestAppContext,
     ) {
-        let (indicator, cx) = setup_indicator_test(cx, timed_bindings());
+        let (indicator, _, cx) = setup_indicator_test(cx, timed_bindings());
 
         cx.update(|_, cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
@@ -680,8 +699,23 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_clicking_indicator_opens_key_context_view(cx: &mut TestAppContext) {
+        let (_, open_key_context_view_count, cx) = setup_indicator_test(cx, timed_bindings());
+
+        cx.simulate_keystrokes("ctrl-b");
+        cx.run_until_parked();
+
+        let indicator_bounds = cx
+            .debug_bounds("PENDING_KEYSTROKES_INDICATOR")
+            .expect("rendered pending keystrokes indicator");
+        cx.simulate_click(indicator_bounds.center(), Modifiers::none());
+
+        assert_eq!(open_key_context_view_count.get(), 1);
+    }
+
+    #[gpui::test]
     fn test_hovering_indicator_opens_popover_and_pauses_timeout(cx: &mut TestAppContext) {
-        let (indicator, cx) = setup_indicator_test(cx, nested_timed_bindings());
+        let (indicator, _, cx) = setup_indicator_test(cx, nested_timed_bindings());
         start_pending_input_and_hover_indicator(cx);
 
         let paused_render_state = indicator
@@ -693,7 +727,7 @@ mod tests {
 
     #[gpui::test]
     fn test_popover_is_positioned_above_indicator(cx: &mut TestAppContext) {
-        let (_, cx) = setup_indicator_test(cx, nested_timed_bindings());
+        let (_, _, cx) = setup_indicator_test(cx, nested_timed_bindings());
         start_pending_input_and_hover_indicator(cx);
 
         let indicator_bounds = cx
@@ -711,7 +745,7 @@ mod tests {
 
     #[gpui::test]
     fn test_pointer_handoff_keeps_popover_open_and_timeout_paused(cx: &mut TestAppContext) {
-        let (indicator, cx) = setup_indicator_test(cx, nested_timed_bindings());
+        let (indicator, _, cx) = setup_indicator_test(cx, nested_timed_bindings());
         start_pending_input_and_hover_indicator(cx);
         move_pointer_over_popover(cx);
 
@@ -734,7 +768,7 @@ mod tests {
 
     #[gpui::test]
     fn test_open_popover_updates_with_pending_input(cx: &mut TestAppContext) {
-        let (indicator, cx) = setup_indicator_test(cx, nested_timed_bindings());
+        let (indicator, _, cx) = setup_indicator_test(cx, nested_timed_bindings());
         start_pending_input_and_hover_indicator(cx);
         let initial_render_state = indicator
             .read_with(cx, |indicator, _| indicator_snapshot(indicator))
@@ -755,7 +789,7 @@ mod tests {
 
     #[gpui::test]
     fn test_popover_hides_and_timeout_resumes_after_delay(cx: &mut TestAppContext) {
-        let (indicator, cx) = setup_indicator_test(cx, nested_timed_bindings());
+        let (indicator, _, cx) = setup_indicator_test(cx, nested_timed_bindings());
         start_pending_input_and_hover_indicator(cx);
         move_pointer_over_popover(cx);
         move_pointer_outside(cx);
@@ -780,7 +814,7 @@ mod tests {
 
     #[gpui::test]
     fn test_disabling_indicator_releases_timeout_pause(cx: &mut TestAppContext) {
-        let (indicator, cx) = setup_indicator_test(cx, timed_bindings());
+        let (indicator, _, cx) = setup_indicator_test(cx, timed_bindings());
 
         cx.simulate_keystrokes("ctrl-b");
         cx.run_until_parked();
@@ -815,7 +849,7 @@ mod tests {
 
     #[gpui::test]
     fn test_indicator_ignores_pending_input_without_timeout(cx: &mut TestAppContext) {
-        let (indicator, cx) = setup_indicator_test(
+        let (indicator, _, cx) = setup_indicator_test(
             cx,
             [KeyBinding::new(
                 "ctrl-b h",
