@@ -446,16 +446,21 @@ impl LspAdapter for GoLspAdapter {
         ))
     }
 
-    fn client_command(
+    async fn client_command(
         &self,
         command_name: &str,
         arguments: &[serde_json::Value],
-    ) -> Option<ClientCommand> {
+    ) -> Result<Option<ClientCommand>> {
         if let "gopls.run_tests" = command_name {
-            let template = go_test_task_template(arguments.first()?)?;
-            Some(ClientCommand::ScheduleTask(template))
+            let Some(argument) = arguments.first() else {
+                return Ok(None);
+            };
+            let Some(template) = go_test_task_template(argument) else {
+                return Ok(None);
+            };
+            Ok(Some(ClientCommand::ScheduleTask(template)))
         } else {
-            None
+            Ok(None)
         }
     }
 

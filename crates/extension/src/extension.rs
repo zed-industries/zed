@@ -105,6 +105,13 @@ pub trait Extension: Send + Sync + 'static {
         worktree: Arc<dyn WorktreeDelegate>,
     ) -> Result<Option<String>>;
 
+    async fn language_server_client_command(
+        &self,
+        language_server_id: LanguageServerName,
+        command: String,
+        arguments: Vec<serde_json::Value>,
+    ) -> Result<Option<ClientCommand>>;
+
     async fn labels_for_completions(
         &self,
         language_server_id: LanguageServerName,
