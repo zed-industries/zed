@@ -9,6 +9,7 @@ use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use acp_thread::MentionUri;
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
+use debugger_ui::debugger_panel::DebugPanel;
 use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
 use futures::FutureExt as _;
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
@@ -105,6 +106,16 @@ impl AgentContextSource {
             return Some(Self::TerminalPanel);
         }
 
+        // Note: don't gate this on the panel's focus_handle — the console Editor's
+        // focus handle is not a descendant of DebugPanel's own handle in the focus
+        // tree, so `contains_focused` would be false even when the console is focused.
+        if let Some(panel) = workspace.panel::<DebugPanel>(cx)
+            && let Some(console) = panel.read(cx).console_editor(cx)
+            && console.focus_handle(cx).is_focused(window)
+        {
+            return Some(Self::Editor(console.downgrade()));
+        }
+
         None
     }
 
@@ -118,6 +129,11 @@ impl AgentContextSource {
         }
         if terminal_panel_dock_is_open(workspace, cx) {
             return Some(Self::TerminalPanel);
+        }
+        if let Some(panel) = workspace.panel::<DebugPanel>(cx)
+            && let Some(console) = panel.read(cx).console_editor(cx)
+        {
+            return Some(Self::Editor(console.downgrade()));
         }
         None
     }

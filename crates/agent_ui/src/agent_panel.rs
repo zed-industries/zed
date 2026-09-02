@@ -86,6 +86,7 @@ use project::{Project, ProjectPath, Worktree};
 use settings::TerminalDockPosition;
 use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
 
+use debugger_ui::debugger_panel::DebugPanel;
 use search::{BufferSearchBar, buffer_search::Deploy as DeployBufferSearch};
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
@@ -677,9 +678,43 @@ pub fn init(cx: &mut App) {
                                 dock_is_open && !panel.read(cx).terminal_selections(cx).is_empty()
                             });
 
+                        let debug_console_editor = workspace
+                            .panel::<DebugPanel>(cx)
+                            .and_then(|panel| panel.read(cx).console_editor(cx));
+                        let debug_console_focused = debug_console_editor
+                            .as_ref()
+                            .is_some_and(|console| console.focus_handle(cx).is_focused(window));
+                        let has_debug_console_selection = debug_console_focused
+                            && debug_console_editor.as_ref().is_some_and(|console| {
+                                console.update(cx, |editor, cx| {
+                                    editor.has_non_empty_selection(&editor.display_snapshot(cx))
+                                })
+                            });
+
+                        let debug_terminal_view = workspace
+                            .panel::<DebugPanel>(cx)
+                            .and_then(|panel| panel.read(cx).debug_terminal(cx));
+                        let debug_terminal_focused =
+                            debug_terminal_view.as_ref().is_some_and(|terminal_view| {
+                                terminal_view.focus_handle(cx).contains_focused(window, cx)
+                            });
+                        let has_debug_terminal_selection = debug_terminal_focused
+                            && debug_terminal_view.as_ref().is_some_and(|terminal_view| {
+                                terminal_view
+                                    .read(cx)
+                                    .terminal()
+                                    .read(cx)
+                                    .last_content
+                                    .selection_text
+                                    .as_ref()
+                                    .is_some_and(|text| !text.is_empty())
+                            });
+
                         if !has_editor_selection
                             && !has_terminal_selection
                             && !has_terminal_panel_selection
+                            && !has_debug_console_selection
+                            && !has_debug_terminal_selection
                         {
                             return;
                         }
@@ -688,7 +723,26 @@ pub fn init(cx: &mut App) {
                             return;
                         };
 
-                        let source = AgentContextSource::from_focused(workspace, window, cx);
+                        // When the debug console or the debug terminal is focused and
+                        // holds a selection, prefer it over the focus/cached/active
+                        // heuristics below: both live in the debugger dock, so they are
+                        // never `active_item`, and would otherwise be shadowed by a
+                        // stale cached source or by the editor that is `active_item`.
+                        // Gating on focus prevents stale selections in the dock from
+                        // shadowing the surface the user is currently interacting with.
+                        let source = if has_debug_terminal_selection {
+                            debug_terminal_view.as_ref().map(|terminal_view| {
+                                AgentContextSource::TerminalView(terminal_view.downgrade())
+                            })
+                        } else if has_debug_console_selection {
+                            debug_console_editor
+                                .as_ref()
+                                .map(|console| AgentContextSource::Editor(console.downgrade()))
+                        } else {
+                            None
+                        };
+                        let source = source
+                            .or_else(|| AgentContextSource::from_focused(workspace, window, cx));
                         let source = source.or_else(|| {
                             let cached = agent_panel.read(cx).last_context_source.clone()?;
                             cached.exists(workspace, cx).then_some(cached)

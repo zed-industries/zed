@@ -484,6 +484,7 @@ dependencies = [
  "component",
  "context_server",
  "db",
+ "debugger_ui",
  "editor",
  "eval_utils",
  "extension",

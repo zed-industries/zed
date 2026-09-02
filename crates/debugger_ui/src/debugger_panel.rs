@@ -22,6 +22,7 @@ use gpui::{
     EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point,
     Subscription, Task, TaskExt, WeakEntity, anchored, deferred,
 };
+use terminal_view::TerminalView;
 
 use itertools::Itertools as _;
 use language::Buffer;
@@ -146,6 +147,31 @@ impl DebugPanel {
 
     pub fn active_session(&self) -> Option<Entity<DebugSession>> {
         self.active_session.clone()
+    }
+
+    /// Returns the console `Editor` of the active debug session, if one is running.
+    ///
+    /// The console is a plain `Editor` rendered inside this dock panel, so it never
+    /// becomes `workspace.active_item()`; callers that resolve context from focused
+    /// surfaces (e.g. `AddSelectionToThread`) need this accessor to reach it.
+    pub fn console_editor(&self, cx: &App) -> Option<Entity<Editor>> {
+        let running_state = self.active_session()?.read(cx).running_state().clone();
+        Some(running_state.read(cx).console().read(cx).editor().clone())
+    }
+
+    /// Returns the debug session's program I/O terminal, if one is running.
+    ///
+    /// Like the console, the debug terminal lives in this dock panel and never
+    /// becomes `workspace.active_item()`; callers that resolve context from
+    /// focused surfaces need this accessor to reach it.
+    pub fn debug_terminal(&self, cx: &App) -> Option<Entity<TerminalView>> {
+        let running_state = self.active_session()?.read(cx).running_state().clone();
+        running_state
+            .read(cx)
+            .debug_terminal
+            .read(cx)
+            .terminal
+            .clone()
     }
 
     pub(crate) fn running_state(&self, cx: &mut App) -> Option<Entity<RunningState>> {

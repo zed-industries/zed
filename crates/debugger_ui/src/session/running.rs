@@ -1652,7 +1652,6 @@ impl RunningState {
         &self.stack_frame_list
     }
 
-    #[cfg(test)]
     pub fn console(&self) -> &Entity<Console> {
         &self.console
     }

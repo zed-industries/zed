@@ -5,6 +5,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
+use debugger_ui::debugger_panel::DebugPanel;
 use editor::{
     Anchor, Editor, EditorSnapshot, FoldPlaceholder, ToOffset,
     display_map::{Crease, CreaseId, CreaseMetadata, FoldId},
@@ -556,13 +557,50 @@ impl MentionSet {
             let point_range = selection_range.to_point(&snapshot);
             let line_range = point_range.start.row..=point_range.end.row;
 
+            // The debug console's output buffer has no project path; label its
+            // selections "Console" instead of the generic "Untitled" fallback.
+            // Identify the console by its buffer: the `editor` here is the agent
+            // thread's message editor (where the mention crease is inserted), not
+            // the surface the selection came from. The console editor is a
+            // multi-buffer, so unwrap its singleton buffer for the comparison.
+            let console_buffer_id = workspace
+                .upgrade()
+                .and_then(|workspace| {
+                    workspace
+                        .read(cx)
+                        .panel::<DebugPanel>(cx)
+                        .and_then(|panel| panel.read(cx).console_editor(cx))
+                })
+                .and_then(|console| {
+                    console
+                        .read(cx)
+                        .buffer()
+                        .read(cx)
+                        .as_singleton()
+                        .map(|buffer| buffer.entity_id())
+                });
+            let is_debug_console =
+                console_buffer_id.is_some_and(|console_id| console_id == buffer.entity_id());
+            let selection_label = if is_debug_console {
+                format!(
+                    "Console ({}:{})",
+                    line_range.start() + 1,
+                    line_range.end() + 1
+                )
+            } else {
+                selection_name(
+                    abs_path.as_deref().map(PathBuf::from).as_deref(),
+                    &line_range,
+                )
+            };
+
             let uri = MentionUri::Selection {
                 abs_path: abs_path.clone(),
                 line_range: line_range.clone(),
                 column: None,
             };
             let crease = crease_for_mention(
-                selection_name(abs_path.as_deref(), &line_range).into(),
+                selection_label.into(),
                 uri.icon_path(cx),
                 uri.tooltip_text(),
                 Some(uri.clone()),

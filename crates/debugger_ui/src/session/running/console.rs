@@ -129,7 +129,6 @@ impl Console {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn editor(&self) -> &Entity<Editor> {
         &self.console
     }
