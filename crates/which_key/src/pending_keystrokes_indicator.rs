@@ -1,22 +1,43 @@
 use gpui::{
-    Animation, AnimationExt, App, Context, KeybindingKeystroke, Render, Subscription, Window,
+    Anchor, Animation, AnimationExt, App, Context, HoverListenerMode, KeybindingKeystroke, Render,
+    Subscription, Task, Window, anchored, deferred,
 };
 use settings::{Settings, SettingsStore};
 use std::{rc::Rc, time::Duration};
-use ui::{CircularProgress, KeyBinding, Tooltip, prelude::*, text_for_keybinding_keystrokes};
+use ui::{
+    ButtonLike, CircularProgress, KeyBinding, KeyBindingStyle, prelude::*,
+    text_for_keybinding_keystrokes, tooltip_container,
+};
+use util::ResultExt;
 use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, item::ItemHandle};
 
 use crate::{bindings_for_pending_input, map_pending_keystrokes};
 
 const MAX_TOOLTIP_BINDINGS: usize = 10;
+const POPOVER_HIDE_DELAY: Duration = Duration::from_millis(300);
 
 /// A status bar item shown while timed pending input can complete a multi-stroke key binding.
 pub struct PendingKeystrokesIndicator {
     render_state: Option<Rc<IndicatorRenderState>>,
     pending_input_generation: u64,
+    popover: PopoverState,
     _pending_input_subscription: Subscription,
     _settings_subscription: Subscription,
+}
+
+#[derive(Default)]
+struct PopoverState {
+    indicator_pointer_over: bool,
+    pointer_over: bool,
+    visible: bool,
+    hide_task: Option<Task<()>>,
+}
+
+impl PopoverState {
+    fn is_pointer_over(&self) -> bool {
+        self.indicator_pointer_over || self.pointer_over
+    }
 }
 
 struct IndicatorRenderState {
@@ -54,6 +75,7 @@ impl PendingKeystrokesIndicator {
         Self {
             render_state: None,
             pending_input_generation: 0,
+            popover: PopoverState::default(),
             _pending_input_subscription: pending_input_subscription,
             _settings_subscription: settings_subscription,
         }
@@ -119,6 +141,7 @@ impl PendingKeystrokesIndicator {
     }
 
     fn clear_render_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.popover = PopoverState::default();
         window.set_pending_input_timeout_paused(&cx.entity(), false, cx);
         self.render_state.take().is_some()
     }
@@ -127,12 +150,56 @@ impl PendingKeystrokesIndicator {
         self.render_state.as_ref()
     }
 
-    fn set_hovered(&mut self, hovered: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn set_indicator_pointer_over(
+        &mut self,
+        pointer_over: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.popover.indicator_pointer_over = pointer_over;
+        self.update_pointer_over_state(window, cx);
+    }
+
+    fn set_popover_pointer_over(
+        &mut self,
+        pointer_over: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.popover.pointer_over = pointer_over;
+        self.update_pointer_over_state(window, cx);
+    }
+
+    fn update_pointer_over_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.render_state.is_none() {
             return;
         }
 
-        window.set_pending_input_timeout_paused(&cx.entity(), hovered, cx);
+        if self.popover.is_pointer_over() {
+            self.popover.hide_task.take();
+            let was_visible = self.popover.visible;
+            self.popover.visible = true;
+            window.set_pending_input_timeout_paused(&cx.entity(), true, cx);
+            if !was_visible {
+                cx.notify();
+            }
+        } else if self.popover.visible && self.popover.hide_task.is_none() {
+            window.set_pending_input_timeout_paused(&cx.entity(), true, cx);
+            self.popover.hide_task = Some(cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(POPOVER_HIDE_DELAY).await;
+                this.update_in(cx, |this, window, cx| {
+                    this.popover.hide_task.take();
+                    if this.popover.is_pointer_over() {
+                        return;
+                    }
+
+                    this.popover.visible = false;
+                    window.set_pending_input_timeout_paused(&cx.entity(), false, cx);
+                    cx.notify();
+                })
+                .log_err();
+            }));
+        }
     }
 }
 
@@ -149,10 +216,7 @@ impl Render for PendingKeystrokesIndicator {
             .clamp(0.0, 1.0)
         };
 
-        h_flex()
-            .id("pending-keystrokes-indicator")
-            .gap_1()
-            .px_1()
+        let button = ButtonLike::new("pending-keystrokes-indicator")
             .child(if cx.reduce_motion() {
                 Icon::new(IconName::CountdownTimer)
                     .size(IconSize::XSmall)
@@ -186,45 +250,100 @@ impl Render for PendingKeystrokesIndicator {
             })
             .child(
                 KeyBinding::from_keystrokes(render_state.keystrokes.clone(), false)
-                    .size(rems_from_px(12_f32)),
-            )
-            .tooltip(Tooltip::element(move |_, _| {
-                let render_state = &render_state;
-                v_flex()
-                    .gap_1()
+                    .size(rems_from_px(12_f32))
+                    .style(KeyBindingStyle::Label),
+            );
+
+        let popover = self.popover.visible.then(|| {
+            let popover_render_state = render_state.clone();
+            let anchored_popover = deferred(
+                anchored()
+                    .anchor(Anchor::BottomRight)
+                    .snap_to_window_with_margin(px(8.))
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .child(KeyBinding::from_keystrokes(
-                                render_state.keystrokes.clone(),
-                                false,
-                            ))
-                            .child(Label::new("is waiting for more keys").color(Color::Muted)),
-                    )
-                    .children(render_state.bindings.iter().take(MAX_TOOLTIP_BINDINGS).map(
-                        |(keystrokes, action)| {
-                            h_flex()
-                                .gap_2()
-                                .child(KeyBinding::from_keystrokes(keystrokes.clone(), false))
-                                .child(Label::new(action.clone()).size(LabelSize::Small))
-                        },
-                    ))
-                    .when(render_state.bindings.len() > MAX_TOOLTIP_BINDINGS, |el| {
-                        el.child(
-                            Label::new(format!(
-                                "…and {} more",
-                                render_state.bindings.len() - MAX_TOOLTIP_BINDINGS
-                            ))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                        )
-                    })
-                    .into_any_element()
+                        div()
+                            .id("pending-keystrokes-popover")
+                            .debug_selector(|| "PENDING_KEYSTROKES_POPOVER".into())
+                            .pb_2()
+                            .occlude()
+                            .on_hover(cx.listener(|this, pointer_over: &bool, window, cx| {
+                                this.set_popover_pointer_over(*pointer_over, window, cx);
+                            }))
+                            .hover_listener_mode(HoverListenerMode::InputModalityIndependent)
+                            .child(tooltip_container(cx, |el, _| {
+                                el.child(
+                                    v_flex()
+                                        .gap_1()
+                                        .child(
+                                            h_flex()
+                                                .gap_1()
+                                                .child(KeyBinding::from_keystrokes(
+                                                    popover_render_state.keystrokes.clone(),
+                                                    false,
+                                                ))
+                                                .child(
+                                                    Label::new("is waiting for more keys")
+                                                        .color(Color::Muted),
+                                                ),
+                                        )
+                                        .children(
+                                            popover_render_state
+                                                .bindings
+                                                .iter()
+                                                .take(MAX_TOOLTIP_BINDINGS)
+                                                .map(|(keystrokes, action)| {
+                                                    h_flex()
+                                                        .gap_2()
+                                                        .child(KeyBinding::from_keystrokes(
+                                                            keystrokes.clone(),
+                                                            false,
+                                                        ))
+                                                        .child(
+                                                            Label::new(action.clone())
+                                                                .size(LabelSize::Small),
+                                                        )
+                                                }),
+                                        )
+                                        .when(
+                                            popover_render_state.bindings.len()
+                                                > MAX_TOOLTIP_BINDINGS,
+                                            |el| {
+                                                el.child(
+                                                    Label::new(format!(
+                                                        "…and {} more",
+                                                        popover_render_state.bindings.len()
+                                                            - MAX_TOOLTIP_BINDINGS
+                                                    ))
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                                )
+                                            },
+                                        ),
+                                )
+                            })),
+                    ),
+            )
+            .with_priority(1);
+
+            div()
+                .absolute()
+                .top_0()
+                .right_0()
+                .w_0()
+                .h_0()
+                .child(anchored_popover)
+        });
+
+        div()
+            .id("pending-keystrokes-indicator-wrapper")
+            .debug_selector(|| "PENDING_KEYSTROKES_INDICATOR".into())
+            .relative()
+            .child(button)
+            .when_some(popover, |this, popover| this.child(popover))
+            .on_hover(cx.listener(|this, pointer_over: &bool, window, cx| {
+                this.set_indicator_pointer_over(*pointer_over, window, cx);
             }))
-            .tooltip_show_delay(Duration::ZERO)
-            .on_hover(cx.listener(|this, hovered: &bool, window, cx| {
-                this.set_hovered(*hovered, window, cx);
-            }))
+            .hover_listener_mode(HoverListenerMode::InputModalityIndependent)
             .into_any_element()
     }
 }
@@ -254,7 +373,8 @@ mod tests {
 
     use command_palette::humanize_action_name;
     use gpui::{
-        Action as _, Entity, FocusHandle, KeyBinding, TestAppContext, VisualTestContext, actions,
+        Action as _, Entity, FocusHandle, KeyBinding, Modifiers, TestAppContext, VisualTestContext,
+        actions, point,
     };
 
     use super::*;
@@ -301,6 +421,7 @@ mod tests {
 
     struct TestView {
         focus_handle: FocusHandle,
+        indicator: Entity<PendingKeystrokesIndicator>,
     }
 
     #[derive(Debug, PartialEq)]
@@ -309,6 +430,8 @@ mod tests {
         generation: u64,
         bindings: Vec<(Vec<String>, String)>,
         timeout_paused: bool,
+        popover_visible: bool,
+        popover_pointer_over: bool,
     }
 
     fn indicator_snapshot(indicator: &PendingKeystrokesIndicator) -> Option<IndicatorSnapshot> {
@@ -335,19 +458,9 @@ mod tests {
                     })
                     .collect(),
                 timeout_paused: render_state.timeout_paused,
+                popover_visible: indicator.popover.visible,
+                popover_pointer_over: indicator.popover.pointer_over,
             })
-    }
-
-    fn set_indicator_hovered(
-        indicator: &Entity<PendingKeystrokesIndicator>,
-        hovered: bool,
-        cx: &mut VisualTestContext,
-    ) {
-        cx.update(|window, cx| {
-            indicator.update(cx, |indicator, cx| {
-                indicator.set_hovered(hovered, window, cx);
-            });
-        });
     }
 
     fn setup_indicator_test(
@@ -356,15 +469,17 @@ mod tests {
     ) -> (Entity<PendingKeystrokesIndicator>, &mut VisualTestContext) {
         cx.update(|cx| {
             settings::init(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             cx.bind_keys(bindings);
         });
 
-        let (test_view, cx) = cx.add_window_view(|_, cx| TestView {
+        let (test_view, cx) = cx.add_window_view(|window, cx| TestView {
             focus_handle: cx.focus_handle(),
+            indicator: cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)),
         });
-        let indicator =
-            cx.update(|window, cx| cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)));
-        let focus_handle = test_view.read_with(cx, |test_view, _| test_view.focus_handle.clone());
+        let (focus_handle, indicator) = test_view.read_with(cx, |test_view, _| {
+            (test_view.focus_handle.clone(), test_view.indicator.clone())
+        });
         cx.update(|window, cx| {
             window.focus(&focus_handle, cx);
             window.activate_window();
@@ -373,14 +488,44 @@ mod tests {
         (indicator, cx)
     }
 
+    fn start_pending_input_and_hover_indicator(cx: &mut VisualTestContext) {
+        cx.simulate_keystrokes("ctrl-b");
+        cx.run_until_parked();
+
+        let indicator_bounds = cx
+            .debug_bounds("PENDING_KEYSTROKES_INDICATOR")
+            .expect("rendered pending keystrokes indicator");
+        cx.simulate_mouse_move(indicator_bounds.center(), None, Modifiers::none());
+    }
+
+    fn move_pointer_over_popover(cx: &mut VisualTestContext) {
+        let popover_bounds = cx
+            .debug_bounds("PENDING_KEYSTROKES_POPOVER")
+            .expect("rendered pending keystrokes popover");
+        cx.simulate_mouse_move(popover_bounds.center(), None, Modifiers::none());
+    }
+
+    fn move_pointer_outside(cx: &mut VisualTestContext) {
+        let outside = cx.update(|window, _| point(window.viewport_size().width - px(1.), px(1.)));
+        cx.simulate_mouse_move(outside, None, Modifiers::none());
+    }
+
     impl Render for TestView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div()
+                .size_full()
                 .key_context("PendingKeystrokesIndicatorTest")
                 .track_focus(&self.focus_handle)
                 .on_action(|_: &ShorterBinding, _, _| {})
                 .on_action(|_: &LongerBinding, _, _| {})
                 .on_action(|_: &LongestBinding, _, _| {})
+                .child(
+                    v_flex()
+                        .size_full()
+                        .justify_end()
+                        .items_end()
+                        .child(self.indicator.clone()),
+                )
         }
     }
 
@@ -431,28 +576,102 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_hover_pauses_and_resumes_timeout(cx: &mut TestAppContext) {
-        let (indicator, cx) = setup_indicator_test(cx, timed_bindings());
+    fn test_hovering_indicator_opens_popover_and_pauses_timeout(cx: &mut TestAppContext) {
+        let (indicator, cx) = setup_indicator_test(cx, nested_timed_bindings());
+        start_pending_input_and_hover_indicator(cx);
 
-        cx.simulate_keystrokes("ctrl-b");
-        cx.run_until_parked();
-
-        set_indicator_hovered(&indicator, true, cx);
-        cx.run_until_parked();
         let paused_render_state = indicator
             .read_with(cx, |indicator, _| indicator_snapshot(indicator))
             .expect("paused pending input");
         assert!(paused_render_state.timeout_paused);
+        assert!(paused_render_state.popover_visible);
+    }
 
-        set_indicator_hovered(&indicator, false, cx);
+    #[gpui::test]
+    fn test_popover_is_positioned_above_indicator(cx: &mut TestAppContext) {
+        let (_, cx) = setup_indicator_test(cx, nested_timed_bindings());
+        start_pending_input_and_hover_indicator(cx);
+
+        let indicator_bounds = cx
+            .debug_bounds("PENDING_KEYSTROKES_INDICATOR")
+            .expect("rendered pending keystrokes indicator");
+        let popover_bounds = cx
+            .debug_bounds("PENDING_KEYSTROKES_POPOVER")
+            .expect("rendered pending keystrokes popover");
+        assert!(
+            popover_bounds.bottom() <= indicator_bounds.top(),
+            "popover {popover_bounds:?} should render above indicator {indicator_bounds:?}"
+        );
+        assert_eq!(popover_bounds.right(), indicator_bounds.right());
+    }
+
+    #[gpui::test]
+    fn test_pointer_handoff_keeps_popover_open_and_timeout_paused(cx: &mut TestAppContext) {
+        let (indicator, cx) = setup_indicator_test(cx, nested_timed_bindings());
+        start_pending_input_and_hover_indicator(cx);
+        move_pointer_over_popover(cx);
+
+        let handoff_render_state = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
+            .expect("pending input during popover handoff");
+        assert!(handoff_render_state.timeout_paused);
+        assert!(handoff_render_state.popover_visible);
+        assert!(handoff_render_state.popover_pointer_over);
+
+        cx.executor().advance_clock(POPOVER_HIDE_DELAY);
+        cx.run_until_parked();
+        let stationary_popover_render_state = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
+            .expect("pending input while pointer remains over popover");
+        assert!(stationary_popover_render_state.timeout_paused);
+        assert!(stationary_popover_render_state.popover_visible);
+        assert!(stationary_popover_render_state.popover_pointer_over);
+    }
+
+    #[gpui::test]
+    fn test_open_popover_updates_with_pending_input(cx: &mut TestAppContext) {
+        let (indicator, cx) = setup_indicator_test(cx, nested_timed_bindings());
+        start_pending_input_and_hover_indicator(cx);
+        let initial_render_state = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
+            .expect("initial pending input");
+        move_pointer_over_popover(cx);
+
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+        let updated_render_state = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
+            .expect("updated pending input while popover is open");
+        assert_eq!(updated_render_state.keystrokes, vec!["ctrl-b", "h"]);
+        assert!(updated_render_state.generation > initial_render_state.generation);
+        assert!(updated_render_state.timeout_paused);
+        assert!(updated_render_state.popover_visible);
+        assert!(cx.debug_bounds("PENDING_KEYSTROKES_POPOVER").is_some());
+    }
+
+    #[gpui::test]
+    fn test_popover_hides_and_timeout_resumes_after_delay(cx: &mut TestAppContext) {
+        let (indicator, cx) = setup_indicator_test(cx, nested_timed_bindings());
+        start_pending_input_and_hover_indicator(cx);
+        move_pointer_over_popover(cx);
+        move_pointer_outside(cx);
+
+        cx.executor()
+            .advance_clock(POPOVER_HIDE_DELAY - Duration::from_millis(1));
+        cx.run_until_parked();
+        let grace_period_render_state = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
+            .expect("pending input during popover dismissal grace period");
+        assert!(grace_period_render_state.timeout_paused);
+        assert!(grace_period_render_state.popover_visible);
+
+        cx.executor().advance_clock(Duration::from_millis(1));
         cx.run_until_parked();
         let resumed_render_state = indicator
             .read_with(cx, |indicator, _| indicator_snapshot(indicator))
             .expect("resumed pending input");
         assert!(!resumed_render_state.timeout_paused);
-
-        cx.simulate_keystrokes("h");
-        cx.run_until_parked();
+        assert!(!resumed_render_state.popover_visible);
     }
 
     #[gpui::test]
@@ -461,8 +680,10 @@ mod tests {
 
         cx.simulate_keystrokes("ctrl-b");
         cx.run_until_parked();
-        set_indicator_hovered(&indicator, true, cx);
-        cx.run_until_parked();
+        let indicator_bounds = cx
+            .debug_bounds("PENDING_KEYSTROKES_INDICATOR")
+            .expect("rendered pending keystrokes indicator");
+        cx.simulate_mouse_move(indicator_bounds.center(), None, Modifiers::none());
 
         cx.update(|_, cx| {
             cx.update_global::<settings::SettingsStore, _>(|store, cx| {
