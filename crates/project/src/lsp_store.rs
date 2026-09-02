@@ -29,7 +29,7 @@ use self::code_lens::CodeLensData;
 use self::document_colors::DocumentColorData;
 use self::document_links::DocumentLinksData;
 use self::document_symbols::DocumentSymbolsData;
-use self::dynamic_registration::{DynamicRegistrations, RegistrationSource};
+use self::dynamic_registration::DynamicRegistrations;
 use self::inlay_hints::BufferInlayHints;
 use crate::{
     CodeAction, Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource,
@@ -303,6 +303,12 @@ pub struct DocumentDiagnostics {
     version: Option<i32>,
 }
 
+#[derive(Clone, Debug)]
+struct DocumentSelectorContext {
+    language_id: String,
+    scheme: &'static str,
+}
+
 pub struct LocalLspStore {
     weak: WeakEntity<LspStore>,
     pub worktree_store: Entity<WorktreeStore>,
@@ -321,6 +327,7 @@ pub struct LocalLspStore {
     language_server_paths_watched_for_rename:
         HashMap<LanguageServerId, RenamePathsWatchedForServer>,
     language_server_dynamic_registrations: HashMap<LanguageServerId, DynamicRegistrations>,
+    initial_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     prettier_store: Entity<PrettierStore>,
@@ -1503,6 +1510,7 @@ impl LocalLspStore {
                 Self::execute_code_actions_on_server(
                     &lsp_store,
                     language_server,
+                    buffer,
                     actions,
                     push_to_history,
                     &mut project_transaction,
@@ -1940,23 +1948,66 @@ impl LocalLspStore {
                     return Ok(());
                 };
 
-                let language_server = match specifier {
+                let adapter_and_server = match specifier {
                     settings::LanguageServerFormatterSpecifier::Specific { name } => {
-                        adapters_and_servers.iter().find_map(|(adapter, server)| {
-                            if adapter.name.0.as_ref() == name {
-                                Some(server.clone())
-                            } else {
-                                None
-                            }
-                        })
+                        adapters_and_servers
+                            .iter()
+                            .find(|(adapter, _)| adapter.name.0.as_ref() == name)
+                            .cloned()
                     }
-                    settings::LanguageServerFormatterSpecifier::Current => adapters_and_servers
-                        .iter()
-                        .find(|(_, server)| Self::server_supports_formatting(server))
-                        .map(|(_, server)| server.clone()),
+                    settings::LanguageServerFormatterSpecifier::Current => {
+                        lsp_store.read_with(cx, |lsp_store, cx| {
+                            lsp_store.as_local().and_then(|local| {
+                                let buffer_snapshot = buffer.handle.read(cx);
+                                let adapter_and_server = if buffer.ranges.is_some() {
+                                    let range_formatter =
+                                        adapters_and_servers.iter().find(|(adapter, server)| {
+                                            buffer_supports_lsp_range_formatting(
+                                                local,
+                                                buffer_snapshot,
+                                                adapter,
+                                                server,
+                                            )
+                                        });
+                                    if range_formatter.is_some() {
+                                        range_formatter
+                                    } else if trigger == FormatTrigger::Save
+                                        && settings.format_on_save
+                                            == FormatOnSave::ModificationsIfAvailable
+                                    {
+                                        adapters_and_servers.iter().find(|(adapter, server)| {
+                                            buffer_supports_lsp_formatting(
+                                                local,
+                                                buffer_snapshot,
+                                                adapter,
+                                                server,
+                                            )
+                                        })
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    adapters_and_servers.iter().find(|(adapter, server)| {
+                                        buffer_supports_lsp_formatting(
+                                            local,
+                                            buffer_snapshot,
+                                            adapter,
+                                            server,
+                                        ) || buffer_supports_lsp_range_formatting(
+                                            local,
+                                            buffer_snapshot,
+                                            adapter,
+                                            server,
+                                        )
+                                    })
+                                };
+                                adapter_and_server.cloned()
+                            })
+                        })?
+                    }
                 };
 
-                let Some(language_server) = language_server else {
+                let Some((adapter, language_server)) = adapter_and_server else {
                     zlog::debug!(
                         logger =>
                         "No language server found to format buffer {buffer_path_abs:?}. Skipping",
@@ -1977,6 +2028,7 @@ impl LocalLspStore {
                         &buffer.handle,
                         ranges,
                         buffer_path_abs,
+                        &adapter,
                         &language_server,
                         &settings,
                         cx,
@@ -1998,6 +2050,7 @@ impl LocalLspStore {
                                     &lsp_store,
                                     &buffer.handle,
                                     buffer_path_abs,
+                                    &adapter,
                                     &language_server,
                                     &settings,
                                     cx,
@@ -2020,6 +2073,7 @@ impl LocalLspStore {
                         &lsp_store,
                         &buffer.handle,
                         buffer_path_abs,
+                        &adapter,
                         &language_server,
                         &settings,
                         cx,
@@ -2111,8 +2165,26 @@ impl LocalLspStore {
 
                     zlog::trace!(logger => "Executing {}", describe_code_action(&action));
 
-                    if let Err(err) =
-                        Self::try_resolve_code_action(server, &mut action, request_timeout).await
+                    let can_resolve_actions = lsp_store.update(cx, |lsp_store, cx| {
+                        lsp_store.text_document_capability_matches_for_server(
+                            &buffer.handle,
+                            server.server_id(),
+                            "textDocument/codeAction",
+                            |capabilities| {
+                                GetCodeActions::can_resolve_actions(
+                                    capabilities.server_capabilities,
+                                )
+                            },
+                            cx,
+                        )
+                    })?;
+                    if let Err(err) = Self::try_resolve_code_action(
+                        server,
+                        &mut action,
+                        can_resolve_actions,
+                        request_timeout,
+                    )
+                    .await
                     {
                         zlog::error!(
                             logger =>
@@ -2404,16 +2476,22 @@ impl LocalLspStore {
         buffer_handle: &Entity<Buffer>,
         ranges: &[Range<Anchor>],
         abs_path: &Path,
+        adapter: &Arc<CachedLspAdapter>,
         language_server: &Arc<LanguageServer>,
         settings: &LanguageSettings,
         cx: &mut AsyncApp,
     ) -> Result<Option<Vec<(Range<Anchor>, Arc<str>)>>> {
-        let capabilities = &language_server.capabilities();
-        let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
-        if !matches!(
-            range_formatting_provider,
-            Some(OneOf::Left(true) | OneOf::Right(_))
-        ) {
+        let range_formatting_supported = this.read_with(cx, |this, cx| {
+            this.as_local().is_some_and(|local| {
+                buffer_supports_lsp_range_formatting(
+                    local,
+                    buffer_handle.read(cx),
+                    adapter,
+                    language_server,
+                )
+            })
+        })?;
+        if !range_formatting_supported {
             log::debug!(
                 "Skipping range formatting: language server {} does not support range formatting",
                 language_server.name()
@@ -2537,17 +2615,11 @@ impl LocalLspStore {
         }
     }
 
-    fn server_supports_formatting(server: &Arc<LanguageServer>) -> bool {
-        let capabilities = server.capabilities();
-        let formatting = capabilities.document_formatting_provider.as_ref();
-        matches!(formatting, Some(p) if *p != OneOf::Left(false))
-            || server_capabilities_support_range_formatting(&capabilities)
-    }
-
     async fn format_via_lsp(
         this: &WeakEntity<LspStore>,
         buffer: &Entity<Buffer>,
         abs_path: &Path,
+        adapter: &Arc<CachedLspAdapter>,
         language_server: &Arc<LanguageServer>,
         settings: &LanguageSettings,
         cx: &mut AsyncApp,
@@ -2557,10 +2629,23 @@ impl LocalLspStore {
 
         let uri = file_path_to_lsp_url(abs_path)?;
         let text_document = lsp::TextDocumentIdentifier::new(uri);
-        let capabilities = &language_server.capabilities();
 
-        let formatting_provider = capabilities.document_formatting_provider.as_ref();
-        let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
+        let (formatting_supported, range_formatting_supported) =
+            this.read_with(cx, |this, cx| match this.as_local() {
+                Some(local) => {
+                    let buffer = buffer.read(cx);
+                    (
+                        buffer_supports_lsp_formatting(local, buffer, adapter, language_server),
+                        buffer_supports_lsp_range_formatting(
+                            local,
+                            buffer,
+                            adapter,
+                            language_server,
+                        ),
+                    )
+                }
+                None => (false, false),
+            })?;
 
         let request_timeout = cx.update(|app| {
             ProjectSettings::get_global(app)
@@ -2568,7 +2653,7 @@ impl LocalLspStore {
                 .get_request_timeout()
         });
 
-        let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
+        let lsp_edits = if formatting_supported {
             let _timer = zlog::time!(logger => "format-full");
             language_server
                 .request::<lsp::request::Formatting>(
@@ -2581,7 +2666,7 @@ impl LocalLspStore {
                 )
                 .await
                 .into_response()?
-        } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
+        } else if range_formatting_supported {
             let _timer = zlog::time!(logger => "format-range");
             let buffer_start = lsp::Position::new(0, 0);
             let buffer_end = buffer.read_with(cx, |b, _| point_to_lsp(b.max_point_utf16()));
@@ -2700,12 +2785,13 @@ impl LocalLspStore {
     async fn try_resolve_code_action(
         lang_server: &LanguageServer,
         action: &mut CodeAction,
+        can_resolve: bool,
         request_timeout: Duration,
     ) -> anyhow::Result<()> {
         match &mut action.lsp_action {
             LspAction::Action(lsp_action) => {
                 if !action.resolved
-                    && GetCodeActions::can_resolve_actions(&lang_server.capabilities())
+                    && can_resolve
                     && lsp_action.data.is_some()
                     && (lsp_action.command.is_none() || lsp_action.edit.is_none())
                 {
@@ -2719,7 +2805,7 @@ impl LocalLspStore {
                 }
             }
             LspAction::CodeLens(lens) => {
-                if !action.resolved && GetCodeLens::can_resolve_lens(&lang_server.capabilities()) {
+                if !action.resolved && can_resolve {
                     *lens = lang_server
                         .request::<lsp::request::CodeLensResolve>(lens.clone(), request_timeout)
                         .await
@@ -2782,35 +2868,32 @@ impl LocalLspStore {
             self.lsp_tree
                 .get(path, language.name(), language.manifest(), &delegate, cx)
         {
-            let server = self
-                .language_servers
-                .get(&server_id)
-                .and_then(|server_state| {
-                    if let LanguageServerState::Running { server, .. } = server_state {
-                        Some(server.clone())
-                    } else {
-                        None
-                    }
-                });
-            let server = match server {
-                Some(server) => server,
-                None => continue,
+            let Some((server, adapter)) =
+                self.language_servers
+                    .get(&server_id)
+                    .and_then(|server_state| {
+                        if let LanguageServerState::Running {
+                            server, adapter, ..
+                        } = server_state
+                        {
+                            Some((server.clone(), adapter.clone()))
+                        } else {
+                            None
+                        }
+                    })
+            else {
+                continue;
             };
 
             buffer_handle.update(cx, |buffer, cx| {
                 buffer.set_completion_triggers(
                     server.server_id(),
-                    server
-                        .capabilities()
-                        .completion_provider
-                        .as_ref()
-                        .and_then(|provider| {
-                            provider
-                                .trigger_characters
-                                .as_ref()
-                                .map(|characters| characters.iter().cloned().collect())
-                        })
-                        .unwrap_or_default(),
+                    completion_trigger_characters_for_buffer(
+                        self,
+                        server.server_id(),
+                        &adapter,
+                        buffer,
+                    ),
                     cx,
                 );
             });
@@ -3116,17 +3199,12 @@ impl LocalLspStore {
             buffer_handle.update(cx, |buffer, cx| {
                 buffer.set_completion_triggers(
                     server.server_id(),
-                    server
-                        .capabilities()
-                        .completion_provider
-                        .as_ref()
-                        .and_then(|provider| {
-                            provider
-                                .trigger_characters
-                                .as_ref()
-                                .map(|characters| characters.iter().cloned().collect())
-                        })
-                        .unwrap_or_default(),
+                    completion_trigger_characters_for_buffer(
+                        self,
+                        server.server_id(),
+                        &adapter,
+                        buffer,
+                    ),
                     cx,
                 );
             });
@@ -3354,6 +3432,7 @@ impl LocalLspStore {
     pub async fn execute_code_actions_on_server(
         lsp_store: &WeakEntity<LspStore>,
         language_server: &Arc<LanguageServer>,
+        buffer: &Entity<Buffer>,
         actions: Vec<CodeAction>,
         push_to_history: bool,
         project_transaction: &mut ProjectTransaction,
@@ -3364,11 +3443,28 @@ impl LocalLspStore {
                 .global_lsp_settings
                 .get_request_timeout()
         });
+        let server_id = language_server.server_id();
+        let can_resolve_actions = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.text_document_capability_matches_for_server(
+                buffer,
+                server_id,
+                "textDocument/codeAction",
+                |capabilities| {
+                    GetCodeActions::can_resolve_actions(capabilities.server_capabilities)
+                },
+                cx,
+            )
+        })?;
 
         for mut action in actions {
-            Self::try_resolve_code_action(language_server, &mut action, request_timeout)
-                .await
-                .context("resolving a formatting code action")?;
+            Self::try_resolve_code_action(
+                language_server,
+                &mut action,
+                can_resolve_actions,
+                request_timeout,
+            )
+            .await
+            .context("resolving a formatting code action")?;
 
             if let Some(edit) = action.lsp_action.edit() {
                 if edit.changes.is_none() && edit.document_changes.is_none() {
@@ -3908,6 +4004,9 @@ impl LocalLspStore {
             self.last_workspace_edits_by_language_server
                 .remove(server_id_to_remove);
             self.language_servers.remove(server_id_to_remove);
+            self.language_server_dynamic_registrations
+                .remove(server_id_to_remove);
+            self.initial_server_capabilities.remove(server_id_to_remove);
             self.buffer_pull_diagnostics_result_ids
                 .remove(server_id_to_remove);
             self.workspace_pull_diagnostics_result_ids
@@ -4344,33 +4443,22 @@ enum ChunkFetch {
     Running(CacheInlayHintsTask),
 }
 
-fn notify_server_capabilities_updated(server: &LanguageServer, cx: &mut Context<LspStore>) {
-    if let Some(capabilities) = serde_json::to_string(&server.capabilities()).ok() {
-        cx.emit(LspStoreEvent::LanguageServerUpdate {
-            language_server_id: server.server_id(),
-            name: Some(server.name()),
-            message: proto::update_language_server::Variant::MetadataUpdated(
-                proto::ServerMetadataUpdated {
-                    capabilities: Some(capabilities),
-                    binary: Some(proto::LanguageServerBinaryInfo {
-                        path: server.binary().path.to_string_lossy().into_owned(),
-                        arguments: server
-                            .binary()
-                            .arguments
-                            .iter()
-                            .map(|arg| arg.to_string_lossy().into_owned())
-                            .collect(),
-                    }),
-                    configuration: serde_json::to_string(server.configuration()).ok(),
-                    workspace_folders: server
-                        .workspace_folders()
-                        .iter()
-                        .map(|uri| uri.to_string())
-                        .collect(),
-                },
-            ),
-        });
-    }
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SyncedServerCapabilities {
+    #[serde(flatten)]
+    server_capabilities: lsp::ServerCapabilities,
+    #[serde(
+        rename = "zedInitialServerCapabilities",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    initial_server_capabilities: Option<lsp::ServerCapabilities>,
+    #[serde(
+        rename = "zedTextDocumentRegistrations",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    text_document_registrations: Option<dynamic_registration::TextDocumentRegistrations>,
 }
 
 #[derive(Debug)]
@@ -4412,6 +4500,9 @@ pub struct LspStore {
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<RelPath>, HashMap<LanguageServerId, DiagnosticSummary>>>,
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
+    lsp_server_initial_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
+    lsp_server_text_document_registrations:
+        HashMap<LanguageServerId, dynamic_registration::TextDocumentRegistrations>,
     semantic_token_config: SemanticTokenConfig,
     lsp_data: HashMap<BufferId, BufferLspData>,
     buffer_reload_tasks: HashMap<BufferId, Task<anyhow::Result<()>>>,
@@ -4655,7 +4746,14 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentSymbols>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
-        client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
+        client.add_entity_request_handler(|lsp_store, envelope, cx| {
+            Self::handle_routed_lsp_command::<PerformRename>(lsp_store, envelope, cx, |request| {
+                request
+                    .language_server_id
+                    .map(LanguageServerToQuery::Other)
+                    .unwrap_or(LanguageServerToQuery::FirstCapable)
+            })
+        });
         client.add_entity_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
 
         client.add_entity_request_handler(Self::handle_lsp_ext_cancel_flycheck);
@@ -4756,6 +4854,7 @@ impl LspStore {
                 language_server_watched_paths: Default::default(),
                 language_server_paths_watched_for_rename: Default::default(),
                 language_server_dynamic_registrations: Default::default(),
+                initial_server_capabilities: HashMap::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_to_refresh_hash_set: HashSet::default(),
                 buffers_to_refresh_queue: VecDeque::new(),
@@ -4799,6 +4898,8 @@ impl LspStore {
             nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
+            lsp_server_initial_capabilities: HashMap::default(),
+            lsp_server_text_document_registrations: HashMap::default(),
             semantic_token_config: SemanticTokenConfig::new(cx),
             lsp_data: HashMap::default(),
             buffer_reload_tasks: HashMap::default(),
@@ -4860,6 +4961,8 @@ impl LspStore {
             nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
+            lsp_server_initial_capabilities: HashMap::default(),
+            lsp_server_text_document_registrations: HashMap::default(),
             semantic_token_config: SemanticTokenConfig::new(cx),
             next_hint_id: Arc::default(),
             lsp_data: HashMap::default(),
@@ -5603,14 +5706,10 @@ impl LspStore {
     where
         R: LspCommand,
     {
-        self.check_if_capable_for_proto_request(
+        self.check_if_any_relevant_text_document_server_matches(
             buffer,
-            |capabilities| {
-                request.check_capabilities(AdapterServerCapabilities {
-                    server_capabilities: capabilities.clone(),
-                    code_action_kinds: None,
-                })
-            },
+            <R::LspRequest as lsp::request::Request>::METHOD,
+            |_, capabilities| request.check_capabilities(capabilities),
             cx,
         )
     }
@@ -5650,36 +5749,218 @@ impl LspStore {
             .collect()
     }
 
-    fn check_if_any_relevant_server_matches<F>(
+    fn synced_server_capabilities(&self, server: &LanguageServer) -> SyncedServerCapabilities {
+        let (initial_server_capabilities, text_document_registrations) = self
+            .as_local()
+            .map(|local| {
+                let initial_server_capabilities = local
+                    .initial_server_capabilities
+                    .get(&server.server_id())
+                    .cloned();
+                let text_document_registrations = local
+                    .language_server_dynamic_registrations
+                    .get(&server.server_id())
+                    .map(|registrations| {
+                        registrations
+                            .text_documents
+                            .iter()
+                            .filter(|(_, registrations)| !registrations.is_empty())
+                            .map(|(method, registrations)| (method.clone(), registrations.clone()))
+                            .collect::<dynamic_registration::TextDocumentRegistrations>()
+                    })
+                    .filter(|registrations| !registrations.is_empty());
+                (initial_server_capabilities, text_document_registrations)
+            })
+            .unwrap_or_default();
+        SyncedServerCapabilities {
+            server_capabilities: server.capabilities(),
+            initial_server_capabilities,
+            text_document_registrations,
+        }
+    }
+
+    fn serialize_synced_server_capabilities(
+        &self,
+        server: &LanguageServer,
+    ) -> serde_json::Result<String> {
+        serde_json::to_string(&self.synced_server_capabilities(server))
+    }
+
+    fn notify_server_capabilities_updated(&self, server: &LanguageServer, cx: &mut Context<Self>) {
+        if let Some(capabilities) = self.serialize_synced_server_capabilities(server).log_err() {
+            cx.emit(LspStoreEvent::LanguageServerUpdate {
+                language_server_id: server.server_id(),
+                name: Some(server.name()),
+                message: proto::update_language_server::Variant::MetadataUpdated(
+                    proto::ServerMetadataUpdated {
+                        capabilities: Some(capabilities),
+                        binary: Some(proto::LanguageServerBinaryInfo {
+                            path: server.binary().path.to_string_lossy().into_owned(),
+                            arguments: server
+                                .binary()
+                                .arguments
+                                .iter()
+                                .map(|arg| arg.to_string_lossy().into_owned())
+                                .collect(),
+                        }),
+                        configuration: serde_json::to_string(server.configuration()).ok(),
+                        workspace_folders: server
+                            .workspace_folders()
+                            .iter()
+                            .map(|uri| uri.to_string())
+                            .collect(),
+                    },
+                ),
+            });
+        }
+    }
+
+    pub(crate) fn insert_synced_server_capabilities(
+        &mut self,
+        server_id: LanguageServerId,
+        capabilities_json: &str,
+    ) {
+        if let Some(capabilities) =
+            serde_json::from_str::<SyncedServerCapabilities>(capabilities_json).log_err()
+        {
+            self.lsp_server_capabilities
+                .insert(server_id, capabilities.server_capabilities);
+            match capabilities.initial_server_capabilities {
+                Some(capabilities) => {
+                    self.lsp_server_initial_capabilities
+                        .insert(server_id, capabilities);
+                }
+                None => {
+                    self.lsp_server_initial_capabilities.remove(&server_id);
+                }
+            }
+            match capabilities.text_document_registrations {
+                Some(registrations) => {
+                    self.lsp_server_text_document_registrations
+                        .insert(server_id, registrations);
+                }
+                None => {
+                    self.lsp_server_text_document_registrations
+                        .remove(&server_id);
+                }
+            }
+        }
+    }
+
+    fn remote_document_selector_context(
+        &self,
+        server_id: LanguageServerId,
+        language: Option<&LanguageName>,
+    ) -> Option<DocumentSelectorContext> {
+        let language = language?;
+        let server_name = &self.language_server_statuses.get(&server_id)?.name;
+        // Without the host's adapter we cannot compute its language id. Callers that the host
+        // re-filters may fail open, while consumers of synced metadata must fail closed.
+        let language_id = self
+            .languages
+            .lsp_adapters(language)
+            .iter()
+            .find(|adapter| &adapter.name() == server_name)
+            .map(|adapter| adapter.language_id(language))?;
+        Some(DocumentSelectorContext {
+            language_id,
+            scheme: "file",
+        })
+    }
+
+    fn remote_text_document_capability_matches(
         &self,
         buffer: &Entity<Buffer>,
+        server_id: LanguageServerId,
+        method: &str,
+        check: impl FnMut(AdapterServerCapabilities<'_>) -> bool,
+        cx: &App,
+    ) -> bool {
+        let registration_method = text_document_registration_method(method);
+        let language = buffer.read(cx).language().map(|language| language.name());
+        let context = self.remote_document_selector_context(server_id, language.as_ref());
+        remote_text_document_capabilities_match(
+            self.lsp_server_initial_capabilities.get(&server_id),
+            self.lsp_server_capabilities.get(&server_id),
+            self.lsp_server_text_document_registrations
+                .get(&server_id)
+                .and_then(|registrations| registrations.get(registration_method)),
+            context.as_ref(),
+            check,
+        )
+    }
+
+    pub(crate) fn text_document_capability_matches_for_server(
+        &self,
+        buffer: &Entity<Buffer>,
+        server_id: LanguageServerId,
+        method: &str,
+        mut check: impl FnMut(AdapterServerCapabilities<'_>) -> bool,
+        cx: &mut App,
+    ) -> bool {
+        if let Some(local) = self.as_local() {
+            return buffer.update(cx, |buffer, cx| {
+                let Some((adapter, server)) = local
+                    .language_servers_for_buffer(buffer, cx)
+                    .find(|(_, server)| server.server_id() == server_id)
+                else {
+                    return false;
+                };
+                text_document_capabilities_for_buffer(local, method, buffer, adapter, server)
+                    .any(&mut check)
+            });
+        }
+
+        self.remote_text_document_capability_matches(buffer, server_id, method, check, cx)
+    }
+
+    fn check_if_any_relevant_text_document_server_matches<F>(
+        &self,
+        buffer: &Entity<Buffer>,
+        method: &str,
         mut check: F,
         cx: &App,
     ) -> bool
     where
-        F: FnMut(&LanguageServerStatus, &lsp::ServerCapabilities) -> bool,
+        F: FnMut(&lsp::LanguageServerName, AdapterServerCapabilities<'_>) -> bool,
     {
+        if let Some(local) = self.as_local() {
+            let buffer = buffer.read(cx);
+            return local
+                .buffers_opened_in_servers
+                .get(&buffer.remote_id())
+                .into_iter()
+                .flatten()
+                .filter_map(|server_id| match local.language_servers.get(server_id)? {
+                    LanguageServerState::Running {
+                        adapter, server, ..
+                    } => Some((adapter, server)),
+                    _ => None,
+                })
+                .any(|(adapter, server)| {
+                    let server_name = server.name();
+                    text_document_capabilities_for_buffer(local, method, buffer, adapter, server)
+                        .any(|capabilities| check(&server_name, capabilities))
+                });
+        }
+
         self.relevant_server_ids_for_capability_check(buffer, cx)
             .into_iter()
             .filter_map(|server_id| {
                 Some((
-                    self.language_server_statuses.get(&server_id)?,
-                    self.lsp_server_capabilities.get(&server_id)?,
+                    server_id,
+                    &self.language_server_statuses.get(&server_id)?.name,
                 ))
             })
-            .any(|(server_status, capabilities)| check(server_status, capabilities))
-    }
-
-    fn check_if_capable_for_proto_request<F>(
-        &self,
-        buffer: &Entity<Buffer>,
-        mut check: F,
-        cx: &App,
-    ) -> bool
-    where
-        F: FnMut(&lsp::ServerCapabilities) -> bool,
-    {
-        self.check_if_any_relevant_server_matches(buffer, |_, capabilities| check(capabilities), cx)
+            .any(|(server_id, server_name)| {
+                self.remote_text_document_capability_matches(
+                    buffer,
+                    server_id,
+                    method,
+                    |capabilities| check(server_name, capabilities),
+                    cx,
+                )
+            })
     }
 
     pub fn supports_range_formatting(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
@@ -5689,28 +5970,41 @@ impl LspStore {
                 Formatter::None => false,
                 Formatter::Auto => {
                     settings.prettier.allowed
-                        || self.check_if_capable_for_proto_request(
+                        || self.check_if_any_relevant_text_document_server_matches(
                             buffer,
-                            server_capabilities_support_range_formatting,
+                            "textDocument/rangeFormatting",
+                            |_, capabilities| {
+                                server_capabilities_support_range_formatting(
+                                    &capabilities.server_capabilities,
+                                )
+                            },
                             cx,
                         )
                 }
                 Formatter::Prettier => true,
                 Formatter::External { .. } => false,
                 Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current) => {
-                    self.check_if_capable_for_proto_request(
+                    self.check_if_any_relevant_text_document_server_matches(
                         buffer,
-                        server_capabilities_support_range_formatting,
+                        "textDocument/rangeFormatting",
+                        |_, capabilities| {
+                            server_capabilities_support_range_formatting(
+                                &capabilities.server_capabilities,
+                            )
+                        },
                         cx,
                     )
                 }
                 Formatter::LanguageServer(
                     settings::LanguageServerFormatterSpecifier::Specific { name },
-                ) => self.check_if_any_relevant_server_matches(
+                ) => self.check_if_any_relevant_text_document_server_matches(
                     buffer,
-                    |server_status, capabilities| {
-                        server_status.name.0.as_ref() == name
-                            && server_capabilities_support_range_formatting(capabilities)
+                    "textDocument/rangeFormatting",
+                    |server_name, capabilities| {
+                        server_name.0.as_ref() == name
+                            && server_capabilities_support_range_formatting(
+                                &capabilities.server_capabilities,
+                            )
                     },
                     cx,
                 ),
@@ -5725,11 +6019,12 @@ impl LspStore {
     fn all_capable_for_proto_request<F>(
         &self,
         buffer: &Entity<Buffer>,
+        method: &str,
         mut check: F,
         cx: &App,
     ) -> Vec<(lsp::LanguageServerId, lsp::LanguageServerName)>
     where
-        F: FnMut(&lsp::LanguageServerName, &lsp::ServerCapabilities) -> bool,
+        F: FnMut(&lsp::LanguageServerName, AdapterServerCapabilities<'_>) -> bool,
     {
         self.relevant_server_ids_for_capability_check(buffer, cx)
             .into_iter()
@@ -5737,11 +6032,18 @@ impl LspStore {
                 Some((
                     server_id,
                     &self.language_server_statuses.get(&server_id)?.name,
-                    self.lsp_server_capabilities.get(&server_id)?,
                 ))
             })
-            .filter(|(_, server_name, capabilities)| check(server_name, capabilities))
-            .map(|(server_id, server_name, _)| (server_id, server_name.clone()))
+            .filter(|(server_id, server_name)| {
+                self.remote_text_document_capability_matches(
+                    buffer,
+                    *server_id,
+                    method,
+                    |capabilities| check(server_name, capabilities),
+                    cx,
+                )
+            })
+            .map(|(server_id, server_name)| (server_id, server_name.clone()))
             .collect()
     }
 
@@ -5767,24 +6069,48 @@ impl LspStore {
             );
         }
 
-        let Some(language_server) = buffer.update(cx, |buffer, cx| match server {
-            LanguageServerToQuery::FirstCapable => self.as_local().and_then(|local| {
-                local
-                    .language_servers_for_buffer(buffer, cx)
-                    .find(|(_, server)| {
-                        request.check_capabilities(server.adapter_server_capabilities())
-                    })
-                    .map(|(_, server)| server.clone())
-            }),
-            LanguageServerToQuery::Other(id) => self
-                .language_server_for_local_buffer(buffer, id, cx)
-                .and_then(|(_, server)| {
-                    request
-                        .check_capabilities(server.adapter_server_capabilities())
-                        .then(|| Arc::clone(server))
-                }),
-        }) else {
-            return Task::ready(Ok(Default::default()));
+        let query_outcome = buffer.update(cx, |buffer, cx| {
+            let mut early_response = None;
+            if let Some(local) = self.as_local() {
+                for (adapter, language_server) in local.language_servers_for_buffer(buffer, cx) {
+                    if let LanguageServerToQuery::Other(id) = server
+                        && language_server.server_id() != id
+                    {
+                        continue;
+                    }
+                    let mut applicable_capabilities =
+                        applicable_lsp_command_capabilities_for_buffer(
+                            local,
+                            &request,
+                            buffer,
+                            adapter,
+                            language_server,
+                        )
+                        .peekable();
+                    if applicable_capabilities.peek().is_some() {
+                        match request.response_without_request(&mut applicable_capabilities) {
+                            None => {
+                                return LanguageServerQueryOutcome::Query(Arc::clone(
+                                    language_server,
+                                ));
+                            }
+                            Some(response) => {
+                                if early_response.is_none() {
+                                    early_response = Some(response);
+                                }
+                            }
+                        }
+                    }
+                    if let LanguageServerToQuery::Other(_) = server {
+                        break;
+                    }
+                }
+            }
+            LanguageServerQueryOutcome::Respond(early_response.unwrap_or_default())
+        });
+        let language_server = match query_outcome {
+            LanguageServerQueryOutcome::Query(language_server) => language_server,
+            LanguageServerQueryOutcome::Respond(response) => return Task::ready(Ok(response)),
         };
 
         let file = File::from_dyn(buffer.read(cx).file()).and_then(File::as_local);
@@ -5793,27 +6119,22 @@ impl LspStore {
             return Task::ready(Ok(Default::default()));
         };
 
-        let lsp_params = match request.to_lsp_params_or_response(
-            &file.abs_path(cx),
-            buffer.read(cx),
-            &language_server,
-            cx,
-        ) {
-            Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
-            Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
-            Err(err) => {
-                let err = err.context(format!(
-                    "{} via {} failed",
-                    request.display_name(),
-                    language_server.name(),
-                ));
-                let message = format!("{err:#}");
-                if should_log_lsp_request_failure(&message) {
-                    log::warn!("{message}");
+        let lsp_params =
+            match request.to_lsp(&file.abs_path(cx), buffer.read(cx), &language_server, cx) {
+                Ok(lsp_params) => lsp_params,
+                Err(err) => {
+                    let err = err.context(format!(
+                        "{} via {} failed",
+                        request.display_name(),
+                        language_server.name(),
+                    ));
+                    let message = format!("{err:#}");
+                    if should_log_lsp_request_failure(&message) {
+                        log::warn!("{message}");
+                    }
+                    return Task::ready(Err(err));
                 }
-                return Task::ready(Err(err));
-            }
-        };
+            };
 
         let status = request.status();
         let request_timeout = ProjectSettings::get_global(cx)
@@ -6087,6 +6408,33 @@ impl LspStore {
         }
     }
 
+    fn can_resolve_lsp_action_for_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+        action: &CodeAction,
+        cx: &mut App,
+    ) -> bool {
+        match &action.lsp_action {
+            LspAction::Action(_) => self.text_document_capability_matches_for_server(
+                buffer,
+                action.server_id,
+                "textDocument/codeAction",
+                |capabilities| {
+                    GetCodeActions::can_resolve_actions(capabilities.server_capabilities)
+                },
+                cx,
+            ),
+            LspAction::CodeLens(_) => self.text_document_capability_matches_for_server(
+                buffer,
+                action.server_id,
+                "textDocument/codeLens",
+                |capabilities| GetCodeLens::can_resolve_lens(capabilities.server_capabilities),
+                cx,
+            ),
+            LspAction::Command(_) => false,
+        }
+    }
+
     pub fn apply_code_action(
         &self,
         buffer_handle: Entity<Buffer>,
@@ -6115,6 +6463,7 @@ impl LspStore {
                     .await
             })
         } else if self.mode.is_local() {
+            let can_resolve = self.can_resolve_lsp_action_for_buffer(&buffer_handle, &action, cx);
             let Some((_, lang_server, request_timeout)) = buffer_handle.update(cx, |buffer, cx| {
                 let request_timeout = ProjectSettings::get_global(cx)
                     .global_lsp_settings
@@ -6126,9 +6475,14 @@ impl LspStore {
             };
 
             cx.spawn(async move |this, cx| {
-                LocalLspStore::try_resolve_code_action(&lang_server, &mut action, request_timeout)
-                    .await
-                    .context("resolving a code action")?;
+                LocalLspStore::try_resolve_code_action(
+                    &lang_server,
+                    &mut action,
+                    can_resolve,
+                    request_timeout,
+                )
+                .await
+                .context("resolving a code action")?;
                 if let Some(edit) = action.lsp_action.edit()
                     && (edit.changes.is_some() || edit.document_changes.is_some())
                 {
@@ -6209,6 +6563,10 @@ impl LspStore {
         if action.resolved {
             return Task::ready(Ok(action));
         }
+        if !self.can_resolve_lsp_action_for_buffer(buffer, &action, cx) {
+            action.resolved = true;
+            return Task::ready(Ok(action));
+        }
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = proto::ResolveCodeAction {
                 project_id,
@@ -6235,9 +6593,14 @@ impl LspStore {
                 .global_lsp_settings
                 .get_request_timeout();
             cx.background_spawn(async move {
-                LocalLspStore::try_resolve_code_action(&lang_server, &mut action, request_timeout)
-                    .await
-                    .context("resolving a code action")?;
+                LocalLspStore::try_resolve_code_action(
+                    &lang_server,
+                    &mut action,
+                    true,
+                    request_timeout,
+                )
+                .await
+                .context("resolving a code action")?;
                 Ok(action)
             })
         } else {
@@ -6399,7 +6762,7 @@ impl LspStore {
                     local
                         .language_servers_for_buffer(buffer, cx)
                         .filter(|(_, server)| {
-                            LinkedEditingRange::check_server_capabilities(server.capabilities())
+                            LinkedEditingRange::check_server_capabilities(&server.capabilities())
                         })
                         .filter(|(adapter, _)| {
                             scope
@@ -6445,10 +6808,14 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Transaction>>> {
         if let Some((client, project_id)) = self.upstream_client() {
-            if !self.check_if_capable_for_proto_request(
+            if !self.check_if_any_relevant_text_document_server_matches(
                 &buffer,
-                |capabilities| {
-                    OnTypeFormatting::supports_on_type_formatting(&trigger, capabilities)
+                "textDocument/onTypeFormatting",
+                |_, capabilities| {
+                    OnTypeFormatting::supports_on_type_formatting(
+                        &trigger,
+                        &capabilities.server_capabilities,
+                    )
                 },
                 cx,
             ) {
@@ -6513,9 +6880,15 @@ impl LspStore {
         push_to_history: bool,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<Option<Transaction>>>> {
-        if !self.check_if_capable_for_proto_request(
+        if !self.check_if_any_relevant_text_document_server_matches(
             &buffer,
-            |capabilities| OnTypeFormatting::supports_on_type_formatting(&trigger, capabilities),
+            "textDocument/onTypeFormatting",
+            |_, capabilities| {
+                OnTypeFormatting::supports_on_type_formatting(
+                    &trigger,
+                    &capabilities.server_capabilities,
+                )
+            },
             cx,
         ) {
             return None;
@@ -7084,10 +7457,6 @@ impl LspStore {
         let server_id = item.server_id;
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetIncomingCalls { item };
-            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
-                return Task::ready(Ok(None));
-            }
-
             let request_timeout = ProjectSettings::get_global(cx)
                 .global_lsp_settings
                 .get_request_timeout();
@@ -7144,10 +7513,6 @@ impl LspStore {
         let server_id = item.server_id;
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetOutgoingCalls { item };
-            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
-                return Task::ready(Ok(None));
-            }
-
             let request_timeout = ProjectSettings::get_global(cx)
                 .global_lsp_settings
                 .get_request_timeout();
@@ -7286,8 +7651,12 @@ impl LspStore {
             let scope = snapshot.language_scope_at(offset);
             let capable_lsps = self.all_capable_for_proto_request(
                 buffer,
+                "textDocument/completion",
                 |server_name, capabilities| {
-                    capabilities.completion_provider.is_some()
+                    capabilities
+                        .server_capabilities
+                        .completion_provider
+                        .is_some()
                         && scope
                             .as_ref()
                             .map(|scope| scope.language_allowed(server_name))
@@ -7368,10 +7737,17 @@ impl LspStore {
                 return Task::ready(Ok(Vec::new()));
             }
 
+            let request = GetCompletions {
+                position,
+                context: context.clone(),
+                server_id: None,
+            };
             let server_ids: Vec<_> = buffer.update(cx, |buffer, cx| {
                 local
                     .language_servers_for_buffer(buffer, cx)
-                    .filter(|(_, server)| server.capabilities().completion_provider.is_some())
+                    .filter(|(adapter, server)| {
+                        lsp_command_allowed_for_buffer(local, &request, buffer, adapter, server)
+                    })
                     .filter(|(adapter, _)| {
                         scope
                             .as_ref()
@@ -7467,14 +7843,24 @@ impl LspStore {
         let client = self.upstream_client();
         let buffer_id = buffer.read(cx).remote_id();
         let buffer_snapshot = buffer.read(cx).snapshot();
+        let resolvable_servers = completion_indices
+            .iter()
+            .filter_map(|&completion_index| {
+                completions.borrow()[completion_index].source.server_id()
+            })
+            .filter(|&server_id| {
+                self.text_document_capability_matches_for_server(
+                    &buffer,
+                    server_id,
+                    "textDocument/completion",
+                    |capabilities| {
+                        GetCompletions::can_resolve_completions(capabilities.server_capabilities)
+                    },
+                    cx,
+                )
+            })
+            .collect::<HashSet<_>>();
 
-        if !self.check_if_capable_for_proto_request(
-            &buffer,
-            GetCompletions::can_resolve_completions,
-            cx,
-        ) {
-            return Task::ready(Ok(false));
-        }
         cx.spawn(async move |lsp_store, cx| {
             let request_timeout = cx.update(|app| {
                 ProjectSettings::get_global(app)
@@ -7490,6 +7876,9 @@ impl LspStore {
                         completion.source.server_id()
                     };
                     if let Some(server_id) = server_id {
+                        if !resolvable_servers.contains(&server_id) {
+                            continue;
+                        }
                         if Self::resolve_completion_remote(
                             project_id,
                             server_id,
@@ -7518,6 +7907,9 @@ impl LspStore {
                         completion.source.server_id()
                     };
                     if let Some(server_id) = server_id {
+                        if !resolvable_servers.contains(&server_id) {
+                            continue;
+                        }
                         let server_and_adapter = lsp_store
                             .read_with(cx, |lsp_store, _| {
                                 let server = lsp_store.language_server_for_id(server_id)?;
@@ -7536,6 +7928,7 @@ impl LspStore {
                             completions.clone(),
                             completion_index,
                             request_timeout,
+                            true,
                         )
                         .await
                         .log_err()
@@ -7569,9 +7962,10 @@ impl LspStore {
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
         request_timeout: Duration,
+        can_resolve: bool,
     ) -> Result<()> {
         let server_id = server.server_id();
-        if !GetCompletions::can_resolve_completions(&server.capabilities()) {
+        if !can_resolve {
             return Ok(());
         }
 
@@ -7879,14 +8273,21 @@ impl LspStore {
                 .global_lsp_settings
                 .get_request_timeout();
 
+            let Some(server_id) = completions.borrow()[completion_index].source.server_id() else {
+                return Task::ready(Ok(None));
+            };
+            let can_resolve = self.text_document_capability_matches_for_server(
+                &buffer_handle,
+                server_id,
+                "textDocument/completion",
+                |capabilities| {
+                    GetCompletions::can_resolve_completions(capabilities.server_capabilities)
+                },
+                cx,
+            );
             let Some(server) = buffer_handle.update(cx, |buffer, cx| {
-                let completion = &completions.borrow()[completion_index];
-                let server_id = completion.source.server_id()?;
-                Some(
-                    self.language_server_for_local_buffer(buffer, server_id, cx)?
-                        .1
-                        .clone(),
-                )
+                self.language_server_for_local_buffer(buffer, server_id, cx)
+                    .map(|(_, server)| server.clone())
             }) else {
                 return Task::ready(Ok(None));
             };
@@ -7897,6 +8298,7 @@ impl LspStore {
                     completions.clone(),
                     completion_index,
                     request_timeout,
+                    can_resolve,
                 )
                 .await
                 .context("resolving completion")?;
@@ -7982,32 +8384,15 @@ impl LspStore {
         let buffer_id = buffer.read(cx).remote_id();
 
         if let Some((client, upstream_project_id)) = self.upstream_client() {
-            let mut suitable_capabilities = None;
-            // Are we capable for proto request?
-            let any_server_has_diagnostics_provider = self.check_if_capable_for_proto_request(
-                &buffer,
-                |capabilities| {
-                    if let Some(caps) = &capabilities.diagnostic_provider {
-                        suitable_capabilities = Some(caps.clone());
-                        true
-                    } else {
-                        false
-                    }
-                },
-                cx,
-            );
             // We don't really care which caps are passed into the request, as they're ignored by RPC anyways.
-            let Some(dynamic_caps) = suitable_capabilities else {
-                return Task::ready(Ok(None));
-            };
-            assert!(any_server_has_diagnostics_provider);
-
-            let identifier = buffer_diagnostic_identifier(&dynamic_caps);
             let request = GetDocumentDiagnostics {
                 previous_result_id: None,
-                identifier,
+                identifier: None,
                 registration_id: None,
             };
+            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
+                return Task::ready(Ok(None));
+            }
             let request_timeout = ProjectSettings::get_global(cx)
                 .global_lsp_settings
                 .get_request_timeout();
@@ -8028,28 +8413,48 @@ impl LspStore {
         } else {
             let servers = buffer.update(cx, |buffer, cx| {
                 self.running_language_servers_for_local_buffer(buffer, cx)
-                    .map(|(_, server)| server.clone())
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             });
 
             let pull_diagnostics = servers
                 .into_iter()
-                .flat_map(|server| {
+                .flat_map(|(adapter, server)| {
                     let result = maybe!({
                         let local = self.as_local()?;
                         let server_id = server.server_id();
-                        let providers_with_identifiers = local
+                        let mut providers_with_identifiers = Vec::new();
+                        if let Some(provider) = local
+                            .initial_server_capabilities
+                            .get(&server_id)
+                            .and_then(|capabilities| capabilities.diagnostic_provider.clone())
+                        {
+                            providers_with_identifiers.push((None, provider));
+                        }
+                        if let Some(diagnostic_registrations) = local
                             .language_server_dynamic_registrations
                             .get(&server_id)
-                            .into_iter()
-                            .flat_map(|registrations| &registrations.diagnostics)
-                            .map(|(source, dynamic_caps)| {
-                                (
-                                    source.registration_id().map(str::to_string),
-                                    dynamic_caps.clone(),
-                                )
+                            .and_then(|registrations| {
+                                registrations.text_documents.get("textDocument/diagnostic")
                             })
-                            .collect::<Vec<_>>();
+                        {
+                            for (registration_id, registration) in diagnostic_registrations {
+                                if !dynamic_text_document_registration_allows_buffer(
+                                    registration,
+                                    buffer.read(cx),
+                                    &adapter,
+                                ) {
+                                    continue;
+                                }
+                                let Some(provider) =
+                                    registration.server_capabilities.diagnostic_provider.clone()
+                                else {
+                                    continue;
+                                };
+                                providers_with_identifiers
+                                    .push((Some(registration_id.clone()), provider));
+                            }
+                        }
                         Some(
                             providers_with_identifiers
                                 .into_iter()
@@ -8130,7 +8535,10 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>> {
         let next_hint_id = self.next_hint_id.clone();
-        let current_servers = self.relevant_server_ids_for_capability_check(&buffer, cx);
+        let capability_probe = InlayHints {
+            range: text::Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
+        };
+        let current_servers = self.language_server_ids_for_request(&buffer, &capability_probe, cx);
         let lsp_data = self.latest_lsp_data(&buffer, cx);
         let query_version = lsp_data.buffer_version.clone();
         if let InvalidationStrategy::RefreshRequested { server_id } = invalidate {
@@ -8410,13 +8818,19 @@ impl LspStore {
         let Some(local) = self.as_local() else {
             return false;
         };
-        let Some(registrations) = local.language_server_dynamic_registrations.get(&server_id)
-        else {
-            return false;
-        };
-        registrations.diagnostics.iter().any(|(source, _)| {
-            source.registration_id() == registration_id.as_ref().map(|id| id.as_ref())
-        })
+        match registration_id {
+            Some(registration_id) => local
+                .language_server_dynamic_registrations
+                .get(&server_id)
+                .and_then(|registrations| {
+                    registrations.text_documents.get("textDocument/diagnostic")
+                })
+                .is_some_and(|registrations| registrations.contains_key(registration_id.as_ref())),
+            None => local
+                .initial_server_capabilities
+                .get(&server_id)
+                .is_some_and(|capabilities| capabilities.diagnostic_provider.is_some()),
+        }
     }
 
     pub fn pull_diagnostics_for_buffer(
@@ -9291,12 +9705,29 @@ impl LspStore {
             .find(|(_, s)| s.server_id() == server_id)
     }
 
+    pub(crate) fn language_server_capable_of_lsp_request<R: LspCommand>(
+        &self,
+        buffer: &Entity<Buffer>,
+        server_id: LanguageServerId,
+        request: &R,
+        cx: &mut App,
+    ) -> bool {
+        self.text_document_capability_matches_for_server(
+            buffer,
+            server_id,
+            <R::LspRequest as lsp::request::Request>::METHOD,
+            |capabilities| request.check_capabilities(capabilities),
+            cx,
+        )
+    }
+
     fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut Context<Self>) {
         self.diagnostic_summaries.remove(&id_to_remove);
         if let Some(local) = self.as_local_mut() {
             let to_remove = local.remove_worktree(id_to_remove, cx);
             for server in to_remove {
                 self.language_server_statuses.remove(&server);
+                self.cleanup_lsp_data(server);
             }
         }
     }
@@ -9378,7 +9809,10 @@ impl LspStore {
         self.downstream_client = Some((downstream_client.clone(), project_id));
 
         for (server_id, status) in &self.language_server_statuses {
-            if let Some(server) = self.language_server_for_id(*server_id) {
+            if let Some(server) = self.language_server_for_id(*server_id)
+                && let Some(capabilities) =
+                    self.serialize_synced_server_capabilities(&server).log_err()
+            {
                 downstream_client
                     .send(proto::StartLanguageServer {
                         project_id,
@@ -9391,8 +9825,7 @@ impl LspStore {
                                 .as_ref()
                                 .map(|name| name.to_proto()),
                         }),
-                        capabilities: serde_json::to_string(&server.capabilities())
-                            .expect("serializing server LSP capabilities"),
+                        capabilities,
                     })
                     .log_err();
             }
@@ -9428,10 +9861,7 @@ impl LspStore {
             .zip(server_capabilities)
             .map(|(server, server_capabilities)| {
                 let server_id = LanguageServerId(server.id as usize);
-                if let Ok(server_capabilities) = serde_json::from_str(&server_capabilities) {
-                    self.lsp_server_capabilities
-                        .insert(server_id, server_capabilities);
-                }
+                self.insert_synced_server_capabilities(server_id, &server_capabilities);
 
                 let name = LanguageServerName::from_proto(server.name);
                 let worktree = server.worktree_id.map(WorktreeId::from_proto);
@@ -9951,28 +10381,43 @@ impl LspStore {
         })
     }
 
-    fn local_lsp_servers_for_buffer(
+    fn language_server_ids_for_request<R>(
         &self,
         buffer: &Entity<Buffer>,
-        cx: &mut Context<Self>,
-    ) -> Vec<LanguageServerId> {
+        request: &R,
+        cx: &mut App,
+    ) -> HashSet<LanguageServerId>
+    where
+        R: LspCommand,
+    {
         let Some(local) = self.as_local() else {
-            return Vec::new();
+            return self
+                .relevant_server_ids_for_capability_check(buffer, cx)
+                .into_iter()
+                .filter(|server_id| {
+                    self.remote_text_document_capability_matches(
+                        buffer,
+                        *server_id,
+                        <R::LspRequest as lsp::request::Request>::METHOD,
+                        |capabilities| request.check_capabilities(capabilities),
+                        cx,
+                    )
+                })
+                .collect();
         };
-
-        let snapshot = buffer.read(cx).snapshot();
-
+        let buffer_id = buffer.read(cx).remote_id();
         buffer.update(cx, |buffer, cx| {
             local
                 .language_servers_for_buffer(buffer, cx)
+                .filter(|(adapter, server)| {
+                    lsp_command_allowed_for_buffer(local, request, buffer, adapter, server)
+                })
                 .map(|(_, server)| server.server_id())
                 .filter(|server_id| {
-                    self.as_local().is_none_or(|local| {
-                        local
-                            .buffers_opened_in_servers
-                            .get(&snapshot.remote_id())
-                            .is_some_and(|servers| servers.contains(server_id))
-                    })
+                    local
+                        .buffers_opened_in_servers
+                        .get(&buffer_id)
+                        .is_some_and(|servers| servers.contains(server_id))
                 })
                 .collect()
         })
@@ -10018,6 +10463,9 @@ impl LspStore {
         let server_ids = buffer.update(cx, |buffer, cx| {
             local
                 .language_servers_for_buffer(buffer, cx)
+                .filter(|(adapter, server)| {
+                    lsp_command_allowed_for_buffer(local, &request, buffer, adapter, server)
+                })
                 .filter(|(adapter, _)| {
                     scope
                         .as_ref()
@@ -10111,7 +10559,23 @@ impl LspStore {
     async fn handle_lsp_command<T: LspCommand>(
         this: Entity<Self>,
         envelope: TypedEnvelope<T::ProtoRequest>,
+        cx: AsyncApp,
+    ) -> Result<<T::ProtoRequest as proto::RequestMessage>::Response>
+    where
+        <T::LspRequest as lsp::request::Request>::Params: Send,
+        <T::LspRequest as lsp::request::Request>::Result: Send,
+    {
+        Self::handle_routed_lsp_command(this, envelope, cx, |request: &T| {
+            request.language_server_to_query()
+        })
+        .await
+    }
+
+    async fn handle_routed_lsp_command<T: LspCommand>(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<T::ProtoRequest>,
         mut cx: AsyncApp,
+        server_to_query: impl FnOnce(&T) -> LanguageServerToQuery,
     ) -> Result<<T::ProtoRequest as proto::RequestMessage>::Response>
     where
         <T::LspRequest as lsp::request::Request>::Params: Send,
@@ -10129,10 +10593,10 @@ impl LspStore {
             cx.clone(),
         )
         .await?;
-        let server = request.language_server_to_query();
+        let server_to_query = server_to_query(&request);
         let response = this
             .update(&mut cx, |this, cx| {
-                this.request_lsp(buffer_handle.clone(), server, request, cx)
+                this.request_lsp(buffer_handle.clone(), server_to_query, request, cx)
             })
             .await?;
         this.update(&mut cx, |this, cx| {
@@ -10413,9 +10877,14 @@ impl LspStore {
                 .await?;
             }
             Request::GetIncomingCalls(get_incoming_calls) => {
+                let item_server_id = get_incoming_calls
+                    .item
+                    .as_ref()
+                    .map(|item| LanguageServerId::from_proto(item.server_id))
+                    .context("missing call hierarchy item")?;
                 Self::query_lsp_locally::<GetIncomingCalls>(
                     lsp_store,
-                    server_id,
+                    Some(item_server_id),
                     sender_id,
                     lsp_request_id,
                     get_incoming_calls,
@@ -10425,9 +10894,14 @@ impl LspStore {
                 .await?;
             }
             Request::GetOutgoingCalls(get_outgoing_calls) => {
+                let item_server_id = get_outgoing_calls
+                    .item
+                    .as_ref()
+                    .map(|item| LanguageServerId::from_proto(item.server_id))
+                    .context("missing call hierarchy item")?;
                 Self::query_lsp_locally::<GetOutgoingCalls>(
                     lsp_store,
-                    server_id,
+                    Some(item_server_id),
                     sender_id,
                     lsp_request_id,
                     get_outgoing_calls,
@@ -10762,21 +11236,11 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         let server = envelope.payload.server.context("invalid server")?;
-        let server_capabilities =
-            serde_json::from_str::<lsp::ServerCapabilities>(&envelope.payload.capabilities)
-                .with_context(|| {
-                    format!(
-                        "incorrect server capabilities {}",
-                        envelope.payload.capabilities
-                    )
-                })?;
         lsp_store.update(&mut cx, |lsp_store, cx| {
             let server_id = LanguageServerId(server.id as usize);
             let server_name = LanguageServerName::from_proto(server.name.clone());
             let language_name = server.language_name.map(LanguageName::from_proto);
-            lsp_store
-                .lsp_server_capabilities
-                .insert(server_id, server_capabilities);
+            lsp_store.insert_synced_server_capabilities(server_id, &envelope.payload.capabilities);
 
             if let Some(ref lang_name) = language_name {
                 lsp_store.try_register_remote_adapter_locally(&server_name, lang_name);
@@ -11520,8 +11984,19 @@ impl LspStore {
         let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
 
         let completion = this
-            .read_with(&cx, |this, cx| {
+            .update(&mut cx, |this, cx| {
                 let id = LanguageServerId(envelope.payload.language_server_id as usize);
+                let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+                let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
+                let can_resolve = this.text_document_capability_matches_for_server(
+                    &buffer,
+                    id,
+                    "textDocument/completion",
+                    |capabilities| {
+                        GetCompletions::can_resolve_completions(capabilities.server_capabilities)
+                    },
+                    cx,
+                );
                 let server = this
                     .language_server_for_id(id)
                     .with_context(|| format!("No language server {id}"))?;
@@ -11531,12 +12006,6 @@ impl LspStore {
                     .get_request_timeout();
 
                 anyhow::Ok(cx.background_spawn(async move {
-                    let can_resolve = server
-                        .capabilities()
-                        .completion_provider
-                        .as_ref()
-                        .and_then(|options| options.resolve_provider)
-                        .unwrap_or(false);
                     if can_resolve {
                         server
                             .request::<lsp::request::ResolveCompletionItem>(
@@ -12264,6 +12733,7 @@ impl LspStore {
         local
             .language_server_dynamic_registrations
             .remove(&server_id);
+        local.initial_server_capabilities.remove(&server_id);
 
         let server_state = local.language_servers.remove(&server_id);
         self.cleanup_lsp_data(server_id);
@@ -12811,22 +13281,15 @@ impl LspStore {
         // indicating that the server is up and running and ready
         let workspace_folders = workspace_folders.lock().clone();
         language_server.set_workspace_folders(workspace_folders);
+        let server_capabilities = language_server.capabilities();
+        local
+            .initial_server_capabilities
+            .insert(server_id, server_capabilities.clone());
 
-        let workspace_diagnostics_refresh_tasks = language_server
-            .capabilities()
+        let workspace_diagnostics_refresh_tasks = server_capabilities
             .diagnostic_provider
+            .clone()
             .and_then(|provider| {
-                let diagnostics = &mut local
-                    .language_server_dynamic_registrations
-                    .entry(server_id)
-                    .or_default()
-                    .diagnostics;
-                if !diagnostics
-                    .iter()
-                    .any(|(source, _)| source.registration_id().is_none())
-                {
-                    diagnostics.push((RegistrationSource::Static, provider.clone()));
-                }
                 let workspace_refresher =
                     lsp_workspace_diagnostics_refresh(None, provider, language_server.clone(), cx)?;
 
@@ -12886,8 +13349,11 @@ impl LspStore {
             Some(key.worktree_id),
         ));
 
-        let server_capabilities = language_server.capabilities();
-        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref()
+            && let Some(capabilities) = self
+                .serialize_synced_server_capabilities(&language_server)
+                .log_err()
+        {
             downstream_client
                 .send(proto::StartLanguageServer {
                     project_id: *project_id,
@@ -12897,8 +13363,7 @@ impl LspStore {
                         worktree_id: Some(key.worktree_id.to_proto()),
                         language_name: Some(language_name.to_proto()),
                     }),
-                    capabilities: serde_json::to_string(&server_capabilities)
-                        .expect("serializing server LSP capabilities"),
+                    capabilities,
                 })
                 .log_err();
         }
@@ -13139,6 +13604,9 @@ impl LspStore {
     ) {
         if let Some(local) = self.as_local_mut() {
             local
+                .initial_server_capabilities
+                .insert(id, server.capabilities());
+            local
                 .supplementary_language_servers
                 .insert(id, (name.clone(), server));
             cx.emit(LspStoreEvent::SupplementaryLanguageServerAdded(id, name));
@@ -13163,6 +13631,7 @@ impl LspStore {
     ) {
         if let Some(local) = self.as_local_mut() {
             local.supplementary_language_servers.remove(&id);
+            local.initial_server_capabilities.remove(&id);
             cx.emit(LspStoreEvent::SupplementaryLanguageServerRemoved(id));
         }
     }
@@ -13533,6 +14002,9 @@ impl LspStore {
 
     fn cleanup_lsp_data(&mut self, for_server: LanguageServerId) {
         self.lsp_server_capabilities.remove(&for_server);
+        self.lsp_server_initial_capabilities.remove(&for_server);
+        self.lsp_server_text_document_registrations
+            .remove(&for_server);
         self.semantic_token_config.remove_server_data(for_server);
         for lsp_data in self.lsp_data.values_mut() {
             lsp_data.remove_server_data(for_server);
@@ -13697,25 +14169,29 @@ impl LspStore {
         buffer_id: BufferId,
         cx: &mut Context<Self>,
     ) {
-        let Some(local) = self.as_local_mut() else {
+        let Some(buffer) = self.buffer_store.read(cx).get(buffer_id) else {
             return;
         };
-        let Some(languages_servers) = local.buffers_opened_in_servers.get(&buffer_id).cloned()
+        let Some(language_servers) = self
+            .language_server_ids_for_opened_buffer(buffer_id)
+            .cloned()
         else {
             return;
         };
-        for server_id in languages_servers {
-            let inter_file_dependencies = self.as_local().is_some_and(|local| {
-                local
-                    .language_server_dynamic_registrations
-                    .get(&server_id)
-                    .is_some_and(|registrations| {
-                        registrations
-                            .diagnostics
-                            .iter()
-                            .any(|(_, options)| diagnostics_inter_file_dependencies(options))
-                    })
-            });
+        for server_id in language_servers {
+            let inter_file_dependencies = self.text_document_capability_matches_for_server(
+                &buffer,
+                server_id,
+                "textDocument/diagnostic",
+                |capabilities| {
+                    capabilities
+                        .server_capabilities
+                        .diagnostic_provider
+                        .as_ref()
+                        .is_some_and(diagnostics_inter_file_dependencies)
+                },
+                cx,
+            );
             if inter_file_dependencies {
                 let _ = self.pull_document_diagnostics_for_server(server_id, Some(buffer_id), cx);
             }
@@ -14199,6 +14675,258 @@ impl LspStore {
         }
         lsp_data
     }
+}
+
+fn document_selector_context_for_buffer(
+    buffer: &Buffer,
+    adapter: &CachedLspAdapter,
+) -> Option<DocumentSelectorContext> {
+    let language = buffer.language()?;
+    Some(document_selector_context_for_language(
+        &language.name(),
+        adapter,
+    ))
+}
+
+fn document_selector_context_for_language(
+    language: &LanguageName,
+    adapter: &CachedLspAdapter,
+) -> DocumentSelectorContext {
+    DocumentSelectorContext {
+        language_id: adapter.language_id(language),
+        scheme: "file",
+    }
+}
+
+fn document_selector_matches(
+    document_selector: Option<&lsp::DocumentSelector>,
+    context: &DocumentSelectorContext,
+) -> bool {
+    let Some(document_selector) = document_selector else {
+        return true;
+    };
+
+    document_selector.iter().any(|filter| {
+        if let Some(language) = &filter.language
+            && language != &context.language_id
+        {
+            return false;
+        }
+
+        if let Some(scheme) = &filter.scheme
+            && !scheme.eq_ignore_ascii_case(context.scheme)
+        {
+            return false;
+        }
+
+        true
+    })
+}
+
+fn remote_text_document_capabilities_match(
+    initial_capabilities: Option<&lsp::ServerCapabilities>,
+    merged_capabilities: Option<&lsp::ServerCapabilities>,
+    registrations: Option<
+        &collections::IndexMap<String, dynamic_registration::DynamicTextDocumentRegistration>,
+    >,
+    context: Option<&DocumentSelectorContext>,
+    mut check: impl FnMut(AdapterServerCapabilities<'_>) -> bool,
+) -> bool {
+    let Some(initial_capabilities) = initial_capabilities else {
+        return merged_capabilities.is_some_and(|server_capabilities| {
+            check(AdapterServerCapabilities {
+                server_capabilities,
+                code_action_kinds: None,
+            })
+        });
+    };
+
+    if check(AdapterServerCapabilities {
+        server_capabilities: initial_capabilities,
+        code_action_kinds: None,
+    }) {
+        return true;
+    }
+
+    let Some(registrations) = registrations else {
+        return false;
+    };
+    registrations.values().any(|registration| {
+        context.is_none_or(|context| {
+            document_selector_matches(registration.document_selector.as_ref(), context)
+        }) && check(AdapterServerCapabilities {
+            server_capabilities: &registration.server_capabilities,
+            code_action_kinds: None,
+        })
+    })
+}
+
+fn dynamic_text_document_registration_allows_buffer(
+    registration: &dynamic_registration::DynamicTextDocumentRegistration,
+    buffer: &Buffer,
+    adapter: &CachedLspAdapter,
+) -> bool {
+    let Some(context) = document_selector_context_for_buffer(buffer, adapter) else {
+        return true;
+    };
+
+    document_selector_matches(registration.document_selector.as_ref(), &context)
+}
+
+fn text_document_registration_method(method: &str) -> &str {
+    // Some related requests have distinct methods but share one registration method.
+    match method {
+        "textDocument/prepareRename" => "textDocument/rename",
+        "textDocument/semanticTokens/full"
+        | "textDocument/semanticTokens/full/delta"
+        | "textDocument/semanticTokens/range" => "textDocument/semanticTokens",
+        _ => method,
+    }
+}
+
+fn text_document_capabilities_for_buffer<'a>(
+    local: &'a LocalLspStore,
+    method: &str,
+    buffer: &'a Buffer,
+    adapter: &'a CachedLspAdapter,
+    server: &'a LanguageServer,
+) -> impl Iterator<Item = AdapterServerCapabilities<'a>> {
+    let code_action_kinds = server.code_action_kinds();
+    let static_capabilities = local
+        .initial_server_capabilities
+        .get(&server.server_id())
+        .map(move |server_capabilities| AdapterServerCapabilities {
+            server_capabilities,
+            code_action_kinds,
+        });
+
+    let registration_method = text_document_registration_method(method);
+    let dynamic_capabilities = local
+        .language_server_dynamic_registrations
+        .get(&server.server_id())
+        .and_then(|registrations| registrations.text_documents.get(registration_method))
+        .into_iter()
+        .flat_map(|registrations| registrations.values())
+        .filter(move |registration| {
+            dynamic_text_document_registration_allows_buffer(registration, buffer, adapter)
+        })
+        .map(move |registration| AdapterServerCapabilities {
+            server_capabilities: &registration.server_capabilities,
+            code_action_kinds,
+        });
+
+    static_capabilities.into_iter().chain(dynamic_capabilities)
+}
+
+fn applicable_lsp_command_capabilities_for_buffer<'a, R>(
+    local: &'a LocalLspStore,
+    request: &'a R,
+    buffer: &'a Buffer,
+    adapter: &'a CachedLspAdapter,
+    server: &'a LanguageServer,
+) -> impl Iterator<Item = AdapterServerCapabilities<'a>>
+where
+    R: LspCommand,
+{
+    text_document_capabilities_for_buffer(
+        local,
+        <R::LspRequest as lsp::request::Request>::METHOD,
+        buffer,
+        adapter,
+        server,
+    )
+    .filter(move |capabilities| request.check_capabilities(*capabilities))
+}
+
+fn lsp_command_allowed_for_buffer<R>(
+    local: &LocalLspStore,
+    request: &R,
+    buffer: &Buffer,
+    adapter: &CachedLspAdapter,
+    server: &LanguageServer,
+) -> bool
+where
+    R: LspCommand,
+{
+    applicable_lsp_command_capabilities_for_buffer(local, request, buffer, adapter, server)
+        .next()
+        .is_some()
+}
+
+fn buffer_supports_lsp_formatting(
+    local: &LocalLspStore,
+    buffer: &Buffer,
+    adapter: &CachedLspAdapter,
+    server: &LanguageServer,
+) -> bool {
+    text_document_capabilities_for_buffer(local, "textDocument/formatting", buffer, adapter, server)
+        .any(|capabilities| {
+            server_capabilities_support_formatting(capabilities.server_capabilities)
+        })
+}
+
+fn buffer_supports_lsp_range_formatting(
+    local: &LocalLspStore,
+    buffer: &Buffer,
+    adapter: &CachedLspAdapter,
+    server: &LanguageServer,
+) -> bool {
+    text_document_capabilities_for_buffer(
+        local,
+        "textDocument/rangeFormatting",
+        buffer,
+        adapter,
+        server,
+    )
+    .any(|capabilities| {
+        server_capabilities_support_range_formatting(capabilities.server_capabilities)
+    })
+}
+
+fn completion_trigger_characters_for_buffer(
+    local: &LocalLspStore,
+    server_id: LanguageServerId,
+    adapter: &CachedLspAdapter,
+    buffer: &Buffer,
+) -> BTreeSet<String> {
+    fn extend_triggers(triggers: &mut BTreeSet<String>, options: &lsp::CompletionOptions) {
+        if let Some(characters) = &options.trigger_characters {
+            triggers.extend(characters.iter().cloned());
+        }
+    }
+
+    let mut triggers = BTreeSet::new();
+    if let Some(options) = local
+        .initial_server_capabilities
+        .get(&server_id)
+        .and_then(|capabilities| capabilities.completion_provider.as_ref())
+    {
+        extend_triggers(&mut triggers, options);
+    }
+    if let Some(registrations) = local
+        .language_server_dynamic_registrations
+        .get(&server_id)
+        .and_then(|registrations| registrations.text_documents.get("textDocument/completion"))
+    {
+        for registration in registrations.values() {
+            if dynamic_text_document_registration_allows_buffer(registration, buffer, adapter)
+                && let Some(options) = registration
+                    .server_capabilities
+                    .completion_provider
+                    .as_ref()
+            {
+                extend_triggers(&mut triggers, options);
+            }
+        }
+    }
+    triggers
+}
+
+fn server_capabilities_support_formatting(capabilities: &lsp::ServerCapabilities) -> bool {
+    matches!(
+        capabilities.document_formatting_provider.as_ref(),
+        Some(provider) if *provider != OneOf::Left(false)
+    )
 }
 
 fn server_capabilities_support_range_formatting(capabilities: &lsp::ServerCapabilities) -> bool {
@@ -14729,6 +15457,11 @@ pub enum LanguageServerToQuery {
     FirstCapable,
     /// Query a specific language server.
     Other(LanguageServerId),
+}
+
+enum LanguageServerQueryOutcome<T> {
+    Query(Arc<LanguageServer>),
+    Respond(T),
 }
 
 #[derive(Default)]
@@ -15843,6 +16576,171 @@ mod tests {
             "Get diagnostics via rust-analyzer failed: Server reset the connection"
         ));
         assert!(should_log_lsp_request_failure("something else entirely"));
+    }
+    #[test]
+    fn synced_server_capabilities_wire_format_is_compatible_with_plain_capabilities() {
+        let registrations: dynamic_registration::TextDocumentRegistrations =
+            HashMap::from_iter([(
+                "textDocument/completion".to_string(),
+                collections::IndexMap::from_iter([(
+                    "file-completion".to_string(),
+                    dynamic_registration::DynamicTextDocumentRegistration {
+                        document_selector: Some(vec![lsp::DocumentFilter {
+                            language: Some("rust".to_string()),
+                            scheme: Some("file".to_string()),
+                            pattern: None,
+                        }]),
+                        server_capabilities: lsp::ServerCapabilities {
+                            completion_provider: Some(lsp::CompletionOptions {
+                                trigger_characters: Some(vec![".".to_string()]),
+                                ..lsp::CompletionOptions::default()
+                            }),
+                            ..lsp::ServerCapabilities::default()
+                        },
+                    },
+                )]),
+            )]);
+        let server_capabilities = lsp::ServerCapabilities {
+            hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+            ..lsp::ServerCapabilities::default()
+        };
+        let initial_server_capabilities = lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        };
+
+        let envelope = serde_json::to_string(&SyncedServerCapabilities {
+            server_capabilities: server_capabilities.clone(),
+            initial_server_capabilities: Some(initial_server_capabilities.clone()),
+            text_document_registrations: Some(registrations.clone()),
+        })
+        .unwrap();
+        let parsed_by_old_peer =
+            serde_json::from_str::<lsp::ServerCapabilities>(&envelope).unwrap();
+        assert_eq!(
+            parsed_by_old_peer, server_capabilities,
+            "peers without the extra field should parse the envelope as plain capabilities",
+        );
+        let parsed = serde_json::from_str::<SyncedServerCapabilities>(&envelope).unwrap();
+        assert_eq!(parsed.server_capabilities, server_capabilities);
+        assert_eq!(
+            parsed.initial_server_capabilities,
+            Some(initial_server_capabilities)
+        );
+        assert_eq!(parsed.text_document_registrations, Some(registrations));
+
+        let plain_capabilities = serde_json::to_string(&server_capabilities).unwrap();
+        let parsed_plain =
+            serde_json::from_str::<SyncedServerCapabilities>(&plain_capabilities).unwrap();
+        assert_eq!(
+            parsed_plain.server_capabilities, server_capabilities,
+            "payloads from peers without the extra field should parse as an envelope",
+        );
+        assert_eq!(parsed_plain.initial_server_capabilities, None);
+        assert_eq!(parsed_plain.text_document_registrations, None);
+    }
+
+    #[test]
+    fn remote_capability_check_falls_back_to_merged_capabilities_without_initial_capabilities() {
+        let merged_capabilities = rename_capabilities();
+        let context = rust_file_context();
+        assert!(
+            remote_text_document_capabilities_match(
+                None,
+                Some(&merged_capabilities),
+                None,
+                Some(&context),
+                rename_capability_check,
+            ),
+            "old hosts send only merged capabilities, which must be consulted",
+        );
+    }
+
+    #[test]
+    fn remote_capability_check_skips_registrations_with_non_matching_selectors() {
+        let initial_capabilities = lsp::ServerCapabilities::default();
+        let merged_capabilities = rename_capabilities();
+        let registrations = rename_registrations("python");
+        let context = rust_file_context();
+        assert!(
+            !remote_text_document_capabilities_match(
+                Some(&initial_capabilities),
+                Some(&merged_capabilities),
+                Some(&registrations),
+                Some(&context),
+                rename_capability_check,
+            ),
+            "a registration scoped to another language must not match",
+        );
+    }
+
+    #[test]
+    fn remote_capability_check_fails_open_without_selector_context() {
+        let initial_capabilities = lsp::ServerCapabilities::default();
+        let merged_capabilities = rename_capabilities();
+        let registrations = rename_registrations("python");
+        assert!(
+            remote_text_document_capabilities_match(
+                Some(&initial_capabilities),
+                Some(&merged_capabilities),
+                Some(&registrations),
+                None,
+                rename_capability_check,
+            ),
+            "without a selector context the guest must fail open and let the host re-filter",
+        );
+    }
+
+    #[test]
+    fn remote_capability_check_rejects_when_no_registration_matches() {
+        let initial_capabilities = lsp::ServerCapabilities::default();
+        let merged_capabilities = rename_capabilities();
+        let registrations = collections::IndexMap::default();
+        let context = rust_file_context();
+        assert!(
+            !remote_text_document_capabilities_match(
+                Some(&initial_capabilities),
+                Some(&merged_capabilities),
+                Some(&registrations),
+                Some(&context),
+                rename_capability_check,
+            ),
+            "initial capabilities without the capability and no registrations must not match",
+        );
+    }
+
+    fn rename_capability_check(capabilities: AdapterServerCapabilities<'_>) -> bool {
+        capabilities.server_capabilities.rename_provider.is_some()
+    }
+
+    fn rename_capabilities() -> lsp::ServerCapabilities {
+        lsp::ServerCapabilities {
+            rename_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        }
+    }
+
+    fn rust_file_context() -> DocumentSelectorContext {
+        DocumentSelectorContext {
+            language_id: "rust".to_string(),
+            scheme: "file",
+        }
+    }
+
+    fn rename_registrations(
+        language: &str,
+    ) -> collections::IndexMap<String, dynamic_registration::DynamicTextDocumentRegistration> {
+        collections::IndexMap::from_iter([(
+            "rename-registration".to_string(),
+            dynamic_registration::DynamicTextDocumentRegistration {
+                document_selector: Some(vec![lsp::DocumentFilter {
+                    language: Some(language.to_string()),
+                    scheme: Some("file".to_string()),
+                    pattern: None,
+                }]),
+                server_capabilities: rename_capabilities(),
+            },
+        )])
     }
 
     #[test]
