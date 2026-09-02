@@ -5,11 +5,12 @@ use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest};
+use language_model::chat_completion::ChatCompletionEventMapper;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, ProviderErrorCategory, RateLimiter,
+    ProviderErrorCategory, RateLimiter,
 };
 use open_ai::{ReasoningEffort, ResponseStreamEvent};
 use rand::RngCore as _;
@@ -305,12 +306,6 @@ impl SuperGrokModel {
             .unwrap_or(true)
     }
 
-    pub fn requires_json_schema_subset(&self) -> bool {
-        self.x_ai_model()
-            .map(|model| model.requires_json_schema_subset())
-            .unwrap_or(true)
-    }
-
     pub fn supports_reasoning_effort(&self) -> bool {
         self.x_ai_model()
             .map(|model| model.supports_reasoning_effort())
@@ -526,14 +521,6 @@ impl LanguageModel for SuperGrokLanguageModel {
         supported_thinking_effort_levels(&self.model)
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        if self.model.requires_json_schema_subset() {
-            LanguageModelToolSchemaFormat::JsonSchemaSubset
-        } else {
-            LanguageModelToolSchemaFormat::JsonSchema
-        }
-    }
-
     fn telemetry_id(&self) -> String {
         format!("x_ai_subscribed/{}", self.model.id())
     }
@@ -579,9 +566,13 @@ impl LanguageModel for SuperGrokLanguageModel {
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
         let completions = self.stream_open_ai_completion(request, cx);
+        let executor = cx.background_executor().clone();
         async move {
-            let mapper = open_ai::completion::OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+            let mapper = ChatCompletionEventMapper::new();
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(completions.await?).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }
