@@ -36,13 +36,14 @@ use language::{
 };
 use lsp::{
     CompletionContext, CompletionResponse, CompletionTriggerKind, DEFAULT_LSP_REQUEST_TIMEOUT,
-    LanguageServerName,
+    LanguageServerId, LanguageServerName,
 };
 use node_runtime::NodeRuntime;
 use project::{
-    ProgressToken, Project, ProjectPath,
+    LanguageServerLogType, ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
     image_store,
+    lsp_store::log_store::{LanguageServerKind, LanguageServerLogKey, LogStore},
     search::{SearchQuery, SearchResult},
 };
 use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
@@ -1110,7 +1111,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     project
         .update(cx, |project, cx| {
-            project.perform_rename(buffer.clone(), 3, "two".to_string(), cx)
+            project.perform_rename(buffer.clone(), 3, "two".to_string(), None, cx)
         })
         .await
         .unwrap();
@@ -4690,6 +4691,77 @@ async fn test_remote_project_creation_notifies_new_entity_observers(
         "creating a remote project should notify new-entity observers with a connected remote client exactly once"
     );
     assert!(project.read_with(cx, |project, _| project.is_remote()));
+}
+
+#[gpui::test]
+async fn test_log_store_keys_remote_events_by_primary_kind_on_supplementary_id_collision(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let server_fs = Arc::new(FakeFs::new(server_cx.executor()));
+    server_fs
+        .insert_tree(path!("/code"), json!({ "project1": { "README.md": "" } }))
+        .await;
+    let (project, _headless) = init_test(&server_fs, cx, server_cx).await;
+
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
+    log_store.update(cx, |log_store, cx| log_store.add_project(&project, cx));
+
+    // A supplementary server (e.g. Copilot) allocates its ID from the local
+    // registry, which may collide numerically with a host-side server ID.
+    let server_id = LanguageServerId(42);
+    let supplementary_server_key = LanguageServerLogKey::new(
+        LanguageServerKind::Supplementary {
+            project: project.downgrade(),
+        },
+        server_id,
+    );
+    log_store.update(cx, |log_store, cx| {
+        log_store.add_language_server(
+            LanguageServerKind::Supplementary {
+                project: project.downgrade(),
+            },
+            server_id,
+            Some(LanguageServerName::new_static("copilot")),
+            None,
+            None,
+            cx,
+        );
+    });
+
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::LanguageServerLog(
+            server_id,
+            LanguageServerLogType::Log(lsp::MessageType::LOG),
+            "host server log".to_string(),
+        ));
+    });
+    cx.run_until_parked();
+
+    let remote_server_key = LanguageServerLogKey::new(
+        LanguageServerKind::Remote {
+            project: project.downgrade(),
+        },
+        server_id,
+    );
+    log_store.read_with(cx, |log_store, _| {
+        assert_eq!(
+            log_store.server_logs(&remote_server_key).map(|logs| {
+                logs.iter()
+                    .map(|log| log.as_ref().to_string())
+                    .collect::<Vec<_>>()
+            }),
+            Some(vec!["host server log".to_string()]),
+            "host server logs should be keyed by the remote server kind"
+        );
+        assert_eq!(
+            log_store
+                .server_logs(&supplementary_server_key)
+                .map(|logs| logs.len()),
+            Some(0),
+            "host server logs should not leak into the supplementary server with the same ID"
+        );
+    });
 }
 
 pub async fn init_test(
