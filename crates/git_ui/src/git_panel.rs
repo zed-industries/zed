@@ -1826,7 +1826,7 @@ impl GitPanel {
                 && self
                     .commit_template
                     .as_ref()
-                    .is_none_or(|commit_template| commit_template.template.trim() == trimmed_text);
+                    .is_none_or(|commit_template| commit_template.template.trim() != trimmed_text);
             let message = use_buffer_text.then_some(text);
             let original_message = self.original_commit_message.clone();
             let amend_pending = self.amend_pending;
