@@ -44,6 +44,7 @@ language_model.workspace = true
 log.workspace = true
 lsp.workspace = true
 menu.workspace = true
+ollama.workspace = true
 open_ai.workspace = true
 postage.workspace = true
 pretty_assertions.workspace = true
