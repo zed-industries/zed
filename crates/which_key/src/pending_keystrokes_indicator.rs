@@ -12,7 +12,9 @@ use util::ResultExt;
 use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, item::ItemHandle};
 
-use crate::{bindings_for_pending_input, map_pending_keystrokes};
+use crate::{
+    bindings_for_pending_input, map_pending_keystrokes, which_key_settings::WhichKeySettings,
+};
 
 const MAX_TOOLTIP_BINDINGS: usize = 10;
 const POPOVER_HIDE_DELAY: Duration = Duration::from_millis(300);
@@ -59,17 +61,26 @@ impl PendingKeystrokesIndicator {
             });
 
         let mut enabled = Self::enabled(cx);
+        let mut popover_enabled = Self::popover_enabled(cx);
         let settings_subscription =
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let new_enabled = Self::enabled(cx);
-                if new_enabled == enabled {
+                let new_popover_enabled = Self::popover_enabled(cx);
+                if new_enabled == enabled && new_popover_enabled == popover_enabled {
                     return;
                 }
 
                 enabled = new_enabled;
+                popover_enabled = new_popover_enabled;
+                if !new_popover_enabled {
+                    this.popover.pointer_over = false;
+                    this.popover.visible = false;
+                    this.popover.hide_task.take();
+                }
                 if this.refresh_render_state(window, cx) {
                     cx.notify();
                 }
+                this.update_pointer_over_state(window, cx);
             });
 
         Self {
@@ -87,6 +98,10 @@ impl PendingKeystrokesIndicator {
             && status_bar_settings.pending_keystrokes_indicator
             && !VimModeSetting::is_enabled(cx)
             && !HelixModeSetting::is_enabled(cx)
+    }
+
+    fn popover_enabled(cx: &App) -> bool {
+        !WhichKeySettings::get_global(cx).enabled
     }
 
     fn refresh_render_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
@@ -178,9 +193,9 @@ impl PendingKeystrokesIndicator {
         if self.popover.is_pointer_over() {
             self.popover.hide_task.take();
             let was_visible = self.popover.visible;
-            self.popover.visible = true;
+            self.popover.visible = Self::popover_enabled(cx);
             window.set_pending_input_timeout_paused(&cx.entity(), true, cx);
-            if !was_visible {
+            if was_visible != self.popover.visible {
                 cx.notify();
             }
         } else if self.popover.visible && self.popover.hide_task.is_none() {
@@ -199,6 +214,8 @@ impl PendingKeystrokesIndicator {
                 })
                 .log_err();
             }));
+        } else if !self.popover.visible {
+            window.set_pending_input_timeout_paused(&cx.entity(), false, cx);
         }
     }
 }
@@ -371,13 +388,12 @@ impl StatusItemView for PendingKeystrokesIndicator {
 mod tests {
     use std::cell::Cell;
 
+    use super::*;
     use command_palette::humanize_action_name;
     use gpui::{
         Action as _, Entity, FocusHandle, KeyBinding, Modifiers, TestAppContext, VisualTestContext,
         actions, point,
     };
-
-    use super::*;
 
     actions!(
         pending_keystrokes_indicator_test,
@@ -469,6 +485,7 @@ mod tests {
     ) -> (Entity<PendingKeystrokesIndicator>, &mut VisualTestContext) {
         cx.update(|cx| {
             settings::init(cx);
+            WhichKeySettings::register(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             cx.bind_keys(bindings);
         });
@@ -605,6 +622,61 @@ mod tests {
                 humanize_action_name(LongerBinding.name()),
             )]
         );
+    }
+
+    #[gpui::test]
+    fn test_which_key_disables_popover_but_keeps_indicator_and_hover_pause(
+        cx: &mut TestAppContext,
+    ) {
+        let (indicator, cx) = setup_indicator_test(cx, timed_bindings());
+
+        cx.update(|_, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(
+                        r#"{
+                            "status_bar": {"pending_keystrokes_indicator": true},
+                            "which_key": {"enabled": true}
+                        }"#,
+                        cx,
+                    )
+                    .expect("valid test settings");
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert!(StatusBarSettings::get_global(cx).pending_keystrokes_indicator);
+            assert!(WhichKeySettings::get_global(cx).enabled);
+        });
+
+        cx.simulate_keystrokes("ctrl-b");
+        cx.run_until_parked();
+
+        assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_some()));
+        let indicator_bounds = cx
+            .debug_bounds("PENDING_KEYSTROKES_INDICATOR")
+            .expect("rendered pending keystrokes indicator");
+        cx.simulate_mouse_move(indicator_bounds.center(), None, Modifiers::none());
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("PENDING_KEYSTROKES_POPOVER").is_none());
+        cx.update(|window, _| {
+            let timeout = window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .expect("pending input timeout");
+            assert!(timeout.is_paused());
+        });
+
+        move_pointer_outside(cx);
+        cx.run_until_parked();
+        cx.update(|window, _| {
+            let timeout = window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .expect("pending input timeout");
+            assert!(!timeout.is_paused());
+        });
     }
 
     #[gpui::test]

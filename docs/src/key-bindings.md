@@ -179,6 +179,21 @@ Zed can also wait before inserting printable text when it might begin a multi-st
 
 Whenever pending input has a timeout, a countdown indicator with the pending keystrokes is shown in the status bar. Hovering it lists the bindings that could still match and pauses the timeout so you can read them. The timeout resumes with the same remaining duration when the pointer leaves. The indicator can be hidden with `{"status_bar": {"pending_keystrokes_indicator": false}}`. Vim and Helix modes continue to use their existing pending-key indicator instead.
 
+To also use the larger which-key menu, open the Settings Editor and search for
+`Show Which-key Menu`. The pending keystrokes indicator remains visible when the
+menu is enabled, and hovering it still pauses the timeout, but its binding list
+popover is disabled. Or add this to your settings.json:
+
+```json [settings]
+{
+  "which_key": {
+    "enabled": true
+  }
+}
+```
+
+Set `which_key.delay_ms` to change how long Zed waits before opening the menu.
+
 ### Non-QWERTY keyboards
 
 Zed's support for non-QWERTY keyboards is still a work in progress.

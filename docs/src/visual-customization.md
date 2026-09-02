@@ -360,8 +360,8 @@ TBD: Centered layout related settings
     // Defaults to "non_utf8".
     "active_encoding_button": "non_utf8",
     // Show/hide an indicator with a countdown while timed multi-stroke
-    // input is pending. Hovering it lists the bindings that could still match
-    // and pauses the timeout.
+    // input is pending. Hovering it pauses the timeout. Unless the which-key
+    // menu is enabled, hovering also lists the bindings that could still match.
     // Defaults to true.
     "pending_keystrokes_indicator": true
   },
