@@ -4324,7 +4324,8 @@ async fn test_restarts_stopped_language_server_by_id(cx: &mut gpui::TestAppConte
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one" })).await;
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one" }))
+        .await;
 
     let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());

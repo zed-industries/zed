@@ -1182,8 +1182,9 @@ mod tests {
                         .contains_key(&(name.clone(), None)),
                     "the global server is stored under a None worktree key",
                 );
-                assert!(
-                    store.server_logs(first_id).map(|logs| logs.len()) == Some(1),
+                assert_eq!(
+                    store.server_logs(first_id).map(|logs| logs.len()),
+                    Some(1),
                     "the global server's logs are retained while stopped",
                 );
 

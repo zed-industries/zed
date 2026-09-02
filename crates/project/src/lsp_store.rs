@@ -12099,22 +12099,31 @@ impl LspStore {
             }
         };
 
-        // Remove this server ID from all entries in the given worktree.
-        let key = local
-            .language_server_ids
-            .iter()
-            .find_map(|(key, state)| (state.id == server_id).then(|| key.clone()));
+        let server_identifier = {
+            let mut first_key = None;
 
-        let server_identifier = if let Some(key) = key {
-            local.language_server_ids.remove(&key);
-            if retain_stopped_status {
-                local
-                    .stopped_server_ids_to_names
-                    .insert(server_id, key.name.clone());
+            for (key, _) in local
+                .language_server_ids
+                .extract_if(|_, state| state.id == server_id)
+            {
+                if first_key.is_none() {
+                    first_key = Some(key);
+                }
             }
-            Some((key.name, key.worktree_id))
-        } else {
-            None
+
+            if let Some(first_key) = first_key {
+                if retain_stopped_status {
+                    local
+                        .stopped_server_ids_to_names
+                        .insert(server_id, first_key.name.clone());
+                }
+
+                Some((first_key.name, first_key.worktree_id))
+            } else {
+                self.language_server_statuses
+                    .get(&server_id)
+                    .and_then(|status| status.worktree.map(|wt| (status.name.clone(), wt)))
+            }
         };
 
         self.buffer_store.update(cx, |buffer_store, cx| {
@@ -12192,6 +12201,18 @@ impl LspStore {
                 worktree_id,
                 binary_status: BinaryStatus::Stopping,
             });
+            cx.emit(LspStoreEvent::LanguageServerUpdate {
+                language_server_id: server_id,
+                name: Some(name.clone()),
+                message: proto::update_language_server::Variant::StatusUpdate(
+                    proto::StatusUpdate {
+                        message: None,
+                        status: Some(proto::status_update::Status::Binary(
+                            proto::ServerBinaryStatus::Stopping as i32,
+                        )),
+                    },
+                ),
+            });
             cx.notify();
 
             return cx.spawn(async move |lsp_store, cx| {
@@ -12222,6 +12243,19 @@ impl LspStore {
                                         message: None,
                                         status: Some(proto::status_update::Status::Binary(
                                             proto::ServerBinaryStatus::Stopped as i32,
+                                        )),
+                                    },
+                                ),
+                            });
+                        } else {
+                            cx.emit(LspStoreEvent::LanguageServerUpdate {
+                                language_server_id: server_id,
+                                name: Some(binary_status_update.name.clone()),
+                                message: proto::update_language_server::Variant::StatusUpdate(
+                                    proto::StatusUpdate {
+                                        message: None,
+                                        status: Some(proto::status_update::Status::Binary(
+                                            proto::ServerBinaryStatus::None as i32,
                                         )),
                                     },
                                 ),
@@ -14191,6 +14225,15 @@ fn subscribe_to_binary_statuses(
                         return;
                     }
 
+                    let Some(language_server_id) = language_server_id_for_binary_status(
+                        lsp_store,
+                        worktree_id,
+                        &binary_status_update.name,
+                        cx,
+                    ) else {
+                        return;
+                    };
+
                     lsp_store.update_stopped_language_servers(
                         binary_status_update.name.clone(),
                         worktree_id,
@@ -14210,14 +14253,6 @@ fn subscribe_to_binary_statuses(
                             message = Some(error);
                             proto::ServerBinaryStatus::Failed
                         }
-                    };
-                    let Some(language_server_id) = language_server_id_for_binary_status(
-                        lsp_store,
-                        worktree_id,
-                        &binary_status_update.name,
-                        cx,
-                    ) else {
-                        return;
                     };
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
                         language_server_id,
@@ -15790,7 +15825,7 @@ mod tests {
                     .cloned()
             }),
             Some(HashSet::from_iter([first_worktree_id])),
-            "Upon receiveing the stopped status, the server is shut down"
+            "Upon receiving the stopped status, the server is shut down"
         );
         assert!(
             second_lsp_store.read_with(cx, |lsp_store, _| lsp_store

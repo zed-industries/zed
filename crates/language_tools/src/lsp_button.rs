@@ -1190,34 +1190,21 @@ impl LspButton {
                 .any(|id| server_ids_to_worktrees.contains_key(id));
             let mut can_restart_all = !can_stop_all;
 
-            for id in server_ids_to_worktrees.keys() {
-                let Some(binary_status) = state.language_servers.binary_statuses.get(id) else {
-                    continue;
-                };
-
+            for binary_status in state.language_servers.binary_statuses.values() {
                 match binary_status.status {
                     BinaryStatus::None => {
                         can_restart_all = false;
                         can_stop_all |= true;
                     }
-                    BinaryStatus::CheckingForUpdate => {
+                    BinaryStatus::CheckingForUpdate
+                    | BinaryStatus::Downloading
+                    | BinaryStatus::Starting
+                    | BinaryStatus::Stopping => {
                         can_restart_all = false;
                         can_stop_all = false;
+                        break;
                     }
-                    BinaryStatus::Downloading => {
-                        can_restart_all = false;
-                        can_stop_all = false;
-                    }
-                    BinaryStatus::Starting => {
-                        can_restart_all = false;
-                        can_stop_all = false;
-                    }
-                    BinaryStatus::Stopping => {
-                        can_restart_all = false;
-                        can_stop_all = false;
-                    }
-                    BinaryStatus::Stopped => {}
-                    BinaryStatus::Failed { .. } => {}
+                    BinaryStatus::Stopped | BinaryStatus::Failed { .. } => {}
                 }
             }
 
