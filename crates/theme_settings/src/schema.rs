@@ -799,6 +799,10 @@ pub fn theme_colors_refinement(
             .as_ref()
             .or(this.version_control_conflict_theirs_background.as_ref())
             .and_then(|color| try_parse_color(color).ok()),
+        version_control_conflict_marker_base: this
+            .version_control_conflict_marker_base
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         vim_normal_background: this
             .vim_normal_background
             .as_ref()

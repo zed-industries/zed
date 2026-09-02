@@ -1096,6 +1096,11 @@ pub struct ThemeColorsContent {
     #[serde(rename = "version_control.conflict_marker.theirs")]
     pub version_control_conflict_marker_theirs: Option<ThemeColor>,
 
+    /// Background color for row highlights of the common-ancestor ("base")
+    /// region in merge conflicts, shown with `diff3`/`zdiff3` conflict style.
+    #[serde(rename = "version_control.conflict_marker.base")]
+    pub version_control_conflict_marker_base: Option<ThemeColor>,
+
     /// Deprecated in favor of `version_control_conflict_marker_ours`.
     #[deprecated]
     pub version_control_conflict_ours_background: Option<ThemeColor>,
