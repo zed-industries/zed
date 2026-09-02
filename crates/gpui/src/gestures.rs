@@ -18,11 +18,27 @@ use scheduler::Instant;
 use smallvec::SmallVec;
 
 use crate::{
-    Axis, IsZero, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta,
-    ScrollWheelEvent, TouchEvent, TouchId, TouchPhase, point, px,
+    Axis, GestureEvent, InputEvent, IsZero, Modifiers, MouseButton, MouseDownEvent, MouseEvent,
+    MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchEvent, TouchId,
+    TouchPhase, point, px, seal::Sealed,
 };
 
 const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
+
+fn dominant_axis(delta: Point<Pixels>) -> Axis {
+    if delta.x.abs() <= delta.y.abs() {
+        Axis::Vertical
+    } else {
+        Axis::Horizontal
+    }
+}
+
+fn lock_delta_to_axis(delta: &mut Point<Pixels>, axis: Axis) {
+    match axis {
+        Axis::Vertical => delta.x = Pixels::ZERO,
+        Axis::Horizontal => delta.y = Pixels::ZERO,
+    }
+}
 
 /// Tracks the dominant axis across the events in a scroll gesture.
 #[derive(Clone, Copy, Debug, Default)]
@@ -66,11 +82,7 @@ impl OngoingScroll {
                 .is_none_or(|last_event| now.duration_since(last_event) >= SCROLL_EVENT_SEPARATION);
         let mut axis = self.axis;
         if starts_new_gesture {
-            axis = if x <= y {
-                Some(Axis::Vertical)
-            } else {
-                Some(Axis::Horizontal)
-            };
+            axis = Some(dominant_axis(*delta));
         } else if x.max(y) >= UNLOCK_LOWER_BOUND {
             match axis {
                 Some(Axis::Vertical) if x > y && x >= y * UNLOCK_PERCENT => {
@@ -85,10 +97,8 @@ impl OngoingScroll {
 
         self.last_event = Some(now);
         self.axis = axis;
-        match axis {
-            Some(Axis::Vertical) => delta.x = Pixels::ZERO,
-            Some(Axis::Horizontal) => delta.y = Pixels::ZERO,
-            None => {}
+        if let Some(axis) = axis {
+            lock_delta_to_axis(delta, axis);
         }
     }
 }
@@ -366,18 +376,35 @@ impl GestureKinds {
     };
 }
 
-/// A long-press gesture, mobile's context-menu trigger.
-///
-/// A bare long press is surfaced as a [`ClickEvent`](crate::ClickEvent) with
-/// `long_press: true`, delivered to aux-click listeners alongside right
-/// clicks. This event is the raw hook for elements that need the gesture
-/// itself (e.g. long-press to start a drag); the registration API ships
-/// together with the gesture arena.
-#[derive(Clone, Debug, Default)]
+/// A phased long-press gesture recognized from a touch.
+#[derive(Clone, Debug)]
 pub struct LongPressEvent {
-    /// The position of the touch that was recognized as a long press.
+    /// The phase of the long press.
+    pub phase: TouchPhase,
+    /// The position where the touch started.
+    pub start_position: Point<Pixels>,
+    /// The touch's current position.
     pub position: Point<Pixels>,
 }
+
+impl Default for LongPressEvent {
+    fn default() -> Self {
+        Self {
+            phase: TouchPhase::Started,
+            start_position: Point::default(),
+            position: Point::default(),
+        }
+    }
+}
+
+impl Sealed for LongPressEvent {}
+impl InputEvent for LongPressEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::LongPress(self)
+    }
+}
+impl GestureEvent for LongPressEvent {}
+impl MouseEvent for LongPressEvent {}
 
 /// Platform gesture recognition services.
 ///
@@ -433,8 +460,8 @@ const VELOCITY_MAX_SAMPLES: usize = 20;
 /// [`ClickEvent::Touch`](crate::ClickEvent), which keeps every existing
 /// mouse-driven behavior (click listeners, caret placement, double-tap
 /// selection) working before elements grow a direct tap-delivery path.
-/// Long-press and pinch recognition are not implemented yet, and additional
-/// touches are ignored while one is being recognized.
+/// Pinch recognition is not implemented yet, and additional touches are ignored
+/// while one is being recognized.
 pub(crate) struct TouchGestureRecognizer {
     tuning: GestureTuning,
     state: TouchGestureState,
@@ -454,21 +481,32 @@ pub(crate) enum RecognizedTouchGesture {
         down: MouseDownEvent,
         up: MouseUpEvent,
     },
+    LongPress(LongPressEvent),
 }
 
 enum TouchGestureState {
     Idle,
     /// The touch is still within `touch_slop` of where it started: it can
     /// still resolve into either a tap or a pan.
-    Pending(ActiveTouch),
+    Pending {
+        touch: ActiveTouch,
+        deadline: Instant,
+        offered: bool,
+    },
     /// The touch exceeded `touch_slop`: it is a pan until it ends, and its
     /// movement flows out as scroll events.
-    Panning(ActiveTouch),
+    Panning {
+        touch: ActiveTouch,
+        axis: Axis,
+    },
+    LongPressing(ActiveTouch),
 }
 
 struct ActiveTouch {
     id: TouchId,
     start_position: Point<Pixels>,
+    /// The latest raw position reported for this touch.
+    last_position: Point<Pixels>,
     /// The position pan output has scrolled to so far. While panning this
     /// may run ahead of the raw touch by the event's predicted position;
     /// the release event targets the raw position again, so the total
@@ -493,6 +531,7 @@ struct Momentum {
     position: Point<Pixels>,
     /// Unit vector of the release velocity.
     direction: Point<f32>,
+    axis: Axis,
     /// Release speed in pixels per second.
     speed: f32,
     started_at: Instant,
@@ -532,9 +571,9 @@ impl TouchGestureRecognizer {
                         Point::default(),
                         TouchPhase::Ended,
                     )));
-                    true
+                    Some(momentum.axis)
                 } else {
-                    false
+                    None
                 };
                 if matches!(self.state, TouchGestureState::Idle) {
                     let mut velocity_tracker = VelocityTracker::default();
@@ -542,10 +581,11 @@ impl TouchGestureRecognizer {
                     let touch = ActiveTouch {
                         id: event.id,
                         start_position: event.position,
+                        last_position: event.position,
                         emitted_position: event.position,
                         velocity_tracker,
                     };
-                    if caught_fling {
+                    if let Some(axis) = caught_fling {
                         // A touch that catches a fling is a drag from the
                         // first pixel: waiting out the slop would freeze the
                         // content mid-scroll and then jump. It can also never
@@ -556,48 +596,75 @@ impl TouchGestureRecognizer {
                             Point::default(),
                             TouchPhase::Started,
                         )));
-                        self.state = TouchGestureState::Panning(touch);
+                        self.state = TouchGestureState::Panning { touch, axis };
                     } else {
-                        self.state = TouchGestureState::Pending(touch);
+                        self.state = TouchGestureState::Pending {
+                            touch,
+                            deadline: now + self.tuning.long_press_duration,
+                            offered: false,
+                        };
                     }
                 }
             }
             TouchPhase::Moved => match mem::replace(&mut self.state, TouchGestureState::Idle) {
-                TouchGestureState::Pending(mut touch) if touch.id == event.id => {
+                TouchGestureState::Pending {
+                    mut touch,
+                    deadline,
+                    offered,
+                } if touch.id == event.id => {
                     touch.velocity_tracker.push(now, event.position);
+                    touch.last_position = event.position;
                     let accumulated = event.position - touch.start_position;
                     if accumulated.magnitude() > f64::from(self.tuning.touch_slop) {
                         // Carry the full movement so far into the first scroll
                         // step: the content catches up to the finger instead
                         // of losing the slop distance.
                         let target = event.predicted_position.unwrap_or(event.position);
+                        let axis = dominant_axis(accumulated);
+                        let mut delta = target - touch.start_position;
+                        lock_delta_to_axis(&mut delta, axis);
                         touch.emitted_position = target;
                         recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
                             touch.start_position,
-                            target - touch.start_position,
+                            delta,
                             TouchPhase::Started,
                         )));
-                        self.state = TouchGestureState::Panning(touch);
+                        self.state = TouchGestureState::Panning { touch, axis };
                     } else {
-                        self.state = TouchGestureState::Pending(touch);
+                        self.state = TouchGestureState::Pending {
+                            touch,
+                            deadline,
+                            offered,
+                        };
                     }
                 }
-                TouchGestureState::Panning(mut touch) if touch.id == event.id => {
+                TouchGestureState::Panning { mut touch, axis } if touch.id == event.id => {
                     touch.velocity_tracker.push(now, event.position);
+                    touch.last_position = event.position;
                     let target = event.predicted_position.unwrap_or(event.position);
-                    let delta = target - touch.emitted_position;
+                    let mut delta = target - touch.emitted_position;
+                    lock_delta_to_axis(&mut delta, axis);
                     touch.emitted_position = target;
                     recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
                         touch.start_position,
                         delta,
                         TouchPhase::Moved,
                     )));
-                    self.state = TouchGestureState::Panning(touch);
+                    self.state = TouchGestureState::Panning { touch, axis };
+                }
+                TouchGestureState::LongPressing(mut touch) if touch.id == event.id => {
+                    touch.last_position = event.position;
+                    recognized.push(RecognizedTouchGesture::LongPress(LongPressEvent {
+                        phase: TouchPhase::Moved,
+                        start_position: touch.start_position,
+                        position: event.position,
+                    }));
+                    self.state = TouchGestureState::LongPressing(touch);
                 }
                 other => self.state = other,
             },
             TouchPhase::Ended => match mem::replace(&mut self.state, TouchGestureState::Idle) {
-                TouchGestureState::Pending(touch) if touch.id == event.id => {
+                TouchGestureState::Pending { touch, .. } if touch.id == event.id => {
                     let tap_count = match &self.last_tap {
                         Some(tap)
                             if now.duration_since(tap.time) <= self.tuning.multi_tap_interval
@@ -629,7 +696,7 @@ impl TouchGestureRecognizer {
                         },
                     });
                 }
-                TouchGestureState::Panning(touch) if touch.id == event.id => {
+                TouchGestureState::Panning { touch, axis } if touch.id == event.id => {
                     // The release deliberately contributes no velocity
                     // sample: it usually repeats the last movement's position
                     // with a later timestamp, which would dilute the
@@ -643,13 +710,18 @@ impl TouchGestureRecognizer {
                             .is_none_or(|latest| {
                                 now.duration_since(latest) > VELOCITY_ASSUME_STOPPED_GAP
                             });
-                    let velocity = if finger_stopped {
+                    let mut velocity = if finger_stopped {
                         Point::default()
                     } else {
                         touch.velocity_tracker.velocity()
                     };
+                    match axis {
+                        Axis::Vertical => velocity.x = 0.,
+                        Axis::Horizontal => velocity.y = 0.,
+                    }
                     let speed = (velocity.x.powi(2) + velocity.y.powi(2)).sqrt();
                     let mut release_delta = event.position - touch.emitted_position;
+                    lock_delta_to_axis(&mut release_delta, axis);
                     if speed >= self.tuning.min_fling_velocity {
                         let direction = point(velocity.x / speed, velocity.y / speed);
                         let speed = speed.min(MAX_FLING_VELOCITY);
@@ -676,6 +748,7 @@ impl TouchGestureRecognizer {
                             self.momentum = Some(Momentum {
                                 position: touch.start_position,
                                 direction,
+                                axis,
                                 speed,
                                 started_at: now,
                                 duration,
@@ -689,21 +762,77 @@ impl TouchGestureRecognizer {
                         TouchPhase::Ended,
                     )));
                 }
+                TouchGestureState::LongPressing(touch) if touch.id == event.id => {
+                    recognized.push(RecognizedTouchGesture::LongPress(LongPressEvent {
+                        phase: TouchPhase::Ended,
+                        start_position: touch.start_position,
+                        position: event.position,
+                    }));
+                }
                 other => self.state = other,
             },
             TouchPhase::Cancelled => match mem::replace(&mut self.state, TouchGestureState::Idle) {
-                TouchGestureState::Pending(touch) if touch.id == event.id => {}
-                TouchGestureState::Panning(touch) if touch.id == event.id => {
+                TouchGestureState::Pending { touch, .. } if touch.id == event.id => {}
+                TouchGestureState::Panning { touch, .. } if touch.id == event.id => {
                     recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
                         touch.start_position,
                         Point::default(),
                         TouchPhase::Cancelled,
                     )));
                 }
+                TouchGestureState::LongPressing(touch) if touch.id == event.id => {
+                    recognized.push(RecognizedTouchGesture::LongPress(LongPressEvent {
+                        phase: TouchPhase::Cancelled,
+                        start_position: touch.start_position,
+                        position: event.position,
+                    }));
+                }
                 other => self.state = other,
             },
         }
         recognized
+    }
+
+    pub(crate) fn pending_long_press(&self) -> Option<(TouchId, Duration)> {
+        let TouchGestureState::Pending {
+            touch,
+            deadline,
+            offered: false,
+        } = &self.state
+        else {
+            return None;
+        };
+        Some((touch.id, deadline.saturating_duration_since(Instant::now())))
+    }
+
+    pub(crate) fn offer_long_press(&mut self, id: TouchId) -> Option<RecognizedTouchGesture> {
+        let TouchGestureState::Pending { touch, offered, .. } = &mut self.state else {
+            return None;
+        };
+        if touch.id != id || *offered {
+            return None;
+        }
+        *offered = true;
+        Some(RecognizedTouchGesture::LongPress(LongPressEvent {
+            phase: TouchPhase::Started,
+            start_position: touch.start_position,
+            position: touch.last_position,
+        }))
+    }
+
+    pub(crate) fn resolve_long_press(&mut self, claimed: bool) {
+        if !claimed {
+            return;
+        }
+        let state = mem::replace(&mut self.state, TouchGestureState::Idle);
+        self.state = match state {
+            TouchGestureState::Pending {
+                touch,
+                offered: true,
+                ..
+            } => TouchGestureState::LongPressing(touch),
+            other => other,
+        };
     }
 
     pub(crate) fn has_momentum(&self) -> bool {
@@ -1087,6 +1216,51 @@ mod tests {
     }
 
     #[test]
+    fn touch_pan_stays_locked_to_its_initial_dominant_axis() {
+        let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+        let now = Instant::now();
+        let touch = TouchId(1);
+
+        recognizer.handle_event_at(&touch_event(touch, TouchPhase::Started, 100., 100.), now);
+
+        let recognized = recognizer.handle_event_at(
+            &touch_event(touch, TouchPhase::Moved, 104., 120.),
+            now + Duration::from_millis(16),
+        );
+        let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
+            panic!("expected scroll, got {recognized:?}");
+        };
+        assert_eq!(scroll.delta.pixel_delta(px(16.)), point(px(0.), px(20.)));
+
+        let recognized = recognizer.handle_event_at(
+            &touch_event(touch, TouchPhase::Moved, 134., 125.),
+            now + Duration::from_millis(32),
+        );
+        let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
+            panic!("expected scroll, got {recognized:?}");
+        };
+        assert_eq!(scroll.delta.pixel_delta(px(16.)), point(px(0.), px(5.)));
+    }
+
+    #[test]
+    fn touch_pan_locks_to_horizontal_axis() {
+        let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+        let now = Instant::now();
+        let touch = TouchId(1);
+
+        recognizer.handle_event_at(&touch_event(touch, TouchPhase::Started, 100., 100.), now);
+
+        let recognized = recognizer.handle_event_at(
+            &touch_event(touch, TouchPhase::Moved, 120., 104.),
+            now + Duration::from_millis(16),
+        );
+        let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
+            panic!("expected scroll, got {recognized:?}");
+        };
+        assert_eq!(scroll.delta.pixel_delta(px(16.)), point(px(20.), px(0.)));
+    }
+
+    #[test]
     fn predicted_positions_lead_the_pan_but_totals_converge_on_release() {
         let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
         let now = Instant::now();
@@ -1096,7 +1270,7 @@ mod tests {
 
         // The first pan step scrolls to the predicted position, not the raw one.
         let mut moved = touch_event(touch, TouchPhase::Moved, 100., 120.);
-        moved.predicted_position = Some(point(px(100.), px(128.)));
+        moved.predicted_position = Some(point(px(106.), px(128.)));
         let recognized = recognizer.handle_event_at(&moved, now + Duration::from_millis(16));
         let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
             panic!("expected scroll, got {recognized:?}");
@@ -1106,7 +1280,7 @@ mod tests {
         // The next step is measured from where the previous prediction left
         // the content, so an overshoot is paid back here.
         let mut moved = touch_event(touch, TouchPhase::Moved, 100., 130.);
-        moved.predicted_position = Some(point(px(100.), px(134.)));
+        moved.predicted_position = Some(point(px(104.), px(134.)));
         let recognized = recognizer.handle_event_at(&moved, now + Duration::from_millis(32));
         let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
             panic!("expected scroll, got {recognized:?}");
@@ -1247,6 +1421,46 @@ mod tests {
         }
         assert_eq!(last_phase, TouchPhase::Ended);
         assert!(recognizer.tick_momentum_at(time).is_none());
+    }
+
+    #[test]
+    fn diagonal_release_flings_only_on_locked_axis() {
+        let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+        let now = Instant::now();
+        let touch = TouchId(1);
+
+        recognizer.handle_event_at(&touch_event(touch, TouchPhase::Started, 100., 300.), now);
+        for step in 1..=5 {
+            let recognized = recognizer.handle_event_at(
+                &touch_event(
+                    touch,
+                    TouchPhase::Moved,
+                    100. + step as f32 * 3.,
+                    300. - step as f32 * 20.,
+                ),
+                now + Duration::from_millis(step * 16),
+            );
+            let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
+                panic!("expected scroll, got {recognized:?}");
+            };
+            assert_eq!(scroll.delta.pixel_delta(px(16.)).x, px(0.));
+        }
+        recognizer.handle_event_at(
+            &touch_event(touch, TouchPhase::Ended, 115., 200.),
+            now + Duration::from_millis(6 * 16),
+        );
+        assert!(recognizer.has_momentum());
+
+        let mut time = now + Duration::from_millis(6 * 16);
+        while recognizer.has_momentum() {
+            time += Duration::from_millis(16);
+            if let Some(RecognizedTouchGesture::Scroll(scroll)) = recognizer.tick_momentum_at(time)
+            {
+                let delta = scroll.delta.pixel_delta(px(16.));
+                assert_eq!(delta.x, px(0.));
+                assert!(delta.y <= px(0.));
+            }
+        }
     }
 
     #[test]
@@ -1589,6 +1803,163 @@ mod tests {
             "pre-pause motion leaked into the estimate: {} px/s",
             velocity.y
         );
+    }
+
+    #[test]
+    fn claimed_long_press_emits_phased_stream_without_tap() {
+        let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+        let touch = TouchId(1);
+        let now = Instant::now();
+        recognizer.handle_event_at(&touch_event(touch, TouchPhase::Started, 10., 20.), now);
+        let Some(RecognizedTouchGesture::LongPress(started)) = recognizer.offer_long_press(touch)
+        else {
+            panic!("expected long press");
+        };
+        assert_eq!(started.phase, TouchPhase::Started);
+        assert_eq!(started.start_position, point(px(10.), px(20.)));
+        recognizer.resolve_long_press(true);
+
+        let moved = recognizer.handle_event_at(
+            &touch_event(touch, TouchPhase::Moved, 12., 21.),
+            now + Duration::from_millis(510),
+        );
+        let [RecognizedTouchGesture::LongPress(moved)] = moved.as_slice() else {
+            panic!("expected moved long press, got {moved:?}");
+        };
+        assert_eq!(moved.phase, TouchPhase::Moved);
+
+        let ended = recognizer.handle_event_at(
+            &touch_event(touch, TouchPhase::Ended, 12., 21.),
+            now + Duration::from_millis(520),
+        );
+        let [RecognizedTouchGesture::LongPress(ended)] = ended.as_slice() else {
+            panic!("expected ended long press, got {ended:?}");
+        };
+        assert_eq!(ended.phase, TouchPhase::Ended);
+    }
+
+    #[test]
+    fn unclaimed_long_press_remains_a_tap_candidate() {
+        let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+        let touch = TouchId(1);
+        let now = Instant::now();
+        recognizer.handle_event_at(&touch_event(touch, TouchPhase::Started, 10., 20.), now);
+        assert!(recognizer.offer_long_press(touch).is_some());
+        recognizer.resolve_long_press(false);
+
+        let ended = recognizer.handle_event_at(
+            &touch_event(touch, TouchPhase::Ended, 10., 20.),
+            now + Duration::from_millis(510),
+        );
+        assert!(matches!(
+            ended.as_slice(),
+            [RecognizedTouchGesture::Tap { .. }]
+        ));
+    }
+
+    #[test]
+    fn unclaimed_long_press_can_still_become_a_pan() {
+        let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+        let touch = TouchId(1);
+        let now = Instant::now();
+        recognizer.handle_event_at(&touch_event(touch, TouchPhase::Started, 0., 0.), now);
+        assert!(recognizer.offer_long_press(touch).is_some());
+        recognizer.resolve_long_press(false);
+
+        let moved = recognizer.handle_event_at(
+            &touch_event(touch, TouchPhase::Moved, 20., 0.),
+            now + Duration::from_millis(510),
+        );
+        assert!(matches!(
+            moved.as_slice(),
+            [RecognizedTouchGesture::Scroll(ScrollWheelEvent {
+                touch_phase: TouchPhase::Started,
+                ..
+            })]
+        ));
+    }
+
+    #[test]
+    fn long_press_offer_is_one_shot_and_specific_to_pending_touch() {
+        let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+        let touch = TouchId(1);
+        recognizer.handle_event(&touch_event(touch, TouchPhase::Started, 0., 0.));
+
+        assert!(
+            recognizer
+                .handle_event(&touch_event(TouchId(2), TouchPhase::Moved, 20., 0.))
+                .is_empty()
+        );
+        assert!(recognizer.offer_long_press(TouchId(2)).is_none());
+        assert!(recognizer.offer_long_press(touch).is_some());
+        assert!(recognizer.offer_long_press(touch).is_none());
+    }
+
+    #[test]
+    fn long_press_cannot_be_offered_after_pending_touch_resolves() {
+        for phase in [TouchPhase::Ended, TouchPhase::Cancelled, TouchPhase::Moved] {
+            let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+            let touch = TouchId(1);
+            let now = Instant::now();
+            recognizer.handle_event_at(&touch_event(touch, TouchPhase::Started, 0., 0.), now);
+            let position = if phase == TouchPhase::Moved { 20. } else { 0. };
+            recognizer.handle_event_at(
+                &touch_event(touch, phase, position, 0.),
+                now + Duration::from_millis(10),
+            );
+            assert!(recognizer.offer_long_press(touch).is_none());
+        }
+    }
+
+    #[test]
+    fn claimed_long_press_emits_cancelled_for_its_touch_only() {
+        let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+        let touch = TouchId(1);
+        recognizer.handle_event(&touch_event(touch, TouchPhase::Started, 4., 5.));
+        assert!(recognizer.offer_long_press(touch).is_some());
+        recognizer.resolve_long_press(true);
+
+        assert!(
+            recognizer
+                .handle_event(&touch_event(TouchId(2), TouchPhase::Cancelled, 9., 9.))
+                .is_empty()
+        );
+        let cancelled = recognizer.handle_event(&touch_event(touch, TouchPhase::Cancelled, 6., 7.));
+        let [RecognizedTouchGesture::LongPress(cancelled)] = cancelled.as_slice() else {
+            panic!("expected cancelled long press, got {cancelled:?}");
+        };
+        assert_eq!(cancelled.phase, TouchPhase::Cancelled);
+        assert_eq!(cancelled.start_position, point(px(4.), px(5.)));
+        assert_eq!(cancelled.position, point(px(6.), px(7.)));
+    }
+
+    #[test]
+    fn unrelated_touch_cannot_end_or_cancel_pending_touch() {
+        for phase in [TouchPhase::Ended, TouchPhase::Cancelled] {
+            let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+            let touch = TouchId(1);
+            recognizer.handle_event(&touch_event(touch, TouchPhase::Started, 4., 5.));
+
+            assert!(
+                recognizer
+                    .handle_event(&touch_event(TouchId(2), phase, 9., 9.))
+                    .is_empty()
+            );
+            assert!(recognizer.offer_long_press(touch).is_some());
+        }
+    }
+
+    #[test]
+    fn completed_touch_id_cannot_claim_replacement_touch() {
+        let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+        let completed_touch = TouchId(1);
+        let replacement_touch = TouchId(2);
+        recognizer.handle_event(&touch_event(completed_touch, TouchPhase::Started, 0., 0.));
+        recognizer.handle_event(&touch_event(completed_touch, TouchPhase::Cancelled, 0., 0.));
+        recognizer.handle_event(&touch_event(replacement_touch, TouchPhase::Started, 5., 5.));
+
+        assert!(recognizer.offer_long_press(completed_touch).is_none());
+        assert!(recognizer.offer_long_press(replacement_touch).is_some());
     }
 
     fn touch_event(id: TouchId, phase: TouchPhase, x: f32, y: f32) -> TouchEvent {
