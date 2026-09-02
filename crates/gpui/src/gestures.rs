@@ -40,6 +40,10 @@ fn lock_delta_to_axis(delta: &mut Point<Pixels>, axis: Axis) {
     }
 }
 
+fn movements_oppose(left: Point<Pixels>, right: Point<Pixels>) -> bool {
+    f32::from(left.x) * f32::from(right.x) + f32::from(left.y) * f32::from(right.y) < 0.
+}
+
 /// Tracks the dominant axis across the events in a scroll gesture.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OngoingScroll {
@@ -512,6 +516,9 @@ struct ActiveTouch {
     /// the release event targets the raw position again, so the total
     /// scrolled distance always converges to the finger's actual travel.
     emitted_position: Point<Pixels>,
+    /// Retained across stationary samples so prediction corrections cannot
+    /// reverse a pan when integer browser coordinates repeat.
+    last_movement: Point<Pixels>,
     velocity_tracker: VelocityTracker,
 }
 
@@ -583,6 +590,7 @@ impl TouchGestureRecognizer {
                         start_position: event.position,
                         last_position: event.position,
                         emitted_position: event.position,
+                        last_movement: Point::default(),
                         velocity_tracker,
                     };
                     if let Some(axis) = caught_fling {
@@ -619,10 +627,17 @@ impl TouchGestureRecognizer {
                         // Carry the full movement so far into the first scroll
                         // step: the content catches up to the finger instead
                         // of losing the slop distance.
-                        let target = event.predicted_position.unwrap_or(event.position);
+                        let mut target = event.predicted_position.unwrap_or(event.position);
                         let axis = dominant_axis(accumulated);
                         let mut delta = target - touch.start_position;
                         lock_delta_to_axis(&mut delta, axis);
+                        touch.last_movement = accumulated;
+                        lock_delta_to_axis(&mut touch.last_movement, axis);
+                        if movements_oppose(delta, touch.last_movement) {
+                            target = event.position;
+                            delta = accumulated;
+                            lock_delta_to_axis(&mut delta, axis);
+                        }
                         touch.emitted_position = target;
                         recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
                             touch.start_position,
@@ -639,11 +654,28 @@ impl TouchGestureRecognizer {
                     }
                 }
                 TouchGestureState::Panning { mut touch, axis } if touch.id == event.id => {
+                    let mut raw_delta = event.position - touch.last_position;
+                    lock_delta_to_axis(&mut raw_delta, axis);
+                    if raw_delta != Point::default() {
+                        touch.last_movement = raw_delta;
+                    }
                     touch.velocity_tracker.push(now, event.position);
                     touch.last_position = event.position;
-                    let target = event.predicted_position.unwrap_or(event.position);
+                    let mut target = event.predicted_position.unwrap_or(event.position);
                     let mut delta = target - touch.emitted_position;
                     lock_delta_to_axis(&mut delta, axis);
+                    // Prediction error must not reverse content while the raw
+                    // touch still advances. Fall back to the raw position so a
+                    // real finger reversal remains responsive.
+                    if movements_oppose(delta, touch.last_movement) {
+                        target = event.position;
+                        delta = target - touch.emitted_position;
+                        lock_delta_to_axis(&mut delta, axis);
+                        if movements_oppose(delta, touch.last_movement) {
+                            target = touch.emitted_position;
+                            delta = Point::default();
+                        }
+                    }
                     touch.emitted_position = target;
                     recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
                         touch.start_position,
@@ -853,8 +885,10 @@ impl TouchGestureRecognizer {
             .tuning
             .scroll_physics
             .fling_distance(momentum.speed, elapsed);
-        let step = distance - momentum.emitted_distance;
-        momentum.emitted_distance = distance;
+        // Prediction overshoot can start momentum ahead of its curve. Hold
+        // that position until the curve catches up instead of stepping back.
+        let step = (distance - momentum.emitted_distance).max(0.);
+        momentum.emitted_distance = momentum.emitted_distance.max(distance);
         let delta = point(
             px(momentum.direction.x * step),
             px(momentum.direction.y * step),
@@ -1303,6 +1337,61 @@ mod tests {
     }
 
     #[test]
+    fn predicted_positions_do_not_emit_false_reversals() {
+        let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+        let now = Instant::now();
+        let touch = TouchId(1);
+
+        recognizer.handle_event_at(&touch_event(touch, TouchPhase::Started, 100., 100.), now);
+
+        let mut moved = touch_event(touch, TouchPhase::Moved, 100., 120.);
+        moved.predicted_position = Some(point(px(100.), px(130.)));
+        let recognized = recognizer.handle_event_at(&moved, now + Duration::from_millis(16));
+        let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
+            panic!("expected scroll, got {recognized:?}");
+        };
+        assert_eq!(scroll.delta.pixel_delta(px(16.)), point(px(0.), px(30.)));
+
+        let mut moved = touch_event(touch, TouchPhase::Moved, 100., 125.);
+        moved.predicted_position = Some(point(px(100.), px(127.)));
+        let recognized = recognizer.handle_event_at(&moved, now + Duration::from_millis(32));
+        let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
+            panic!("expected scroll, got {recognized:?}");
+        };
+        assert_eq!(
+            scroll.delta.pixel_delta(px(16.)),
+            Point::<Pixels>::default()
+        );
+
+        let mut moved = touch_event(touch, TouchPhase::Moved, 100., 125.);
+        moved.predicted_position = Some(point(px(100.), px(126.)));
+        let recognized = recognizer.handle_event_at(&moved, now + Duration::from_millis(40));
+        let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
+            panic!("expected scroll, got {recognized:?}");
+        };
+        assert_eq!(
+            scroll.delta.pixel_delta(px(16.)),
+            Point::<Pixels>::default()
+        );
+
+        let mut moved = touch_event(touch, TouchPhase::Moved, 100., 132.);
+        moved.predicted_position = Some(point(px(100.), px(136.)));
+        let recognized = recognizer.handle_event_at(&moved, now + Duration::from_millis(48));
+        let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
+            panic!("expected scroll, got {recognized:?}");
+        };
+        assert_eq!(scroll.delta.pixel_delta(px(16.)), point(px(0.), px(6.)));
+
+        let mut moved = touch_event(touch, TouchPhase::Moved, 100., 124.);
+        moved.predicted_position = Some(point(px(100.), px(140.)));
+        let recognized = recognizer.handle_event_at(&moved, now + Duration::from_millis(64));
+        let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
+            panic!("expected scroll, got {recognized:?}");
+        };
+        assert_eq!(scroll.delta.pixel_delta(px(16.)), point(px(0.), px(-12.)));
+    }
+
+    #[test]
     fn predicted_overshoot_folds_into_the_fling_without_scrolling_backwards() {
         let now = Instant::now();
         let mut total_with_prediction = 0f32;
@@ -1348,12 +1437,12 @@ mod tests {
             );
             drain(&recognized, use_prediction);
             assert!(recognizer.has_momentum());
-            let mut tick = now + Duration::from_millis(90);
+            let mut tick = now + Duration::from_millis(91);
             while recognizer.has_momentum() {
-                tick += Duration::from_millis(16);
                 if let Some(gesture) = recognizer.tick_momentum_at(tick) {
                     drain(&[gesture], use_prediction);
                 }
+                tick += Duration::from_millis(16);
             }
 
             if use_prediction {
