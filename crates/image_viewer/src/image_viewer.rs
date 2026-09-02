@@ -1529,9 +1529,6 @@ impl Render for ImageView {
                                         cx.notify();
                                     }),
                                 )
-                                .on_scroll_wheel(cx.listener(|_this, _event: &ScrollWheelEvent, _window, cx| {
-                                    cx.notify();
-                                }))
                                 .flex()
                                 .flex_col()
                                 .items_center()
@@ -1641,7 +1638,7 @@ impl Render for ImageView {
                                                     let link_url_tooltip = link.url.clone();
 
                                                     div()
-                                                        .id(ElementId::Name(format!("pdf-link-{page_idx}-{link_idx}").into()))
+                                                        .id(("pdf-link", page_idx * 100_000 + link_idx))
                                                         .absolute()
                                                         .left(link_left)
                                                         .top(link_top)
