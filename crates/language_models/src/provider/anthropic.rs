@@ -347,6 +347,13 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
     {
         extra_beta_headers.push(anthropic::FAST_MODE_BETA_HEADER.to_string());
     }
+    if anthropic::binds_thinking_blocks_to_prefix(&available.name)
+        && !extra_beta_headers
+            .iter()
+            .any(|header| header.trim() == anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER)
+    {
+        extra_beta_headers.push(anthropic::THINKING_BINDING_CONTROLS_BETA_HEADER.to_string());
+    }
 
     anthropic::Model {
         display_name: available
@@ -762,9 +769,8 @@ impl LanguageModel for AnthropicModel {
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto
-            | LanguageModelToolChoice::Any
-            | LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::Auto | LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::Any => anthropic::supports_forced_tool_use(&self.model.id),
         }
     }
 
