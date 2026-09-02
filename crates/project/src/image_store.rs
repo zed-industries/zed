@@ -258,7 +258,7 @@ pub fn is_image_file(project: &Entity<Project>, path: &ProjectPath, cx: &App) ->
     });
 
     match ext {
-        Some(ext) => Img::extensions().contains(&ext.as_str()) && !ext.contains("svg"),
+        Some(ext) => (Img::extensions().contains(&ext.as_str()) || ext == "pdf") && !ext.contains("svg"),
         None => false,
     }
 }
@@ -932,6 +932,33 @@ impl LocalImageStore {
 }
 
 fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
+    if content.starts_with(b"%PDF-") {
+        let engine = kkpdf_zed::pdfium::PdfiumEngine::new();
+        let options = kkpdf_zed::rasterizer::RasterizerOptions {
+            target_dpi: 144.0,
+            zoom_factor: 1.0,
+            dark_mode: false,
+            saturation_threshold: 0.18,
+        };
+        let arc_bytes = Arc::new(content);
+        let rendered_page = engine.render_page_from_bytes(&arc_bytes, 0, options)?;
+
+        let mut png_bytes: Vec<u8> = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut png_bytes);
+        let img_buf = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
+            rendered_page.width,
+            rendered_page.height,
+            rendered_page.rgba_buffer.as_ref().clone(),
+        )
+        .ok_or_else(|| anyhow::anyhow!("Failed to convert RGBA to ImageBuffer"))?;
+
+        img_buf.write_to(&mut cursor, image::ImageFormat::Png)?;
+        return Ok(Arc::new(gpui::Image::from_bytes(
+            gpui::ImageFormat::Png,
+            png_bytes,
+        )));
+    }
+
     let format = image::guess_format(&content)?;
 
     Ok(Arc::new(gpui::Image::from_bytes(
