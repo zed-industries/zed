@@ -294,26 +294,25 @@ fn merge_reasoning_detail(details: &mut Vec<Value>, chunk: Value) {
 
 #[derive(Default)]
 struct RawToolCall {
+    index: Option<usize>,
     id: String,
     name: String,
     arguments: String,
     thought_signature: Option<String>,
 }
 
-/// Accumulates streamed tool calls, matching chunks by call ID first and
-/// stream index second: the index alone is unreliable because some providers
-/// omit it (#42584) or reuse it across parallel calls (Ollama has sent two
-/// distinct IDs that both used `index: 0`).
+/// Accumulates streamed tool calls, matching chunks by their ID and index when
+/// both are present. Either value alone is unreliable because some providers
+/// omit indices (#42584), reuse indices, or repeat IDs across parallel calls.
 #[derive(Default)]
 struct ToolCallAccumulator {
     calls: Vec<RawToolCall>,
     calls_by_index: HashMap<usize, usize>,
-    calls_by_id: HashMap<String, usize>,
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "cannot attribute a tool call chunk without an id or index to one of the \
+    "cannot unambiguously attribute a tool call chunk to one of the \
      {calls_in_flight} tool calls in progress"
 )]
 struct AmbiguousToolCallChunk {
@@ -323,11 +322,11 @@ struct AmbiguousToolCallChunk {
 impl ToolCallAccumulator {
     /// Returns the call `chunk` belongs to, creating it if the chunk starts
     /// a new call. Fails rather than guessing (and corrupting arguments) when
-    /// a chunk has neither ID nor index while several calls are in flight.
+    /// the available identity matches multiple calls in flight.
     fn entry(&mut self, chunk: &ToolCallChunk) -> Result<&mut RawToolCall, AmbiguousToolCallChunk> {
         let id = chunk.id.as_deref().filter(|id| !id.is_empty());
         let call = match (id, chunk.index) {
-            (Some(id), index) => self.call_for_id(id, index),
+            (Some(id), index) => self.call_for_id(id, index)?,
             (None, Some(index)) => self.call_for_index(index),
             (None, None) => match self.calls.len() {
                 0 => self.new_call(),
@@ -338,33 +337,53 @@ impl ToolCallAccumulator {
         Ok(&mut self.calls[call])
     }
 
-    fn call_for_id(&mut self, id: &str, index: Option<usize>) -> usize {
-        let known_call = self
-            .calls_by_id
-            .get(id)
-            .copied()
-            .or_else(|| {
-                // A new ID continues the call at its index only while that
-                // call is anonymous; a different ID means the index was
-                // reused for another parallel call.
-                let call = self.calls_by_index.get(&index?).copied()?;
-                self.calls[call].id.is_empty().then_some(call)
-            })
-            .or_else(|| {
-                // Some providers send the ID only partway through a call; an
-                // ID without an index adopts the only anonymous call in flight.
-                (index.is_none() && self.calls.len() == 1 && self.calls[0].id.is_empty())
-                    .then_some(0)
-            });
+    fn call_for_id(
+        &mut self,
+        id: &str,
+        index: Option<usize>,
+    ) -> Result<usize, AmbiguousToolCallChunk> {
+        let known_call = match index {
+            Some(index) => self
+                .calls
+                .iter()
+                .rposition(|call| call.id == id && call.index == Some(index))
+                .or_else(|| {
+                    // A new ID continues the call at its index only while that
+                    // call is anonymous; a different ID means the index was
+                    // reused for another parallel call.
+                    let call = self.calls_by_index.get(&index).copied()?;
+                    self.calls[call].id.is_empty().then_some(call)
+                })
+                .or_else(|| {
+                    self.calls
+                        .iter()
+                        .rposition(|call| call.id == id && call.index.is_none())
+                }),
+            None => {
+                let matching_calls = self.calls.iter().filter(|call| call.id == id).count();
+                if matching_calls > 1 {
+                    return Err(AmbiguousToolCallChunk {
+                        calls_in_flight: matching_calls,
+                    });
+                }
+                self.calls
+                    .iter()
+                    .position(|call| call.id == id)
+                    .or_else(|| {
+                        // Some providers send the ID only partway through a call.
+                        (self.calls.len() == 1 && self.calls[0].id.is_empty()).then_some(0)
+                    })
+            }
+        };
         let call = known_call.unwrap_or_else(|| self.new_call());
         if self.calls[call].id.is_empty() {
             self.calls[call].id = id.to_string();
         }
-        self.calls_by_id.insert(id.to_string(), call);
         if let Some(index) = index {
+            self.calls[call].index = Some(index);
             self.calls_by_index.insert(index, call);
         }
-        call
+        Ok(call)
     }
 
     fn call_for_index(&mut self, index: usize) -> usize {
@@ -372,6 +391,7 @@ impl ToolCallAccumulator {
             Some(&call) => call,
             None => {
                 let call = self.new_call();
+                self.calls[call].index = Some(index);
                 self.calls_by_index.insert(index, call);
                 call
             }
@@ -386,7 +406,6 @@ impl ToolCallAccumulator {
     /// Removes and returns every call, in the order they appeared in the stream.
     fn drain(&mut self) -> impl Iterator<Item = RawToolCall> + '_ {
         self.calls_by_index.clear();
-        self.calls_by_id.clear();
         self.calls.drain(..)
     }
 }
@@ -400,6 +419,7 @@ impl ToolCallAccumulator {
 /// provider's own adapter before or after this mapping.
 pub struct ChatCompletionEventMapper {
     tool_calls: ToolCallAccumulator,
+    tool_call_accumulation_failed: bool,
     reasoning_details: ReasoningDetailsAccumulator,
 }
 
@@ -407,6 +427,7 @@ impl ChatCompletionEventMapper {
     pub fn new() -> Self {
         Self {
             tool_calls: ToolCallAccumulator::default(),
+            tool_call_accumulation_failed: false,
             reasoning_details: ReasoningDetailsAccumulator::default(),
         }
     }
@@ -459,13 +480,17 @@ impl ChatCompletionEventMapper {
                 }
             }
 
-            if let Some(tool_calls) = delta.tool_calls.as_ref() {
+            if !self.tool_call_accumulation_failed
+                && let Some(tool_calls) = delta.tool_calls.as_ref()
+            {
                 for tool_call in tool_calls {
                     let entry = match self.tool_calls.entry(tool_call) {
                         Ok(entry) => entry,
                         Err(error) => {
+                            self.tool_call_accumulation_failed = true;
+                            self.tool_calls = ToolCallAccumulator::default();
                             events.push(Err(anyhow::Error::new(error).into()));
-                            continue;
+                            break;
                         }
                     };
 
@@ -510,9 +535,9 @@ impl ChatCompletionEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             Some("tool_calls") => {
-                events.extend(
-                    self.tool_calls.drain().map(|tool_call| {
-                        match parse_tool_arguments(&tool_call.arguments) {
+                if !self.tool_call_accumulation_failed {
+                    events.extend(self.tool_calls.drain().map(
+                        |tool_call| match parse_tool_arguments(&tool_call.arguments) {
                             Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
                                     id: tool_call.id.clone().into(),
@@ -529,9 +554,9 @@ impl ChatCompletionEventMapper {
                                 raw_input: tool_call.arguments.clone().into(),
                                 json_parse_error: error.to_string(),
                             }),
-                        }
-                    }),
-                );
+                        },
+                    ));
+                }
 
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
             }
@@ -1242,6 +1267,91 @@ mod tests {
     }
 
     #[test]
+    fn separates_parallel_tool_calls_sharing_an_id() {
+        let mapped = map_completion_events(vec![
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: Some("get_weather".into()),
+                    arguments: Some(r#"{"city":"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(1),
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: Some("get_weather".into()),
+                    arguments: Some(r#"{"city":"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: None,
+                function: Some(FunctionChunk {
+                    name: None,
+                    arguments: Some(r#""Berlin"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(1),
+                id: None,
+                function: Some(FunctionChunk {
+                    name: None,
+                    arguments: Some(r#""Tokyo"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            finish_tool_calls_event(),
+        ]);
+
+        let tool_uses = completed_tool_calls(&mapped);
+        assert_eq!(tool_uses.len(), 2);
+        assert_eq!(tool_uses[0].raw_input, r#"{"city":"Berlin"}"#);
+        assert_eq!(tool_uses[1].raw_input, r#"{"city":"Tokyo"}"#);
+    }
+
+    #[test]
+    fn rejects_id_only_chunks_for_calls_sharing_an_id() {
+        let mut mapper = ChatCompletionEventMapper::new();
+        for index in [0, 1] {
+            mapper.map_event(tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(index),
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: Some("get_weather".into()),
+                    arguments: Some("{".into()),
+                    thought_signature: None,
+                }),
+            }]));
+        }
+
+        let events = mapper.map_event(tool_call_chunk_event(vec![ToolCallChunk {
+            index: None,
+            id: Some("call_a".into()),
+            function: Some(FunctionChunk {
+                name: None,
+                arguments: Some("}".into()),
+                thought_signature: None,
+            }),
+        }]));
+
+        match events.as_slice() {
+            [Err(error)] => {
+                let message = error.to_string();
+                assert!(
+                    message.contains("2 tool calls in progress"),
+                    "expected an attribution error, got: {message}"
+                );
+            }
+            events => panic!("expected a single error event, got: {events:?}"),
+        }
+    }
+
+    #[test]
     fn continues_the_latest_call_at_a_reused_index() {
         let mapped = map_completion_events(vec![
             tool_call_chunk_event(vec![ToolCallChunk {
@@ -1435,6 +1545,51 @@ mod tests {
             }
             events => panic!("expected a single error event, got: {events:?}"),
         }
+    }
+
+    #[test]
+    fn does_not_emit_tool_calls_after_an_attribution_error() {
+        let mut mapper = ChatCompletionEventMapper::new();
+        for id in ["call_a", "call_b"] {
+            mapper.map_event(tool_call_chunk_event(vec![ToolCallChunk {
+                index: None,
+                id: Some(id.into()),
+                function: Some(FunctionChunk {
+                    name: Some("list_directory".into()),
+                    arguments: Some("{".into()),
+                    thought_signature: None,
+                }),
+            }]));
+        }
+
+        let error_events = mapper.map_event(tool_call_chunk_event(vec![ToolCallChunk {
+            index: None,
+            id: None,
+            function: Some(FunctionChunk {
+                name: None,
+                arguments: Some(r#""path":"src"}"#.into()),
+                thought_signature: None,
+            }),
+        }]));
+        assert!(matches!(error_events.as_slice(), [Err(_)]));
+
+        let continuation_events = mapper.map_event(tool_call_chunk_event(vec![ToolCallChunk {
+            index: None,
+            id: Some("call_a".into()),
+            function: Some(FunctionChunk {
+                name: None,
+                arguments: Some("}".into()),
+                thought_signature: None,
+            }),
+        }]));
+        assert!(continuation_events.is_empty());
+
+        let finish_events = mapper.map_event(finish_tool_calls_event());
+
+        assert!(matches!(
+            finish_events.as_slice(),
+            [Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse))]
+        ));
     }
 
     // The `index: -1` stream shape from #42584, end to end.
