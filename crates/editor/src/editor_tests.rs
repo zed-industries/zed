@@ -23323,6 +23323,7 @@ fn language_with_hash_comments_and_attributes() -> Arc<Language> {
             r#"
             [(string_literal) (raw_string_literal)] @string
             [(line_comment) (block_comment)] @comment.inclusive
+            (attribute_item) @attribute.inclusive
             "#,
         )
         .unwrap(),
@@ -23378,6 +23379,64 @@ async fn test_toggle_comment_strips_hash_comment_prefix(cx: &mut TestAppContext)
     cx.assert_editor_state(indoc! {"
         ˇcommented out
         struct Foo;
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_comment_strips_prefix_inside_string(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = language_with_hash_comments_and_attributes();
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // A labeled `string` counts as commented, so the prefix is stripped rather
+    // than stacked. Dropping `string` from that rule leaves the line unable to
+    // uncomment: every toggle adds another prefix.
+    cx.set_state(indoc! {"
+        let sql = \"
+        «// insideˇ»
+        \";
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        let sql = \"
+        «insideˇ»
+        \";
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        let sql = \"
+        // «insideˇ»
+        \";
+    "});
+}
+
+#[gpui::test]
+async fn test_newline_inside_string_still_continues_prefix(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = language_with_hash_comments_and_attributes();
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // The newline path applies the same rule as the toggle path, so a delimiter
+    // inside a string is still continued.
+    cx.set_state(indoc! {"
+        let sql = \"
+        // insideˇ
+        \";
+    "});
+
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        let sql = \"
+        // inside
+        // ˇ
+        \";
     "});
 }
 
