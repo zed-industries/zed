@@ -979,6 +979,27 @@ fn expand_mermaid_diagram(
         markdown.mermaid_expanded_focus_handle(source_offset, cx)
     });
     panel_focus_handle.focus(window, cx);
+
+    // The panel is a deferred draw, so it paints above everything that isn't,
+    // including the workspace's modal layer: a modal opened while the panel is
+    // up (the command palette, say) would otherwise hold the keyboard while
+    // sitting invisible behind the panel. Modals take focus when they open, so
+    // yielding on focus loss keeps the panel from covering them, and matches
+    // how it already dismisses when clicking outside.
+    let focus_subscription = window.on_focus_out(&panel_focus_handle, cx, {
+        let markdown = markdown.clone();
+        move |_event, window, cx| {
+            // Deactivating the window also reports focus out, and closing the
+            // panel just because the user looked at another app would be
+            // hostile; only a focus change within the window should dismiss it.
+            if window.is_window_active() {
+                collapse_mermaid_diagram(&markdown, source_offset, window, cx);
+            }
+        }
+    });
+    markdown.update(cx, |markdown, _| {
+        markdown.set_mermaid_expanded_focus_subscription(source_offset, Some(focus_subscription));
+    });
 }
 
 /// Closes a diagram's overlay panel. Focus returns to whatever held it before
@@ -993,6 +1014,7 @@ fn collapse_mermaid_diagram(
 ) {
     let (panel_focus_handle, previous_focus_handle) = markdown.update(cx, |markdown, cx| {
         markdown.set_mermaid_expanded(source_offset, false);
+        markdown.set_mermaid_expanded_focus_subscription(source_offset, None);
         cx.notify();
         (
             markdown.mermaid_expanded_focus_handle(source_offset, cx),
@@ -1376,13 +1398,17 @@ mod tests {
     use collections::HashMap;
     use gpui::{
         Context, Entity, FocusHandle, IntoElement, KeyBinding, Render, RenderImage, TestAppContext,
-        Window, point, size,
+        Window, actions, point, size,
     };
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;
     use std::time::Duration;
     use ui::prelude::*;
+
+    // Stands in for the base keymap's context-less `escape` binding, which the
+    // panel's binding has to win over.
+    actions!(mermaid_tests, [StandInForMenuCancel]);
 
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -2284,13 +2310,14 @@ mod tests {
         ensure_theme_initialized(cx);
 
         // Tests load no keymap, so bind the panel's dismissal keybinding the
-        // same way the default keymaps do.
+        // same way the default keymaps do, alongside the context-less `escape`
+        // binding those keymaps carry (`menu::Cancel` in production) that the
+        // panel's more specific binding has to win while it holds focus.
         cx.update(|cx| {
-            cx.bind_keys([KeyBinding::new(
-                "shift-escape",
-                CollapseDiagram,
-                Some("ExpandedMermaidDiagram"),
-            )]);
+            cx.bind_keys([
+                KeyBinding::new("escape", StandInForMenuCancel, None),
+                KeyBinding::new("escape", CollapseDiagram, Some("ExpandedMermaidDiagram")),
+            ]);
         });
 
         // The overlay is drawn via `defer_draw`, which only works within a
@@ -2364,14 +2391,121 @@ mod tests {
         });
         assert!(cx.update(|window, _| panel_focus_handle.is_focused(window)));
 
-        // Shift-esc dismisses the focused panel, matching the workspace's
-        // zoomed overlay, and focus returns to what the panel took it from
-        // rather than being left on the panel as it leaves the dispatch tree.
-        cx.simulate_keystrokes("shift-escape");
+        // Esc dismisses the focused panel, and focus returns to what the panel
+        // took it from rather than being left on the panel as it leaves the
+        // dispatch tree.
+        cx.simulate_keystrokes("escape");
         assert!(markdown.update(cx, |markdown, _| {
             !markdown.is_mermaid_expanded(source_offset)
         }));
         cx.run_until_parked();
         assert!(cx.update(|window, _| view_focus_handle.is_focused(window)));
+    }
+
+    /// The panel is a deferred draw, so it paints above the workspace's modal
+    /// layer. Anything that takes focus while it is open — the command palette
+    /// being the one users hit — would otherwise be stranded behind it, holding
+    /// the keyboard while invisible, so the panel yields on focus loss.
+    #[gpui::test]
+    fn test_mermaid_expanded_overlay_dismisses_when_focus_moves_away(cx: &mut TestAppContext) {
+        struct MarkdownView {
+            markdown: Entity<Markdown>,
+            focus_handle: FocusHandle,
+        }
+
+        impl Render for MarkdownView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().track_focus(&self.focus_handle).child(
+                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                        .code_block_renderer(CodeBlockRenderer::Default {
+                            copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
+                            wrap_button_visibility: WrapButtonVisibility::Hidden,
+                            border: false,
+                        }),
+                )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            let markdown = cx.new(|cx| {
+                Markdown::new_with_options(
+                    "```mermaid\ngraph TD;\n```".into(),
+                    None,
+                    None,
+                    MarkdownOptions {
+                        render_mermaid_diagrams: true,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            });
+            MarkdownView {
+                markdown,
+                focus_handle: cx.focus_handle(),
+            }
+        });
+        // Focus-out is reported with an empty previous path while the window is
+        // inactive, so the panel only sees focus move in an active window.
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+
+        let markdown = view.read_with(cx, |view, _| view.markdown.clone());
+        let render_image = mock_render_image(cx);
+        let source_offset = markdown.update(cx, |markdown, cx| {
+            let (source_offset, diagram) = markdown
+                .parsed_markdown
+                .mermaid_diagrams
+                .iter()
+                .next()
+                .unwrap();
+            let source_offset = *source_offset;
+            let contents = diagram.contents.clone();
+            markdown.mermaid_state.cache.insert(
+                contents.clone(),
+                Arc::new(CachedMermaidDiagram::new_for_test(
+                    Some(render_image),
+                    None,
+                    None,
+                )),
+            );
+            markdown.mermaid_state.order = vec![contents];
+            cx.notify();
+            source_offset
+        });
+
+        view.update_in(cx, |view, window, cx| {
+            view.focus_handle.focus(window, cx);
+            expand_mermaid_diagram(&markdown, source_offset, window, cx);
+        });
+        cx.run_until_parked();
+        assert!(markdown.update(cx, |markdown, _| {
+            markdown.is_mermaid_expanded(source_offset)
+        }));
+
+        // Stands in for a modal taking focus as it opens.
+        let unrelated_focus_handle = cx.update(|_, cx| cx.focus_handle());
+        cx.update(|window, cx| unrelated_focus_handle.focus(window, cx));
+        cx.run_until_parked();
+        assert!(markdown.update(cx, |markdown, _| {
+            !markdown.is_mermaid_expanded(source_offset)
+        }));
+
+        // Focus stays where it moved to; the panel must not claw it back to
+        // whatever it was taken from when it opened.
+        assert!(cx.update(|window, _| unrelated_focus_handle.is_focused(window)));
+
+        // Deactivating the window reports focus out too, but glancing at
+        // another app must leave the panel alone.
+        view.update_in(cx, |view, window, cx| {
+            view.focus_handle.focus(window, cx);
+            expand_mermaid_diagram(&markdown, source_offset, window, cx);
+        });
+        cx.run_until_parked();
+        cx.deactivate_window();
+        assert!(markdown.update(cx, |markdown, _| {
+            markdown.is_mermaid_expanded(source_offset)
+        }));
     }
 }

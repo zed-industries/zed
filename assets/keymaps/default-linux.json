@@ -180,7 +180,7 @@
   {
     "context": "ExpandedMermaidDiagram",
     "bindings": {
-      "shift-escape": "markdown::CollapseDiagram",
+      "escape": "markdown::CollapseDiagram",
     },
   },
   {

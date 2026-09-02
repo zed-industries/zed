@@ -456,6 +456,9 @@ struct MermaidViewState {
     /// Whatever held focus when the overlay panel opened, so closing the panel
     /// can hand focus back instead of leaving it on the removed panel.
     expanded_previous_focus_handle: Option<FocusHandle>,
+    /// Dismisses the overlay panel when it loses focus, held for as long as the
+    /// panel is open.
+    expanded_focus_subscription: Option<Subscription>,
     /// The pending debounced re-raster scheduled by the last zoom change.
     debounce_task: Option<Task<()>>,
     /// Overrides the scroll container width, which tests can't obtain from
@@ -488,6 +491,7 @@ impl Default for MermaidViewState {
             expanded_vertical_scroll_handle: ScrollHandle::new(),
             expanded_focus_handle: None,
             expanded_previous_focus_handle: None,
+            expanded_focus_subscription: None,
             debounce_task: None,
             #[cfg(test)]
             container_width_for_test: None,
@@ -856,6 +860,17 @@ impl Markdown {
             .get_mut(&source_offset)?
             .expanded_previous_focus_handle
             .take()
+    }
+
+    pub(crate) fn set_mermaid_expanded_focus_subscription(
+        &mut self,
+        source_offset: usize,
+        subscription: Option<Subscription>,
+    ) {
+        self.mermaid_views
+            .entry(source_offset)
+            .or_default()
+            .expanded_focus_subscription = subscription;
     }
 
     pub(crate) fn mermaid_zoom_level(&self, source_offset: usize) -> f32 {

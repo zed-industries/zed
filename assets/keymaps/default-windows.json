@@ -179,7 +179,7 @@
     "context": "ExpandedMermaidDiagram",
     "use_key_equivalents": true,
     "bindings": {
-      "shift-escape": "markdown::CollapseDiagram",
+      "escape": "markdown::CollapseDiagram",
     },
   },
   {
