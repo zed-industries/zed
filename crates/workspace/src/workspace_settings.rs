@@ -25,6 +25,7 @@ pub struct WorkspaceSettings {
     pub cli_default_open_behavior: settings::CliDefaultOpenBehavior,
     pub default_open_behavior: settings::DefaultOpenBehavior,
     pub restore_on_file_reopen: bool,
+    pub reveal_if_open: bool,
     pub drop_target_size: f32,
     pub use_system_path_prompts: bool,
     pub use_system_prompts: bool,
@@ -38,9 +39,22 @@ pub struct WorkspaceSettings {
     pub close_on_file_delete: bool,
     pub close_panel_on_toggle: bool,
     pub use_system_window_tabs: bool,
+    pub fullscreen_mode: settings::FullscreenMode,
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
     pub focus_follows_mouse: FocusFollowsMouse,
+}
+
+#[cfg(target_os = "macos")]
+pub fn closing_last_window_quits_app(cx: &App) -> bool {
+    WorkspaceSettings::get_global(cx)
+        .on_last_window_closed
+        .is_quit_app()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn closing_last_window_quits_app(_cx: &App) -> bool {
+    true
 }
 
 #[derive(Copy, Clone, Deserialize)]
@@ -82,7 +96,7 @@ impl Settings for WorkspaceSettings {
         Self {
             active_pane_modifiers: ActivePanelModifiers {
                 border_size: Some(
-                    workspace
+                    *workspace
                         .active_pane_modifiers
                         .unwrap()
                         .border_size
@@ -107,6 +121,7 @@ impl Settings for WorkspaceSettings {
             cli_default_open_behavior: workspace.cli_default_open_behavior.unwrap(),
             default_open_behavior: workspace.default_open_behavior.unwrap(),
             restore_on_file_reopen: workspace.restore_on_file_reopen.unwrap(),
+            reveal_if_open: workspace.reveal_if_open.unwrap(),
             drop_target_size: workspace.drop_target_size.unwrap(),
             use_system_path_prompts: workspace.use_system_path_prompts.unwrap(),
             use_system_prompts: workspace.use_system_prompts.unwrap(),
@@ -126,6 +141,7 @@ impl Settings for WorkspaceSettings {
             close_on_file_delete: workspace.close_on_file_delete.unwrap(),
             close_panel_on_toggle: workspace.close_panel_on_toggle.unwrap(),
             use_system_window_tabs: workspace.use_system_window_tabs.unwrap(),
+            fullscreen_mode: workspace.fullscreen_mode.unwrap(),
             zoomed_padding: workspace.zoomed_padding.unwrap(),
             window_decorations: workspace.window_decorations.unwrap(),
             focus_follows_mouse: FocusFollowsMouse {

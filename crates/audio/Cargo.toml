@@ -21,7 +21,6 @@ gpui.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 rodio.workspace = true
-serde.workspace = true
 settings.workspace = true
 thiserror.workspace = true
 util.workspace = true

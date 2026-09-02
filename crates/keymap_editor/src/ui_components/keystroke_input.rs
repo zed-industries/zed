@@ -468,7 +468,7 @@ impl Render for KeystrokeInput {
         let is_focused = self.outer_focus_handle.contains_focused(window, cx);
         let is_recording = self.is_recording(window);
 
-        let width = rems_from_px(64.);
+        let width = rems_from_px(64_f32);
 
         let recording_bg_color = colors
             .editor_background
