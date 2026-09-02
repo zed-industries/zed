@@ -67,6 +67,22 @@ fn test_splice_included_ranges() {
     );
     assert_eq!(change, 0..1);
 
+    let (new_ranges, change) = splice_included_ranges(
+        vec![ts_range(20..30)],
+        &[0..30],
+        &[ts_range(20..25), ts_range(25..30)],
+    );
+    assert_eq!(new_ranges, &[ts_range(20..25), ts_range(25..30)]);
+    assert_eq!(change, 0..2);
+
+    let (new_ranges, change) = splice_included_ranges(
+        vec![ts_range(10..20)],
+        &[],
+        &[ts_range(20..30), ts_range(25..35)],
+    );
+    assert_eq!(new_ranges, &[ts_range(10..20), ts_range(25..35)]);
+    assert_eq!(change, 1..2);
+
     fn ts_range(range: Range<usize>) -> tree_sitter::Range {
         tree_sitter::Range {
             start_byte: range.start,
