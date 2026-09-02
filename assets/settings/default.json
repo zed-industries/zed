@@ -1339,6 +1339,10 @@
     //
     // Default: false
     "show_turn_stats": false,
+    // Whether to create git checkpoints for agent turns, allowing changes to be restored.
+    //
+    // Default: true
+    "enable_checkpoints": true,
     // Whether to show the merge conflict indicator in the status bar
     // that offers to resolve conflicts using the agent.
     //
