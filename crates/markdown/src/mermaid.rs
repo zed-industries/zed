@@ -22,6 +22,8 @@ type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, Arc<Cac
 /// Per scroll tick, zoom changes by 10 percentage points, regardless of how
 /// large a delta the platform reports for the tick.
 const MERMAID_ZOOM_STEP: f32 = 0.1;
+/// The zoom in/out buttons step to the next multiple of 25 percentage points.
+const MERMAID_ZOOM_BUTTON_STEP: f32 = 0.25;
 /// How many pixels of precise (trackpad) scroll make up one zoom tick.
 const PIXELS_PER_ZOOM_TICK: f32 = 20.0;
 
@@ -629,7 +631,7 @@ pub(crate) fn render_mermaid_diagram(
                     container.child(render_mermaid_overlay_controls(
                         source_offset,
                         code.to_string(),
-                        (!showing_code && zoom != 1.0).then_some(zoom),
+                        (!showing_code).then_some(zoom),
                         markdown,
                         on_zoom,
                     ))
@@ -702,7 +704,7 @@ pub(crate) fn render_mermaid_diagram(
                         container.child(render_mermaid_overlay_controls(
                             source_offset,
                             code.to_string(),
-                            (zoom != 1.0).then_some(zoom),
+                            Some(zoom),
                             markdown,
                             on_zoom,
                         ))
@@ -850,9 +852,13 @@ fn render_mermaid_tab_header(
         )
 }
 
-/// The overlay controls anchored to the top-right corner of a diagram: an
-/// optional "Zoom NNN%" readout with a reset button (shown only while zoomed
-/// away from the natural size) followed by the hover-revealed copy button.
+/// The overlay controls anchored to the top-right corner of a diagram: zoom
+/// out/in buttons preceded by a zoom percentage readout with a reset button
+/// (shown only while zoomed away from the natural size), followed by the copy
+/// button. Revealed on hover unless the diagram is zoomed.
+///
+/// `zoom` is `Some` while the rendered diagram (rather than its code) is
+/// shown.
 fn render_mermaid_overlay_controls(
     source_offset: usize,
     code: String,
@@ -860,15 +866,42 @@ fn render_mermaid_overlay_controls(
     markdown: Entity<Markdown>,
     on_zoom: Option<MermaidZoomCallback>,
 ) -> impl IntoElement {
+    // The readout is shown only while zoomed away from the natural size, and
+    // while it is, its sibling buttons stay visible too instead of being
+    // revealed on hover.
+    let zoom_indicator = zoom.filter(|zoom| *zoom != 1.0);
     h_flex()
         .absolute()
         .top_1()
         .right_1()
         .gap_0p5()
-        .when_some(zoom, |this, zoom| {
+        .when(zoom_indicator.is_none(), |this| {
+            this.visible_on_hover("code_block")
+        })
+        .when_some(zoom_indicator, |this, zoom| {
             this.child(render_mermaid_zoom_indicator(
                 source_offset,
                 zoom,
+                markdown.clone(),
+                on_zoom.clone(),
+            ))
+        })
+        .when(zoom.is_some(), |this| {
+            this.child(render_mermaid_zoom_button(
+                "mermaid-zoom-out",
+                IconName::Dash,
+                "Zoom Out",
+                false,
+                source_offset,
+                markdown.clone(),
+                on_zoom.clone(),
+            ))
+            .child(render_mermaid_zoom_button(
+                "mermaid-zoom-in",
+                IconName::Plus,
+                "Zoom In",
+                true,
+                source_offset,
                 markdown.clone(),
                 on_zoom,
             ))
@@ -876,9 +909,73 @@ fn render_mermaid_overlay_controls(
         .child(render_mermaid_copy_button(source_offset, code, markdown))
 }
 
-/// A "Zoom NNN%" readout paired with a reset button, styled like the adjacent
-/// copy button. Shown only while the diagram is zoomed away from its natural
-/// size, so it doubles as an affordance that the zoom can be reset.
+/// [`on_mermaid_zoom_scroll`] accepts either ctrl or the platform key on every
+/// platform, so the buttons' hint names only the one that platform's users
+/// reach for.
+const MERMAID_ZOOM_SCROLL_MODIFIER: &str = if cfg!(target_os = "macos") {
+    "cmd"
+} else {
+    "ctrl"
+};
+
+/// A button that zooms a diagram in or out to the next multiple of
+/// [`MERMAID_ZOOM_BUTTON_STEP`] per click. Clicks past the zoom limits are
+/// no-ops, matching the scroll-wheel zoom gesture, which the tooltip advertises
+/// since it is otherwise undiscoverable.
+fn render_mermaid_zoom_button(
+    id_name: &'static str,
+    icon: IconName,
+    tooltip_label: &'static str,
+    zoom_in: bool,
+    source_offset: usize,
+    markdown: Entity<Markdown>,
+    on_zoom: Option<MermaidZoomCallback>,
+) -> impl IntoElement {
+    IconButton::new(ElementId::named_usize(id_name, source_offset), icon)
+        .icon_size(IconSize::Small)
+        .icon_color(Color::Muted)
+        .tooltip(move |_window, cx| {
+            // Scrolling up zooms in: the gesture adds the scroll delta to the
+            // zoom, and scrolling up reports a positive delta.
+            let scroll_direction = if zoom_in { "up" } else { "down" };
+            Tooltip::with_meta(
+                tooltip_label,
+                None,
+                format!("Or {MERMAID_ZOOM_SCROLL_MODIFIER}-scroll {scroll_direction}"),
+                cx,
+            )
+        })
+        .on_click(move |_event, window, cx| {
+            let zoom_changed = markdown.update(cx, |markdown, cx| {
+                let current_zoom = markdown.mermaid_zoom_level(source_offset);
+                let new_zoom = next_mermaid_zoom_step(current_zoom, zoom_in);
+                markdown.set_mermaid_zoom_level(source_offset, new_zoom, cx);
+                markdown.mermaid_zoom_level(source_offset) != current_zoom
+            });
+            if zoom_changed && let Some(on_zoom) = &on_zoom {
+                on_zoom(window, cx);
+            }
+        })
+}
+
+/// The next multiple of [`MERMAID_ZOOM_BUTTON_STEP`] in the given direction,
+/// so button clicks land on round percentages regardless of where a scroll
+/// gesture or fit-to-width floor left the zoom (93% zooms in to 100%, then
+/// 125%; and back out to 75%).
+fn next_mermaid_zoom_step(current_zoom: f32, zoom_in: bool) -> f32 {
+    let steps = current_zoom / MERMAID_ZOOM_BUTTON_STEP;
+    // The epsilon makes a zoom already sitting on a multiple step by a full
+    // increment instead of re-snapping to itself due to float error.
+    if zoom_in {
+        ((steps + 1e-3).floor() + 1.0) * MERMAID_ZOOM_BUTTON_STEP
+    } else {
+        ((steps - 1e-3).ceil() - 1.0) * MERMAID_ZOOM_BUTTON_STEP
+    }
+}
+
+/// A zoom percentage readout paired with a reset button, styled like the
+/// adjacent copy button. Shown only while the diagram is zoomed away from its
+/// natural size, so it doubles as an affordance that the zoom can be reset.
 fn render_mermaid_zoom_indicator(
     source_offset: usize,
     zoom: f32,
@@ -890,7 +987,7 @@ fn render_mermaid_zoom_indicator(
     h_flex()
         .gap_0p5()
         .child(
-            Label::new(format!("Zoom {percentage}%"))
+            Label::new(format!("{percentage}%"))
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         )
@@ -925,28 +1022,26 @@ fn render_mermaid_copy_button(
         source_offset.to_string().into(),
     );
 
-    CopyButton::new(id.clone(), code.clone())
-        .visible_on_hover("code_block")
-        .custom_on_click({
-            move |_window, cx| {
-                let id = id.clone();
-                markdown.update(cx, |this, cx| {
-                    this.copied_code_blocks.insert(id.clone());
-                    cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
-                    cx.spawn(async move |this, cx| {
-                        cx.background_executor().timer(Duration::from_secs(2)).await;
-                        cx.update(|cx| {
-                            this.update(cx, |this, cx| {
-                                this.copied_code_blocks.remove(&id);
-                                cx.notify();
-                            })
+    CopyButton::new(id.clone(), code.clone()).custom_on_click({
+        move |_window, cx| {
+            let id = id.clone();
+            markdown.update(cx, |this, cx| {
+                this.copied_code_blocks.insert(id.clone());
+                cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(Duration::from_secs(2)).await;
+                    cx.update(|cx| {
+                        this.update(cx, |this, cx| {
+                            this.copied_code_blocks.remove(&id);
+                            cx.notify();
                         })
-                        .ok();
                     })
-                    .detach();
-                });
-            }
-        })
+                    .ok();
+                })
+                .detach();
+            });
+        }
+    })
 }
 
 fn render_mermaid_code_view(contents: &SharedString) -> AnyElement {
@@ -1479,6 +1574,25 @@ mod tests {
             assert_eq!(new_size.width.0, original_size.width.0 * 2);
             assert_eq!(new_size.height.0, original_size.height.0 * 2);
         });
+    }
+
+    #[test]
+    fn test_next_mermaid_zoom_step_snaps_to_multiples() {
+        use super::next_mermaid_zoom_step;
+
+        // From an off-step zoom (e.g. left by a scroll gesture or the
+        // fit-to-width floor), a click lands on the nearest multiple in the
+        // click's direction.
+        assert_eq!(next_mermaid_zoom_step(0.93, true), 1.0);
+        assert_eq!(next_mermaid_zoom_step(0.93, false), 0.75);
+        assert_eq!(next_mermaid_zoom_step(1.13, true), 1.25);
+        assert_eq!(next_mermaid_zoom_step(1.13, false), 1.0);
+
+        // From a multiple, a click steps by a full increment.
+        assert_eq!(next_mermaid_zoom_step(1.0, true), 1.25);
+        assert_eq!(next_mermaid_zoom_step(1.0, false), 0.75);
+        assert_eq!(next_mermaid_zoom_step(0.5, false), 0.25);
+        assert_eq!(next_mermaid_zoom_step(1.75, true), 2.0);
     }
 
     #[test]
