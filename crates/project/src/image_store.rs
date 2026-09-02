@@ -115,7 +115,7 @@ pub struct PdfPageEntry {
     pub page_index: usize,
     pub width: u32,
     pub height: u32,
-    pub image: Arc<gpui::Image>,
+    pub image: Arc<gpui::RenderImage>,
     pub links: Vec<kkpdf_zed::PdfLinkAnnotation>,
     pub text_segments: Vec<kkpdf_zed::PdfTextSegment>,
     pub page_text: String,
@@ -286,7 +286,6 @@ impl ImageItem {
 
         info.current_page = page_index;
         if let Some(page) = info.pages.get(page_index) {
-            self.image = page.image.clone();
             self.image_metadata = Some(ImageMetadata {
                 width: page.width,
                 height: page.height,
@@ -345,16 +344,11 @@ impl ImageItem {
                     if let Ok((pages, full_text)) = pdf_res {
                         let total_pages = pages.len();
                         let target_page = cur_page.min(total_pages.saturating_sub(1));
-                        let first_image = pages
-                            .get(target_page)
-                            .map(|p| p.image.clone())
-                            .unwrap_or_else(|| create_gpui_image(bytes.clone()).unwrap());
                         let (width, height) = pages
                             .get(target_page)
                             .map(|p| (p.width, p.height))
                             .unwrap_or((0, 0));
                         this.update(cx, |this, cx| {
-                            this.image = first_image;
                             this.pdf_info = Some(PdfPageInfo {
                                 current_page: target_page,
                                 total_pages,
@@ -751,10 +745,6 @@ impl RemoteImageStore {
                     let is_pdf = content.starts_with(b"%PDF-");
                     let (image, pdf_info) = if is_pdf {
                         if let Ok((pages, full_text)) = create_gpui_images_from_pdf(&content) {
-                            let first_image = pages
-                                .first()
-                                .map(|p| p.image.clone())
-                                .unwrap_or_else(|| create_gpui_image(content.clone()).unwrap());
                             let total_pages = pages.len();
                             let pdf_info = PdfPageInfo {
                                 current_page: 0,
@@ -763,7 +753,8 @@ impl RemoteImageStore {
                                 pages,
                                 full_text,
                             };
-                            (first_image, Some(pdf_info))
+                            let dummy_img = Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![]));
+                            (dummy_img, Some(pdf_info))
                         } else {
                             (create_gpui_image(content.clone())?, None)
                         }
@@ -836,10 +827,6 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
                     create_gpui_images_from_pdf(&content_clone)
                 }).await;
                 if let Ok((pages, full_text)) = pdf_res {
-                    let first_image = pages
-                        .first()
-                        .map(|p| p.image.clone())
-                        .unwrap_or_else(|| create_gpui_image(content.clone()).unwrap());
                     let total_pages = pages.len();
                     let pdf_info = PdfPageInfo {
                         current_page: 0,
@@ -848,7 +835,8 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
                         pages,
                         full_text,
                     };
-                    (first_image, Some(pdf_info))
+                    let dummy_img = Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![]));
+                    (dummy_img, Some(pdf_info))
                 } else {
                     (create_gpui_image(content.clone())?, None)
                 }
@@ -1129,9 +1117,6 @@ pub fn create_gpui_images_from_pdf(
     pdf_bytes: &[u8],
 ) -> anyhow::Result<(Vec<PdfPageEntry>, Option<String>)> {
     let engine = kkpdf_zed::PdfiumEngine::new();
-    let doc_details = engine.extract_document_details(pdf_bytes).unwrap_or_default();
-    let doc = engine.load_document_from_bytes(pdf_bytes, None)?;
-    let total_pages = doc.total_pages();
     let options = kkpdf_zed::rasterizer::RasterizerOptions {
         target_dpi: 144.0,
         zoom_factor: 1.0,
@@ -1139,44 +1124,34 @@ pub fn create_gpui_images_from_pdf(
         saturation_threshold: 0.18,
     };
 
-    let mut pages = Vec::with_capacity(total_pages);
-    for page_idx in 0..total_pages {
-        let page = engine.render_page_from_bytes(pdf_bytes, page_idx, options)?;
-        let mut png_bytes: Vec<u8> = Vec::new();
-        let mut cursor = std::io::Cursor::new(&mut png_bytes);
+    let doc_res = engine.render_and_extract_document_from_bytes(pdf_bytes, options)?;
+    let mut pages = Vec::with_capacity(doc_res.pages.len());
+
+    for page in doc_res.pages {
         let img_buf = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
             page.width,
             page.height,
-            page.rgba_buffer.as_ref().clone(),
+            page.rgba_buffer,
         )
         .ok_or_else(|| anyhow::anyhow!("Failed to convert RGBA to ImageBuffer"))?;
 
-        img_buf.write_to(&mut cursor, image::ImageFormat::Png)?;
-        let image = Arc::new(gpui::Image::from_bytes(
-            gpui::ImageFormat::Png,
-            png_bytes,
-        ));
-
-        let page_detail = doc_details.pages.get(page_idx);
-        let links = page_detail.map(|d| d.links.clone()).unwrap_or_default();
-        let text_segments = page_detail.map(|d| d.text_segments.clone()).unwrap_or_default();
-        let page_text = page_detail.map(|d| d.text.clone()).unwrap_or_default();
+        let render_image = Arc::new(gpui::RenderImage::new(vec![image::Frame::new(img_buf)]));
 
         pages.push(PdfPageEntry {
-            page_index: page_idx,
+            page_index: page.page_index,
             width: page.width,
             height: page.height,
-            image,
-            links,
-            text_segments,
-            page_text,
+            image: render_image,
+            links: page.links,
+            text_segments: page.text_segments,
+            page_text: page.text,
         });
     }
 
-    let full_text = if !doc_details.full_text.is_empty() {
-        Some(doc_details.full_text)
+    let full_text = if !doc_res.full_text.is_empty() {
+        Some(doc_res.full_text)
     } else {
-        engine.extract_text_from_bytes(pdf_bytes, None).ok()
+        None
     };
 
     Ok((pages, full_text))

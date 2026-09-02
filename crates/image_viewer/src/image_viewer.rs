@@ -1,7 +1,7 @@
 mod image_info;
 mod image_viewer_settings;
 
-use std::{path::Path, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc, sync::Arc};
 
 use anyhow::Context as _;
 use editor::{
@@ -15,7 +15,7 @@ use gpui::{
     InteractiveElement, IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, ParentElement, PinchEvent, Pixels, Point, Render, RenderImage, ScrollDelta,
     ScrollWheelEvent, Style, Styled, Subscription, Task, WeakEntity, Window, actions, anchored,
-    checkerboard, deferred, div, img, point, px, size,
+    canvas, checkerboard, deferred, div, img, point, px, size,
 };
 use language::File as _;
 use persistence::ImageViewerDb;
@@ -100,6 +100,7 @@ pub struct ImageView {
     pdf_selection: Option<PdfSelection>,
     pdf_mouse_down: bool,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    page_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
 }
 
 struct DisplayedImage {
@@ -216,6 +217,7 @@ impl ImageView {
             pdf_selection: None,
             pdf_mouse_down: false,
             context_menu: None,
+            page_bounds: Rc::new(RefCell::new(HashMap::default())),
         }
     }
 
@@ -412,60 +414,158 @@ impl ImageView {
         cx.notify();
     }
 
-    fn handle_pdf_segment_mouse_down(
+    fn find_segment_at(
+        segments: &[kkpdf_zed::PdfTextSegment],
+        norm_x: f32,
+        norm_y: f32,
+    ) -> Option<usize> {
+        if segments.is_empty() {
+            return None;
+        }
+
+        // 1. Exact bounding box hit
+        for (i, seg) in segments.iter().enumerate() {
+            if norm_x >= seg.x
+                && norm_x <= seg.x + seg.width
+                && norm_y >= seg.y
+                && norm_y <= seg.y + seg.height
+            {
+                return Some(i);
+            }
+        }
+
+        // 2. Line-level hit with horizontal proximity
+        let mut closest_on_line: Option<(usize, f32)> = None;
+        for (i, seg) in segments.iter().enumerate() {
+            let line_top = seg.y - seg.height * 0.2;
+            let line_bottom = seg.y + seg.height * 1.2;
+            if norm_y >= line_top && norm_y <= line_bottom {
+                let seg_center_x = seg.x + seg.width * 0.5;
+                let dist_x = (norm_x - seg_center_x).abs();
+                if closest_on_line.as_ref().map_or(true, |(_, d)| dist_x < *d) {
+                    closest_on_line = Some((i, dist_x));
+                }
+            }
+        }
+        if let Some((idx, _)) = closest_on_line {
+            return Some(idx);
+        }
+
+        // 3. Closest segment overall
+        let mut closest: Option<(usize, f32)> = None;
+        for (i, seg) in segments.iter().enumerate() {
+            let center_x = seg.x + seg.width * 0.5;
+            let center_y = seg.y + seg.height * 0.5;
+            let dist_sq = (norm_x - center_x).powi(2) + (norm_y - center_y).powi(2);
+            if closest.as_ref().map_or(true, |(_, d)| dist_sq < *d) {
+                closest = Some((i, dist_sq));
+            }
+        }
+        closest.map(|(idx, _)| idx)
+    }
+
+    fn handle_pdf_canvas_mouse_down(
         &mut self,
         page_index: usize,
-        seg_index: usize,
-        seg_text: String,
+        click_pos: Point<Pixels>,
         click_count: usize,
         cx: &mut Context<Self>,
     ) {
-        self.pdf_mouse_down = true;
+        let bounds = self.page_bounds.borrow().get(&page_index).copied();
+        let pdf_info = self.image_item.read(cx).pdf_info.clone();
+        let Some(pdf_info) = pdf_info else { return; };
+        let Some(page) = pdf_info.pages.iter().find(|p| p.page_index == page_index) else { return; };
+
         if click_count >= 3 {
-            if let Some(pdf_info) = self.image_item.read(cx).pdf_info.as_ref() {
-                if let Some(page) = pdf_info.pages.iter().find(|p| p.page_index == page_index) {
-                    self.pdf_selection = Some(PdfSelection {
-                        page_index,
-                        start_seg: 0,
-                        end_seg: page.text_segments.len().saturating_sub(1),
-                        text: page.page_text.clone(),
-                    });
-                }
-            }
-        } else {
+            self.pdf_mouse_down = false;
             self.pdf_selection = Some(PdfSelection {
                 page_index,
-                start_seg: seg_index,
-                end_seg: seg_index,
-                text: seg_text,
+                start_seg: 0,
+                end_seg: page.text_segments.len().saturating_sub(1),
+                text: page.page_text.clone(),
             });
+            cx.notify();
+            return;
+        }
+
+        let Some(bounds) = bounds else { return; };
+        let b_w: f32 = bounds.size.width.into();
+        let b_h: f32 = bounds.size.height.into();
+        if b_w <= 0.0 || b_h <= 0.0 {
+            return;
+        }
+
+        let b_ox: f32 = bounds.origin.x.into();
+        let b_oy: f32 = bounds.origin.y.into();
+        let p_x: f32 = click_pos.x.into();
+        let p_y: f32 = click_pos.y.into();
+        let norm_x = ((p_x - b_ox) / b_w).clamp(0.0, 1.0);
+        let norm_y = ((p_y - b_oy) / b_h).clamp(0.0, 1.0);
+
+        if let Some(idx) = Self::find_segment_at(&page.text_segments, norm_x, norm_y) {
+            self.pdf_mouse_down = true;
+            let seg = &page.text_segments[idx];
+            self.pdf_selection = Some(PdfSelection {
+                page_index,
+                start_seg: idx,
+                end_seg: idx,
+                text: seg.text.clone(),
+            });
+        } else {
+            self.pdf_mouse_down = false;
+            self.pdf_selection = None;
         }
         cx.notify();
     }
 
-    fn handle_pdf_segment_mouse_move(
+    fn handle_pdf_canvas_mouse_move(
         &mut self,
         page_index: usize,
-        seg_index: usize,
-        segments: &[kkpdf_zed::PdfTextSegment],
+        cursor_pos: Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
         if !self.pdf_mouse_down {
             return;
         }
-        if let Some(ref mut sel) = self.pdf_selection {
-            if sel.page_index == page_index && sel.end_seg != seg_index {
-                sel.end_seg = seg_index;
-                let min_idx = sel.start_seg.min(seg_index);
-                let max_idx = sel.start_seg.max(seg_index);
-                if max_idx < segments.len() {
-                    sel.text = segments[min_idx..=max_idx]
-                        .iter()
-                        .map(|s| s.text.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ");
+        let Some(ref sel) = self.pdf_selection else { return; };
+        if sel.page_index != page_index {
+            return;
+        }
+
+        let bounds = self.page_bounds.borrow().get(&page_index).copied();
+        let Some(bounds) = bounds else { return; };
+        let b_w: f32 = bounds.size.width.into();
+        let b_h: f32 = bounds.size.height.into();
+        if b_w <= 0.0 || b_h <= 0.0 {
+            return;
+        }
+
+        let pdf_info = self.image_item.read(cx).pdf_info.clone();
+        let Some(pdf_info) = pdf_info else { return; };
+        let Some(page) = pdf_info.pages.iter().find(|p| p.page_index == page_index) else { return; };
+
+        let b_ox: f32 = bounds.origin.x.into();
+        let b_oy: f32 = bounds.origin.y.into();
+        let p_x: f32 = cursor_pos.x.into();
+        let p_y: f32 = cursor_pos.y.into();
+        let norm_x = ((p_x - b_ox) / b_w).clamp(0.0, 1.0);
+        let norm_y = ((p_y - b_oy) / b_h).clamp(0.0, 1.0);
+
+        if let Some(seg_index) = Self::find_segment_at(&page.text_segments, norm_x, norm_y) {
+            if let Some(ref mut sel) = self.pdf_selection {
+                if sel.end_seg != seg_index {
+                    sel.end_seg = seg_index;
+                    let min_idx = sel.start_seg.min(seg_index);
+                    let max_idx = sel.start_seg.max(seg_index);
+                    if max_idx < page.text_segments.len() {
+                        sel.text = page.text_segments[min_idx..=max_idx]
+                            .iter()
+                            .map(|s| s.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                    }
+                    cx.notify();
                 }
-                cx.notify();
             }
         }
     }
@@ -477,28 +577,46 @@ impl ImageView {
         }
     }
 
-    fn handle_pdf_canvas_mouse_down(
+    fn handle_pdf_canvas_right_click(
         &mut self,
         page_index: usize,
-        click_count: usize,
+        click_pos: Point<Pixels>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if click_count >= 2 {
-            if let Some(pdf_info) = self.image_item.read(cx).pdf_info.as_ref() {
-                if let Some(page) = pdf_info.pages.iter().find(|p| p.page_index == page_index) {
-                    self.pdf_selection = Some(PdfSelection {
-                        page_index,
-                        start_seg: 0,
-                        end_seg: page.text_segments.len().saturating_sub(1),
-                        text: page.page_text.clone(),
-                    });
+        if let Some(bounds) = self.page_bounds.borrow().get(&page_index).copied() {
+            let b_w: f32 = bounds.size.width.into();
+            let b_h: f32 = bounds.size.height.into();
+            if b_w > 0.0 && b_h > 0.0 {
+                let b_ox: f32 = bounds.origin.x.into();
+                let b_oy: f32 = bounds.origin.y.into();
+                let p_x: f32 = click_pos.x.into();
+                let p_y: f32 = click_pos.y.into();
+                let norm_x = ((p_x - b_ox) / b_w).clamp(0.0, 1.0);
+                let norm_y = ((p_y - b_oy) / b_h).clamp(0.0, 1.0);
+
+                let pdf_info = self.image_item.read(cx).pdf_info.clone();
+                if let Some(pdf_info) = pdf_info {
+                    if let Some(page) = pdf_info.pages.iter().find(|p| p.page_index == page_index) {
+                        if let Some(seg_idx) = Self::find_segment_at(&page.text_segments, norm_x, norm_y) {
+                            let need_select = self.pdf_selection.as_ref().map_or(true, |s| {
+                                s.page_index != page_index
+                                    || (seg_idx < s.start_seg.min(s.end_seg) || seg_idx > s.start_seg.max(s.end_seg))
+                            });
+                            if need_select {
+                                self.pdf_selection = Some(PdfSelection {
+                                    page_index,
+                                    start_seg: seg_idx,
+                                    end_seg: seg_idx,
+                                    text: page.text_segments[seg_idx].text.clone(),
+                                });
+                            }
+                        }
+                    }
                 }
             }
-        } else {
-            self.pdf_selection = None;
         }
-        self.pdf_mouse_down = false;
-        cx.notify();
+        self.deploy_context_menu(click_pos, window, cx);
     }
 
     fn toggle_text_panel(&mut self, _: &ToggleTextPanel, window: &mut Window, cx: &mut Context<Self>) {
@@ -921,6 +1039,7 @@ impl Item for ImageView {
             pdf_selection: self.pdf_selection.clone(),
             pdf_mouse_down: false,
             context_menu: None,
+            page_bounds: Rc::new(RefCell::new(HashMap::default())),
         })))
     }
 
@@ -1060,6 +1179,9 @@ impl Render for ImageView {
                         .track_scroll(&self.pdf_scroll_handle)
                         .overflow_y_scroll()
                         .size_full()
+                        .on_mouse_up(MouseButton::Left, cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
+                            this.handle_pdf_mouse_up(cx);
+                        }))
                         .child(
                             v_flex()
                                 .w_full()
@@ -1072,7 +1194,6 @@ impl Render for ImageView {
                                     let page_w_val = page.width as f32 * zoom_level;
                                     let page_h_val = page.height as f32 * zoom_level;
                                     let page_idx = page.page_index;
-                                    let total_segs = page.text_segments.len();
                                     let segments_arc = Arc::new(page.text_segments);
                                     let links = page.links;
                                     let pdf_selection = self.pdf_selection.clone();
@@ -1092,86 +1213,67 @@ impl Render for ImageView {
                                                 .border_color(border_color)
                                                 .bg(gpui::white())
                                                 .cursor(gpui::CursorStyle::IBeam)
-                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-                                                    this.handle_pdf_canvas_mouse_down(page_idx, event.click_count, cx);
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                                                        this.handle_pdf_canvas_mouse_down(page_idx, event.position, event.click_count, cx);
+                                                    }),
+                                                )
+                                                .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
+                                                    this.handle_pdf_canvas_mouse_move(page_idx, event.position, cx);
                                                 }))
-                                                .on_mouse_up(MouseButton::Left, cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
-                                                    this.handle_pdf_mouse_up(cx);
-                                                }))
-                                                .on_mouse_down(MouseButton::Right, cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                                                    this.deploy_context_menu(event.position, window, cx);
-                                                }))
+                                                .on_mouse_up(
+                                                    MouseButton::Left,
+                                                    cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
+                                                        this.handle_pdf_mouse_up(cx);
+                                                    }),
+                                                )
+                                                .on_mouse_down(
+                                                    MouseButton::Right,
+                                                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                                        this.handle_pdf_canvas_right_click(page_idx, event.position, window, cx);
+                                                    }),
+                                                )
+                                                .child({
+                                                    let page_bounds = self.page_bounds.clone();
+                                                    canvas(
+                                                        move |bounds: Bounds<Pixels>, _window: &mut Window, _cx: &mut App| {
+                                                            page_bounds.borrow_mut().insert(page_idx, bounds);
+                                                        },
+                                                        |_bounds: Bounds<Pixels>, _state: (), _window: &mut Window, _cx: &mut App| {},
+                                                    )
+                                                    .absolute()
+                                                    .size_full()
+                                                })
                                                 .child(
                                                     img(page.image)
                                                         .id(("pdf-page-img", page_idx))
                                                         .size_full()
-                                                        .absolute()
+                                                        .absolute(),
                                                 )
-                                                .children((0..total_segs).map(|seg_idx| {
-                                                    let seg = &segments_arc[seg_idx];
-                                                    let is_selected = pdf_selection.as_ref().is_some_and(|sel| {
-                                                        sel.page_index == page_idx && {
+                                                .children(
+                                                    pdf_selection
+                                                        .as_ref()
+                                                        .filter(|s| s.page_index == page_idx)
+                                                        .into_iter()
+                                                        .flat_map(|sel| {
                                                             let min_idx = sel.start_seg.min(sel.end_seg);
                                                             let max_idx = sel.start_seg.max(sel.end_seg);
-                                                            seg_idx >= min_idx && seg_idx <= max_idx
-                                                        }
-                                                    });
-                                                    let seg_left = px(seg.x * page_w_val);
-                                                    let seg_top = px(seg.y * page_h_val);
-                                                    let seg_w = px(seg.width * page_w_val);
-                                                    let seg_h = px(seg.height * page_h_val);
-                                                    let seg_text = seg.text.clone();
-                                                    let seg_text_clone = seg.text.clone();
-                                                    let segs_ref = Arc::clone(&segments_arc);
-
-                                                    div()
-                                                        .id(ElementId::Name(format!("pdf-text-seg-{page_idx}-{seg_idx}").into()))
-                                                        .absolute()
-                                                        .left(seg_left)
-                                                        .top(seg_top)
-                                                        .w(seg_w)
-                                                        .h(seg_h)
-                                                        .cursor(gpui::CursorStyle::IBeam)
-                                                        .when(is_selected, |s| s.bg(gpui::rgba(0x3b82f644)).rounded_xs())
-                                                        .when(!is_selected, |s| {
-                                                             s.hover(|h| h.bg(gpui::rgba(0x3b82f618)).rounded_xs())
-                                                        })
-                                                        .on_mouse_down(
-                                                            MouseButton::Left,
-                                                            cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-                                                                this.handle_pdf_segment_mouse_down(page_idx, seg_idx, seg_text.clone(), event.click_count, cx);
-                                                                cx.stop_propagation();
-                                                            }),
-                                                        )
-                                                        .on_mouse_move(cx.listener(move |this, _event: &MouseMoveEvent, _window, cx| {
-                                                            this.handle_pdf_segment_mouse_move(page_idx, seg_idx, &segs_ref, cx);
-                                                        }))
-                                                        .on_mouse_up(
-                                                            MouseButton::Left,
-                                                            cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
-                                                                this.handle_pdf_mouse_up(cx);
-                                                                cx.stop_propagation();
-                                                            }),
-                                                        )
-                                                        .on_mouse_down(
-                                                            MouseButton::Right,
-                                                            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                                                                let need_select = this.pdf_selection.as_ref().map_or(true, |s| {
-                                                                    s.page_index != page_idx || (seg_idx < s.start_seg.min(s.end_seg) || seg_idx > s.start_seg.max(s.end_seg))
-                                                                });
-                                                                if need_select {
-                                                                    this.pdf_selection = Some(PdfSelection {
-                                                                        page_index: page_idx,
-                                                                        start_seg: seg_idx,
-                                                                        end_seg: seg_idx,
-                                                                        text: seg_text_clone.clone(),
-                                                                    });
-                                                                }
-                                                                this.deploy_context_menu(event.position, window, cx);
-                                                                cx.stop_propagation();
-                                                            }),
-                                                        )
-                                                }))
+                                                            let segs = &segments_arc;
+                                                            (min_idx..=max_idx.min(segs.len().saturating_sub(1))).map(move |seg_idx| {
+                                                                let seg = &segs[seg_idx];
+                                                                div()
+                                                                    .id(ElementId::Name(format!("pdf-sel-highlight-{page_idx}-{seg_idx}").into()))
+                                                                    .absolute()
+                                                                    .left(px(seg.x * page_w_val))
+                                                                    .top(px(seg.y * page_h_val))
+                                                                    .w(px(seg.width * page_w_val))
+                                                                    .h(px(seg.height * page_h_val))
+                                                                    .bg(gpui::rgba(0x3b82f644))
+                                                                    .rounded_xs()
+                                                            })
+                                                        }),
+                                                )
                                                 .children(links.into_iter().enumerate().map(|(link_idx, link)| {
                                                     let link_left = px(link.x * page_w_val);
                                                     let link_top = px(link.y * page_h_val);
