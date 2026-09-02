@@ -1100,6 +1100,55 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_non_image_file_with_image_extension_opens_in_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            editor::init(cx);
+            crate::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(Path::new("/root"))
+            .await
+            .expect("test root should be created");
+        fs.insert_file(
+            "/root/test.pam",
+            "Not a real image file\n".as_bytes().to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+
+        let worktree_id =
+            cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
+
+        let (workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::Workspace::test_new(project.clone(), window, cx)
+        });
+
+        let item = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path("test.pam").into(),
+                    },
+                    None,
+                    true,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("test.pam should open");
+
+        assert!(
+            item.downcast::<editor::Editor>().is_some(),
+            "test.pam should open as Editor"
+        );
+    }
+
     fn test_image(red: u8) -> Arc<gpui::Image> {
         let bytes = format!("P3\n1 1\n255\n{red} 0 0\n").into_bytes();
         Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Pnm, bytes))

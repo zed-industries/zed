@@ -1473,7 +1473,7 @@ pub mod test {
             _project: &Entity<Project>,
             _path: &ProjectPath,
             _cx: &mut App,
-        ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
+        ) -> Option<Task<anyhow::Result<Option<Entity<Self>>>>> {
             None
         }
         fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {

@@ -1646,7 +1646,7 @@ impl project::ProjectItem for NotebookItem {
         project: &Entity<Project>,
         path: &ProjectPath,
         cx: &mut App,
-    ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
+    ) -> Option<Task<anyhow::Result<Option<Entity<Self>>>>> {
         let path = path.clone();
         let project = project.clone();
         let languages = project.read(cx).languages().clone();
@@ -1717,12 +1717,12 @@ impl project::ProjectItem for NotebookItem {
                     })
                     .context("Entry not found")?;
 
-                Ok(cx.new(|_| NotebookItem {
+                Ok(Some(cx.new(|_| NotebookItem {
                     project_path: path,
                     languages,
                     notebook,
                     id,
-                }))
+                })))
             }))
         } else {
             None
@@ -2153,7 +2153,8 @@ mod tests {
                 .expect("ipynb files should be openable as notebooks")
             })
             .await
-            .expect("notebook should parse");
+            .expect("notebook should parse")
+            .expect("notebook should be valid");
 
         // Don't render the notebook UI itself: its animated kernel status icon
         // schedules a new frame on every render, which makes `run_until_parked`
@@ -2266,7 +2267,8 @@ mod tests {
                     .expect("single-file .ipynb should open as a notebook")
             })
             .await
-            .expect("notebook should parse");
+            .expect("notebook should parse")
+            .expect("notebook should be valid");
 
         notebook_item.read_with(cx, |item, _| {
             assert_eq!(item.notebook.cells.len(), 1);
@@ -2306,7 +2308,8 @@ mod tests {
                     .expect("ipynb files should be openable as notebooks")
             })
             .await
-            .expect("notebook should parse");
+            .expect("notebook should parse")
+            .expect("notebook should be valid");
 
         // Held across the save: a save that bypasses the project writes the file
         // behind this buffer's back, leaving it stale.

@@ -12,7 +12,7 @@ use gpui::{
 pub use image::ImageFormat;
 use image::{ExtendedColorType, GenericImageView, ImageReader};
 use language::{DiskState, File};
-use rpc::{AnyProtoClient, ErrorExt as _, TypedEnvelope, proto};
+use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use std::future::Future;
 use std::num::NonZeroU64;
 use std::path::PathBuf;
@@ -268,14 +268,14 @@ impl ProjectItem for ImageItem {
         project: &Entity<Project>,
         path: &ProjectPath,
         cx: &mut App,
-    ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
+    ) -> Option<Task<anyhow::Result<Option<Entity<Self>>>>> {
         if is_image_file(project, path, cx) {
             Some(cx.spawn({
                 let path = path.clone();
                 let project = project.clone();
                 async move |cx| {
                     project
-                        .update(cx, |project, cx| project.open_image(path, cx))
+                        .update(cx, |project, cx| project.try_open_image(path, cx))
                         .await
                 }
             }))
@@ -298,12 +298,12 @@ impl ProjectItem for ImageItem {
 }
 
 trait ImageStoreImpl {
-    fn open_image(
+    fn open_image_impl(
         &self,
         path: Arc<RelPath>,
         worktree: Entity<Worktree>,
         cx: &mut Context<ImageStore>,
-    ) -> Task<Result<Entity<ImageItem>>>;
+    ) -> Task<Result<ImageOpenOutcome>>;
 
     fn reload_images(
         &self,
@@ -337,6 +337,12 @@ struct LocalImageStore {
     _subscription: Subscription,
 }
 
+#[derive(Clone)]
+enum ImageOpenOutcome {
+    Opened(Entity<ImageItem>),
+    NotAnImage(Arc<anyhow::Error>),
+}
+
 pub struct ImageStore {
     state: Box<dyn ImageStoreImpl>,
     opened_images: HashMap<ImageId, WeakEntity<ImageItem>>,
@@ -344,7 +350,7 @@ pub struct ImageStore {
     #[allow(clippy::type_complexity)]
     loading_images_by_path: HashMap<
         ProjectPath,
-        postage::watch::Receiver<Option<Result<Entity<ImageItem>, Arc<anyhow::Error>>>>,
+        postage::watch::Receiver<Option<Result<ImageOpenOutcome, Arc<anyhow::Error>>>>,
     >,
 }
 
@@ -412,14 +418,42 @@ impl ImageStore {
             .find(|image| &image.read(cx).project_path(cx) == path)
     }
 
+    pub fn try_open_image(
+        &mut self,
+        project_path: ProjectPath,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Entity<ImageItem>>>> {
+        let task = self.open_image_impl(project_path, cx);
+        cx.background_spawn(async move {
+            match task.await? {
+                ImageOpenOutcome::Opened(image) => Ok(Some(image)),
+                ImageOpenOutcome::NotAnImage(_) => Ok(None),
+            }
+        })
+    }
+
     pub fn open_image(
         &mut self,
         project_path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<ImageItem>>> {
+        let task = self.open_image_impl(project_path, cx);
+        cx.background_spawn(async move {
+            match task.await? {
+                ImageOpenOutcome::Opened(image) => Ok(image),
+                ImageOpenOutcome::NotAnImage(e) => Err(anyhow::anyhow!("{:?}", e)),
+            }
+        })
+    }
+
+    fn open_image_impl(
+        &mut self,
+        project_path: ProjectPath,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<ImageOpenOutcome>> {
         let existing_image = self.get_by_path(&project_path, cx);
         if let Some(existing_image) = existing_image {
-            return Task::ready(Ok(existing_image));
+            return Task::ready(Ok(ImageOpenOutcome::Opened(existing_image)));
         }
 
         let Some(worktree) = self
@@ -440,21 +474,20 @@ impl ImageStore {
                 let (mut tx, rx) = postage::watch::channel();
                 entry.insert(rx.clone());
 
-                let load_image = self
-                    .state
-                    .open_image(project_path.path.clone(), worktree, cx);
-
+                let load_image =
+                    self.state
+                        .open_image_impl(project_path.path.clone(), worktree, cx);
                 cx.spawn(async move |this, cx| {
                     let load_result = load_image.await;
                     *tx.borrow_mut() = Some(this.update(cx, |this, _cx| {
                         // Record the fact that the image is no longer loading.
                         this.loading_images_by_path.remove(&project_path);
-                        let image = load_result.map_err(Arc::new)?;
-                        Ok(image)
+                        load_result.map_err(Arc::new)
                     })?);
                     anyhow::Ok(())
                 })
                 .detach();
+
                 rx
             }
         };
@@ -462,15 +495,15 @@ impl ImageStore {
         cx.background_spawn(async move {
             Self::wait_for_loading_image(loading_watch)
                 .await
-                .map_err(|e| e.cloned())
+                .map_err(|e| anyhow::anyhow!("{:?}", e))
         })
     }
 
-    pub async fn wait_for_loading_image(
+    async fn wait_for_loading_image(
         mut receiver: postage::watch::Receiver<
-            Option<Result<Entity<ImageItem>, Arc<anyhow::Error>>>,
+            Option<Result<ImageOpenOutcome, Arc<anyhow::Error>>>,
         >,
-    ) -> Result<Entity<ImageItem>, Arc<anyhow::Error>> {
+    ) -> Result<ImageOpenOutcome, Arc<anyhow::Error>> {
         loop {
             if let Some(result) = receiver.borrow().as_ref() {
                 match result {
@@ -648,12 +681,12 @@ impl RemoteImageStore {
 }
 
 impl ImageStoreImpl for Entity<LocalImageStore> {
-    fn open_image(
+    fn open_image_impl(
         &self,
         path: Arc<RelPath>,
         worktree: Entity<Worktree>,
         cx: &mut Context<ImageStore>,
-    ) -> Task<Result<Entity<ImageItem>>> {
+    ) -> Task<Result<ImageOpenOutcome>> {
         let this = self.clone();
 
         let load_file = worktree.update(cx, |worktree, cx| {
@@ -661,7 +694,28 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
         });
         cx.spawn(async move |image_store, cx| {
             let LoadedBinaryFile { file, content } = load_file.await?;
-            let image = create_gpui_image(content)?;
+            let format = match image::guess_format(&content) {
+                Ok(f) => f,
+                Err(image::ImageError::Unsupported(e)) => {
+                    return Ok(ImageOpenOutcome::NotAnImage(Arc::new(anyhow::anyhow!(e))));
+                }
+                Err(e) => return Err(e.into()),
+            };
+
+            let image = Arc::new(gpui::Image::from_bytes(
+                match format {
+                    image::ImageFormat::Png => gpui::ImageFormat::Png,
+                    image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
+                    image::ImageFormat::Gif => gpui::ImageFormat::Gif,
+                    image::ImageFormat::WebP => gpui::ImageFormat::Webp,
+                    image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
+                    image::ImageFormat::Ico => gpui::ImageFormat::Ico,
+                    image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
+                    image::ImageFormat::Pnm => gpui::ImageFormat::Pnm,
+                    format => anyhow::bail!("Image format {format:?} not supported"),
+                },
+                content,
+            ));
 
             let entity = cx.new(|cx| ImageItem {
                 id: cx.entity_id().as_non_zero_u64().into(),
@@ -692,7 +746,7 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
                 anyhow::Ok(())
             })?;
 
-            Ok(entity)
+            Ok(ImageOpenOutcome::Opened(entity))
         })
     }
 
@@ -721,12 +775,12 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
 }
 
 impl ImageStoreImpl for Entity<RemoteImageStore> {
-    fn open_image(
+    fn open_image_impl(
         &self,
         path: Arc<RelPath>,
         worktree: Entity<Worktree>,
         cx: &mut Context<ImageStore>,
-    ) -> Task<Result<Entity<ImageItem>>> {
+    ) -> Task<Result<ImageOpenOutcome>> {
         let worktree_id = worktree.read(cx).id().to_proto();
         let (project_id, client) = {
             let store = self.read(cx);
@@ -746,12 +800,10 @@ impl ImageStoreImpl for Entity<RemoteImageStore> {
             let image_id = ImageId::from(
                 NonZeroU64::new(response.image_id).context("invalid image_id in response")?,
             );
-
-            remote_store
-                .update(cx, |remote_store, cx| {
-                    remote_store.wait_for_remote_image(image_id, cx)
-                })
-                .await
+            let entity = remote_store
+                .update(cx, |store, cx| store.wait_for_remote_image(image_id, cx))
+                .await?;
+            Ok(ImageOpenOutcome::Opened(entity))
         })
     }
 

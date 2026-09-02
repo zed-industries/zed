@@ -9348,9 +9348,9 @@ mod tests {
                 _project: &Entity<Project>,
                 path: &ProjectPath,
                 cx: &mut App,
-            ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
+            ) -> Option<Task<anyhow::Result<Option<Entity<Self>>>>> {
                 let project_path = path.clone();
-                Some(cx.spawn(async move |cx| Ok(cx.new(|_| Self { project_path }))))
+                Some(cx.spawn(async move |cx| Ok(Some(cx.new(|_| Self { project_path })))))
             }
 
             fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {

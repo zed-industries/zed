@@ -907,7 +907,7 @@ type BuildProjectItemForPathFn =
         &ProjectPath,
         &mut Window,
         &mut App,
-    ) -> Option<Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>>>;
+    ) -> Option<Task<Result<Option<(Option<ProjectEntryId>, WorkspaceItemBuilder)>>>>;
 
 #[derive(Clone, Default)]
 struct ProjectItemRegistry {
@@ -944,7 +944,7 @@ impl ProjectItemRegistry {
                             entry_abs_path.as_deref().unwrap_or(&project_path.path.as_std_path())
                         )
                     }) {
-                        Ok(project_item) => {
+                        Ok(Some(project_item)) => {
                             let project_item = project_item;
                             let project_entry_id: Option<ProjectEntryId> =
                                 project_item.read_with(cx, project::ProjectItem::entry_id);
@@ -961,8 +961,9 @@ impl ProjectItemRegistry {
                                     })) as Box<dyn ItemHandle>
                                 },
                             ) as Box<_>;
-                            Ok((project_entry_id, build_workspace_item))
+                            Ok(Some((project_entry_id, build_workspace_item)))
                         }
+                        Ok(None) => Ok(None),
                         Err(e) => {
                             log::warn!("Failed to open a project item: {e:#}");
                             if e.error_code() == ErrorCode::Internal {
@@ -982,7 +983,7 @@ impl ProjectItemRegistry {
                                             },
                                         )
                                         as Box<_>;
-                                        return Ok((None, build_workspace_item));
+                                        return Ok(Some((None, build_workspace_item)));
                                     }
                                 }
                             }
@@ -1000,15 +1001,23 @@ impl ProjectItemRegistry {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
-        let Some(open_project_item) = self
-            .build_project_item_for_path_fns
-            .iter()
-            .rev()
-            .find_map(|open_project_item| open_project_item(project, path, window, cx))
-        else {
-            return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
-        };
-        open_project_item
+        let build_fns = self.build_project_item_for_path_fns.clone();
+        let project = project.clone();
+        let path = path.clone();
+
+        window.spawn(cx, async move |cx| {
+            for build_fn in build_fns.into_iter().rev() {
+                let task = cx.update(|window, cx| build_fn(&project, &path, window, cx))?;
+                if let Some(task) = task {
+                    match task.await {
+                        Ok(Some(result)) => return Ok(result),
+                        Ok(None) => continue,
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+            Err(anyhow::anyhow!("cannot open file {:?}", path.path))
+        })
     }
 
     fn build_item<T: project::ProjectItem>(
@@ -17523,10 +17532,14 @@ mod tests {
                 _project: &Entity<Project>,
                 path: &ProjectPath,
                 cx: &mut App,
-            ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
+            ) -> Option<Task<anyhow::Result<Option<Entity<Self>>>>> {
                 if path.path.extension().unwrap() == "png" {
                     let project_path = path.clone();
-                    Some(cx.spawn(async move |cx| Ok(cx.new(|_| TestPngItem { project_path }))))
+                    Some(
+                        cx.spawn(async move |cx| {
+                            Ok(Some(cx.new(|_| TestPngItem { project_path })))
+                        }),
+                    )
                 } else {
                     None
                 }
@@ -17613,9 +17626,9 @@ mod tests {
                 _project: &Entity<Project>,
                 path: &ProjectPath,
                 cx: &mut App,
-            ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
+            ) -> Option<Task<anyhow::Result<Option<Entity<Self>>>>> {
                 if path.path.extension().unwrap() == "ipynb" {
-                    Some(cx.spawn(async move |cx| Ok(cx.new(|_| TestIpynbItem {}))))
+                    Some(cx.spawn(async move |cx| Ok(Some(cx.new(|_| TestIpynbItem {})))))
                 } else {
                     None
                 }

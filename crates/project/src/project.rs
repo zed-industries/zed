@@ -193,7 +193,7 @@ pub trait ProjectItem: 'static {
         project: &Entity<Project>,
         path: &ProjectPath,
         cx: &mut App,
-    ) -> Option<Task<Result<Entity<Self>>>>
+    ) -> Option<Task<Result<Option<Entity<Self>>>>>
     where
         Self: Sized;
     fn entry_id(&self, cx: &App) -> Option<ProjectEntryId>;
@@ -3487,25 +3487,54 @@ impl Project {
         });
 
         let weak_project = cx.entity().downgrade();
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |_, mut cx| {
             let image_item = open_image_task.await?;
-
-            // Check if metadata already exists (e.g., for remote images)
-            let needs_metadata =
-                cx.read_entity(&image_item, |item, _| item.image_metadata.is_none());
-
-            if needs_metadata {
-                let project = weak_project.upgrade().context("Project dropped")?;
-                let metadata =
-                    ImageItem::load_image_metadata(image_item.clone(), project, cx).await?;
-                image_item.update(cx, |image_item, cx| {
-                    image_item.image_metadata = Some(metadata);
-                    cx.emit(ImageItemEvent::MetadataUpdated);
-                });
-            }
-
-            Ok(image_item)
+            Self::ensure_image_metadata(image_item, weak_project, &mut cx).await
         })
+    }
+
+    pub fn try_open_image(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Entity<ImageItem>>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+
+        let open_image_task = self.image_store.update(cx, |image_store, cx| {
+            image_store.try_open_image(path.into(), cx)
+        });
+
+        let weak_project = cx.entity().downgrade();
+        cx.spawn(async move |_, mut cx| {
+            let Some(image_item) = open_image_task.await? else {
+                return Ok(None);
+            };
+            Self::ensure_image_metadata(image_item, weak_project, &mut cx)
+                .await
+                .map(Some)
+        })
+    }
+
+    async fn ensure_image_metadata(
+        image_item: Entity<ImageItem>,
+        weak_project: WeakEntity<Project>,
+        cx: &mut gpui::AsyncApp,
+    ) -> Result<Entity<ImageItem>> {
+        // Check if metadata already exists (e.g., for remote images)
+        let needs_metadata = cx.read_entity(&image_item, |item, _| item.image_metadata.is_none());
+
+        if needs_metadata {
+            let project = weak_project.upgrade().context("Project dropped")?;
+            let metadata = ImageItem::load_image_metadata(image_item.clone(), project, cx).await?;
+            image_item.update(cx, |image_item, cx| {
+                image_item.image_metadata = Some(metadata);
+                cx.emit(ImageItemEvent::MetadataUpdated);
+            });
+        }
+
+        Ok(image_item)
     }
 
     async fn send_buffer_ordered_messages(
@@ -6811,8 +6840,12 @@ impl ProjectItem for Buffer {
         project: &Entity<Project>,
         path: &ProjectPath,
         cx: &mut App,
-    ) -> Option<Task<Result<Entity<Self>>>> {
-        Some(project.update(cx, |project, cx| project.open_buffer(path.clone(), cx)))
+    ) -> Option<Task<Result<Option<Entity<Self>>>>> {
+        let task = project.update(cx, |project, cx| project.open_buffer(path.clone(), cx));
+        Some(cx.background_spawn(async move {
+            let buffer = task.await?;
+            Ok(Some(buffer))
+        }))
     }
 
     fn entry_id(&self, _cx: &App) -> Option<ProjectEntryId> {
