@@ -15,6 +15,7 @@ mod document_colors;
 mod document_links;
 mod document_symbols;
 mod dynamic_registration;
+pub mod emmet_ext;
 mod folding_ranges;
 mod inlay_hints;
 pub mod json_language_server_ext;
@@ -4605,6 +4606,8 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_lsp_ext_run_flycheck);
         client.add_entity_request_handler(Self::handle_lsp_ext_clear_flycheck);
         client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
+        client
+            .add_entity_request_handler(Self::handle_lsp_command::<emmet_ext::ExpandAbbreviation>);
         client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::OpenDocs>);
         client.add_entity_request_handler(
             Self::handle_lsp_command::<lsp_ext_command::GoToParentModule>,
@@ -5714,16 +5717,16 @@ impl LspStore {
             Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
             Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
             Err(err) => {
-                let message = format!(
-                    "{} via {} failed: {}",
+                let err = err.context(format!(
+                    "{} via {} failed",
                     request.display_name(),
                     language_server.name(),
-                    err
-                );
+                ));
+                let message = format!("{err:#}");
                 if should_log_lsp_request_failure(&message) {
                     log::warn!("{message}");
                 }
-                return Task::ready(Err(anyhow!(message)));
+                return Task::ready(Err(err));
             }
         };
 
@@ -5775,16 +5778,16 @@ impl LspStore {
             let result = lsp_request.await.into_response();
 
             let response = result.map_err(|err| {
-                let message = format!(
-                    "{} via {} failed: {}",
+                let err = err.context(format!(
+                    "{} via {} failed",
                     request.display_name(),
                     language_server.name(),
-                    err
-                );
+                ));
+                let message = format!("{err:#}");
                 if should_log_lsp_request_failure(&message) {
                     log::warn!("{message}");
                 }
-                anyhow::anyhow!(message)
+                err
             })?;
 
             request
@@ -9168,6 +9171,13 @@ impl LspStore {
             .unwrap_or_default()
     }
 
+    pub fn language_server_ids_for_opened_buffer(
+        &self,
+        buffer_id: BufferId,
+    ) -> Option<&HashSet<LanguageServerId>> {
+        self.as_local()?.buffers_opened_in_servers.get(&buffer_id)
+    }
+
     pub fn language_server_for_local_buffer<'a>(
         &'a self,
         buffer: &'a Buffer,
@@ -9969,14 +9979,10 @@ impl LspStore {
             cx.clone(),
         )
         .await?;
+        let server = request.language_server_to_query();
         let response = this
             .update(&mut cx, |this, cx| {
-                this.request_lsp(
-                    buffer_handle.clone(),
-                    LanguageServerToQuery::FirstCapable,
-                    request,
-                    cx,
-                )
+                this.request_lsp(buffer_handle.clone(), server, request, cx)
             })
             .await?;
         this.update(&mut cx, |this, cx| {
