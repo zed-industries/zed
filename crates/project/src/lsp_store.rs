@@ -64,7 +64,7 @@ use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt,
     channel::oneshot,
-    future::{Either, Shared, join_all, select},
+    future::{Shared, join_all},
     select, select_biased,
     stream::FuturesUnordered,
 };
@@ -176,6 +176,10 @@ pub use worktree::{
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
 const WORKSPACE_DIAGNOSTICS_TOKEN_START: &str = "id:";
+const WORKSPACE_DIAGNOSTICS_REPULL_DELAY: Duration = Duration::from_secs(2);
+const CROSS_BUFFER_DIAGNOSTICS_PULL_DELAY: Duration = Duration::from_millis(100);
+const DOCUMENT_DIAGNOSTICS_RETRIGGER_LIMIT: usize = 3;
+const DOCUMENT_DIAGNOSTICS_RETRIGGER_DELAY: Duration = Duration::from_millis(100);
 const SERVER_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10);
 static NEXT_PROMPT_REQUEST_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -4693,6 +4697,18 @@ fn should_log_lsp_request_failure(message: &str) -> bool {
     !(message.ends_with("content modified") || message.ends_with("server cancelled the request"))
 }
 
+fn should_log_lsp_response_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<lsp::ResponseError>()
+        .is_none_or(|response_error| !response_error.is_request_denied())
+}
+
+fn lsp_pull_cancelled_with_retrigger(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<lsp::ResponseError>()
+        .is_some_and(|response_error| response_error.should_retrigger())
+}
+
 impl LspStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_lsp_query);
@@ -5188,7 +5204,14 @@ impl LspStore {
 
     fn background_diagnostics_worker(cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
-            while let Ok(Some(task)) = this.update(cx, |this, cx| this.refresh_next_buffer(cx)) {
+            loop {
+                cx.background_executor()
+                    .timer(CROSS_BUFFER_DIAGNOSTICS_PULL_DELAY)
+                    .await;
+                let Ok(Some(task)) = this.update(cx, |this, cx| this.refresh_next_buffer(cx))
+                else {
+                    return;
+                };
                 task.await.log_err();
             }
         })
@@ -6161,16 +6184,18 @@ impl LspStore {
             let result = lsp_request.await.into_response();
 
             let response = result.map_err(|err| {
-                let err = err.context(format!(
+                let context = format!(
                     "{} via {} failed",
                     request.display_name(),
-                    language_server.name(),
-                ));
-                let message = format!("{err:#}");
-                if should_log_lsp_request_failure(&message) {
-                    log::warn!("{message}");
+                    language_server.name()
+                );
+                if should_log_lsp_response_error(&err) {
+                    let message = format!("{context}: {err}");
+                    if should_log_lsp_request_failure(&message) {
+                        log::warn!("{message}");
+                    }
                 }
-                err
+                err.context(context)
             })?;
 
             request
@@ -8813,17 +8838,32 @@ impl LspStore {
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
-        let diagnostics = self.pull_diagnostics(buffer, cx);
+        let mut diagnostics_task = self.pull_diagnostics(buffer.clone(), cx);
         cx.spawn(async move |lsp_store, cx| {
-            let diagnostics = match diagnostics.await {
-                Ok(Some(diagnostics)) => diagnostics,
-                Ok(None) => return Ok(()),
-                Err(error) if should_log_lsp_request_failure(&format!("{error:#}")) => {
-                    return Err(error).context("pulling diagnostics");
+            let mut retriggers_left = DOCUMENT_DIAGNOSTICS_RETRIGGER_LIMIT;
+            let diagnostics = loop {
+                match diagnostics_task.await {
+                    Ok(Some(diagnostics)) => break diagnostics,
+                    Ok(None) => return Ok(()),
+                    Err(error)
+                        if retriggers_left > 0 && lsp_pull_cancelled_with_retrigger(&error) =>
+                    {
+                        retriggers_left -= 1;
+                        cx.background_executor()
+                            .timer(DOCUMENT_DIAGNOSTICS_RETRIGGER_DELAY)
+                            .await;
+                        diagnostics_task = lsp_store.update(cx, |lsp_store, cx| {
+                            lsp_store.pull_diagnostics(buffer.clone(), cx)
+                        })?;
+                    }
+                    Err(error)
+                        if should_log_lsp_response_error(&error)
+                            && should_log_lsp_request_failure(&format!("{error:#}")) =>
+                    {
+                        return Err(error).context("pulling diagnostics");
+                    }
+                    Err(_) => return Ok(()),
                 }
-                // This is a weird way to suppress diagnostic failures on server side cancellation,
-                // we should actually retry the request here?
-                Err(_) => return Ok(()),
             };
             lsp_store.update(cx, |lsp_store, cx| {
                 if lsp_store.as_local().is_none() {
@@ -10466,7 +10506,9 @@ impl LspStore {
                 match response_result {
                     Ok(response) => responses.push((server_id, response)),
                     // rust-analyzer likes to error with this when its still loading up
-                    Err(e) if format!("{e:#}").ends_with("content modified") => (),
+                    Err(e)
+                        if !should_log_lsp_response_error(&e)
+                            || !should_log_lsp_request_failure(&format!("{e:#}")) => {}
                     Err(e) => log::error!("Error handling response for request {request:?}: {e:#}"),
                 }
             }
@@ -11728,12 +11770,12 @@ impl LspStore {
                 );
             }
             lsp::ProgressParamsValue::WorkspaceDiagnostic(report) => {
-                let registration_id = match progress_params.token {
-                    lsp::NumberOrString::Number(_) => None,
-                    lsp::NumberOrString::String(token) => token
-                        .split_once(WORKSPACE_DIAGNOSTICS_TOKEN_START)
-                        .map(|(_, id)| id.to_owned()),
+                let lsp::NumberOrString::String(token) = progress_params.token else {
+                    return;
                 };
+                let registration_id = token
+                    .split_once(WORKSPACE_DIAGNOSTICS_TOKEN_START)
+                    .map(|(_, id)| id.to_owned());
                 if let Some(LanguageServerState::Running {
                     workspace_diagnostics_refresh_tasks,
                     ..
@@ -11742,6 +11784,8 @@ impl LspStore {
                     .and_then(|local| local.language_servers.get_mut(&language_server_id))
                     && let Some(workspace_diagnostics) =
                         workspace_diagnostics_refresh_tasks.get_mut(&registration_id)
+                    && workspace_diagnostics.current_request_token.as_deref()
+                        == Some(token.as_str())
                 {
                     workspace_diagnostics.progress_tx.try_send(()).ok();
                     self.apply_workspace_diagnostic_report(
@@ -14000,6 +14044,27 @@ impl LspStore {
     /// Gets all result_ids for a workspace diagnostics pull request.
     /// First, it tries to find buffer's result_id retrieved via the diagnostics pull; if it fails, it falls back to the workspace disagnostics pull result_id.
     /// The latter is supposed to be of lower priority as we keep on pulling diagnostics for open buffers eagerly.
+    fn set_workspace_refresh_token(
+        &mut self,
+        server_id: LanguageServerId,
+        registration_id: &Option<String>,
+        token: Option<String>,
+    ) {
+        if let Some(workspace_diagnostics) = self
+            .as_local_mut()
+            .and_then(|local| local.language_servers.get_mut(&server_id))
+            .and_then(|state| match state {
+                LanguageServerState::Running {
+                    workspace_diagnostics_refresh_tasks,
+                    ..
+                } => workspace_diagnostics_refresh_tasks.get_mut(registration_id),
+                _ => None,
+            })
+        {
+            workspace_diagnostics.current_request_token = token;
+        }
+    }
+
     pub fn result_ids_for_workspace_refresh(
         &self,
         server_id: LanguageServerId,
@@ -14104,15 +14169,32 @@ impl LspStore {
         buffer_id: BufferId,
         cx: &mut Context<Self>,
     ) {
-        let Some(local) = self.as_local_mut() else {
+        let Some(buffer) = self.buffer_store.read(cx).get(buffer_id) else {
             return;
         };
-        let Some(languages_servers) = local.buffers_opened_in_servers.get(&buffer_id).cloned()
+        let Some(language_servers) = self
+            .language_server_ids_for_opened_buffer(buffer_id)
+            .cloned()
         else {
             return;
         };
-        for server_id in languages_servers {
-            let _ = self.pull_document_diagnostics_for_server(server_id, Some(buffer_id), cx);
+        for server_id in language_servers {
+            let inter_file_dependencies = self.text_document_capability_matches_for_server(
+                &buffer,
+                server_id,
+                "textDocument/diagnostic",
+                |capabilities| {
+                    capabilities
+                        .server_capabilities
+                        .diagnostic_provider
+                        .as_ref()
+                        .is_some_and(diagnostics_inter_file_dependencies)
+                },
+                cx,
+            );
+            if inter_file_dependencies {
+                let _ = self.pull_document_diagnostics_for_server(server_id, Some(buffer_id), cx);
+            }
         }
     }
 
@@ -14418,7 +14500,9 @@ impl LspStore {
                         match server_task.await {
                             Ok(response) => responses.push((server_id, response)),
                             // rust-analyzer likes to error with this when its still loading up
-                            Err(e) if format!("{e:#}").ends_with("content modified") => (),
+                            Err(e)
+                                if !should_log_lsp_response_error(&e)
+                                    || !should_log_lsp_request_failure(&format!("{e:#}")) => {}
                             Err(e) => log::error!(
                                 "Error handling response for request {request:?}: {e:#}"
                             ),
@@ -14929,7 +15013,7 @@ fn lsp_workspace_diagnostics_refresh(
     let registration_id_shared = registration_id.as_ref().map(SharedString::from);
 
     let (progress_tx, mut progress_rx) = mpsc::channel(1);
-    let (mut refresh_tx, mut refresh_rx) = mpsc::channel::<Option<oneshot::Sender<bool>>>(1);
+    let (mut refresh_tx, mut refresh_rx) = mpsc::channel::<Option<oneshot::Sender<bool>>>(8);
     refresh_tx.try_send(None).ok();
 
     let request_timeout = ProjectSettings::get_global(cx)
@@ -14947,6 +15031,7 @@ fn lsp_workspace_diagnostics_refresh(
     let workspace_query_language_server = cx.spawn(async move |lsp_store, cx| {
         let mut attempts = 0;
         let max_attempts = 50;
+        let retries_after_exhaustion = 3;
         let mut requests = 0;
 
         loop {
@@ -14954,14 +15039,22 @@ fn lsp_workspace_diagnostics_refresh(
                 return;
             };
             let mut completion_txs = completion_tx.into_iter().collect::<Vec<_>>();
+            let mut queued_completion_txs = Vec::<oneshot::Sender<bool>>::new();
 
             'request: loop {
                 requests += 1;
                 if attempts > max_attempts {
                     log::error!(
-                        "Failed to pull workspace diagnostics {max_attempts} times, aborting"
+                        "Failed to pull workspace diagnostics {max_attempts} times, pausing until the next refresh"
                     );
-                    return;
+                    for tx in completion_txs
+                        .drain(..)
+                        .chain(queued_completion_txs.drain(..))
+                    {
+                        tx.send(false).ok();
+                    }
+                    attempts = max_attempts + 1 - retries_after_exhaustion;
+                    break 'request;
                 }
                 let backoff_millis = (50 * (1 << attempts)).clamp(30, 1000);
                 cx.background_executor()
@@ -14971,11 +15064,26 @@ fn lsp_workspace_diagnostics_refresh(
 
                 // Absorb refresh requests that queued up in the meantime, so their
                 // waiters are resolved by this attempt instead of waiting behind it.
+                completion_txs.append(&mut queued_completion_txs);
                 while let Ok(queued_refresh) = refresh_rx.try_recv() {
                     completion_txs.extend(queued_refresh);
                 }
 
+                let token = if let Some(registration_id) = &registration_id {
+                    format!(
+                        "workspace/diagnostic/{}/{requests}/{WORKSPACE_DIAGNOSTICS_TOKEN_START}{registration_id}",
+                        server.server_id(),
+                    )
+                } else {
+                    format!("workspace/diagnostic/{}/{requests}", server.server_id())
+                };
+
                 let Ok(previous_result_ids) = lsp_store.update(cx, |lsp_store, _| {
+                    lsp_store.set_workspace_refresh_token(
+                        server.server_id(),
+                        &registration_id,
+                        Some(token.clone()),
+                    );
                     lsp_store
                         .result_ids_for_workspace_refresh(server.server_id(), &registration_id_shared)
                         .into_iter()
@@ -14991,60 +15099,77 @@ fn lsp_workspace_diagnostics_refresh(
                     return;
                 };
 
-                let token = if let Some(registration_id) = &registration_id {
-                    format!(
-                        "workspace/diagnostic/{}/{requests}/{WORKSPACE_DIAGNOSTICS_TOKEN_START}{registration_id}",
-                        server.server_id(),
-                    )
-                } else {
-                    format!("workspace/diagnostic/{}/{requests}", server.server_id())
-                };
-
                 progress_rx.try_recv().ok();
-                // Restart the timeout whenever a partial result arrives: streaming
-                // servers may legitimately take longer than a single timeout period,
-                // but a server that stops streaming without completing the request
-                // should still time out instead of hanging forever.
-                let timer = async {
+                let mut refresh_requested = false;
+                let mut request = pin!(
+                    server
+                        .request::<lsp::WorkspaceDiagnosticRequest>(
+                            lsp::WorkspaceDiagnosticParams {
+                                previous_result_ids,
+                                identifier: identifier.clone(),
+                                work_done_progress_params: Default::default(),
+                                partial_result_params: lsp::PartialResultParams {
+                                    partial_result_token: Some(lsp::ProgressToken::String(token)),
+                                },
+                            },
+                            Duration::MAX,
+                        )
+                        .fuse()
+                );
+                let response_result = 'response: loop {
+                    let mut inactivity_timer = pin!(server.request_timer(timeout).fuse());
                     loop {
-                        let timer = pin!(server.request_timer(timeout).fuse());
-                        let progress = pin!(progress_rx.recv().fuse());
-                        match select(timer, progress).await {
-                            Either::Left((message, ..)) => break message,
-                            Either::Right((Some(()), ..)) => {}
-                            Either::Right((None, timer)) => break timer.await,
+                        let mut progress = pin!(progress_rx.recv().fuse());
+                        let mut refresh = pin!(refresh_rx.recv().fuse());
+                        select_biased! {
+                            response = request => break 'response response,
+                            new_progress = progress => match new_progress {
+                                Some(()) => continue 'response,
+                                None => return,
+                            },
+                            new_refresh = refresh => match new_refresh {
+                                Some(completion_tx) => {
+                                    refresh_requested = true;
+                                    queued_completion_txs.extend(completion_tx);
+                                }
+                                None => return,
+                            },
+                            _ = inactivity_timer => {
+                                // Release everyone waiting on this refresh (e.g. the agent's
+                                // diagnostics tool), including waiters that queued up while the
+                                // request was in flight, so they can fall back to cached
+                                // diagnostics instead of waiting through every retry.
+                                for tx in completion_txs
+                                    .drain(..)
+                                    .chain(queued_completion_txs.drain(..))
+                                {
+                                    tx.send(false).ok();
+                                }
+                                continue 'response;
+                            }
                         }
                     }
                 };
-                let response_result = server
-                    .request_with_timer::<lsp::WorkspaceDiagnosticRequest, _>(
-                        lsp::WorkspaceDiagnosticParams {
-                            previous_result_ids,
-                            identifier: identifier.clone(),
-                            work_done_progress_params: Default::default(),
-                            partial_result_params: lsp::PartialResultParams {
-                                partial_result_token: Some(lsp::ProgressToken::String(token)),
-                            },
-                        },
-                        timer,
-                    )
-                    .await;
+                if lsp_store
+                    .update(cx, |lsp_store, _| {
+                        lsp_store.set_workspace_refresh_token(
+                            server.server_id(),
+                            &registration_id,
+                            None,
+                        );
+                    })
+                    .is_err()
+                {
+                    return;
+                }
 
                 // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic_refresh
                 // >  If a server closes a workspace diagnostic pull request the client should re-trigger the request.
                 match response_result {
                     ConnectionResult::Timeout => {
-                        log::error!("Timeout during workspace diagnostics pull");
-                        // Release everyone waiting on this refresh (e.g. the agent's
-                        // diagnostics tool), including waiters that queued up while the
-                        // request was in flight, so they can fall back to cached
-                        // diagnostics instead of waiting through every retry.
-                        while let Ok(queued_refresh) = refresh_rx.try_recv() {
-                            completion_txs.extend(queued_refresh);
-                        }
-                        for tx in completion_txs.drain(..) {
-                            tx.send(false).ok();
-                        }
+                        debug_panic!(
+                            "Unexpected workspace diagnostics pull timeout without a request timer"
+                        );
                         continue 'request;
                     }
                     ConnectionResult::ConnectionReset => {
@@ -15052,11 +15177,23 @@ fn lsp_workspace_diagnostics_refresh(
                         continue 'request;
                     }
                     ConnectionResult::Result(Err(e)) => {
-                        log::error!("Error during workspace diagnostics pull: {e:#}");
-                        for tx in completion_txs.drain(..) {
-                            tx.send(false).ok();
+                        if lsp_pull_cancelled_with_retrigger(&e) {
+                            attempts = 0;
+                        } else {
+                            if should_log_lsp_response_error(&e) {
+                                log::error!("Error during workspace diagnostics pull: {e:#}");
+                            } else {
+                                log::debug!("Workspace diagnostics pull denied: {e:#}");
+                            }
+                            for tx in completion_txs.drain(..) {
+                                tx.send(false).ok();
+                            }
+                            if refresh_requested {
+                                continue 'request;
+                            }
+                            debug_assert!(queued_completion_txs.is_empty());
+                            break 'request;
                         }
-                        break 'request;
                     }
                     ConnectionResult::Result(Ok(pulled_diagnostics)) => {
                         attempts = 0;
@@ -15076,9 +15213,26 @@ fn lsp_workspace_diagnostics_refresh(
                         for tx in completion_txs.drain(..) {
                             tx.send(true).ok();
                         }
-                        break 'request;
                     }
                 }
+
+                if refresh_requested {
+                    continue 'request;
+                }
+                let mut repull_timer = pin!(
+                    cx.background_executor()
+                        .timer(WORKSPACE_DIAGNOSTICS_REPULL_DELAY)
+                        .fuse()
+                );
+                let mut refresh = pin!(refresh_rx.recv().fuse());
+                select_biased! {
+                    new_refresh = refresh => match new_refresh {
+                        Some(completion_tx) => completion_txs.extend(completion_tx),
+                        None => return,
+                    },
+                    _ = repull_timer => {}
+                }
+                continue 'request;
             }
         }
     });
@@ -15086,8 +15240,22 @@ fn lsp_workspace_diagnostics_refresh(
     Some(WorkspaceRefreshTask {
         refresh_tx,
         progress_tx,
+        current_request_token: None,
         task: workspace_query_language_server,
     })
+}
+
+fn diagnostics_inter_file_dependencies(options: &DiagnosticServerCapabilities) -> bool {
+    match options {
+        lsp::DiagnosticServerCapabilities::Options(diagnostic_options) => {
+            diagnostic_options.inter_file_dependencies
+        }
+        lsp::DiagnosticServerCapabilities::RegistrationOptions(registration_options) => {
+            registration_options
+                .diagnostic_options
+                .inter_file_dependencies
+        }
+    }
 }
 
 fn buffer_diagnostic_identifier(options: &DiagnosticServerCapabilities) -> Option<SharedString> {
@@ -15624,6 +15792,7 @@ impl LanguageServerLogType {
 pub struct WorkspaceRefreshTask {
     refresh_tx: mpsc::Sender<Option<oneshot::Sender<bool>>>,
     progress_tx: mpsc::Sender<()>,
+    current_request_token: Option<String>,
     #[allow(dead_code)]
     task: Task<()>,
 }
@@ -16408,7 +16577,6 @@ mod tests {
         ));
         assert!(should_log_lsp_request_failure("something else entirely"));
     }
-
     #[test]
     fn synced_server_capabilities_wire_format_is_compatible_with_plain_capabilities() {
         let registrations: dynamic_registration::TextDocumentRegistrations =
@@ -16573,5 +16741,50 @@ mod tests {
                 server_capabilities: rename_capabilities(),
             },
         )])
+    }
+
+    #[test]
+    fn lsp_pull_cancelled_with_retrigger_follows_the_spec() {
+        assert!(lsp_pull_cancelled_with_retrigger(&server_cancellation(
+            None
+        )));
+        assert!(lsp_pull_cancelled_with_retrigger(&server_cancellation(
+            Some(serde_json::json!({ "retriggerRequest": true }))
+        )));
+        assert!(!lsp_pull_cancelled_with_retrigger(&server_cancellation(
+            Some(serde_json::json!({ "retriggerRequest": false }))
+        )));
+        assert!(lsp_pull_cancelled_with_retrigger(
+            &server_cancellation(None).context("pulling diagnostics")
+        ));
+        assert!(!lsp_pull_cancelled_with_retrigger(&anyhow::Error::new(
+            lsp::ResponseError::new(lsp::ResponseErrorCode::RequestFailed, "request failed")
+        )));
+        assert!(!lsp_pull_cancelled_with_retrigger(&anyhow::anyhow!(
+            "server cancelled the request"
+        )));
+    }
+
+    #[test]
+    fn should_log_lsp_response_error_suppresses_denied_requests() {
+        assert!(!should_log_lsp_response_error(&server_cancellation(None)));
+        assert!(!should_log_lsp_response_error(&anyhow::Error::new(
+            lsp::ResponseError::new(
+                lsp::ResponseErrorCode::ContentModified,
+                "content changed meanwhile",
+            )
+        )));
+        assert!(should_log_lsp_response_error(&anyhow::Error::new(
+            lsp::ResponseError::new(lsp::ResponseErrorCode::RequestFailed, "request failed")
+        )));
+        assert!(should_log_lsp_response_error(&anyhow::anyhow!(
+            "something else entirely"
+        )));
+    }
+
+    fn server_cancellation(data: Option<serde_json::Value>) -> anyhow::Error {
+        let mut response_error = lsp::ResponseError::server_cancelled();
+        response_error.data = data;
+        anyhow::Error::new(response_error)
     }
 }
