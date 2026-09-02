@@ -1418,6 +1418,16 @@ impl LocalLspStore {
         }
     }
 
+    fn server_pulls_workspace_diagnostics(&self, server_id: LanguageServerId) -> bool {
+        match self.language_servers.get(&server_id) {
+            Some(LanguageServerState::Running {
+                workspace_diagnostics_refresh_tasks,
+                ..
+            }) => !workspace_diagnostics_refresh_tasks.is_empty(),
+            _ => false,
+        }
+    }
+
     fn language_servers_for_buffer<'a>(
         &'a self,
         buffer: &'a Buffer,
@@ -3223,16 +3233,16 @@ impl LocalLspStore {
         buffer: &Entity<Buffer>,
         old_file: &File,
         cx: &mut App,
-    ) {
+    ) -> Vec<LanguageServerId> {
         let old_path = match old_file.as_local() {
             Some(local) => local.abs_path(cx),
-            None => return,
+            None => return Vec::new(),
         };
 
         let Ok(file_url) = lsp::Uri::from_file_path(old_path.as_path()) else {
-            return;
+            return Vec::new();
         };
-        self.unregister_buffer_from_language_servers(buffer, &file_url, cx);
+        self.unregister_buffer_from_language_servers(buffer, &file_url, cx)
     }
 
     pub(crate) fn unregister_buffer_from_language_servers(
@@ -3240,19 +3250,42 @@ impl LocalLspStore {
         buffer: &Entity<Buffer>,
         file_url: &lsp::Uri,
         cx: &mut App,
-    ) {
+    ) -> Vec<LanguageServerId> {
+        let abs_path = file_url.to_file_path().ok();
         buffer.update(cx, |buffer, cx| {
-            let mut snapshots = self.buffer_snapshots.remove(&buffer.remote_id());
+            let buffer_id = buffer.remote_id();
+            let mut snapshots = self.buffer_snapshots.remove(&buffer_id);
 
+            let mut detached_servers = Vec::new();
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
+                let server_id = language_server.server_id();
                 if snapshots
                     .as_mut()
-                    .is_some_and(|map| map.remove(&language_server.server_id()).is_some())
+                    .is_some_and(|map| map.remove(&server_id).is_some())
                 {
                     language_server.unregister_buffer(file_url.clone());
+                    detached_servers.push(server_id);
                 }
             }
-        });
+
+            for &server_id in &detached_servers {
+                buffer.set_completion_triggers(server_id, Default::default(), cx);
+                if let Some(opened_in_servers) = self.buffers_opened_in_servers.get_mut(&buffer_id)
+                {
+                    opened_in_servers.remove(&server_id);
+                }
+                if let Some(abs_path) = &abs_path
+                    && let Some(result_ids) =
+                        self.buffer_pull_diagnostics_result_ids.get_mut(&server_id)
+                {
+                    for result_ids in result_ids.values_mut() {
+                        result_ids.remove(abs_path);
+                    }
+                }
+            }
+
+            detached_servers
+        })
     }
 
     fn buffer_snapshot_for_lsp_version(
@@ -5131,46 +5164,27 @@ impl LspStore {
                                 );
                             }
 
-                            let diagnostic_updates = local
+                            // Closing the buffer does not change which servers are relevant
+                            // to its path, so pushed diagnostics stay: a running server may
+                            // still describe the file. Pulled document diagnostics need an
+                            // open document to be refreshed, so they are dropped, except for
+                            // servers whose workspace pull still owns the path's verdict.
+                            let servers_to_clear = local
                                 .language_servers
-                                .iter()
-                                .filter_map(|(server_id, state)| {
-                                    let supports_workspace_diagnostics = match state {
-                                        LanguageServerState::Running {
-                                            workspace_diagnostics_refresh_tasks,
-                                            ..
-                                        } => !workspace_diagnostics_refresh_tasks.is_empty(),
-                                        _ => false,
-                                    };
-                                    if supports_workspace_diagnostics {
-                                        None
-                                    } else {
-                                        Some(*server_id)
-                                    }
-                                })
-                                .map(|server_id| DocumentDiagnosticsUpdate {
-                                    diagnostics: DocumentDiagnostics {
-                                        document_abs_path: buffer_abs_path.clone(),
-                                        version: None,
-                                        diagnostics: Vec::new(),
-                                    },
-                                    result_id: None,
-                                    registration_id: None,
-                                    server_id,
-                                    disk_based_sources: Cow::Borrowed(&[]),
+                                .keys()
+                                .copied()
+                                .filter(|server_id| {
+                                    !local.server_pulls_workspace_diagnostics(*server_id)
                                 })
                                 .collect::<Vec<_>>();
-
-                            lsp_store
-                                .merge_diagnostic_entries(
-                                    diagnostic_updates,
-                                    |_, diagnostic, _| {
-                                        diagnostic.source_kind != DiagnosticSourceKind::Pulled
-                                    },
-                                    cx,
-                                )
-                                .context("Clearing diagnostics for the closed buffer")
-                                .log_err();
+                            lsp_store.clear_path_diagnostics_for_servers(
+                                buffer_abs_path,
+                                servers_to_clear,
+                                |_, diagnostic, _| {
+                                    diagnostic.source_kind != DiagnosticSourceKind::Pulled
+                                },
+                                cx,
+                            );
                         }
                     }
                 })
@@ -5232,23 +5246,25 @@ impl LspStore {
                                 for buffer in buffer_store.buffers() {
                                     if let Some(f) = File::from_dyn(buffer.read(cx).file()).cloned()
                                     {
+                                        // Detach before the language is unassigned: the
+                                        // detachment resolves the buffer's servers through
+                                        // its current language, and with the language gone
+                                        // it skips didClose and leaks the per-server state
+                                        // while still dropping the snapshots.
+                                        if let Some(local) = this.as_local_mut()
+                                            && local
+                                                .registered_buffers
+                                                .contains_key(&buffer.read(cx).remote_id())
+                                            && let Some(file_url) =
+                                                file_path_to_lsp_url(&f.abs_path(cx)).log_err()
+                                        {
+                                            local.unregister_buffer_from_language_servers(
+                                                &buffer, &file_url, cx,
+                                            );
+                                        }
                                         buffer.update(cx, |buffer, cx| {
                                             buffer.set_language_async(None, cx)
                                         });
-                                        if let Some(local) = this.as_local_mut() {
-                                            local.reset_buffer(&buffer, &f, cx);
-
-                                            if local
-                                                .registered_buffers
-                                                .contains_key(&buffer.read(cx).remote_id())
-                                                && let Some(file_url) =
-                                                    file_path_to_lsp_url(&f.abs_path(cx)).log_err()
-                                            {
-                                                local.unregister_buffer_from_language_servers(
-                                                    &buffer, &file_url, cx,
-                                                );
-                                            }
-                                        }
                                     }
                                 }
                             });
@@ -5428,13 +5444,17 @@ impl LspStore {
         let buffer = buffer_entity.read(cx);
         let buffer_file = buffer.file().cloned();
         let buffer_id = buffer.remote_id();
+        let mut detached_servers = Vec::new();
+        let mut detached_abs_path = None;
         if let Some(local_store) = self.as_local_mut()
             && local_store.registered_buffers.contains_key(&buffer_id)
             && let Some(abs_path) =
                 File::from_dyn(buffer_file.as_ref()).map(|file| file.abs_path(cx))
             && let Some(file_url) = file_path_to_lsp_url(&abs_path).log_err()
         {
-            local_store.unregister_buffer_from_language_servers(buffer_entity, &file_url, cx);
+            detached_servers =
+                local_store.unregister_buffer_from_language_servers(buffer_entity, &file_url, cx);
+            detached_abs_path = Some(abs_path);
         }
         buffer_entity.update(cx, |buffer, cx| {
             if buffer
@@ -5464,6 +5484,41 @@ impl LspStore {
         } else {
             None
         };
+
+        // A detached server keeps running and may legitimately re-publish for this path,
+        // since publishes are applied by path with no regard for registration. So only
+        // drop what it already said: clear the (path, server) diagnostics everywhere,
+        // exempting servers whose workspace-diagnostics pull owns the verdict, mirroring
+        // the buffer-close path. Anything a live server still asserts comes back on its
+        // next publish; a verdict from a server that stopped tracking the file has no
+        // other way to ever go away.
+        if let Some(abs_path) = detached_abs_path
+            && !detached_servers.is_empty()
+        {
+            let servers_to_clear = if let Some(local) = self.as_local() {
+                let reattached_servers = buffer_entity.update(cx, |buffer, cx| {
+                    local.language_server_ids_for_buffer(buffer, cx)
+                });
+                detached_servers
+                    .into_iter()
+                    .filter(|server_id| !reattached_servers.contains(server_id))
+                    .filter(|server_id| !local.server_pulls_workspace_diagnostics(*server_id))
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            if let Some(lsp_data) = self.lsp_data.get_mut(&buffer_id) {
+                for server_id in &servers_to_clear {
+                    lsp_data.remove_server_data(*server_id);
+                }
+            }
+            self.clear_path_diagnostics_for_servers(
+                abs_path,
+                servers_to_clear,
+                |_, _, _| false,
+                cx,
+            );
+        }
 
         if settings.prettier.allowed
             && let Some(prettier_plugins) = prettier_store::prettier_plugins_for_language(&settings)
@@ -9212,6 +9267,20 @@ impl LspStore {
         changes: &UpdatedEntriesSet,
         cx: &mut Context<Self>,
     ) {
+        // A removed path takes its stored diagnostics with it, or reopening a file
+        // recreated at the same path replays them from the worktree store via
+        // initialize_buffer, showing verdicts about content that no longer exists.
+        if let Some(local) = self.as_local_mut()
+            && let Some(diagnostics_for_tree) = local.diagnostics.get_mut(&worktree_id)
+        {
+            for (path, _, _) in changes
+                .iter()
+                .filter(|(_, _, change)| *change == PathChange::Removed)
+            {
+                diagnostics_for_tree.remove(path);
+            }
+        }
+
         let Some(summaries_for_tree) = self.diagnostic_summaries.get_mut(&worktree_id) else {
             return;
         };
@@ -9427,6 +9496,38 @@ impl LspStore {
             cx,
         )?;
         Ok(())
+    }
+
+    // A path's diagnostics are dropped per server, through the same merge machinery that
+    // applies them: buffer sets, worktree diagnostics, summaries, downstream propagation
+    // and the DiagnosticsUpdated event all follow from one call.
+    fn clear_path_diagnostics_for_servers(
+        &mut self,
+        abs_path: PathBuf,
+        server_ids: Vec<LanguageServerId>,
+        retain_diagnostic: impl Fn(&lsp::Uri, &Diagnostic, &App) -> bool + Clone,
+        cx: &mut Context<Self>,
+    ) {
+        if server_ids.is_empty() {
+            return;
+        }
+        let diagnostic_updates = server_ids
+            .into_iter()
+            .map(|server_id| DocumentDiagnosticsUpdate {
+                diagnostics: DocumentDiagnostics {
+                    document_abs_path: abs_path.clone(),
+                    version: None,
+                    diagnostics: Vec::new(),
+                },
+                result_id: None,
+                registration_id: None,
+                server_id,
+                disk_based_sources: Cow::Borrowed(&[]),
+            })
+            .collect::<Vec<_>>();
+        self.merge_diagnostic_entries(diagnostic_updates, retain_diagnostic, cx)
+            .context("clearing path diagnostics")
+            .log_err();
     }
 
     pub fn merge_diagnostic_entries<'a>(
