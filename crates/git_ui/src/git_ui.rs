@@ -56,6 +56,7 @@ pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
 mod review_markdown;
+mod review_provider;
 mod review_state;
 pub mod solo_diff_view;
 pub mod staged_diff;

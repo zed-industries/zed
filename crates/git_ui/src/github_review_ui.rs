@@ -2,25 +2,252 @@ use crate::github_review::{
     self, Checkout, CommentDraft, CommentKind, CommentTarget, DiscussionAction, DiscussionComment,
     GitHubClient, GitHubFailure, GitHubRepo, PullRequest,
 };
+use crate::review_provider::{
+    ReviewBackend, ReviewHeader, ReviewProviderIdentity, ReviewRequestSummary,
+};
 use anyhow::{Context as _, Result, ensure};
 use db::kvp::KeyValueStore;
 use editor::{
     Editor, EditorEvent,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
-use gpui::{App, ClipboardItem, Entity, EventEmitter, Focusable, Subscription, Task};
+use fuzzy::{StringMatch, StringMatchCandidate};
+use gpui::{
+    App, ClipboardItem, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
+    Task, WeakEntity,
+};
+use picker::{Picker, PickerDelegate};
 use project::{Project, git_store::Repository};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
-use ui::prelude::*;
+use ui::{ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt as _;
 
 pub(crate) enum GitHubReviewEvent {
     Open { repo: GitHubRepo, pr: PullRequest },
-    CommentSelection,
-    CommentsLoaded(Vec<github_review::PublishedComment>),
+    CommentsLoaded(Vec<crate::review_provider::PlacedReviewComment>),
 }
+pub(crate) type ReviewService = GitHubReview;
+pub(crate) type ReviewServiceEvent = GitHubReviewEvent;
 impl EventEmitter<GitHubReviewEvent> for GitHubReview {}
+
+pub(crate) struct ReviewRequestPicker {
+    picker: Entity<Picker<ReviewRequestPickerDelegate>>,
+    _subscription: Subscription,
+}
+
+impl ReviewRequestPicker {
+    pub(crate) fn new(
+        review: Entity<GitHubReview>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let delegate = ReviewRequestPickerDelegate::new(review.downgrade(), review.read(cx));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .initial_width(rems(24.))
+                .show_scrollbar(true)
+        });
+        let picker_for_subscription = picker.clone();
+        let review_subscription = cx.observe_in(&review, window, move |_, review, window, cx| {
+            let requests = review.read(cx).request_summaries().to_vec();
+            picker_for_subscription.update(cx, |picker, cx| {
+                picker.delegate.set_requests(requests);
+                picker.refresh(window, cx);
+            });
+        });
+        let dismiss_subscription =
+            cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| cx.emit(DismissEvent));
+        Self {
+            picker,
+            _subscription: Subscription::join(review_subscription, dismiss_subscription),
+        }
+    }
+}
+
+impl EventEmitter<DismissEvent> for ReviewRequestPicker {}
+
+impl Focusable for ReviewRequestPicker {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for ReviewRequestPicker {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.picker.clone()
+    }
+}
+
+struct ReviewRequestPickerDelegate {
+    review: WeakEntity<GitHubReview>,
+    requests: Vec<ReviewRequestSummary>,
+    matches: Vec<StringMatch>,
+    selected_index: usize,
+}
+
+impl ReviewRequestPickerDelegate {
+    fn new(review: WeakEntity<GitHubReview>, state: &GitHubReview) -> Self {
+        let requests = state.request_summaries().to_vec();
+        let matches = Self::all_matches(&requests);
+        Self {
+            review,
+            requests,
+            matches,
+            selected_index: 0,
+        }
+    }
+
+    fn all_matches(requests: &[ReviewRequestSummary]) -> Vec<StringMatch> {
+        requests
+            .iter()
+            .enumerate()
+            .map(|(index, request)| StringMatch {
+                candidate_id: index,
+                string: format!("#{} {}", request.number, request.title),
+                positions: Vec::new(),
+                score: 0.0,
+            })
+            .collect()
+    }
+
+    fn set_requests(&mut self, requests: Vec<ReviewRequestSummary>) {
+        self.requests = requests;
+        self.matches = Self::all_matches(&self.requests);
+        self.selected_index = self
+            .selected_index
+            .min(self.matches.len().saturating_sub(1));
+    }
+}
+
+impl PickerDelegate for ReviewRequestPickerDelegate {
+    type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "review request picker"
+    }
+
+    fn placeholder_text(&self, _: &mut Window, _: &mut App) -> std::sync::Arc<str> {
+        "Search reviews…".into()
+    }
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, index: usize, _: &mut Window, _: &mut Context<Picker<Self>>) {
+        self.selected_index = index;
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        if query.is_empty() {
+            self.matches = Self::all_matches(&self.requests);
+            return Task::ready(());
+        }
+        let candidates = self
+            .requests
+            .iter()
+            .enumerate()
+            .map(|(index, request)| {
+                StringMatchCandidate::new(index, &format!("#{} {}", request.number, request.title))
+            })
+            .collect::<Vec<_>>();
+        cx.spawn_in(window, async move |picker, cx| {
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                true,
+                true,
+                100,
+                &Default::default(),
+                cx.background_executor().clone(),
+            )
+            .await;
+            picker
+                .update(cx, |picker, _| {
+                    picker.delegate.matches = matches;
+                    picker.delegate.selected_index = picker
+                        .delegate
+                        .selected_index
+                        .min(picker.delegate.matches.len().saturating_sub(1));
+                })
+                .log_err();
+        })
+    }
+
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(request) = self
+            .matches
+            .get(self.selected_index)
+            .and_then(|matched| self.requests.get(matched.candidate_id))
+        else {
+            return;
+        };
+        self.review
+            .update(cx, |review, cx| {
+                review.open_request(request.number, window, cx)
+            })
+            .log_err();
+        cx.emit(DismissEvent);
+    }
+
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn render_match(
+        &self,
+        index: usize,
+        selected: bool,
+        _: &mut Window,
+        _: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let request = self
+            .matches
+            .get(index)
+            .and_then(|matched| self.requests.get(matched.candidate_id))?;
+        Some(
+            ListItem::new(("review-request", index))
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .tooltip(Tooltip::text(format!(
+                    "#{} {}",
+                    request.number, request.title
+                )))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .gap_1()
+                        .child(
+                            div().flex_none().child(
+                                Label::new(format!("#{}", request.number))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                        )
+                        .child(
+                            div().flex_1().min_w_0().child(
+                                Label::new(request.title.clone())
+                                    .size(LabelSize::Small)
+                                    .single_line()
+                                    .truncate(),
+                            ),
+                        ),
+                ),
+        )
+    }
+}
 
 #[derive(Default, Serialize, Deserialize)]
 struct SavedDrafts {
@@ -35,29 +262,20 @@ struct InlineComposerBlock {
     block_id: CustomBlockId,
     path: String,
     comparison: Option<(Option<String>, Option<String>)>,
-    _view: Entity<InlineGitHubComposer>,
+    _view: Entity<InlineReviewComposer>,
     _subscription: Subscription,
 }
 
-struct InlineGitHubComposer {
+pub(crate) struct InlineReviewComposer {
     github: gpui::WeakEntity<GitHubReview>,
 }
 
-impl Render for InlineGitHubComposer {
+impl Render for InlineReviewComposer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.github
             .update(cx, |github, cx| github.render_inline_composer(window, cx))
             .unwrap_or_else(|_| gpui::Empty.into_any_element())
     }
-}
-
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum DiscussionFilter {
-    #[default]
-    All,
-    Unresolved,
-    Resolved,
-    Outdated,
 }
 
 pub(crate) struct GitHubReview {
@@ -73,13 +291,12 @@ pub(crate) struct GitHubReview {
     storage_key: Option<String>,
     load_failed: bool,
     selected_repo: Option<GitHubRepo>,
-    requests: Vec<github_review::PullRequestSummary>,
+    requests: Vec<ReviewRequestSummary>,
     preview: Option<PullRequest>,
     pub checkout: Option<Checkout>,
     discussion: Vec<DiscussionComment>,
     viewer: Option<String>,
     thread_error: Option<String>,
-    discussion_filter: DiscussionFilter,
     markdown: BTreeMap<String, (String, Entity<markdown::Markdown>)>,
     expanded_comments: std::collections::BTreeSet<String>,
     preview_markdown: Option<(String, Entity<markdown::Markdown>)>,
@@ -88,9 +305,6 @@ pub(crate) struct GitHubReview {
     target: CommentTarget,
     state: &'static str,
     page: u32,
-    has_next: bool,
-    browsing: bool,
-    pub showing_discussion: bool,
     busy: bool,
     posting: bool,
     detached: bool,
@@ -103,7 +317,19 @@ pub(crate) struct GitHubReview {
     copied_prompt: bool,
     copied_prompt_task: Option<Task<()>>,
     inline_composer: Option<InlineComposerBlock>,
+    inline_reply: Option<(
+        crate::review_provider::ReviewThreadId,
+        Entity<InlineReviewComposer>,
+    )>,
     _subscriptions: Vec<Subscription>,
+}
+
+impl EventEmitter<DismissEvent> for GitHubReview {}
+
+impl Focusable for GitHubReview {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.composer.focus_handle(cx)
+    }
 }
 
 impl GitHubReview {
@@ -114,7 +340,7 @@ impl GitHubReview {
         });
         let composer = cx.new(|cx| Editor::auto_height(3, 8, window, cx));
         composer.update(cx, |editor, cx| {
-            editor.set_placeholder_text("Write a GitHub comment…", window, cx)
+            editor.set_placeholder_text("Write a review comment…", window, cx)
         });
         let subscriptions = vec![
             cx.subscribe(&composer, |this, _, event, cx| {
@@ -150,7 +376,6 @@ impl GitHubReview {
             discussion: Vec::new(),
             viewer: None,
             thread_error: None,
-            discussion_filter: DiscussionFilter::All,
             markdown: BTreeMap::new(),
             expanded_comments: Default::default(),
             preview_markdown: None,
@@ -159,9 +384,6 @@ impl GitHubReview {
             target: CommentTarget::General,
             state: "open",
             page: 1,
-            has_next: false,
-            browsing: false,
-            showing_discussion: false,
             busy: false,
             posting: false,
             detached: true,
@@ -174,6 +396,7 @@ impl GitHubReview {
             copied_prompt: false,
             copied_prompt_task: None,
             inline_composer: None,
+            inline_reply: None,
             _subscriptions: subscriptions,
         }
     }
@@ -331,8 +554,6 @@ impl GitHubReview {
         self.preview = Some(checkout.pull_request.clone());
         self.checkout = Some(checkout);
         self.detached = false;
-        self.browsing = false;
-        self.showing_discussion = false;
         self.discussion.clear();
         self.markdown.clear();
         self.expanded_comments.clear();
@@ -359,8 +580,6 @@ impl GitHubReview {
         self.checkout = None;
         self.review = None;
         self.preview = None;
-        self.browsing = false;
-        self.showing_discussion = false;
         if !self.posting {
             self.generation += 1;
             self.task = None;
@@ -374,20 +593,14 @@ impl GitHubReview {
         self.detached = true;
         cx.notify();
     }
-    pub fn show_browser(&mut self, cx: &mut Context<Self>) {
-        self.browsing = true;
-        self.showing_discussion = false;
+    pub(crate) fn load_review_requests(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.state = "open";
+        self.page = 1;
+        self.query
+            .update(cx, |query, cx| query.set_text("", window, cx));
         self.search(cx);
     }
-    pub fn show_files(&mut self, cx: &mut Context<Self>) {
-        self.browsing = false;
-        self.showing_discussion = false;
-        cx.notify();
-    }
-    pub fn is_visible(&self) -> bool {
-        self.browsing || self.showing_discussion
-    }
-    pub fn has_github(&self) -> bool {
+    pub fn has_provider(&self) -> bool {
         !self.choices.is_empty()
     }
     pub fn matches_repository(&self, repository: &Entity<Repository>, cx: &App) -> bool {
@@ -396,6 +609,17 @@ impl GitHubReview {
 
     pub fn is_posting(&self) -> bool {
         self.posting
+    }
+
+    pub(crate) fn current_review_header(&self) -> Option<ReviewHeader> {
+        let checkout = self.checkout.as_ref()?;
+        Some(ReviewHeader {
+            number: checkout.pull_request.number,
+            title: checkout.pull_request.title.clone(),
+            repository: checkout.repository.full_name.clone(),
+            base_branch: checkout.pull_request.base.branch.clone(),
+            review_branch: checkout.pull_request.head.branch.clone(),
+        })
     }
 
     fn copy_agent_prompt(&mut self, cx: &mut Context<Self>) {
@@ -500,8 +724,6 @@ impl GitHubReview {
             editor.set_text(body, window, cx);
             editor.set_read_only(uncertain);
         });
-        self.showing_discussion = true;
-        self.browsing = false;
         cx.notify();
     }
 
@@ -518,7 +740,7 @@ impl GitHubReview {
             return;
         }
         let github = cx.weak_entity();
-        let view = cx.new(|_| InlineGitHubComposer { github });
+        let view = cx.new(|_| InlineReviewComposer { github });
         let path = match &self.target {
             CommentTarget::Inline { path, .. } => path.clone(),
             _ => return,
@@ -567,7 +789,7 @@ impl GitHubReview {
             )
         });
         let Some(block_id) = block_ids.into_iter().next() else {
-            self.error = Some("Could not open the inline GitHub composer".into());
+            self.error = Some("Could not open the inline review composer".into());
             cx.notify();
             return;
         };
@@ -587,15 +809,16 @@ impl GitHubReview {
         if save_draft {
             self.save_draft(cx);
         }
-        let Some(inline) = self.inline_composer.take() else {
-            return;
-        };
-        inline
-            .editor
-            .update(cx, |editor, cx| {
-                editor.remove_blocks([inline.block_id].into_iter().collect(), None, cx)
-            })
-            .ok();
+        self.inline_reply = None;
+        if let Some(inline) = self.inline_composer.take() {
+            inline
+                .editor
+                .update(cx, |editor, cx| {
+                    editor.remove_blocks([inline.block_id].into_iter().collect(), None, cx)
+                })
+                .ok();
+        }
+        self.notify_review_ui(cx);
         cx.notify();
     }
 
@@ -639,8 +862,9 @@ impl GitHubReview {
         let pending = self.busy || self.posting;
         let unknown = self.draft().is_some_and(|draft| draft.outcome_unknown);
         let target = target_label(&self.target);
+        let provider_name = self.identity().name;
         v_flex()
-            .id("inline-github-comment-composer")
+            .id("inline-review-comment-composer")
             .w_full()
             .min_w_0()
             .gap_1()
@@ -703,9 +927,12 @@ impl GitHubReview {
                 )
             })
             .child(
-                Button::new("post-inline-github-comment", "Post to GitHub")
-                    .disabled(pending || self.detached || unknown || self.load_failed)
-                    .on_click(cx.listener(|this, _, window, cx| this.post(window, cx))),
+                Button::new(
+                    "post-inline-review-comment",
+                    format!("Post to {provider_name}"),
+                )
+                .disabled(pending || self.detached || unknown || self.load_failed)
+                .on_click(cx.listener(|this, _, window, cx| this.post(window, cx))),
             )
             .into_any_element()
     }
@@ -759,10 +986,15 @@ impl GitHubReview {
                 }
                 this.busy = false;
                 match result {
-                    Ok((repo, requests, next)) => {
+                    Ok((repo, requests, _next)) => {
                         this.selected_repo = Some(repo);
-                        this.requests = requests;
-                        this.has_next = next;
+                        this.requests = requests
+                            .into_iter()
+                            .map(|request| ReviewRequestSummary {
+                                number: request.number,
+                                title: request.title,
+                            })
+                            .collect();
                     }
                     Err(error) => this.error = Some(format!("{error:#}")),
                 }
@@ -773,28 +1005,34 @@ impl GitHubReview {
         cx.notify();
     }
 
-    fn preview_request(&mut self, number: u64, cx: &mut Context<Self>) {
-        if self.posting {
+    fn open_request(&mut self, number: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.posting || self.busy {
             return;
         }
-        let Some(repo) = self.selected_repo.clone() else {
+        let Some(repository) = self.selected_repo.clone() else {
+            self.error = Some("Select a review repository first".into());
+            cx.notify();
             return;
         };
         let client = self.client.clone();
         self.generation += 1;
         let generation = self.generation;
         self.busy = true;
-        self.task = Some(cx.spawn(async move |this, cx| {
-            let result = client.pull_request(&repo, number).await;
+        self.task = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = client.pull_request(&repository, number).await;
             this.update(cx, |this, cx| {
                 if generation != this.generation {
                     return;
                 }
                 this.busy = false;
                 match result {
-                    Ok(pr) => {
-                        this.preview = Some(pr);
+                    Ok(request) => {
+                        this.preview = Some(request.clone());
                         this.error = None;
+                        cx.emit(GitHubReviewEvent::Open {
+                            repo: repository,
+                            pr: request,
+                        });
                     }
                     Err(error) => this.error = Some(format!("{error:#}")),
                 }
@@ -817,8 +1055,6 @@ impl GitHubReview {
         let root = self.root.clone();
         let client = self.client.clone();
         self.busy = true;
-        self.showing_discussion = true;
-        self.browsing = false;
         self.task = Some(cx.spawn(async move |this, cx| {
             let result: Result<_> = async {
                 let pr = client
@@ -893,7 +1129,24 @@ impl GitHubReview {
                         this.markdown.retain(|key, _| {
                             comments.iter().any(|entry| key == &comment_key(entry))
                         });
-                        cx.emit(GitHubReviewEvent::CommentsLoaded(inline));
+                        let checkout = this.checkout.clone();
+                        cx.emit(GitHubReviewEvent::CommentsLoaded(
+                            inline
+                                .into_iter()
+                                .filter_map(github_review::PublishedComment::into_placed)
+                                .map(|mut comment| {
+                                    comment.url = checkout.as_ref().and_then(|checkout| {
+                                        comment.id.parse::<u64>().ok().map(|id| {
+                                            format!(
+                                                "{}#discussion_r{id}",
+                                                checkout.pull_request.url(&checkout.repository)
+                                            )
+                                        })
+                                    });
+                                    comment
+                                })
+                                .collect(),
+                        ));
                         this.preview = Some(pr);
                         this.discussion = comments;
                         this.reconciled = true;
@@ -1026,6 +1279,63 @@ impl GitHubReview {
         cx.notify();
     }
 
+    pub(crate) fn reply_inline(
+        &mut self,
+        comment_id: &str,
+        thread_id: crate::review_provider::ReviewThreadId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Ok(comment_id) = comment_id.parse() else {
+            self.error = Some("The review provider returned an invalid comment identity".into());
+            cx.notify();
+            return;
+        };
+        self.select_target(CommentTarget::Reply { comment_id }, window, cx);
+        let github = cx.weak_entity();
+        self.inline_reply = Some((thread_id, cx.new(|_| InlineReviewComposer { github })));
+        self.composer.focus_handle(cx).focus(window, cx);
+        self.notify_review_ui(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn inline_reply_view(
+        &self,
+        thread_id: &crate::review_provider::ReviewThreadId,
+        _cx: &App,
+    ) -> Option<Entity<InlineReviewComposer>> {
+        self.inline_reply
+            .as_ref()
+            .filter(|(active, _)| active == thread_id)
+            .map(|(_, view)| view.clone())
+    }
+
+    fn notify_review_ui(&self, cx: &mut Context<Self>) {
+        if let Some(review) = &self.review {
+            let review = review.clone();
+            cx.defer(move |cx| {
+                review
+                    .update(cx, |review, cx| review.remote_review_updated(cx))
+                    .log_err();
+            });
+        }
+    }
+
+    pub(crate) fn set_thread_resolved(
+        &mut self,
+        thread_id: String,
+        resolved: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_discussion_action(
+            DiscussionAction::Resolve {
+                thread_id,
+                resolved,
+            },
+            cx,
+        );
+    }
+
     fn comment_markdown(
         &mut self,
         entry: &DiscussionComment,
@@ -1053,21 +1363,10 @@ impl GitHubReview {
         let mut groups: Vec<Vec<DiscussionComment>> = Vec::new();
         let mut indices = BTreeMap::new();
         for entry in &self.discussion {
-            let key = if entry.kind == CommentKind::Inline {
-                entry
-                    .comment
-                    .thread
-                    .as_ref()
-                    .map(|thread| thread.id.clone())
-                    .unwrap_or_else(|| {
-                        format!(
-                            "inline-{}",
-                            entry.comment.in_reply_to_id.unwrap_or(entry.comment.id)
-                        )
-                    })
-            } else {
-                comment_key(entry)
-            };
+            if entry.kind == CommentKind::Inline {
+                continue;
+            }
+            let key = comment_key(entry);
             let index = *indices.entry(key).or_insert_with(|| {
                 groups.push(Vec::new());
                 groups.len() - 1
@@ -1085,20 +1384,6 @@ impl GitHubReview {
             .filter_map(|group| {
                 let first = group.first()?;
                 let thread = first.comment.thread.clone();
-                if !match self.discussion_filter {
-                    DiscussionFilter::All => true,
-                    DiscussionFilter::Unresolved => {
-                        thread.as_ref().is_some_and(|thread| !thread.is_resolved)
-                    }
-                    DiscussionFilter::Resolved => {
-                        thread.as_ref().is_some_and(|thread| thread.is_resolved)
-                    }
-                    DiscussionFilter::Outdated => {
-                        thread.as_ref().is_some_and(|thread| thread.is_outdated)
-                    }
-                } {
-                    return None;
-                }
                 let mut card = v_flex()
                     .gap_1()
                     .p_2()
@@ -1513,6 +1798,24 @@ impl GitHubReview {
     }
 }
 
+impl ReviewBackend for GitHubReview {
+    fn identity(&self) -> ReviewProviderIdentity {
+        ReviewProviderIdentity {
+            name: "GitHub".into(),
+            repository: self
+                .selected_repo
+                .as_ref()
+                .map(|repository| repository.full_name.clone())
+                .or_else(|| self.saved.repository.clone())
+                .unwrap_or_default(),
+        }
+    }
+
+    fn request_summaries(&self) -> &[ReviewRequestSummary] {
+        &self.requests
+    }
+}
+
 impl Render for GitHubReview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let discussion = self.render_discussion(window, cx);
@@ -1534,109 +1837,221 @@ impl Render for GitHubReview {
         let unknown_action = self
             .action_key()
             .is_some_and(|key| self.saved.pending_actions.contains_key(&key));
-        let changed_edit = if let CommentTarget::Edit {
-            comment_id,
-            comment_kind,
-        } = self.target
-        {
-            self.discussion
-                .iter()
-                .find(|entry| entry.kind == comment_kind && entry.comment.id == comment_id)
-                .and_then(|entry| entry.comment.body.clone())
-                .filter(|body| {
-                    self.draft().and_then(|draft| draft.original_body.as_ref()) != Some(body)
-                })
-        } else {
-            None
-        };
         let pending = self.busy || self.posting;
         let unknown = self.draft().is_some_and(|draft| draft.outcome_unknown);
-        v_flex().id("github-review-content").size_full().min_h_0().gap_2().p_2().overflow_y_scroll()
-            .when_some(self.error.clone(), |view, error| view.child(Label::new(error).size(LabelSize::Small).color(Color::Error)))
-            .when(pending, |view| view.child(Label::new(if self.posting { "Posting to GitHub…" } else { "Loading GitHub…" }).size(LabelSize::Small)))
-            .map(|view| if self.browsing {
-                view.children(self.choices.clone().into_iter().enumerate().map(|(index, name)| {
-                    Button::new(("github-repository", index), name.clone()).toggle_state(self.saved.repository.as_ref() == Some(&name)).disabled(pending)
-                        .on_click(cx.listener(move |this, _, _, cx| { this.saved.repository = Some(name.clone()); this.page = 1; this.persist(cx); this.search(cx); }))
-                }))
-                .child(div().p_1().border_1().border_color(cx.theme().colors().border).child(self.query.clone()))
-                .child(h_flex().gap_1().child(Button::new("github-search", "Search").disabled(pending).on_click(cx.listener(|this, _, _, cx| { this.page = 1; this.search(cx); })))
-                    .children(["open", "closed", "all"].into_iter().map(|state| Button::new(state, state).toggle_state(self.state == state).disabled(pending).on_click(cx.listener(move |this, _, _, cx| { this.state = state; this.page = 1; this.search(cx); })))))
-                .when_some(self.preview.clone(), |view, pr| {
-                    let repo = self.selected_repo.clone();
-                    view.child(v_flex().gap_1().p_2().border_1().border_color(cx.theme().colors().border)
-                        .child(Label::new(format!("#{} {}", pr.number, pr.title)).size(LabelSize::Small))
-                        .child(Label::new(format!("{} · {} → {} · {}", pr.user.login, pr.head.branch, pr.base.branch, pr.state)).size(LabelSize::XSmall))
-                        .child(Label::new(pr.body.clone().unwrap_or_default()).size(LabelSize::Small).line_clamp(6))
-                        .child(Button::new("open-github-pr", "Open PR in this checkout").disabled(pending).on_click(cx.listener(move |_, _, _, cx| {
-                            if let Some(repo) = &repo { cx.emit(GitHubReviewEvent::Open { repo: repo.clone(), pr: pr.clone() }); }
-                        }))))
+        let provider_name = self.identity().name;
+        v_flex()
+            .id("review-conversation-content")
+            .w(rems(22.))
+            .max_h(rems(28.))
+            .min_h_0()
+            .gap_2()
+            .p_2()
+            .elevation_3(cx)
+            .overflow_hidden()
+            .overflow_y_scroll()
+            .when_some(self.error.clone(), |view, error| {
+                view.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+            })
+            .when(pending, |view| {
+                view.child(
+                    Label::new(if self.posting {
+                        format!("Posting to {provider_name}…")
+                    } else {
+                        format!("Loading {provider_name}…")
+                    })
+                    .size(LabelSize::Small),
+                )
+            })
+            .when_some(self.checkout.clone(), |view, checkout| {
+                let update = self.preview.clone().filter(|request| {
+                    request.head.sha != checkout.pull_request.head.sha
+                        || request.base.sha != checkout.pull_request.base.sha
+                });
+                let provider_name = provider_name.clone();
+                view.child(
+                    h_flex()
+                        .gap_1()
+                        .flex_wrap()
+                        .child(
+                            Button::new("refresh-review-conversation", "Refresh")
+                                .disabled(pending)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.refresh_discussion(cx)
+                                })),
+                        )
+                        .child(
+                            Button::new(
+                                "copy-agent-prompt",
+                                if self.copied_prompt {
+                                    "Copied"
+                                } else {
+                                    "Copy Agent Prompt"
+                                },
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.copy_agent_prompt(cx))),
+                        )
+                        .child(
+                            Button::new(
+                                "open-review-in-provider",
+                                format!("{provider_name} ↗"),
+                            )
+                            .on_click(move |_, _, cx| {
+                                cx.open_url(
+                                    &checkout.pull_request.url(&checkout.repository),
+                                )
+                            }),
+                        ),
+                )
+                .when_some(update, |view, request| {
+                    let repository =
+                        self.checkout.as_ref().map(|checkout| checkout.repository.clone());
+                    view.child(
+                        Label::new(
+                            "A newer review revision is available. Your checkout has not changed.",
+                        )
+                        .size(LabelSize::Small)
+                        .color(Color::Warning),
+                    )
+                    .child(
+                        Button::new("update-review-checkout", "Update checkout")
+                            .disabled(pending || self.detached)
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                if let Some(repository) = &repository {
+                                    cx.emit(GitHubReviewEvent::Open {
+                                        repo: repository.clone(),
+                                        pr: request.clone(),
+                                    });
+                                }
+                            })),
+                    )
                 })
-                .children(self.requests.clone().into_iter().map(|pr| Button::new(("github-pr", pr.number as usize), format!("#{} {}", pr.number, pr.title))
-                    .full_width().disabled(pending).on_click(cx.listener(move |this, _, _, cx| { this.preview_request(pr.number, cx); }))))
-                .when(!self.query.read(cx).text(cx).trim().is_empty(), |view| view.child(Label::new("Title search: up to 1,000 matches").size(LabelSize::XSmall).color(Color::Muted)))
-                .child(h_flex().gap_1().child(Button::new("previous-pr-page", "Previous").disabled(pending || self.page <= 1).on_click(cx.listener(|this, _, _, cx| { this.page -= 1; this.search(cx); })))
-                    .child(Label::new(format!("Page {}", self.page)).size(LabelSize::Small))
-                    .child(Button::new("next-pr-page", "Next").disabled(pending || !self.has_next).on_click(cx.listener(|this, _, _, cx| { this.page += 1; this.search(cx); }))))
-            } else {
-                view.when_some(self.checkout.clone(), |view, checkout| {
-                    let update = self.preview.clone().filter(|pr| pr.head.sha != checkout.pull_request.head.sha || pr.base.sha != checkout.pull_request.base.sha);
-                    view.child(Label::new(format!("#{} {}", checkout.pull_request.number, checkout.pull_request.title)).size(LabelSize::Small))
-                        .child(h_flex().gap_1().flex_wrap().child(Button::new("refresh-github-discussion", "Refresh").disabled(pending).on_click(cx.listener(|this, _, _, cx| this.refresh_discussion(cx))))
-                            .child(Button::new("copy-agent-prompt", if self.copied_prompt { "Copied" } else { "Copy Agent Prompt" }).on_click(cx.listener(|this, _, _, cx| this.copy_agent_prompt(cx))))
-                            .child(Button::new("open-pr-in-browser", "GitHub ↗").on_click(move |_, _, cx| cx.open_url(&checkout.pull_request.url(&checkout.repository)))))
-                        .when_some(update, |view, pr| { let repo = self.checkout.as_ref().map(|checkout| checkout.repository.clone());
-                            view.child(Label::new("A newer PR revision is available. Your checkout has not changed.").size(LabelSize::Small))
-                                .child(Button::new("update-pr-checkout", "Update checkout").disabled(pending || self.detached).on_click(cx.listener(move |_, _, _, cx| { if let Some(repo) = &repo { cx.emit(GitHubReviewEvent::Open { repo: repo.clone(), pr: pr.clone() }); } })))
-                        })
-                })
-                .when_some(self.thread_error.clone(), |view, error| view.child(Label::new(error).size(LabelSize::Small).color(Color::Warning)))
-                .child(h_flex().gap_1().flex_wrap().children([
-                    ("all-discussion", "All", DiscussionFilter::All), ("unresolved-discussion", "Unresolved", DiscussionFilter::Unresolved),
-                    ("resolved-discussion", "Resolved", DiscussionFilter::Resolved), ("outdated-discussion", "Outdated", DiscussionFilter::Outdated),
-                ].into_iter().map(|(id, label, filter)| Button::new(id, label).toggle_state(self.discussion_filter == filter).on_click(cx.listener(move |this, _, _, cx| { this.discussion_filter = filter; cx.notify(); })))))
-                .when(unknown_action, |view| view.child(Label::new("A thread action may have succeeded. Refresh and inspect GitHub before retrying.").size(LabelSize::Small).color(Color::Warning))
-                    .child(Button::new("clear-unknown-action", "I checked GitHub; allow another action").disabled(pending || !self.reconciled).on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(key) = this.action_key() { this.saved.pending_actions.remove(&key); } this.persist(cx); cx.notify();
-                    }))))
-                .children(discussion)
-                .children(self.checkout.as_ref().map(|checkout| format!("{}:{}:", checkout.repository.id, checkout.pull_request.number)).into_iter().flat_map(|prefix| {
-                    self.saved.drafts.iter().filter(move |(key, draft)| key.starts_with(&prefix) && (!draft.body.is_empty() || draft.outcome_unknown))
-                }).enumerate().map(|(index, (_, draft))| {
-                    let target = draft.target.clone();
-                    Button::new(("saved-comment-draft", index), format!("Draft: {}", target_label(&target))).disabled(pending)
-                        .on_click(cx.listener(move |this, _, window, cx| this.select_target(target.clone(), window, cx)))
-                }))
-                .when(self.checkout.is_some(), |view| view.child(v_flex().gap_2()
-                    .child(h_flex().gap_1().child(Button::new("general-pr-comment", "General").disabled(pending).on_click(cx.listener(|this, _, window, cx| this.select_target(CommentTarget::General, window, cx))))
-                        .child(Button::new("inline-pr-comment", "Selected lines").disabled(pending || self.detached).on_click(cx.listener(|_, _, _, cx| cx.emit(GitHubReviewEvent::CommentSelection)))))
-                    .child(Label::new(target_label(&self.target)).size(LabelSize::XSmall))
-                    .when_some(changed_edit, |view, latest| view
-                        .child(Label::new("This comment changed on GitHub. Compare the discussion above with your draft before replacing it.").size(LabelSize::Small).color(Color::Warning))
-                        .child(Button::new("accept-latest-edit-base", "Keep draft; use refreshed comment as base").disabled(pending || unknown).on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(key) = this.draft_key() { if let Some(draft) = this.saved.drafts.get_mut(&key) { draft.original_body = Some(latest.clone()); } }
-                            this.persist(cx); cx.notify();
-                        }))))
-                    .child(h_flex().gap_1()
-                        .child(Button::new("write-comment", "Write").toggle_state(!self.previewing).on_click(cx.listener(|this, _, _, cx| { this.previewing = false; cx.notify(); })))
-                        .child(Button::new("preview-comment", "Preview").toggle_state(self.previewing).on_click(cx.listener(|this, _, _, cx| { this.previewing = true; cx.notify(); }))))
-                    .child(div().min_w_0().border_1().border_color(cx.theme().colors().border).p_2().map(|view| {
-                        if self.inline_composer.is_some() {
-                            view.child(Label::new("This draft is open in the diff.").size(LabelSize::Small))
-                        } else if self.previewing {
-                            view.child(crate::review_markdown::render(preview, window, cx))
-                        } else {
-                            view.child(self.composer.clone())
+            })
+            .when_some(self.thread_error.clone(), |view, error| {
+                view.child(Label::new(error).size(LabelSize::Small).color(Color::Warning))
+            })
+            .when(unknown_action, |view| {
+                let provider_name = provider_name.clone();
+                view.child(
+                    Label::new(format!(
+                        "A review action may have succeeded. Refresh and inspect {provider_name} before retrying."
+                    ))
+                    .size(LabelSize::Small)
+                    .color(Color::Warning),
+                )
+                .child(
+                    Button::new(
+                        "clear-unknown-review-action",
+                        format!("I checked {provider_name}; allow another action"),
+                    )
+                    .disabled(pending || !self.reconciled)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(key) = this.action_key() {
+                            this.saved.pending_actions.remove(&key);
                         }
-                    }))
-                    .when(self.detached, |view| view.child(Label::new("Review detached from the checkout. Drafts are kept; reopen the PR to post.").size(LabelSize::Small).color(Color::Warning)))
-                    .when(unknown, |view| view.child(Label::new("The last post may have succeeded. Refresh and inspect the discussion before retrying.").size(LabelSize::Small).color(Color::Warning))
-                        .child(Button::new("confirm-comment-retry", "I checked GitHub; allow retry").disabled(pending || !self.reconciled).on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(key) = this.draft_key() { if let Some(draft) = this.saved.drafts.get_mut(&key) { draft.outcome_unknown = false; } }
-                            this.composer.update(cx, |editor, _| editor.set_read_only(false));
-                            this.persist(cx); cx.notify();
-                        }))))
-                    .child(Button::new("post-github-comment", if matches!(self.target, CommentTarget::Edit { .. }) { "Save changes" } else { "Post to GitHub" }).disabled(pending || self.detached || unknown || unknown_action || self.load_failed).on_click(cx.listener(|this, _, window, cx| this.post(window, cx))))))
+                        this.persist(cx);
+                        cx.notify();
+                    })),
+                )
+            })
+            .children(discussion)
+            .when(self.checkout.is_some(), |view| {
+                let provider_name = provider_name.clone();
+                view.child(
+                    v_flex()
+                        .gap_2()
+                        .child(Label::new("Conversation").size(LabelSize::Small))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Button::new("write-conversation", "Write")
+                                        .toggle_state(!self.previewing)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.previewing = false;
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(
+                                    Button::new("preview-conversation", "Preview")
+                                        .toggle_state(self.previewing)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.previewing = true;
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .p_2()
+                                .map(|view| {
+                                    if self.previewing {
+                                        view.child(crate::review_markdown::render(
+                                            preview, window, cx,
+                                        ))
+                                    } else {
+                                        view.child(self.composer.clone())
+                                    }
+                                }),
+                        )
+                        .when(self.detached, |view| {
+                            view.child(
+                                Label::new(
+                                    "Review detached from the checkout. Drafts are kept.",
+                                )
+                                .size(LabelSize::Small)
+                                .color(Color::Warning),
+                            )
+                        })
+                        .when(unknown, |view| {
+                            let provider_name = provider_name.clone();
+                            view.child(
+                                Label::new(format!(
+                                    "The last post may have succeeded. Refresh and inspect {provider_name} before retrying."
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Warning),
+                            )
+                            .child(
+                                Button::new(
+                                    "confirm-conversation-retry",
+                                    format!("I checked {provider_name}; allow retry"),
+                                )
+                                .disabled(pending || !self.reconciled)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if let Some(key) = this.draft_key()
+                                        && let Some(draft) = this.saved.drafts.get_mut(&key)
+                                    {
+                                        draft.outcome_unknown = false;
+                                    }
+                                    this.composer
+                                        .update(cx, |editor, _| editor.set_read_only(false));
+                                    this.persist(cx);
+                                    cx.notify();
+                                })),
+                            )
+                        })
+                        .child(
+                            Button::new(
+                                "post-review-conversation",
+                                format!("Post to {provider_name}"),
+                            )
+                            .disabled(
+                                pending
+                                    || self.detached
+                                    || unknown
+                                    || unknown_action
+                                    || self.load_failed,
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.select_target(CommentTarget::General, window, cx);
+                                this.post(window, cx);
+                            })),
+                        ),
+                )
             })
     }
 }
@@ -1698,6 +2113,7 @@ mod tests {
             repository: repo.clone(),
             branch: "feature".into(),
             base_ref: "main".into(),
+            warning: None,
             pull_request: PullRequest {
                 number,
                 title: "Fixture".into(),
@@ -1740,6 +2156,28 @@ mod tests {
         }
         assert!(!prompt.contains("Fixture"));
         assert!(!prompt.contains("untrusted-login-42"));
+    }
+
+    #[test]
+    fn request_picker_keeps_review_numbers_separate_from_truncatable_titles() {
+        let requests = vec![
+            ReviewRequestSummary {
+                number: 4,
+                title: "feat(cli): add targeted catch-up and user listing".into(),
+            },
+            ReviewRequestSummary {
+                number: 23,
+                title: "fix authentication".into(),
+            },
+        ];
+        let matches = ReviewRequestPickerDelegate::all_matches(&requests);
+        assert_eq!(
+            matches[0].string,
+            "#4 feat(cli): add targeted catch-up and user listing"
+        );
+        assert_eq!(matches[1].string, "#23 fix authentication");
+        assert_eq!(matches[0].candidate_id, 0);
+        assert_eq!(matches[1].candidate_id, 1);
     }
 
     #[gpui::test]
@@ -1816,11 +2254,7 @@ mod tests {
             reply.comment.id = 8;
             reply.comment.in_reply_to_id = Some(7);
             view.discussion = vec![entry.clone(), reply];
-            assert_eq!(view.render_discussion(window, cx).len(), 1);
-            view.discussion_filter = DiscussionFilter::Unresolved;
             assert!(view.render_discussion(window, cx).is_empty());
-            view.discussion_filter = DiscussionFilter::Outdated;
-            assert_eq!(view.render_discussion(window, cx).len(), 1);
             view.start_edit(entry, window, cx);
             assert_eq!(view.composer.read(cx).text(cx), "**Original**");
             assert_eq!(view.draft().unwrap().original_body.as_deref(), Some("**Original**"));

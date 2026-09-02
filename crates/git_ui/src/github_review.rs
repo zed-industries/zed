@@ -2,7 +2,13 @@ use anyhow::{Context as _, Result, bail, ensure};
 use futures::{AsyncWriteExt as _, FutureExt as _, future::BoxFuture};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{path::Path, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+    process::Stdio,
+    sync::Arc,
+    time::Duration,
+};
 use util::ResultExt as _;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -866,6 +872,8 @@ pub(crate) struct Checkout {
     pub pull_request: PullRequest,
     pub branch: String,
     pub base_ref: String,
+    #[serde(default)]
+    pub warning: Option<String>,
 }
 
 impl Checkout {
@@ -984,6 +992,177 @@ pub(crate) async fn check_clean_checkout(
     Ok(())
 }
 
+#[derive(Clone, Debug)]
+struct LocalReviewBranch {
+    name: String,
+    tip: String,
+    upstream_remote: Option<String>,
+    upstream_ref: Option<String>,
+    association: Option<crate::review_provider::ReviewCheckoutAssociation>,
+}
+
+fn checkout_identity(
+    repo: &GitHubRepo,
+    pr: &PullRequest,
+) -> crate::review_provider::ReviewCheckoutIdentity {
+    let source_repository = pr.head.repo.as_ref().unwrap_or(repo);
+    crate::review_provider::ReviewCheckoutIdentity {
+        provider: "github".into(),
+        repository_id: repo.id.to_string(),
+        review_number: pr.number,
+        source_host: "github.com".into(),
+        source_repository: source_repository.full_name.clone(),
+        source_available: pr.head.repo.is_some(),
+        source_branch: pr.head.branch.clone(),
+        target_branch: pr.base.branch.clone(),
+    }
+}
+
+fn association_key(branch: &str) -> String {
+    format!("branch.{branch}.zed-review-association")
+}
+
+async fn local_review_branches(
+    executor: &gpui::BackgroundExecutor,
+    root: &Path,
+) -> Result<Vec<LocalReviewBranch>> {
+    let config = git_output(executor, root, &["config", "--local", "--null", "--list"]).await?;
+    let mut associations: HashMap<String, crate::review_provider::ReviewCheckoutAssociation> =
+        HashMap::new();
+    for entry in String::from_utf8(config)?.split('\0') {
+        let Some((key, value)) = entry.split_once('\n') else {
+            continue;
+        };
+        let Some(branch) = key
+            .strip_prefix("branch.")
+            .and_then(|key| key.strip_suffix(".zed-review-association"))
+        else {
+            continue;
+        };
+        if let Ok(association) = serde_json::from_str(value) {
+            associations.insert(branch.to_string(), association);
+        }
+    }
+    let refs = git_text(
+        executor,
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)%09%(objectname)%09%(upstream:remotename)%09%(upstream:remoteref)",
+            "refs/heads/",
+        ],
+    )
+    .await?;
+    Ok(refs
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next()?.to_string();
+            let tip = fields.next()?.to_string();
+            let upstream_remote = fields
+                .next()
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let upstream_ref = fields
+                .next()
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let association = associations.remove(&name);
+            Some(LocalReviewBranch {
+                name,
+                tip,
+                upstream_remote,
+                upstream_ref,
+                association,
+            })
+        })
+        .collect())
+}
+
+async fn remote_repositories(
+    executor: &gpui::BackgroundExecutor,
+    root: &Path,
+    branches: &[LocalReviewBranch],
+) -> HashMap<String, String> {
+    let mut result = HashMap::default();
+    let remotes: HashSet<_> = branches
+        .iter()
+        .filter_map(|branch| branch.upstream_remote.clone())
+        .collect();
+    for remote in remotes {
+        let repository = match git_text(executor, root, &["remote", "get-url", &remote]).await {
+            Ok(url) => repository_from_remote(&url),
+            Err(error) => {
+                log::warn!("could not inspect review checkout remote {remote}: {error:#}");
+                None
+            }
+        };
+        if let Some(repository) = repository {
+            result.insert(remote, repository);
+        }
+    }
+    result
+}
+
+async fn branches_in_other_worktrees(
+    executor: &gpui::BackgroundExecutor,
+    root: &Path,
+) -> Result<HashSet<String>> {
+    let output = git_text(executor, root, &["worktree", "list", "--porcelain"]).await?;
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let mut result = HashSet::default();
+    let mut worktree = None;
+    let mut branch = None;
+    for line in output.lines().chain(std::iter::once("")) {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            worktree = Some(path);
+        } else if let Some(name) = line.strip_prefix("branch refs/heads/") {
+            branch = Some(name);
+        } else if line.is_empty() {
+            if worktree.is_some_and(|path| {
+                Path::new(path)
+                    .canonicalize()
+                    .unwrap_or_else(|_| Path::new(path).to_path_buf())
+                    != root
+            }) && let Some(branch) = branch.take()
+            {
+                result.insert(branch.to_string());
+            }
+            worktree = None;
+            branch = None;
+        }
+    }
+    Ok(result)
+}
+
+async fn write_checkout_association(
+    executor: &gpui::BackgroundExecutor,
+    root: &Path,
+    branch: &str,
+    identity: &crate::review_provider::ReviewCheckoutIdentity,
+    head_sha: &str,
+    managed: bool,
+) -> Result<()> {
+    let value = serde_json::to_string(&crate::review_provider::ReviewCheckoutAssociation {
+        identity: identity.clone(),
+        last_head_sha: head_sha.to_string(),
+        managed,
+    })?;
+    git_output(
+        executor,
+        root,
+        &[
+            "config",
+            "--local",
+            "--replace-all",
+            &association_key(branch),
+            &value,
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
 pub(crate) async fn checkout_pull_request(
     executor: &gpui::BackgroundExecutor,
     root: std::path::PathBuf,
@@ -1014,6 +1193,15 @@ async fn checkout_from_remote(
         &[
             "check-ref-format",
             &format!("refs/heads/{}", pr.base.branch),
+        ],
+    )
+    .await?;
+    git_output(
+        executor,
+        &root,
+        &[
+            "check-ref-format",
+            &format!("refs/heads/{}", pr.head.branch),
         ],
     )
     .await?;
@@ -1049,40 +1237,6 @@ async fn checkout_from_remote(
     )
     .await?;
     let head = git_text(executor, &root, &["rev-parse", "HEAD"]).await?;
-    let previously_associated = previous.as_ref().is_some_and(|saved| {
-        saved.repository.id == repo.id
-            && saved.pull_request.number == pr.number
-            && saved.branch == current
-    });
-    let configured_remote = git_text(
-        executor,
-        &root,
-        &["config", "--get", &format!("branch.{current}.remote")],
-    )
-    .await
-    .ok();
-    let configured_merge = git_text(
-        executor,
-        &root,
-        &["config", "--get", &format!("branch.{current}.merge")],
-    )
-    .await
-    .ok();
-    let remote_url = if let Some(remote) = configured_remote {
-        git_text(executor, &root, &["remote", "get-url", &remote])
-            .await
-            .ok()
-            .and_then(|url| repository_from_remote(&url))
-    } else {
-        None
-    };
-    let associated = previously_associated
-        || (configured_merge.as_deref() == Some(&format!("refs/heads/{}", pr.head.branch))
-            && pr
-                .head
-                .repo
-                .as_ref()
-                .is_some_and(|repo| remote_url.as_deref() == Some(&repo.full_name)));
     ready()?;
     check_clean_checkout(executor, &root).await?;
     ensure!(
@@ -1097,32 +1251,196 @@ async fn checkout_from_remote(
         "The checkout changed during fetch. Try again."
     );
     ready()?;
-    let branch = if associated && head == pr.head.sha {
-        current
-    } else {
-        let existing = git_text(
+    let identity = checkout_identity(&repo, &pr);
+    let branches = local_review_branches(executor, &root).await?;
+    let remote_repositories = remote_repositories(executor, &root, &branches).await;
+    let other_worktrees = branches_in_other_worktrees(executor, &root).await?;
+    let previous_matches = previous.as_ref().is_some_and(|checkout| {
+        checkout_identity(&checkout.repository, &checkout.pull_request) == identity
+    });
+    let source_ref = format!("refs/heads/{}", identity.source_branch);
+    let mut candidate_names = Vec::new();
+    let mut add_candidate = |name: &str| {
+        if !candidate_names.iter().any(|candidate| candidate == name) {
+            candidate_names.push(name.to_string());
+        }
+    };
+    let qualifies = |branch: &LocalReviewBranch| {
+        let previous = previous_matches
+            && previous
+                .as_ref()
+                .is_some_and(|checkout| checkout.branch == branch.name);
+        let associated = branch
+            .association
+            .as_ref()
+            .is_some_and(|association| association.identity == identity);
+        let upstream = branch.upstream_ref.as_deref() == Some(&source_ref)
+            && branch.upstream_remote.as_ref().is_some_and(|remote| {
+                remote_repositories.get(remote) == Some(&identity.source_repository)
+            });
+        let source_branch = identity.source_available
+            && branch.name == identity.source_branch
+            && branch
+                .association
+                .as_ref()
+                .is_none_or(|association| association.identity == identity);
+        previous || associated || upstream || source_branch
+    };
+    if branches
+        .iter()
+        .find(|branch| branch.name == current)
+        .is_some_and(qualifies)
+    {
+        add_candidate(&current);
+    }
+    if previous_matches && let Some(previous) = &previous {
+        add_candidate(&previous.branch);
+    }
+    for branch in branches.iter().filter(|branch| {
+        branch.upstream_ref.as_deref() == Some(&source_ref)
+            && branch.upstream_remote.as_ref().is_some_and(|remote| {
+                remote_repositories.get(remote) == Some(&identity.source_repository)
+            })
+    }) {
+        add_candidate(&branch.name);
+    }
+    for branch in branches.iter().filter(|branch| {
+        branch
+            .association
+            .as_ref()
+            .is_some_and(|association| association.identity == identity)
+    }) {
+        add_candidate(&branch.name);
+    }
+    if identity.source_available
+        && branches.iter().any(|branch| {
+            branch.name == identity.source_branch
+                && branch
+                    .association
+                    .as_ref()
+                    .is_none_or(|association| association.identity == identity)
+        })
+    {
+        add_candidate(&identity.source_branch);
+    }
+
+    let mut warnings = Vec::new();
+    let mut selected = None;
+    for name in candidate_names {
+        let Some(branch) = branches.iter().find(|branch| branch.name == name) else {
+            continue;
+        };
+        if other_worktrees.contains(&branch.name) {
+            warnings.push(format!(
+                "Preserved {} because it is checked out in another worktree.",
+                branch.name
+            ));
+            continue;
+        }
+        let previous_managed = previous_matches
+            && previous.as_ref().is_some_and(|checkout| {
+                checkout.branch == branch.name && branch.name.starts_with("review/pr-")
+            });
+        let managed = branch
+            .association
+            .as_ref()
+            .is_some_and(|association| association.identity == identity && association.managed)
+            || previous_managed;
+        let is_fast_forward = if branch.tip == pr.head.sha {
+            false
+        } else {
+            git_text(executor, &root, &["merge-base", &branch.tip, &head_ref])
+                .await
+                .is_ok_and(|merge_base| merge_base == branch.tip)
+        };
+        let may_follow_force_push = (managed
+            && branch.association.as_ref().is_some_and(|association| {
+                association.identity == identity && association.last_head_sha == branch.tip
+            }))
+            || (previous_managed
+                && previous
+                    .as_ref()
+                    .is_some_and(|checkout| checkout.pull_request.head.sha == branch.tip));
+        if branch.tip != pr.head.sha && !is_fast_forward && !may_follow_force_push {
+            warnings.push(format!(
+                "Preserved {} because it contains commits outside the current review.",
+                branch.name
+            ));
+            continue;
+        }
+        ready()?;
+        check_clean_checkout(executor, &root).await?;
+        if branch.tip != pr.head.sha && !is_fast_forward && may_follow_force_push {
+            // Keep the last provider-confirmed head reachable before moving a
+            // Zed-managed branch across a force push. This is intentionally a
+            // hidden review ref, so recovery does not add another local branch.
+            let recovery_ref = format!("{prefix}/recovery-{}", branch.tip);
+            git_output(executor, &root, &["update-ref", &recovery_ref, &branch.tip]).await?;
+        }
+        if branch.name == current {
+            if is_fast_forward {
+                git_output(executor, &root, &["merge", "--ff-only", &head_ref]).await?;
+            } else if branch.tip != pr.head.sha {
+                git_output(executor, &root, &["reset", "--hard", &head_ref]).await?;
+            }
+        } else {
+            if branch.tip != pr.head.sha {
+                git_output(
+                    executor,
+                    &root,
+                    &["branch", "--force", &branch.name, &head_ref],
+                )
+                .await?;
+            }
+            git_output(executor, &root, &["switch", "--no-guess", &branch.name]).await?;
+        }
+        write_checkout_association(
             executor,
             &root,
-            &["for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+            &branch.name,
+            &identity,
+            &pr.head.sha,
+            managed,
         )
         .await?;
-        let name = format!("review/pr-{}-{}", pr.number, &pr.head.sha[..8]);
-        let mut branch = name.clone();
+        selected = Some(branch.name.clone());
+        break;
+    }
+
+    let branch = if let Some(branch) = selected {
+        branch
+    } else {
+        let existing: HashSet<_> = branches.iter().map(|branch| branch.name.as_str()).collect();
+        let preferred = identity.source_branch.clone();
+        let base = format!("review/pr-{}-{}", pr.number, identity.source_branch);
+        let mut branch = if !identity.source_available {
+            warnings.push(
+                "The review source repository is unavailable; using a managed review branch."
+                    .into(),
+            );
+            base.clone()
+        } else if existing.contains(preferred.as_str()) {
+            warnings.push(format!(
+                "Preserved unrelated local branch {preferred}; using a managed review branch."
+            ));
+            base.clone()
+        } else {
+            preferred
+        };
         let mut suffix = 2;
-        while existing.lines().any(|existing| existing == branch) {
-            branch = format!("{name}-{suffix}");
+        while existing.contains(branch.as_str()) || other_worktrees.contains(&branch) {
+            branch = format!("{base}-{suffix}");
             suffix += 1;
         }
         ready()?;
         check_clean_checkout(executor, &root).await?;
-        ready()?;
-        // A fresh branch preserves local commits and prior PR revisions, including force pushes.
         git_output(
             executor,
             &root,
             &["switch", "--no-guess", "-c", &branch, &head_ref],
         )
         .await?;
+        write_checkout_association(executor, &root, &branch, &identity, &pr.head.sha, true).await?;
         branch
     };
     Ok(Checkout {
@@ -1130,6 +1448,7 @@ async fn checkout_from_remote(
         pull_request: pr,
         branch,
         base_ref,
+        warning: (!warnings.is_empty()).then(|| warnings.join(" ")),
     })
 }
 
@@ -1247,6 +1566,48 @@ pub(crate) struct PublishedComment {
     pub comment: RemoteComment,
     pub current: Option<String>,
     pub base: Option<String>,
+}
+
+impl PublishedComment {
+    pub(crate) fn into_placed(self) -> Option<crate::review_provider::PlacedReviewComment> {
+        let path = self.comment.path.clone()?;
+        let line = self.comment.line?;
+        let side = match self.comment.side? {
+            DiffSide::Left => crate::review_provider::ReviewDiffSide::Left,
+            DiffSide::Right => crate::review_provider::ReviewDiffSide::Right,
+        };
+        let root_comment_id = self
+            .comment
+            .in_reply_to_id
+            .unwrap_or(self.comment.id)
+            .to_string();
+        let thread = self.comment.thread.as_ref();
+        Some(crate::review_provider::PlacedReviewComment {
+            id: self.comment.id.to_string(),
+            thread: crate::review_provider::ReviewThreadState {
+                id: crate::review_provider::ReviewThreadId(
+                    thread
+                        .map(|thread| thread.id.clone())
+                        .unwrap_or_else(|| format!("comment-{root_comment_id}")),
+                ),
+                resolved: thread.is_some_and(|thread| thread.is_resolved),
+                outdated: thread.is_some_and(|thread| thread.is_outdated),
+                can_reply: thread.is_some_and(|thread| thread.viewer_can_reply),
+                can_resolve: thread.is_some_and(|thread| thread.viewer_can_resolve),
+                can_reopen: thread.is_some_and(|thread| thread.viewer_can_unresolve),
+            },
+            root_comment_id,
+            author: self.comment.user.login,
+            body: self.comment.body.unwrap_or_default(),
+            provider_name: "GitHub".into(),
+            url: None,
+            path,
+            side,
+            line,
+            current: self.current,
+            base: self.base,
+        })
+    }
 }
 
 pub(crate) async fn published_comments(
@@ -1813,6 +2174,7 @@ mod tests {
             pull_request: pr(),
             branch: "review/old".into(),
             base_ref: "old-sha".into(),
+            warning: None,
         };
         let original = checkout.review_key(Path::new("/worktree")).unwrap();
         checkout.branch = "review/new".into();
@@ -1915,6 +2277,48 @@ mod tests {
         (directory, root, remote, pr)
     }
 
+    async fn publish_review_head(
+        executor: &gpui::BackgroundExecutor,
+        root: &Path,
+        remote: &Path,
+        start: &str,
+        contents: &str,
+    ) -> String {
+        let current = git_text(
+            executor,
+            root,
+            &["symbolic-ref", "--quiet", "--short", "HEAD"],
+        )
+        .await
+        .unwrap();
+        git_output(executor, root, &["switch", "--detach", start])
+            .await
+            .unwrap();
+        smol::fs::write(root.join("a.txt"), contents).await.unwrap();
+        git_output(executor, root, &["commit", "-am", "updated review head"])
+            .await
+            .unwrap();
+        let head = git_text(executor, root, &["rev-parse", "HEAD"])
+            .await
+            .unwrap();
+        git_output(
+            executor,
+            root,
+            &[
+                "push",
+                "--force",
+                remote.to_str().unwrap(),
+                &format!("{head}:refs/pull/12/head"),
+            ],
+        )
+        .await
+        .unwrap();
+        git_output(executor, root, &["switch", &current])
+            .await
+            .unwrap();
+        head
+    }
+
     #[gpui::test]
     fn checkout_preserves_branches_and_rejects_dirty_state_and_fetch_races(
         cx: &mut gpui::TestAppContext,
@@ -1950,10 +2354,6 @@ mod tests {
             smol::fs::remove_file(root.join("untracked.txt"))
                 .await
                 .unwrap();
-            let collision = format!("review/pr-12-{}", &pr.head.sha[..8]);
-            git_output(executor, &root, &["branch", &collision])
-                .await
-                .unwrap();
             let checkout = checkout_from_remote(
                 executor,
                 root.clone(),
@@ -1965,12 +2365,13 @@ mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(checkout.branch, format!("{collision}-2"));
+            assert_eq!(checkout.branch, "feature");
+            assert!(checkout.warning.is_none());
             assert_eq!(
-                git_text(executor, &root, &["rev-parse", &collision])
+                git_text(executor, &root, &["rev-parse", &checkout.base_ref])
                     .await
                     .unwrap(),
-                original
+                pr.base.sha
             );
             assert_eq!(
                 git_text(executor, &root, &["rev-parse", "HEAD"])
@@ -1978,18 +2379,34 @@ mod tests {
                     .unwrap(),
                 pr.head.sha
             );
+            git_output(executor, &root, &["switch", "main"])
+                .await
+                .unwrap();
             let retained = checkout_from_remote(
                 executor,
                 root.clone(),
                 repo(),
                 pr.clone(),
-                Some(checkout.clone()),
+                None,
                 remote.to_str().unwrap().into(),
                 || Ok(()),
             )
             .await
             .unwrap();
             assert_eq!(retained.branch, checkout.branch);
+            assert_eq!(
+                git_text(
+                    executor,
+                    &root,
+                    &["for-each-ref", "--format=%(refname:short)", "refs/heads/"]
+                )
+                .await
+                .unwrap()
+                .lines()
+                .filter(|branch| branch.starts_with("review/pr-12-"))
+                .count(),
+                0
+            );
             let mut moved = pr.clone();
             moved.head.sha = "c".repeat(40);
             assert!(
@@ -2035,6 +2452,364 @@ mod tests {
                     .unwrap(),
                 pr.head.sha
             );
+        });
+    }
+
+    #[gpui::test]
+    fn checkout_reuses_managed_and_upstream_source_branches(cx: &mut gpui::TestAppContext) {
+        let executor = &cx.background_executor;
+        smol::block_on(async {
+            let (_directory, root, remote, pr) = fixture(executor).await;
+            git_output(executor, &root, &["branch", "-D", "feature"])
+                .await
+                .unwrap();
+            let created = checkout_from_remote(
+                executor,
+                root.clone(),
+                repo(),
+                pr.clone(),
+                None,
+                remote.to_str().unwrap().into(),
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(created.branch, "feature");
+            git_output(executor, &root, &["switch", "main"])
+                .await
+                .unwrap();
+            let reopened = checkout_from_remote(
+                executor,
+                root.clone(),
+                repo(),
+                pr.clone(),
+                None,
+                remote.to_str().unwrap().into(),
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(reopened.branch, created.branch);
+
+            git_output(executor, &root, &["switch", "main"])
+                .await
+                .unwrap();
+            git_output(
+                executor,
+                &root,
+                &["branch", "-m", "feature", "local-feature"],
+            )
+            .await
+            .unwrap();
+            git_output(
+                executor,
+                &root,
+                &[
+                    "config",
+                    "--unset-all",
+                    "branch.local-feature.zed-review-association",
+                ],
+            )
+            .await
+            .unwrap();
+            git_output(
+                executor,
+                &root,
+                &[
+                    "remote",
+                    "add",
+                    "contributor",
+                    "https://github.com/contributor/project.git",
+                ],
+            )
+            .await
+            .unwrap();
+            git_output(
+                executor,
+                &root,
+                &["config", "branch.local-feature.remote", "contributor"],
+            )
+            .await
+            .unwrap();
+            git_output(
+                executor,
+                &root,
+                &["config", "branch.local-feature.merge", "refs/heads/feature"],
+            )
+            .await
+            .unwrap();
+            git_output(
+                executor,
+                &root,
+                &[
+                    "update-ref",
+                    "refs/remotes/contributor/feature",
+                    &pr.head.sha,
+                ],
+            )
+            .await
+            .unwrap();
+            let upstream = checkout_from_remote(
+                executor,
+                root.clone(),
+                repo(),
+                pr,
+                None,
+                remote.to_str().unwrap().into(),
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(upstream.branch, "local-feature");
+        });
+    }
+
+    #[gpui::test]
+    fn checkout_updates_safe_branches_and_preserves_diverged_branches(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let executor = &cx.background_executor;
+        smol::block_on(async {
+            let (_directory, root, remote, mut pr) = fixture(executor).await;
+            let old_head = pr.head.sha.clone();
+            pr.head.sha =
+                publish_review_head(executor, &root, &remote, &old_head, "fast forward\n").await;
+            let fast_forwarded = checkout_from_remote(
+                executor,
+                root.clone(),
+                repo(),
+                pr.clone(),
+                None,
+                remote.to_str().unwrap().into(),
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(fast_forwarded.branch, "feature");
+            assert_eq!(
+                git_text(executor, &root, &["rev-parse", "feature"])
+                    .await
+                    .unwrap(),
+                pr.head.sha
+            );
+
+            let (_directory, root, remote, mut pr) = fixture(executor).await;
+            let user_head = pr.head.sha.clone();
+            pr.head.sha =
+                publish_review_head(executor, &root, &remote, &pr.base.sha, "force pushed\n").await;
+            let fallback = checkout_from_remote(
+                executor,
+                root.clone(),
+                repo(),
+                pr.clone(),
+                None,
+                remote.to_str().unwrap().into(),
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(fallback.branch, "review/pr-12-feature");
+            assert!(fallback.warning.is_some());
+            assert_eq!(
+                git_text(executor, &root, &["rev-parse", "feature"])
+                    .await
+                    .unwrap(),
+                user_head
+            );
+
+            let (_directory, root, remote, mut pr) = fixture(executor).await;
+            git_output(executor, &root, &["branch", "-D", "feature"])
+                .await
+                .unwrap();
+            let managed = checkout_from_remote(
+                executor,
+                root.clone(),
+                repo(),
+                pr.clone(),
+                None,
+                remote.to_str().unwrap().into(),
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            let old_head = pr.head.sha.clone();
+            git_output(executor, &root, &["switch", "main"])
+                .await
+                .unwrap();
+            pr.head.sha = publish_review_head(
+                executor,
+                &root,
+                &remote,
+                &pr.base.sha,
+                "managed force push\n",
+            )
+            .await;
+            let updated = checkout_from_remote(
+                executor,
+                root.clone(),
+                repo(),
+                pr.clone(),
+                None,
+                remote.to_str().unwrap().into(),
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(updated.branch, managed.branch);
+            assert_ne!(old_head, pr.head.sha);
+            assert_eq!(
+                git_text(
+                    executor,
+                    &root,
+                    &[
+                        "rev-parse",
+                        &format!("refs/zed/reviews/7/12/recovery-{old_head}")
+                    ],
+                )
+                .await
+                .unwrap(),
+                old_head
+            );
+            assert_eq!(
+                git_text(executor, &root, &["rev-parse", &updated.branch])
+                    .await
+                    .unwrap(),
+                pr.head.sha
+            );
+
+            let (_directory, root, remote, pr) = fixture(executor).await;
+            git_output(executor, &root, &["switch", "feature"])
+                .await
+                .unwrap();
+            smol::fs::write(root.join("a.txt"), "local commit\n")
+                .await
+                .unwrap();
+            git_output(executor, &root, &["commit", "-am", "local work"])
+                .await
+                .unwrap();
+            let local_head = git_text(executor, &root, &["rev-parse", "HEAD"])
+                .await
+                .unwrap();
+            git_output(executor, &root, &["switch", "main"])
+                .await
+                .unwrap();
+            let ahead = checkout_from_remote(
+                executor,
+                root.clone(),
+                repo(),
+                pr,
+                None,
+                remote.to_str().unwrap().into(),
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(ahead.branch, "review/pr-12-feature");
+            assert_eq!(
+                git_text(executor, &root, &["rev-parse", "feature"])
+                    .await
+                    .unwrap(),
+                local_head
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn checkout_isolates_forks_worktrees_and_deleted_sources(cx: &mut gpui::TestAppContext) {
+        let executor = &cx.background_executor;
+        smol::block_on(async {
+            let (_directory, root, remote, pr) = fixture(executor).await;
+            let mut other_identity = checkout_identity(&repo(), &pr);
+            other_identity.source_repository = "other/project".into();
+            write_checkout_association(
+                executor,
+                &root,
+                "feature",
+                &other_identity,
+                &pr.head.sha,
+                true,
+            )
+            .await
+            .unwrap();
+            let isolated = checkout_from_remote(
+                executor,
+                root.clone(),
+                repo(),
+                pr.clone(),
+                None,
+                remote.to_str().unwrap().into(),
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(isolated.branch, "review/pr-12-feature");
+            git_output(executor, &root, &["switch", "main"])
+                .await
+                .unwrap();
+            let reopened = checkout_from_remote(
+                executor,
+                root.clone(),
+                repo(),
+                pr.clone(),
+                None,
+                remote.to_str().unwrap().into(),
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(reopened.branch, isolated.branch);
+
+            let (directory, root, remote, pr) = fixture(executor).await;
+            let secondary = directory.path().join("secondary");
+            git_output(
+                executor,
+                &root,
+                &["worktree", "add", secondary.to_str().unwrap(), "feature"],
+            )
+            .await
+            .unwrap();
+            let worktree_checkout = checkout_from_remote(
+                executor,
+                root.clone(),
+                repo(),
+                pr.clone(),
+                None,
+                remote.to_str().unwrap().into(),
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            assert_ne!(worktree_checkout.branch, "feature");
+            assert!(worktree_checkout.warning.is_some());
+
+            let (_directory, root, remote, pr) = fixture(executor).await;
+            let mut deleted = pr;
+            deleted.number = 13;
+            deleted.head.repo = None;
+            git_output(
+                executor,
+                &root,
+                &[
+                    "push",
+                    remote.to_str().unwrap(),
+                    &format!("{}:refs/pull/13/head", deleted.head.sha),
+                ],
+            )
+            .await
+            .unwrap();
+            let deleted_checkout = checkout_from_remote(
+                executor,
+                root.clone(),
+                repo(),
+                deleted,
+                None,
+                remote.to_str().unwrap().into(),
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            assert!(deleted_checkout.branch.starts_with("review/pr-13-feature"));
+            assert!(deleted_checkout.warning.is_some());
         });
     }
 

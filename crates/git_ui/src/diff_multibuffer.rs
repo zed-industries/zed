@@ -64,6 +64,8 @@ pub struct DiffMultibuffer {
     branch_diff: Entity<diff_buffer_list::DiffBufferList>,
     editor: Entity<SplittableEditor>,
     buffer_subscriptions: HashMap<RepoPath, BufferSubscriptions>,
+    pending_folds: HashSet<RepoPath>,
+    session_folds: HashSet<RepoPath>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
@@ -117,7 +119,6 @@ impl DiffMultibuffer {
                     cx.notify();
                 }
             });
-
         let branch_diff_subscription = cx.subscribe_in(
             &branch_diff,
             window,
@@ -130,6 +131,8 @@ impl DiffMultibuffer {
                 }
                 BranchDiffEvent::DiffBaseChanged => {
                     this.pending_scroll.take();
+                    this.pending_folds.clear();
+                    this.session_folds.clear();
                     this._task = window.spawn(cx, {
                         let this = cx.weak_entity();
                         async |cx| Self::refresh(this, cx).await
@@ -180,6 +183,8 @@ impl DiffMultibuffer {
             editor,
             multibuffer,
             buffer_subscriptions: Default::default(),
+            pending_folds: HashSet::default(),
+            session_folds: HashSet::default(),
             pending_scroll: None,
             viewed_delta: None,
             custom_diff_task: None,
@@ -211,8 +216,10 @@ impl DiffMultibuffer {
             .get(path)
             .map(|subscriptions| subscriptions.display_buffer.read(cx).remote_id())
         else {
-            return false;
+            self.pending_folds.insert(path.clone());
+            return true;
         };
+        self.pending_folds.remove(path);
         self.editor.update(cx, |split, cx| {
             split
                 .rhs_editor()
@@ -221,7 +228,18 @@ impl DiffMultibuffer {
         true
     }
 
+    pub(crate) fn fold_path_for_session(
+        &mut self,
+        path: &RepoPath,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.session_folds.insert(path.clone());
+        self.fold_path(path, cx)
+    }
+
     pub(crate) fn unfold_path(&mut self, path: &RepoPath, cx: &mut Context<Self>) -> bool {
+        self.pending_folds.remove(path);
+        self.session_folds.remove(path);
         let Some(buffer_id) = self
             .buffer_subscriptions
             .get(path)
@@ -235,6 +253,10 @@ impl DiffMultibuffer {
                 .update(cx, |editor, cx| editor.unfold_buffer(buffer_id, cx));
         });
         true
+    }
+
+    pub(crate) fn cancel_session_fold(&mut self, path: &RepoPath) {
+        self.session_folds.remove(path);
     }
 
     pub(crate) fn show_viewed_delta(
@@ -614,6 +636,12 @@ impl DiffMultibuffer {
                 }
             })
         });
+        // A dedicated Since Viewed comparison is already narrowed to the selected
+        // approval delta. Do not carry the Branch view's automatic Viewed fold
+        // into that temporary excerpt or the changes the user requested can be
+        // hidden as soon as they open the comparison.
+        let pending_fold = self.viewed_delta.is_none()
+            && (self.pending_folds.remove(&repo_path) || self.session_folds.contains(&repo_path));
         self.buffer_subscriptions.insert(
             repo_path,
             BufferSubscriptions {
@@ -650,7 +678,7 @@ impl DiffMultibuffer {
         };
 
         let buffer_id = snapshot.text.remote_id();
-        let mut needs_fold = false;
+        let mut needs_fold = pending_fold;
 
         let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
             let was_empty = editor.rhs_editor().read(cx).buffer().read(cx).is_empty();
@@ -805,7 +833,8 @@ impl DiffMultibuffer {
 
             this.buffer_subscriptions
                 .retain(|repo_path, _| live_repo_paths.contains(repo_path));
-
+            this.pending_folds
+                .retain(|repo_path| live_repo_paths.contains(repo_path));
             (entries, this.viewed_delta.clone())
         })?;
 

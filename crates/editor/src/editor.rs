@@ -789,6 +789,8 @@ pub trait Addon: 'static {
         None
     }
 
+    fn buffer_fold_toggled(&self, _: BufferId, _: bool, _: &mut App) {}
+
     fn to_any(&self) -> &dyn std::any::Any;
 
     fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {

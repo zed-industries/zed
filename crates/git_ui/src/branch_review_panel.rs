@@ -1,7 +1,8 @@
 use crate::{branch_diff::BranchDiff, branch_review::ReviewEvent, project_diff::CompareWithBranch};
 use crate::{
     github_review::{Checkout, CommentTarget, DiffSide, GitHubRepo, PullRequest},
-    github_review_ui::{GitHubReview, GitHubReviewEvent},
+    github_review_ui::{ReviewRequestPicker, ReviewService, ReviewServiceEvent},
+    review_provider::ReviewBackend,
 };
 use anyhow::{Context as _, Result, ensure};
 use db::kvp::KeyValueStore;
@@ -14,7 +15,7 @@ use project::git_store::{GitStoreEvent, diff_buffer_list::DiffBase};
 use serde::{Deserialize, Serialize};
 use settings::{IntoGpui as _, Settings};
 use std::{ops::Range, path::PathBuf};
-use ui::{Tooltip, prelude::*};
+use ui::{ButtonLike, PopoverMenu, Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::{
     Panel, Workspace,
@@ -111,7 +112,7 @@ struct ReviewSession {
 
 pub struct BranchReviewPanel {
     workspace: WeakEntity<Workspace>,
-    github: Entity<GitHubReview>,
+    github: Entity<ReviewService>,
     checkout_task: Option<Task<()>>,
     pending_checkout: Option<Checkout>,
     ignored_item: Option<gpui::EntityId>,
@@ -122,6 +123,7 @@ pub struct BranchReviewPanel {
     storage_key: Option<String>,
     write_task: Option<Task<()>>,
     error: Option<String>,
+    warning: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -166,14 +168,13 @@ impl BranchReviewPanel {
         cx: &mut Context<Self>,
     ) -> Self {
         let git_store = workspace.project().read(cx).git_store().clone();
-        let github = cx.new(|cx| GitHubReview::new(workspace.project().clone(), window, cx));
+        let github = cx.new(|cx| ReviewService::new(workspace.project().clone(), window, cx));
         let subscriptions = vec![
             cx.subscribe_in(&github, window, |this, _, event, window, cx| match event {
-                GitHubReviewEvent::Open { repo, pr } => {
+                ReviewServiceEvent::Open { repo, pr } => {
                     this.open_pull_request(repo.clone(), pr.clone(), window, cx)
                 }
-                GitHubReviewEvent::CommentSelection => this.comment_selection(window, cx),
-                GitHubReviewEvent::CommentsLoaded(comments) => {
+                ReviewServiceEvent::CommentsLoaded(comments) => {
                     if let Some(session) = &this.session {
                         let review = session.item.read(cx).review.clone();
                         review.update(cx, |review, cx| review.set_comments(comments.clone(), cx));
@@ -236,6 +237,7 @@ impl BranchReviewPanel {
             storage_key,
             write_task: None,
             error,
+            warning: None,
             _subscriptions: subscriptions,
         }
     }
@@ -296,7 +298,8 @@ impl BranchReviewPanel {
             previous_review.update(cx, |review, cx| review.set_panel_focus_handle(None, cx));
         }
         review.update(cx, |review, cx| {
-            review.set_panel_focus_handle(Some(self.focus_handle.clone()), cx)
+            review.set_panel_focus_handle(Some(self.focus_handle.clone()), cx);
+            review.set_review_service(Some(self.github.downgrade()), cx);
         });
         if let Some(checkout) = &comparison.checkout {
             match checkout.review_key(&comparison.worktree) {
@@ -348,11 +351,18 @@ impl BranchReviewPanel {
                         }
                     })
                 }
-                ReviewEvent::Reply(id) => {
-                    this.github.update(cx, |github, cx| {
-                        github.select_target(CommentTarget::Reply { comment_id: *id }, window, cx)
-                    });
-                }
+                ReviewEvent::Reply {
+                    comment_id,
+                    thread_id,
+                } => this.github.update(cx, |github, cx| {
+                    github.reply_inline(comment_id, thread_id.clone(), window, cx)
+                }),
+                ReviewEvent::Resolve {
+                    thread_id,
+                    resolved,
+                } => this.github.update(cx, |github, cx| {
+                    github.set_thread_resolved(thread_id.0.clone(), *resolved, cx)
+                }),
             },
         );
         let item_subscription = cx.observe_in(&item, window, |_, _, window, cx| {
@@ -456,8 +466,7 @@ impl BranchReviewPanel {
         };
         if !self.github.read(cx).matches_repository(&repository, cx) {
             self.error = Some(
-                "The active repository changed. Browse PRs for the selected repository again."
-                    .into(),
+                "The active repository changed. Select a review for this repository again.".into(),
             );
             cx.notify();
             return;
@@ -465,6 +474,7 @@ impl BranchReviewPanel {
         let root = repository.read(cx).work_directory_abs_path.to_path_buf();
         let previous = self.github.read(cx).checkout.clone();
         self.error = None;
+        self.warning = None;
         let weak_repository = repository.downgrade();
         let project_for_job = project.clone();
         let job = repository.update(cx, |repository, _| repository.send_job("open_pull_request", Some("Opening PR checkout".into()), move |state, cx| async move {
@@ -492,7 +502,11 @@ impl BranchReviewPanel {
                 }
                 ensure!(observed, "Git switched branches, but the project has not refreshed. Open Branch Review again after the project refreshes.");
                 let item = cx.update(|window, cx| BranchDiff::new_with_branch_base(project.clone(), workspace.clone(), checkout.base_ref.clone().into(), repository, None, window, cx))?.await?;
-                this.update(cx, |this, _| { this.pending_checkout = Some(checkout); this.ignored_item = None; })?;
+                this.update(cx, |this, _| {
+                    this.warning = checkout.warning.clone();
+                    this.pending_checkout = Some(checkout);
+                    this.ignored_item = None;
+                })?;
                 workspace.update_in(cx, |workspace, window, cx| workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx))?;
                 Ok(())
             }.await;
@@ -505,22 +519,6 @@ impl BranchReviewPanel {
             }).log_err();
         }));
         cx.notify();
-    }
-
-    fn comment_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let result: Result<CommentTarget> = (|| {
-            let session = self.session.as_ref().context("Open a PR review first")?;
-            let split = session.item.read(cx).editor(cx);
-            let split = split.read(cx);
-            let editor_handle = split.focused_editor().clone();
-            let editor = editor_handle.read(cx);
-            let selection = editor.selections.newest_anchor();
-            self.comment_target(&editor_handle, selection.start..selection.end, cx)
-        })();
-        self.github.update(cx, |github, cx| match result {
-            Ok(target) => github.select_target(target, window, cx),
-            Err(error) => github.show_error(format!("{error:#}"), cx),
-        });
     }
 
     fn comment_range(
@@ -555,7 +553,7 @@ impl BranchReviewPanel {
             .context("This is a local branch comparison")?;
         ensure!(
             !session.item.read(cx).review.read(cx).is_viewed_delta(cx),
-            "Switch to the Branch comparison before selecting lines for a GitHub comment"
+            "Switch to the Branch comparison before selecting lines for a review comment"
         );
         let split = session.item.read(cx).editor(cx);
         let split = split.read(cx);
@@ -632,6 +630,7 @@ impl BranchReviewPanel {
             .map(|session| session.item.entity_id());
         self.session = None;
         self.pending_restore = None;
+        self.warning = None;
         self.github.update(cx, |github, cx| github.close_review(cx));
         self.persist(cx);
         cx.notify();
@@ -728,6 +727,12 @@ impl Panel for BranchReviewPanel {
 
 impl Render for BranchReviewPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let current_review = self.github.read(cx).current_review_header();
+        let provider = self.github.read(cx).identity();
+        let review_picker = self.github.clone();
+        let load_review_picker = self.github.clone();
+        let conversation = self.github.clone();
+        let load_conversation = self.github.clone();
         v_flex()
             .size_full()
             .track_focus(&self.focus_handle)
@@ -772,53 +777,171 @@ impl Render for BranchReviewPanel {
                         .child(Label::new(error).size(LabelSize::Small).color(Color::Error)),
                 )
             })
-            .when(self.github.read(cx).has_github(), |view| {
+            .when_some(self.warning.clone(), |view, warning| {
                 view.child(
-                    h_flex()
+                    div().px_2().pb_1().child(
+                        Label::new(warning)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Warning)
+                            .line_clamp(3),
+                    ),
+                )
+            })
+            .when_some(current_review, |view, review| {
+                let full_title = format!("#{} {}", review.number, review.title);
+                view.child(
+                    v_flex()
                         .px_2()
-                        .gap_1()
-                        .child(Button::new("review-files", "Files").on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.github.update(cx, |github, cx| github.show_files(cx));
-                            },
-                        )))
+                        .pb_1()
+                        .gap_0p5()
                         .child(
-                            Button::new("review-discussion", "Discussion")
-                                .disabled(self.github.read(cx).checkout.is_none())
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.github
-                                        .update(cx, |github, cx| github.refresh_discussion(cx));
-                                })),
+                            h_flex()
+                                .min_w_0()
+                                .gap_1()
+                                .child(
+                                    div().flex_1().min_w_0().child(
+                                        PopoverMenu::new("branch-review-request-picker")
+                                            .full_width(true)
+                                            .on_open(std::rc::Rc::new(move |window, cx| {
+                                                load_review_picker.update(cx, |review, cx| {
+                                                    review.load_review_requests(window, cx)
+                                                });
+                                            }))
+                                            .menu(move |window, cx| {
+                                                Some(cx.new(|cx| {
+                                                    ReviewRequestPicker::new(
+                                                        review_picker.clone(),
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }))
+                                            })
+                                            .anchor(gpui::Anchor::TopLeft)
+                                            .trigger(
+                                                ButtonLike::new("current-branch-review")
+                                                    .full_width()
+                                                    .tooltip(Tooltip::text(full_title))
+                                                    .child(
+                                                        h_flex()
+                                                            .w_full()
+                                                            .min_w_0()
+                                                            .gap_1()
+                                                            .child(
+                                                                div().flex_none().child(
+                                                                    Label::new(format!(
+                                                                        "#{}",
+                                                                        review.number
+                                                                    ))
+                                                                    .size(LabelSize::Small)
+                                                                    .color(Color::Muted),
+                                                                ),
+                                                            )
+                                                            .child(
+                                                                div().flex_1().min_w_0().child(
+                                                                    Label::new(
+                                                                        review.title.clone(),
+                                                                    )
+                                                                    .size(LabelSize::Small)
+                                                                    .single_line()
+                                                                    .truncate(),
+                                                                ),
+                                                            )
+                                                            .child(
+                                                                Icon::new(IconName::ChevronDown)
+                                                                    .size(IconSize::Small)
+                                                                    .color(Color::Muted),
+                                                            ),
+                                                    ),
+                                            ),
+                                    ),
+                                )
+                                .child(
+                                    PopoverMenu::new("branch-review-conversation")
+                                        .on_open(std::rc::Rc::new(move |_, cx| {
+                                            load_conversation.update(cx, |review, cx| {
+                                                review.refresh_discussion(cx)
+                                            });
+                                        }))
+                                        .menu(move |_, _| Some(conversation.clone()))
+                                        .anchor(gpui::Anchor::TopRight)
+                                        .trigger(
+                                            IconButton::new(
+                                                "branch-review-more",
+                                                IconName::Ellipsis,
+                                            )
+                                            .tooltip(
+                                                Tooltip::text("Review conversation and actions"),
+                                            ),
+                                        ),
+                                ),
                         )
                         .child(
-                            Button::new("browse-github-prs", "PRs")
-                                .disabled(
-                                    self.checkout_task
-                                        .as_ref()
-                                        .is_some_and(|task| !task.is_ready()),
-                                )
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.github.update(cx, |github, cx| github.show_browser(cx));
-                                })),
+                            Label::new(review.repository)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Label::new(format!(
+                                "{} → {}",
+                                review.base_branch, review.review_branch
+                            ))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted)
+                            .single_line()
+                            .truncate(),
                         ),
                 )
             })
             .when(
+                self.github.read(cx).has_provider()
+                    && self.github.read(cx).current_review_header().is_none(),
+                |view| {
+                    let picker = self.github.clone();
+                    let loader = self.github.clone();
+                    view.child(
+                        div().px_2().pb_1().child(
+                            PopoverMenu::new("branch-review-empty-request-picker")
+                                .full_width(true)
+                                .on_open(std::rc::Rc::new(move |window, cx| {
+                                    loader.update(cx, |review, cx| {
+                                        review.load_review_requests(window, cx)
+                                    });
+                                }))
+                                .menu(move |window, cx| {
+                                    Some(cx.new(|cx| {
+                                        ReviewRequestPicker::new(picker.clone(), window, cx)
+                                    }))
+                                })
+                                .trigger(
+                                    Button::new(
+                                        "choose-remote-review",
+                                        format!("Choose {} review", provider.name),
+                                    )
+                                    .full_width(),
+                                ),
+                        ),
+                    )
+                },
+            )
+            .when(
                 self.checkout_task
                     .as_ref()
                     .is_some_and(|task| !task.is_ready()),
-                |view| view.child(Label::new("Preparing PR checkout…").size(LabelSize::Small)),
+                |view| view.child(Label::new("Preparing review checkout…").size(LabelSize::Small)),
             )
             .map(|view| {
-                if self.github.read(cx).is_visible() {
-                    view.child(div().flex_1().min_h_0().child(self.github.clone()))
-                } else if let Some(session) = &self.session {
-                    view.child(
-                        div().px_2().pb_1().child(
-                            Label::new(format!("Base: {}", session.comparison.base_ref))
-                                .size(LabelSize::Small),
-                        ),
-                    )
+                if let Some(session) = &self.session {
+                    view.child(div().px_2().pb_1().when(
+                        self.github.read(cx).current_review_header().is_none(),
+                        |row| {
+                            row.child(
+                                Label::new(format!("Base: {}", session.comparison.base_ref))
+                                    .size(LabelSize::Small)
+                                    .single_line()
+                                    .truncate(),
+                            )
+                        },
+                    ))
                     .child(
                         div()
                             .flex_1()

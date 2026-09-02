@@ -782,10 +782,20 @@ pub(crate) fn render_buffer_header(
                                             if is_folded {
                                                 editor.update(cx, |editor, cx| {
                                                     editor.unfold_buffer(buffer_id, cx);
+                                                    for addon in editor.addons.values() {
+                                                        addon.buffer_fold_toggled(
+                                                            buffer_id, false, cx,
+                                                        );
+                                                    }
                                                 });
                                             } else {
                                                 editor.update(cx, |editor, cx| {
                                                     editor.fold_buffer(buffer_id, cx);
+                                                    for addon in editor.addons.values() {
+                                                        addon.buffer_fold_toggled(
+                                                            buffer_id, true, cx,
+                                                        );
+                                                    }
                                                 });
                                             }
                                         }
@@ -967,8 +977,14 @@ pub(crate) fn render_buffer_header(
 
                                 if is_folded {
                                     editor.unfold_buffer(buffer_id, cx);
+                                    for addon in editor.addons.values() {
+                                        addon.buffer_fold_toggled(buffer_id, false, cx);
+                                    }
                                 } else {
                                     editor.fold_buffer(buffer_id, cx);
+                                    for addon in editor.addons.values() {
+                                        addon.buffer_fold_toggled(buffer_id, true, cx);
+                                    }
                                 }
                             }
                         })),

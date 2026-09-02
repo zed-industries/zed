@@ -111,6 +111,34 @@ pub(crate) enum SnapshotAvailability {
     Legacy,
 }
 
+pub(crate) struct ViewedUpdate {
+    path: String,
+    fingerprint: Option<Fingerprint>,
+    comparison: Option<(Option<String>, Option<String>)>,
+}
+
+impl ViewedUpdate {
+    pub(crate) fn viewed(
+        path: String,
+        fingerprint: Fingerprint,
+        comparison: Option<(Option<String>, Option<String>)>,
+    ) -> Self {
+        Self {
+            path,
+            fingerprint: Some(fingerprint),
+            comparison,
+        }
+    }
+
+    pub(crate) fn unviewed(path: String) -> Self {
+        Self {
+            path,
+            fingerprint: None,
+            comparison: None,
+        }
+    }
+}
+
 impl ApprovedSnapshot {
     fn capture(base: Option<&str>, current: Option<&str>) -> Result<Self> {
         if base.is_some_and(|text| text.len() > MAX_SNAPSHOT_BYTES)
@@ -439,6 +467,10 @@ impl ReviewState {
         self.error.is_none() && self.records.viewed.contains_key(path)
     }
 
+    pub fn approval_paths(&self) -> impl Iterator<Item = &str> {
+        self.records.viewed.keys().map(String::as_str)
+    }
+
     pub fn change_reasons(&self, path: &str, fingerprint: &Fingerprint) -> Vec<&'static str> {
         if self.error.is_some() {
             return Vec::new();
@@ -504,35 +536,62 @@ impl ReviewState {
         comparison: Option<(Option<&str>, Option<&str>)>,
         cx: &mut Context<Self>,
     ) {
+        let update = match fingerprint {
+            Some(fingerprint) => ViewedUpdate::viewed(
+                path,
+                fingerprint,
+                comparison
+                    .map(|(base, current)| (base.map(str::to_owned), current.map(str::to_owned))),
+            ),
+            None => ViewedUpdate::unviewed(path),
+        };
+        self.set_viewed_many(vec![update], cx);
+    }
+
+    pub(crate) fn set_viewed_many(&mut self, updates: Vec<ViewedUpdate>, cx: &mut Context<Self>) {
         if self.error.is_some() {
             return;
         }
-        match fingerprint {
-            Some(fingerprint) => {
-                let snapshot = match comparison
-                    .map(|(base, current)| ApprovedSnapshot::capture(base, current))
-                    .transpose()
-                {
-                    Ok(snapshot) => snapshot,
-                    Err(error) => {
-                        self.error = Some(format!("Progress was not saved: {error:#}"));
-                        cx.notify();
-                        return;
-                    }
-                };
-                self.records.viewed.insert(
-                    path,
-                    Approval {
-                        fingerprint,
-                        snapshot,
-                    },
-                );
-            }
-            None => {
-                self.records.viewed.remove(&path);
+        let mut changed = false;
+        let mut first_error = None;
+        for update in updates {
+            match update.fingerprint {
+                Some(fingerprint) => {
+                    let snapshot = match update
+                        .comparison
+                        .as_ref()
+                        .map(|(base, current)| {
+                            ApprovedSnapshot::capture(base.as_deref(), current.as_deref())
+                        })
+                        .transpose()
+                    {
+                        Ok(snapshot) => snapshot,
+                        Err(error) => {
+                            first_error.get_or_insert(error);
+                            continue;
+                        }
+                    };
+                    self.records.viewed.insert(
+                        update.path,
+                        Approval {
+                            fingerprint,
+                            snapshot,
+                        },
+                    );
+                    changed = true;
+                }
+                None => {
+                    changed |= self.records.viewed.remove(&update.path).is_some();
+                }
             }
         }
-        self.persist(cx);
+        if changed {
+            self.persist(cx);
+        }
+        if let Some(error) = first_error {
+            self.error = Some(format!("Progress was not saved: {error:#}"));
+            cx.notify();
+        }
     }
 
     #[ztracing::instrument(skip_all, fields(approvals = self.records.viewed.len()))]
@@ -559,9 +618,9 @@ impl ReviewState {
             this.update(cx, |this, cx| {
                 if this.revision == revision {
                     this.saving = false;
-                    this.error = result
-                        .err()
-                        .map(|error| format!("Progress was not saved: {error:#}"));
+                    if let Err(error) = result {
+                        this.error = Some(format!("Progress was not saved: {error:#}"));
+                    }
                     cx.notify();
                 }
             })
@@ -707,6 +766,29 @@ mod tests {
         let restored = ReviewState::load("review".into(), database);
         assert!(!restored.is_viewed("a", &approved));
         assert!(restored.change_reasons("a", &approved).is_empty());
+    }
+
+    #[gpui::test]
+    async fn bulk_viewed_updates_share_one_persistence_revision(cx: &mut gpui::TestAppContext) {
+        let database = KeyValueStore::open_test_db("branch_review_bulk_persistence").await;
+        let state = cx.new(|_| ReviewState::load("bulk-review".into(), database));
+        cx.run_until_parked();
+        let revision = state.read_with(cx, |state, _| state.revision);
+        let a = fingerprint("a", Some("base a"), Some("reviewed a"));
+        let b = fingerprint("b", Some("base b"), Some("reviewed b"));
+        state.update(cx, |state, cx| {
+            state.set_viewed_many(
+                vec![
+                    ViewedUpdate::viewed("a".into(), a.clone(), None),
+                    ViewedUpdate::viewed("b".into(), b.clone(), None),
+                ],
+                cx,
+            );
+            assert_eq!(state.revision, revision + 1);
+            assert!(state.is_viewed("a", &a));
+            assert!(state.is_viewed("b", &b));
+        });
+        cx.run_until_parked();
     }
 
     fn fingerprint(path: &str, base: Option<&str>, current: Option<&str>) -> Fingerprint {

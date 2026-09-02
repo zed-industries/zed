@@ -83,6 +83,19 @@ impl Addon for BranchDiffAddon {
             .status_for_buffer_id(buffer_id, cx)
     }
 
+    fn buffer_fold_toggled(&self, buffer_id: BufferId, folded: bool, cx: &mut App) {
+        if folded {
+            return;
+        }
+        if let Some(review) = self.review.as_ref() {
+            review
+                .update(cx, |review, cx| {
+                    review.buffer_manually_unfolded(buffer_id, cx)
+                })
+                .ok();
+        }
+    }
+
     fn render_buffer_header_controls(
         &self,
         _: &multi_buffer::ExcerptBoundaryInfo,
