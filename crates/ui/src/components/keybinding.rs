@@ -60,6 +60,12 @@ impl Global for VimStyle {}
 struct KeyBindingVisibility(bool);
 impl Global for KeyBindingVisibility {}
 
+impl Default for KeyBindingVisibility {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
 impl KeyBinding {
     /// Returns the highest precedence keybinding for an action. This is the last binding added to
     /// the keymap. User bindings are added after built-in bindings so that they take precedence.
@@ -98,9 +104,8 @@ impl KeyBinding {
         cx.refresh_windows();
     }
 
-    fn default_visibility(cx: &App) -> bool {
-        cx.try_global::<KeyBindingVisibility>()
-            .map_or(true, |visibility| visibility.0)
+    fn default_visibility(cx: &mut App) -> bool {
+        cx.default_global::<KeyBindingVisibility>().0
     }
 
     pub fn new(action: &dyn Action, focus_handle: Option<FocusHandle>, cx: &App) -> Self {
