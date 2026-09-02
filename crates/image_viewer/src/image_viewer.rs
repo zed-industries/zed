@@ -372,7 +372,25 @@ impl ImageView {
         cx.notify();
     }
 
+    fn ensure_pdf_selection_text(&mut self, cx: &mut Context<Self>) {
+        if let Some(ref mut sel) = self.pdf_selection {
+            if sel.text.is_empty() {
+                let pdf_info = self.image_item.read(cx).pdf_info.clone();
+                if let Some(pdf_info) = pdf_info {
+                    sel.text = Self::collect_selection_text(
+                        &pdf_info.pages,
+                        sel.start_page,
+                        sel.start_seg,
+                        sel.end_page,
+                        sel.end_seg,
+                    );
+                }
+            }
+        }
+    }
+
     fn copy_text(&mut self, _: &CopyText, _window: &mut Window, cx: &mut Context<Self>) {
+        self.ensure_pdf_selection_text(cx);
         if let Some(ref sel) = self.pdf_selection {
             if !sel.text.is_empty() {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(sel.text.clone()));
@@ -417,6 +435,7 @@ impl ImageView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.ensure_pdf_selection_text(cx);
         let has_selection = self
             .pdf_selection
             .as_ref()
@@ -658,25 +677,19 @@ impl ImageView {
                 if sel.end_page != page_idx || sel.end_seg != seg_idx {
                     sel.end_page = page_idx;
                     sel.end_seg = seg_idx;
-                    sel.text = Self::collect_selection_text(
-                        &pdf_info.pages,
-                        sel.start_page,
-                        sel.start_seg,
-                        sel.end_page,
-                        sel.end_seg,
-                    );
+                    sel.text.clear();
                     cx.notify();
                 }
             }
         }
     }
 
-    pub(crate) fn calculate_pdf_autoscroll_dy(
+    pub(crate) fn calculate_pdf_autoscroll_velocity(
         cursor_y: Pixels,
         viewport_top: Pixels,
         viewport_bottom: Pixels,
-    ) -> Pixels {
-        let edge_threshold = px(96.0);
+    ) -> f32 {
+        let edge_threshold = px(110.0);
         let top_threshold = viewport_top + edge_threshold;
         let bottom_threshold = viewport_bottom - edge_threshold;
 
@@ -685,17 +698,17 @@ impl ImageView {
             let edge_val = f32::from(edge_threshold);
             let ratio = (dist / edge_val).min(1.0);
             let extra = f32::from(cursor_y - viewport_bottom).max(0.0);
-            let speed = 10.0 + (38.0 * ratio.powf(1.5)) + (extra * 0.4).min(24.0);
-            -px(speed)
+            let speed = 700.0 + (3800.0 * ratio.powf(1.6)) + (extra * 50.0).min(5000.0);
+            -speed
         } else if cursor_y < top_threshold {
             let dist = f32::from(top_threshold - cursor_y).max(0.0);
             let edge_val = f32::from(edge_threshold);
             let ratio = (dist / edge_val).min(1.0);
             let extra = f32::from(viewport_top - cursor_y).max(0.0);
-            let speed = 10.0 + (38.0 * ratio.powf(1.5)) + (extra * 0.4).min(24.0);
-            px(speed)
+            let speed = 700.0 + (3800.0 * ratio.powf(1.6)) + (extra * 50.0).min(5000.0);
+            speed
         } else {
-            px(0.)
+            0.0
         }
     }
 
@@ -710,8 +723,12 @@ impl ImageView {
         }
 
         let task = cx.spawn(async move |this, cx| {
+            let mut last_tick = std::time::Instant::now();
             loop {
-                cx.background_executor().timer(std::time::Duration::from_millis(16)).await;
+                cx.background_executor().timer(std::time::Duration::from_millis(8)).await;
+                let now = std::time::Instant::now();
+                let dt = (now - last_tick).as_secs_f32().min(0.05);
+                last_tick = now;
 
                 let should_continue = this.update(cx, |this, cx| {
                     if !this.pdf_mouse_down {
@@ -728,13 +745,14 @@ impl ImageView {
                         return true;
                     }
 
-                    let scroll_dy = Self::calculate_pdf_autoscroll_dy(
+                    let velocity = Self::calculate_pdf_autoscroll_velocity(
                         cursor_pos.y,
                         viewport_bounds.top(),
                         viewport_bounds.bottom(),
                     );
 
-                    if scroll_dy != px(0.) {
+                    if velocity != 0.0 {
+                        let scroll_dy = px(velocity * dt);
                         let current_offset = this.pdf_scroll_handle.offset();
                         let max_offset = this.pdf_scroll_handle.max_offset();
                         let new_y = (current_offset.y + scroll_dy).clamp(-max_offset.y, px(0.));
@@ -840,6 +858,7 @@ impl ImageView {
             self.pdf_mouse_down = false;
             self.pdf_drag_position = None;
             self.pdf_autoscroll_task = None;
+            self.ensure_pdf_selection_text(cx);
             cx.notify();
         }
     }
@@ -1464,6 +1483,12 @@ impl Render for ImageView {
                     this.handle_pdf_mouse_up(cx);
                 }),
             )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
+                    this.handle_pdf_mouse_up(cx);
+                }),
+            )
             .size_full()
             .relative()
             .bg(cx.theme().colors().editor_background)
@@ -1542,24 +1567,14 @@ impl Render for ImageView {
                                                         this.handle_pdf_canvas_right_click(page_idx, event.position, window, cx);
                                                     }),
                                                 )
-                                                .child({
-                                                    let page_bounds = self.page_bounds.clone();
-                                                    canvas(
-                                                        move |bounds: Bounds<Pixels>, _window: &mut Window, _cx: &mut App| {
-                                                            page_bounds.borrow_mut().insert(page_idx, bounds);
-                                                        },
-                                                        |_bounds: Bounds<Pixels>, _state: (), _window: &mut Window, _cx: &mut App| {},
-                                                    )
-                                                    .absolute()
-                                                    .size_full()
-                                                })
                                                 .child(
                                                     img(page.image)
                                                         .id(("pdf-page-img", page_idx))
                                                         .size_full()
                                                         .absolute(),
                                                 )
-                                                .children({
+                                                .child({
+                                                    let page_bounds = self.page_bounds.clone();
                                                     let seg_range = pdf_selection.as_ref().and_then(|sel| {
                                                         let (min_p, min_s) = sel.min_endpoint();
                                                         let (max_p, max_s) = sel.max_endpoint();
@@ -1569,27 +1584,43 @@ impl Render for ImageView {
                                                         let first_idx = if page_idx == min_p { min_s.min(segments_arc.len().saturating_sub(1)) } else { 0 };
                                                         let last_idx = if page_idx == max_p { max_s.min(segments_arc.len().saturating_sub(1)) } else { segments_arc.len().saturating_sub(1) };
                                                         if first_idx <= last_idx {
-                                                            Some(first_idx..=last_idx)
+                                                            Some((first_idx, last_idx))
                                                         } else {
                                                             None
                                                         }
                                                     });
                                                     let segs = segments_arc.clone();
-                                                    seg_range.into_iter().flat_map(move |range| {
-                                                        let segs = segs.clone();
-                                                        range.map(move |seg_idx| {
-                                                            let seg = &segs[seg_idx];
-                                                            div()
-                                                                .id(ElementId::Name(format!("pdf-sel-highlight-{page_idx}-{seg_idx}").into()))
-                                                                .absolute()
-                                                                .left(px(seg.x * page_w_val))
-                                                                .top(px(seg.y * page_h_val))
-                                                                .w(px(seg.width * page_w_val))
-                                                                .h(px(seg.height * page_h_val))
-                                                                .bg(gpui::rgba(0x3b82f644))
-                                                                .rounded_xs()
-                                                        })
-                                                    })
+                                                    canvas(
+                                                        move |bounds: Bounds<Pixels>, _window: &mut Window, _cx: &mut App| {
+                                                            page_bounds.borrow_mut().insert(page_idx, bounds);
+                                                        },
+                                                        move |bounds: Bounds<Pixels>, _state: (), window: &mut Window, _cx: &mut App| {
+                                                            if let Some((first_idx, last_idx)) = seg_range {
+                                                                let highlight_color = gpui::rgba(0x3b82f644);
+                                                                let b_ox = bounds.origin.x;
+                                                                let b_oy = bounds.origin.y;
+                                                                let b_w = f32::from(bounds.size.width);
+                                                                let b_h = f32::from(bounds.size.height);
+                                                                for seg_idx in first_idx..=last_idx {
+                                                                    if let Some(seg) = segs.get(seg_idx) {
+                                                                        let quad_bounds = Bounds {
+                                                                            origin: point(
+                                                                                b_ox + px(seg.x * b_w),
+                                                                                b_oy + px(seg.y * b_h),
+                                                                            ),
+                                                                            size: size(
+                                                                                px(seg.width * b_w),
+                                                                                px(seg.height * b_h),
+                                                                            ),
+                                                                        };
+                                                                        window.paint_quad(gpui::fill(quad_bounds, highlight_color).corner_radii(px(2.0)));
+                                                                    }
+                                                                }
+                                                            }
+                                                        },
+                                                    )
+                                                    .absolute()
+                                                    .size_full()
                                                 })
                                                 .children(links.into_iter().enumerate().map(|(link_idx, link)| {
                                                     let link_left = px(link.x * page_w_val);
@@ -2412,39 +2443,46 @@ mod tests {
         let v_bottom = px(900.0);
         // Neutral zone (middle of viewport)
         assert_eq!(
-            ImageView::calculate_pdf_autoscroll_dy(px(500.0), v_top, v_bottom),
-            px(0.0)
+            ImageView::calculate_pdf_autoscroll_velocity(px(500.0), v_top, v_bottom),
+            0.0
         );
 
         // At edge threshold (dist = 0)
-        let top_thresh = px(196.0); // 100 + 96
-        let bot_thresh = px(804.0); // 900 - 96
-        let dy_thresh_up = ImageView::calculate_pdf_autoscroll_dy(top_thresh - px(0.01), v_top, v_bottom);
-        let dy_thresh_down = ImageView::calculate_pdf_autoscroll_dy(bot_thresh + px(0.01), v_top, v_bottom);
-        assert_eq!(f32::from(dy_thresh_up).round(), 10.0);
-        assert_eq!(f32::from(dy_thresh_down).round(), -10.0);
+        let top_thresh = px(210.0); // 100 + 110
+        let bot_thresh = px(790.0); // 900 - 110
+        let v_thresh_up = ImageView::calculate_pdf_autoscroll_velocity(top_thresh - px(0.01), v_top, v_bottom);
+        let v_thresh_down = ImageView::calculate_pdf_autoscroll_velocity(bot_thresh + px(0.01), v_top, v_bottom);
+        assert_eq!(v_thresh_up.round(), 700.0);
+        assert_eq!(v_thresh_down.round(), -700.0);
 
-        // Mid-margin (dist = 48px into margin)
-        let top_mid = v_top + px(48.0);
-        let bot_mid = v_bottom - px(48.0);
-        let dy_up = ImageView::calculate_pdf_autoscroll_dy(top_mid, v_top, v_bottom);
-        let dy_down = ImageView::calculate_pdf_autoscroll_dy(bot_mid, v_top, v_bottom);
-        assert_eq!(dy_up, -dy_down);
-        assert!(f32::from(dy_up) > 20.0);
+        // Mid-margin (dist = 55px into margin)
+        let top_mid = v_top + px(55.0);
+        let bot_mid = v_bottom - px(55.0);
+        let v_up = ImageView::calculate_pdf_autoscroll_velocity(top_mid, v_top, v_bottom);
+        let v_down = ImageView::calculate_pdf_autoscroll_velocity(bot_mid, v_top, v_bottom);
+        assert_eq!(v_up, -v_down);
+        assert!(v_up > 1500.0);
 
-        // At exact viewport edge (dist = 96px, ratio = 1.0)
-        let dy_edge_up = ImageView::calculate_pdf_autoscroll_dy(v_top, v_top, v_bottom);
-        let dy_edge_down = ImageView::calculate_pdf_autoscroll_dy(v_bottom, v_top, v_bottom);
-        assert_eq!(dy_edge_up, -dy_edge_down);
-        assert_eq!(dy_edge_up, px(48.0));
-        assert_eq!(dy_edge_down, -px(48.0));
+        // At exact viewport edge (dist = 110px, ratio = 1.0)
+        let v_edge_up = ImageView::calculate_pdf_autoscroll_velocity(v_top, v_top, v_bottom);
+        let v_edge_down = ImageView::calculate_pdf_autoscroll_velocity(v_bottom, v_top, v_bottom);
+        assert_eq!(v_edge_up, -v_edge_down);
+        assert_eq!(v_edge_up, 4500.0);
+        assert_eq!(v_edge_down, -4500.0);
 
-        // Past viewport edge (extra = 20px)
-        let dy_past_up = ImageView::calculate_pdf_autoscroll_dy(v_top - px(20.0), v_top, v_bottom);
-        let dy_past_down = ImageView::calculate_pdf_autoscroll_dy(v_bottom + px(20.0), v_top, v_bottom);
-        assert_eq!(dy_past_up, -dy_past_down);
-        assert_eq!(dy_past_up, px(56.0));
-        assert_eq!(dy_past_down, -px(56.0));
+        // Past viewport edge (extra = 20px -> +1000.0 speed)
+        let v_past_up = ImageView::calculate_pdf_autoscroll_velocity(v_top - px(20.0), v_top, v_bottom);
+        let v_past_down = ImageView::calculate_pdf_autoscroll_velocity(v_bottom + px(20.0), v_top, v_bottom);
+        assert_eq!(v_past_up, -v_past_down);
+        assert_eq!(v_past_up, 5500.0);
+        assert_eq!(v_past_down, -5500.0);
+
+        // Far past viewport edge (extra = 150px -> capped at 9500.0 speed)
+        let v_far_up = ImageView::calculate_pdf_autoscroll_velocity(v_top - px(150.0), v_top, v_bottom);
+        let v_far_down = ImageView::calculate_pdf_autoscroll_velocity(v_bottom + px(150.0), v_top, v_bottom);
+        assert_eq!(v_far_up, -v_far_down);
+        assert_eq!(v_far_up, 9500.0);
+        assert_eq!(v_far_down, -9500.0);
     }
 }
 
