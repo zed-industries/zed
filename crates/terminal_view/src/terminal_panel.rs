@@ -52,6 +52,10 @@ actions!(
     ]
 );
 
+fn should_render_terminal_tab_bar_buttons(is_active_pane: bool, has_local_focus: bool) -> bool {
+    is_active_pane || has_local_focus
+}
+
 pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
@@ -142,11 +146,10 @@ impl TerminalPanel {
                         terminal_panel.active_pane.entity_id() == terminal_pane_id
                     })
                     .unwrap_or(false);
-                if !is_active_pane
-                    && !pane.has_focus(window, cx)
-                    && !pane.context_menu_focused(window, cx)
-                    && !has_focused_rename_editor
-                {
+                let has_local_focus = pane.has_focus(window, cx)
+                    || pane.context_menu_focused(window, cx)
+                    || has_focused_rename_editor;
+                if !should_render_terminal_tab_bar_buttons(is_active_pane, has_local_focus) {
                     return (None, None);
                 }
                 let focus_handle = pane.focus_handle(cx);
@@ -1915,6 +1918,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_terminal_tab_bar_button_visibility() {
+        assert!(
+            should_render_terminal_tab_bar_buttons(true, false),
+            "the active terminal pane should keep its actions when focus moves elsewhere"
+        );
+        assert!(
+            !should_render_terminal_tab_bar_buttons(false, false),
+            "an inactive terminal split should keep its actions hidden when it has no local focus"
+        );
+        assert!(
+            should_render_terminal_tab_bar_buttons(false, true),
+            "focused terminal panes and their focused child UI should keep their actions visible"
+        );
+    }
+
     #[gpui::test]
     async fn test_terminal_tab_bar_buttons_stay_visible_when_panel_loses_focus(
         cx: &mut TestAppContext,
@@ -1930,6 +1949,7 @@ mod tests {
             .expect("Failed to read workspace");
         let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
 
+        terminal_panel.update(cx, |panel, cx| panel.set_assistant_enabled(true, cx));
         terminal_panel
             .update_in(cx, |terminal_panel, window, cx| {
                 terminal_panel.add_terminal_shell(false, None, RevealStrategy::Always, window, cx)
@@ -1939,7 +1959,7 @@ mod tests {
         cx.run_until_parked();
 
         assert!(
-            cx.debug_bounds("terminal-pane-split").is_some(),
+            cx.debug_bounds("ICON-ZedAssistant").is_some(),
             "terminal tab bar actions should be visible while the terminal pane is focused"
         );
 
@@ -1955,7 +1975,7 @@ mod tests {
             );
         });
         assert!(
-            cx.debug_bounds("terminal-pane-split").is_some(),
+            cx.debug_bounds("ICON-ZedAssistant").is_some(),
             "terminal tab bar actions should stay visible when focus moves back to the editor"
         );
     }
