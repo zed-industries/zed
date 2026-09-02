@@ -245,6 +245,7 @@ impl VsCodeSettings {
     fn editor_settings_content(&self) -> EditorSettingsContent {
         EditorSettingsContent {
             auto_signature_help: self.read_bool("editor.parameterHints.enabled"),
+            language_detection: self.read_bool("workbench.editor.languageDetection"),
             autoscroll_on_clicks: None,
             cursor_blink: self.read_enum("editor.cursorBlinking", |s| match s {
                 "blink" | "phase" | "expand" | "smooth" => Some(true),
@@ -1061,11 +1062,13 @@ impl VsCodeSettings {
             } else {
                 None
             },
+            on_new_window: None,
             on_last_window_closed: None,
             pane_split_direction_horizontal: None,
             pane_split_direction_vertical: None,
             resize_all_panels_in_dock: None,
             restore_on_file_reopen: self.read_bool("workbench.editor.restoreViewState"),
+            reveal_if_open: self.read_bool("workbench.editor.revealIfOpen"),
             restore_on_startup: None,
             window_decorations: None,
             show_call_status_icon: None,
@@ -1183,5 +1186,17 @@ mod tests {
             None
         );
         assert_eq!(imported_reduce_motion("{}"), None);
+    }
+
+    #[test]
+    fn test_import_reveal_if_open() {
+        let settings = VsCodeSettings::from_str(
+            r#"{ "workbench.editor.revealIfOpen": true }"#,
+            VsCodeSettingsSource::VsCode,
+        )
+        .unwrap()
+        .settings_content();
+
+        assert_eq!(settings.workspace.reveal_if_open, Some(true));
     }
 }

@@ -299,6 +299,7 @@ message LspExtExpandMacro {
   uint64 project_id = 1;
   uint64 buffer_id = 2;
   Anchor position = 3;
+  uint64 server_id = 4;
 }
 
 message LspExtExpandMacroResponse {
@@ -306,10 +307,28 @@ message LspExtExpandMacroResponse {
   string expansion = 2;
 }
 
+message LspExtExpandAbbreviation {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  string abbreviation = 3;
+  repeated string text = 4;
+  string language = 5;
+  uint64 server_id = 6;
+  bool comment_filter = 7;
+  bool bem_filter = 8;
+  string indent = 9;
+  string base_indent = 10;
+}
+
+message LspExtExpandAbbreviationResponse {
+  optional string expansion = 1;
+}
+
 message LspExtOpenDocs {
   uint64 project_id = 1;
   uint64 buffer_id = 2;
   Anchor position = 3;
+  uint64 server_id = 4;
 }
 
 message LspExtOpenDocsResponse {
@@ -320,6 +339,7 @@ message LspExtOpenDocsResponse {
 message LspExtSwitchSourceHeader {
   uint64 project_id = 1;
   uint64 buffer_id = 2;
+  uint64 server_id = 3;
 }
 
 message LspExtSwitchSourceHeaderResponse {
@@ -330,6 +350,7 @@ message LspExtGoToParentModule {
   uint64 project_id = 1;
   uint64 buffer_id = 2;
   Anchor position = 3;
+  uint64 server_id = 4;
 }
 
 message LspExtGoToParentModuleResponse {
@@ -1070,6 +1091,7 @@ message LspExtRunnables {
   uint64 project_id = 1;
   uint64 buffer_id = 2;
   optional Anchor position = 3;
+  uint64 server_id = 4;
 }
 
 message LspExtRunnablesResponse {

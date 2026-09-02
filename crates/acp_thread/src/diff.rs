@@ -89,13 +89,10 @@ impl Diff {
         let language = buffer.read(cx).language().cloned();
         let language_registry = buffer.read(cx).language_registry();
         let buffer_diff = cx.new(|cx| {
-            BufferDiff::new_unchanged(
-                &buffer_text_snapshot,
-                language,
-                language_registry,
-                buffer_diff::DiffBaseKind::Custom,
-                cx,
-            )
+            let mut diff =
+                BufferDiff::new_unchanged(&buffer_text_snapshot, language, language_registry, cx);
+            diff.set_operations(Arc::new(buffer_diff::RestoreDiffOperations));
+            diff
         });
 
         let multibuffer = cx.new(|cx| {
@@ -279,7 +276,7 @@ impl PendingDiff {
                 self.new_buffer.read(cx).line_ending(),
                 self.new_buffer.read(cx).as_rope().clone(),
             );
-            let mut buffer = Buffer::build(buffer, None, Capability::ReadWrite);
+            let mut buffer = Buffer::build(buffer, None, Capability::ReadWrite, cx);
             buffer.set_language(language, cx);
             buffer
         });
@@ -396,13 +393,9 @@ async fn build_buffer_diff(
     let base_text = base_text_exists.then(|| old_text);
 
     let diff = cx.new(|cx| {
-        BufferDiff::new(
-            &buffer,
-            language,
-            language_registry,
-            buffer_diff::DiffBaseKind::Custom,
-            cx,
-        )
+        let mut diff = BufferDiff::new(&buffer, language, language_registry, cx);
+        diff.set_operations(Arc::new(buffer_diff::RestoreDiffOperations));
+        diff
     });
     diff.update(cx, |diff, cx| {
         diff.set_base_text(base_text, buffer.text, cx)

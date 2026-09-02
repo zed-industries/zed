@@ -5,7 +5,7 @@ use crate::{
         location_link_to_proto, location_links_from_lsp, location_links_from_proto,
         location_links_to_proto,
     },
-    lsp_store::LspStore,
+    lsp_store::{LanguageServerToQuery, LspStore},
     make_lsp_text_document_position, make_text_document_identifier,
 };
 use anyhow::{Context as _, Result};
@@ -56,6 +56,7 @@ impl ExpandedMacro {
 #[derive(Debug)]
 pub struct ExpandMacro {
     pub position: PointUtf16,
+    pub server_id: LanguageServerId,
 }
 
 #[async_trait(?Send)]
@@ -70,6 +71,10 @@ impl LspCommand for ExpandMacro {
 
     fn check_capabilities(&self, _: AdapterServerCapabilities<'_>) -> bool {
         true
+    }
+
+    fn language_server_to_query(&self) -> LanguageServerToQuery {
+        LanguageServerToQuery::Other(self.server_id)
     }
 
     fn to_lsp(
@@ -108,6 +113,7 @@ impl LspCommand for ExpandMacro {
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
+            server_id: self.server_id.to_proto(),
         }
     }
 
@@ -123,6 +129,7 @@ impl LspCommand for ExpandMacro {
             .context("invalid position")?;
         Ok(Self {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+            server_id: LanguageServerId::from_proto(message.server_id),
         })
     }
 
@@ -188,6 +195,7 @@ impl DocsUrls {
 #[derive(Debug)]
 pub struct OpenDocs {
     pub position: PointUtf16,
+    pub server_id: LanguageServerId,
 }
 
 #[async_trait(?Send)]
@@ -202,6 +210,10 @@ impl LspCommand for OpenDocs {
 
     fn check_capabilities(&self, _: AdapterServerCapabilities<'_>) -> bool {
         true
+    }
+
+    fn language_server_to_query(&self) -> LanguageServerToQuery {
+        LanguageServerToQuery::Other(self.server_id)
     }
 
     fn to_lsp(
@@ -242,6 +254,7 @@ impl LspCommand for OpenDocs {
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
+            server_id: self.server_id.to_proto(),
         }
     }
 
@@ -257,6 +270,7 @@ impl LspCommand for OpenDocs {
             .context("invalid position")?;
         Ok(Self {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+            server_id: LanguageServerId::from_proto(message.server_id),
         })
     }
 
@@ -307,13 +321,15 @@ pub struct SwitchSourceHeaderParams(lsp::TextDocumentIdentifier);
 #[serde(rename_all = "camelCase")]
 pub struct SwitchSourceHeaderResult(pub String);
 
-#[derive(Default, Deserialize, Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct SwitchSourceHeader;
+#[derive(Debug)]
+pub struct SwitchSourceHeader {
+    pub server_id: LanguageServerId,
+}
 
 #[derive(Debug)]
 pub struct GoToParentModule {
     pub position: PointUtf16,
+    pub server_id: LanguageServerId,
 }
 
 pub struct LspGoToParentModule {}
@@ -336,6 +352,10 @@ impl LspCommand for SwitchSourceHeader {
 
     fn check_capabilities(&self, _: AdapterServerCapabilities<'_>) -> bool {
         true
+    }
+
+    fn language_server_to_query(&self) -> LanguageServerToQuery {
+        LanguageServerToQuery::Other(self.server_id)
     }
 
     fn to_lsp(
@@ -367,16 +387,19 @@ impl LspCommand for SwitchSourceHeader {
         proto::LspExtSwitchSourceHeader {
             project_id,
             buffer_id: buffer.remote_id().into(),
+            server_id: self.server_id.to_proto(),
         }
     }
 
     async fn from_proto(
-        _: Self::ProtoRequest,
+        message: Self::ProtoRequest,
         _: Entity<LspStore>,
         _: Entity<Buffer>,
         _: AsyncApp,
     ) -> anyhow::Result<Self> {
-        Ok(Self {})
+        Ok(Self {
+            server_id: LanguageServerId::from_proto(message.server_id),
+        })
     }
 
     fn response_to_proto(
@@ -420,6 +443,10 @@ impl LspCommand for GoToParentModule {
         true
     }
 
+    fn language_server_to_query(&self) -> LanguageServerToQuery {
+        LanguageServerToQuery::Other(self.server_id)
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -455,6 +482,7 @@ impl LspCommand for GoToParentModule {
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
+            server_id: self.server_id.to_proto(),
         }
     }
 
@@ -470,6 +498,7 @@ impl LspCommand for GoToParentModule {
             .context("bad request with bad position")?;
         Ok(Self {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+            server_id: LanguageServerId::from_proto(request.server_id),
         })
     }
 
@@ -606,6 +635,7 @@ pub struct ShellRunnableArgs {
 pub struct GetLspRunnables {
     pub buffer_id: BufferId,
     pub position: Option<text::Anchor>,
+    pub server_id: LanguageServerId,
 }
 
 #[derive(Debug, Default)]
@@ -677,6 +707,10 @@ impl LspCommand for GetLspRunnables {
         true
     }
 
+    fn language_server_to_query(&self) -> LanguageServerToQuery {
+        LanguageServerToQuery::Other(self.server_id)
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -723,6 +757,7 @@ impl LspCommand for GetLspRunnables {
             project_id,
             buffer_id: buffer.remote_id().to_proto(),
             position: self.position.as_ref().map(serialize_anchor),
+            server_id: self.server_id.to_proto(),
         }
     }
 
@@ -737,6 +772,7 @@ impl LspCommand for GetLspRunnables {
         Ok(Self {
             buffer_id,
             position,
+            server_id: LanguageServerId::from_proto(message.server_id),
         })
     }
 

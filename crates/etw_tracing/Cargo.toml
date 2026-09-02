@@ -11,7 +11,6 @@ path = "etw_tracing.rs"
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
-log.workspace = true
 net.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -21,4 +20,9 @@ workspace.workspace = true
 [target.'cfg(target_os = "windows")'.dependencies]
 wprcontrol = { git = "https://github.com/zed-industries/wprcontrol", rev = "cd811f7" }
 windows-core = "0.61"
-windows.workspace = true
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
