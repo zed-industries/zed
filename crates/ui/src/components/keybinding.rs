@@ -52,7 +52,6 @@ pub struct KeyBinding {
     vim_mode: bool,
     /// Indicates whether the keybinding is currently disabled.
     disabled: bool,
-    visible: Option<bool>,
 }
 
 struct VimStyle(bool);
@@ -93,8 +92,7 @@ impl KeyBinding {
         cx.try_global::<VimStyle>().is_some_and(|g| g.0)
     }
 
-    /// Sets the visibility inherited by keybindings without a per-instance
-    /// override.
+    /// Sets the application-wide visibility of keybindings.
     pub fn set_default_visibility(cx: &mut App, visible: bool) {
         cx.set_global(KeyBindingVisibility(visible));
         cx.refresh_windows();
@@ -115,7 +113,6 @@ impl KeyBinding {
             vim_mode: KeyBinding::is_vim_mode(cx),
             platform_style: PlatformStyle::platform(),
             disabled: false,
-            visible: None,
         }
     }
 
@@ -126,7 +123,6 @@ impl KeyBinding {
             vim_mode,
             platform_style: PlatformStyle::platform(),
             disabled: false,
-            visible: None,
         }
     }
 
@@ -146,12 +142,6 @@ impl KeyBinding {
     /// Disabled keybinds will be rendered in a dimmed state.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
-        self
-    }
-
-    /// Sets whether this keybinding is rendered.
-    pub fn visible(mut self, visible: bool) -> Self {
-        self.visible = Some(visible);
         self
     }
 
@@ -223,7 +213,7 @@ fn render_key(
 
 impl RenderOnce for KeyBinding {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        if !self.visible.unwrap_or_else(|| Self::default_visibility(cx)) {
+        if !Self::default_visibility(cx) {
             return gpui::Empty.into_any_element();
         }
 
