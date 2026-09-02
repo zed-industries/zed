@@ -63,6 +63,27 @@ pub(crate) struct DockerExecConnection {
     shell: String,
 }
 
+/// Renders `args` for logging, replacing the value of every `NAME=VALUE`-shaped
+/// argument with a placeholder.
+///
+/// The `-e NAME=VALUE` pairs forwarded into a dev container routinely hold secrets,
+/// and the strings built from these args reach `Zed.log` — both directly and through
+/// the error surfaced on a failed reconnect. The names are kept because they are the
+/// part with debugging value.
+fn redact_env_values(args: &[impl AsRef<str>]) -> String {
+    args.iter()
+        .map(|arg| {
+            let arg = arg.as_ref();
+
+            match arg.split_once('=') {
+                Some((name, _)) => format!("{name}=<redacted>"),
+                None => arg.to_owned(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl DockerExecConnection {
     pub async fn new(
         connection_options: DockerConnectionOptions,
@@ -512,10 +533,16 @@ impl DockerExecConnection {
             command.arg(arg.as_ref());
         }
         let output = command.output().await?;
-        log::debug!("{:?}: {:?}", command, output);
+        let redacted_command = format!(
+            "{} {subcommand} {}",
+            self.docker_cli(),
+            redact_env_values(args)
+        );
+
+        log::debug!("{redacted_command}: {:?}", output.status);
         anyhow::ensure!(
             output.status.success(),
-            "failed to run command {command:?}: {}",
+            "failed to run command {redacted_command}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -875,5 +902,67 @@ impl RemoteConnection for DockerExecConnection {
 
     fn default_system_shell(&self) -> String {
         String::from("/bin/sh")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_env_values;
+
+    #[test]
+    fn test_redact_env_values_hides_forwarded_secrets() {
+        let redacted = redact_env_values(&[
+            "-u",
+            "user",
+            "-e",
+            "GH_TOKEN=ghp_supersecret",
+            "-e",
+            "PATH=/usr/bin",
+            "container_id",
+            "sh",
+            "-c",
+            "echo hi",
+        ]);
+
+        assert!(!redacted.contains("ghp_supersecret"));
+        assert_eq!(
+            redacted,
+            "-u user -e GH_TOKEN=<redacted> -e PATH=<redacted> container_id sh -c echo hi"
+        );
+    }
+
+    #[test]
+    fn test_redact_env_values_redacts_the_whole_value() {
+        // Values can themselves contain `=` (base64 padding, connection strings).
+        // Only the name up to the first `=` may survive.
+        assert_eq!(
+            redact_env_values(&["-e", "TOKEN=a=b=c=="]),
+            "-e TOKEN=<redacted>"
+        );
+    }
+
+    #[test]
+    fn test_redact_env_values_leaves_other_args_alone() {
+        assert_eq!(
+            redact_env_values(&["exec", "-w", "/workspace", "container_id"]),
+            "exec -w /workspace container_id"
+        );
+    }
+
+    #[test]
+    fn test_redact_env_values_redacts_assignments_in_any_position() {
+        // The rule is not keyed off a preceding `-e`, so assignments passed through
+        // any other flag are redacted too.
+        assert_eq!(
+            redact_env_values(&["--env", "GH_TOKEN=ghp_supersecret"]),
+            "--env GH_TOKEN=<redacted>"
+        );
+    }
+
+    #[test]
+    fn test_redact_env_values_handles_empty_args() {
+        let no_args: [&str; 0] = [];
+
+        assert_eq!(redact_env_values(&no_args), "");
     }
 }
