@@ -55,7 +55,7 @@ use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
 
-const MERMAID_MAX_ZOOM: f32 = 2.0;
+pub(crate) const MERMAID_MAX_ZOOM: f32 = 2.0;
 /// Zoom levels within this distance of 1.0 snap back to exactly 1.0 so users
 /// can easily return to the default size.
 const MERMAID_ZOOM_SNAP_TOLERANCE: f32 = 0.05;
@@ -787,7 +787,7 @@ impl Markdown {
     /// the content width, capped at 1.0 so diagrams that already fit are
     /// never zoomed out below their natural size. Falls back to 1.0 when the
     /// diagram has no raster yet or the container hasn't been laid out.
-    fn mermaid_min_zoom_level(&self, source_offset: usize) -> f32 {
+    pub(crate) fn mermaid_min_zoom_level(&self, source_offset: usize) -> f32 {
         let Some(diagram) = self.parsed_markdown.mermaid_diagrams.get(&source_offset) else {
             return 1.0;
         };
@@ -807,12 +807,14 @@ impl Markdown {
         container_width / natural_size.width
     }
 
+    /// Returns whether the zoom level actually changed, which it may not when
+    /// the requested level is clamped or snapped back to the current one.
     pub(crate) fn set_mermaid_zoom_level(
         &mut self,
         source_offset: usize,
         zoom: f32,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let min_zoom = self.mermaid_min_zoom_level(source_offset);
         let requested_zoom = zoom;
         let mut zoom = zoom.clamp(min_zoom, MERMAID_MAX_ZOOM);
@@ -828,10 +830,12 @@ impl Markdown {
 
         let debounce_task = self.schedule_mermaid_rerasterize(source_offset, cx);
         let view = self.mermaid_views.entry(source_offset).or_default();
+        let zoom_changed = view.zoom != zoom;
         view.zoom = zoom;
         view.zoomed_to_fit = zoomed_to_fit;
         view.debounce_task = Some(debounce_task);
         cx.notify();
+        zoom_changed
     }
 
     /// The zoom level to display a diagram at, syncing a fit-to-width zoom
