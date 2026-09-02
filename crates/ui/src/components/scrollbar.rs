@@ -351,6 +351,7 @@ pub enum ScrollbarStyle {
     #[default]
     Regular,
     Editor,
+    Thick,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -374,6 +375,7 @@ impl ScrollbarStyle {
         match self {
             ScrollbarStyle::Regular => px(6.),
             ScrollbarStyle::Editor => px(15.),
+            ScrollbarStyle::Thick => px(14.),
         }
     }
 }
@@ -1240,7 +1242,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                     bounds.size.apply_along(axis.invert(), |_| {
                                         width
                                             + match state.style {
-                                                ScrollbarStyle::Regular => 2 * SCROLLBAR_PADDING,
+                                                ScrollbarStyle::Regular | ScrollbarStyle::Thick => 2 * SCROLLBAR_PADDING,
                                                 ScrollbarStyle::Editor => Pixels::ZERO,
                                             }
                                     }),
@@ -1252,7 +1254,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                 // Rounded style needs a bit of padding, whereas for editor scrollbars,
                                 // we want the full length of the track
                                 let thumb_container_bounds = match state.style {
-                                    ScrollbarStyle::Regular => {
+                                    ScrollbarStyle::Regular | ScrollbarStyle::Thick => {
                                         scroll_track_bounds.dilate(-SCROLLBAR_PADDING)
                                     }
                                     ScrollbarStyle::Editor if has_border => scroll_track_bounds
@@ -1488,7 +1490,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     window.paint_quad(quad(
                         *thumb_bounds,
                         match style {
-                            ScrollbarStyle::Regular => Corners::all(Pixels::MAX)
+                            ScrollbarStyle::Regular | ScrollbarStyle::Thick => Corners::all(Pixels::MAX)
                                 .clamp_radii_for_quad_size(thumb_bounds.size),
                             ScrollbarStyle::Editor => Corners::default(),
                         },
