@@ -24,7 +24,7 @@ use project::{
 };
 use settings::Settings;
 use theme_settings::ThemeSettings;
-use ui::{Tooltip, prelude::*};
+use ui::{Divider, Tooltip, prelude::*};
 use util::{ResultExt as _, paths::PathExt};
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -48,7 +48,15 @@ actions!(
         /// Fit the image to view.
         FitToView,
         /// Zoom to actual size (100%).
-        ZoomToActualSize
+        ZoomToActualSize,
+        /// Go to next page (PDF).
+        NextPage,
+        /// Go to previous page (PDF).
+        PreviousPage,
+        /// Go to first page (PDF).
+        FirstPage,
+        /// Go to last page (PDF).
+        LastPage
     ]
 );
 
@@ -195,6 +203,8 @@ impl ImageView {
             ImageItemEvent::MetadataUpdated
             | ImageItemEvent::FileHandleChanged
             | ImageItemEvent::Reloaded => {
+                let image = self.image_item.read(cx).image.clone();
+                self.pending_image = Some(image);
                 self.image_size = self
                     .image_item
                     .read(cx)
@@ -247,6 +257,30 @@ impl ImageView {
         self.zoom_level = 1.0;
         self.pan_offset = Point::default();
         cx.notify();
+    }
+
+    fn next_page(&mut self, _: &NextPage, _window: &mut Window, cx: &mut Context<Self>) {
+        self.image_item.update(cx, |item, cx| {
+            item.next_page(cx);
+        });
+    }
+
+    fn previous_page(&mut self, _: &PreviousPage, _window: &mut Window, cx: &mut Context<Self>) {
+        self.image_item.update(cx, |item, cx| {
+            item.previous_page(cx);
+        });
+    }
+
+    fn first_page(&mut self, _: &FirstPage, _window: &mut Window, cx: &mut Context<Self>) {
+        self.image_item.update(cx, |item, cx| {
+            item.first_page(cx);
+        });
+    }
+
+    fn last_page(&mut self, _: &LastPage, _window: &mut Window, cx: &mut Context<Self>) {
+        self.image_item.update(cx, |item, cx| {
+            item.last_page(cx);
+        });
     }
 
     fn reveal_in_file_manager(
@@ -774,6 +808,10 @@ impl Render for ImageView {
             .on_action(cx.listener(Self::fit_to_view))
             .on_action(cx.listener(Self::zoom_to_actual_size))
             .on_action(cx.listener(Self::reveal_in_file_manager))
+            .on_action(cx.listener(Self::next_page))
+            .on_action(cx.listener(Self::previous_page))
+            .on_action(cx.listener(Self::first_page))
+            .on_action(cx.listener(Self::last_page))
             .size_full()
             .relative()
             .bg(cx.theme().colors().editor_background)
@@ -939,8 +977,50 @@ impl Render for ImageViewToolbarControls {
             return div().into_any_element();
         };
 
+        let image_item = image_view.read(cx).image_item.clone();
+        let (is_pdf, current_page, total_pages) = {
+            let item = image_item.read(cx);
+            (item.is_pdf(), item.current_page(), item.total_pages())
+        };
+
         h_flex()
             .gap_1()
+            .when(is_pdf && total_pages > 1, |this| {
+                let image_view_prev = image_view.downgrade();
+                let image_view_next = image_view.downgrade();
+                this.child(
+                    IconButton::new("prev-page", IconName::ChevronLeft)
+                        .icon_size(IconSize::Small)
+                        .disabled(current_page == 0)
+                        .tooltip(|_window, cx| Tooltip::for_action("Previous Page", &PreviousPage, cx))
+                        .on_click(move |_, window, cx| {
+                            if let Some(view) = image_view_prev.upgrade() {
+                                view.update(cx, |this, cx| {
+                                    this.previous_page(&PreviousPage, window, cx);
+                                });
+                            }
+                        }),
+                )
+                .child(
+                    h_flex()
+                        .px_1()
+                        .child(Label::new(format!("{} / {}", current_page + 1, total_pages)).size(LabelSize::Small))
+                )
+                .child(
+                    IconButton::new("next-page", IconName::ChevronRight)
+                        .icon_size(IconSize::Small)
+                        .disabled(current_page + 1 >= total_pages)
+                        .tooltip(|_window, cx| Tooltip::for_action("Next Page", &NextPage, cx))
+                        .on_click(move |_, window, cx| {
+                            if let Some(view) = image_view_next.upgrade() {
+                                view.update(cx, |this, cx| {
+                                    this.next_page(&NextPage, window, cx);
+                                });
+                            }
+                        }),
+                )
+                .child(Divider::vertical())
+            })
             .child(
                 IconButton::new("zoom-out", IconName::Dash)
                     .icon_size(IconSize::Small)

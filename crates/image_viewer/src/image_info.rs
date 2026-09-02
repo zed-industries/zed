@@ -9,6 +9,7 @@ use crate::{ImageFileSizeUnit, ImageView, ImageViewerSettings};
 
 pub struct ImageInfo {
     metadata: Option<ImageMetadata>,
+    pdf_info: Option<(usize, usize)>,
     _observe_active_image: Option<Subscription>,
     observe_image_item: Option<Subscription>,
 }
@@ -17,6 +18,7 @@ impl ImageInfo {
     pub fn new(_workspace: &Workspace) -> Self {
         Self {
             metadata: None,
+            pdf_info: None,
             _observe_active_image: None,
             observe_image_item: None,
         }
@@ -24,16 +26,25 @@ impl ImageInfo {
 
     fn update_metadata(&mut self, image_view: &Entity<ImageView>, cx: &mut Context<Self>) {
         let image_item = image_view.read(cx).image_item.clone();
-        let current_metadata = image_item.read(cx).image_metadata;
-        if current_metadata.is_some() {
-            self.metadata = current_metadata;
-            cx.notify();
+        let item_ref = image_item.read(cx);
+        self.metadata = item_ref.image_metadata;
+        if item_ref.is_pdf() {
+            self.pdf_info = Some((item_ref.current_page(), item_ref.total_pages()));
         } else {
-            self.observe_image_item = Some(cx.observe(&image_item, |this, item, cx| {
-                this.metadata = item.read(cx).image_metadata;
-                cx.notify();
-            }));
+            self.pdf_info = None;
         }
+
+        self.observe_image_item = Some(cx.observe(&image_item, |this, item, cx| {
+            let item_ref = item.read(cx);
+            this.metadata = item_ref.image_metadata;
+            if item_ref.is_pdf() {
+                this.pdf_info = Some((item_ref.current_page(), item_ref.total_pages()));
+            } else {
+                this.pdf_info = None;
+            }
+            cx.notify();
+        }));
+        cx.notify();
     }
 }
 
@@ -51,6 +62,9 @@ impl Render for ImageInfo {
         };
 
         let mut components = Vec::new();
+        if let Some((current_page, total_pages)) = self.pdf_info {
+            components.push(format!("Page {} of {}", current_page + 1, total_pages));
+        }
         components.push(format!("{}x{}", metadata.width, metadata.height));
         components.push(format_image_size(metadata.file_size, settings.unit));
 
@@ -63,16 +77,20 @@ impl Render for ImageInfo {
         }
 
         components.push(
-            match metadata.format {
-                ImageFormat::Png => "PNG",
-                ImageFormat::Jpeg => "JPEG",
-                ImageFormat::Gif => "GIF",
-                ImageFormat::WebP => "WebP",
-                ImageFormat::Tiff => "TIFF",
-                ImageFormat::Bmp => "BMP",
-                ImageFormat::Ico => "ICO",
-                ImageFormat::Avif => "Avif",
-                _ => "Unknown",
+            if self.pdf_info.is_some() {
+                "PDF"
+            } else {
+                match metadata.format {
+                    ImageFormat::Png => "PNG",
+                    ImageFormat::Jpeg => "JPEG",
+                    ImageFormat::Gif => "GIF",
+                    ImageFormat::WebP => "WebP",
+                    ImageFormat::Tiff => "TIFF",
+                    ImageFormat::Bmp => "BMP",
+                    ImageFormat::Ico => "ICO",
+                    ImageFormat::Avif => "Avif",
+                    _ => "Unknown",
+                }
             }
             .to_string(),
         );

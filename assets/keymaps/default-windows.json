@@ -1558,6 +1558,14 @@
       "ctrl-1": "image_viewer::ZoomToActualSize",
       "ctrl-k r": "editor::RevealInFileManager",
       "ctrl-shift-0": "image_viewer::FitToView",
+      "right": "image_viewer::NextPage",
+      "pagedown": "image_viewer::NextPage",
+      "j": "image_viewer::NextPage",
+      "left": "image_viewer::PreviousPage",
+      "pageup": "image_viewer::PreviousPage",
+      "k": "image_viewer::PreviousPage",
+      "home": "image_viewer::FirstPage",
+      "end": "image_viewer::LastPage"
     },
   },
   {
