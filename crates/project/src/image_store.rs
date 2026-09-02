@@ -152,17 +152,11 @@ impl ImageItem {
     pub fn compute_metadata_from_bytes(image_bytes: &[u8]) -> Result<ImageMetadata> {
         if image_bytes.starts_with(b"%PDF-") {
             let engine = kkpdf_zed::pdfium::PdfiumEngine::new();
-            let options = kkpdf_zed::rasterizer::RasterizerOptions {
-                target_dpi: 144.0,
-                zoom_factor: 1.0,
-                dark_mode: false,
-                saturation_threshold: 0.18,
-            };
-            let arc_bytes = Arc::new(image_bytes.to_vec());
-            let rendered_page = engine.render_page_from_bytes(&arc_bytes, 0, options)?;
+            let doc = engine.load_document_from_bytes(image_bytes, None)?;
+            let (width, height) = doc.total_pixel_size(1.0, 144.0, 20);
             return Ok(ImageMetadata {
-                width: rendered_page.width,
-                height: rendered_page.height,
+                width,
+                height,
                 file_size: image_bytes.len() as u64,
                 format: image::ImageFormat::Png,
                 colors: ImageColorInfo::from_color_type(image::ColorType::Rgba8),
@@ -960,14 +954,14 @@ fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
             saturation_threshold: 0.18,
         };
         let arc_bytes = Arc::new(content);
-        let rendered_page = engine.render_page_from_bytes(&arc_bytes, 0, options)?;
+        let rendered_doc = engine.render_document_from_bytes(&arc_bytes, options, 20)?;
 
         let mut png_bytes: Vec<u8> = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut png_bytes);
         let img_buf = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
-            rendered_page.width,
-            rendered_page.height,
-            rendered_page.rgba_buffer.as_ref().clone(),
+            rendered_doc.width,
+            rendered_doc.height,
+            rendered_doc.rgba_buffer.as_ref().clone(),
         )
         .ok_or_else(|| anyhow::anyhow!("Failed to convert RGBA to ImageBuffer"))?;
 
