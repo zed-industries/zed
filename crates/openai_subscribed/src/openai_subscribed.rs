@@ -62,9 +62,15 @@ impl CodexCredentials {
     }
 }
 
+enum SignInState {
+    Idle,
+    Authorizing(Task<Result<()>>),
+    PersistingCredentials { _task: Task<Result<()>> },
+}
+
 pub struct State {
     credentials: Option<CodexCredentials>,
-    sign_in_task: Option<Task<Result<()>>>,
+    sign_in_state: SignInState,
     refresh_task: Option<Shared<Task<Result<CodexCredentials, Arc<anyhow::Error>>>>>,
     load_task: Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>>,
     credentials_provider: Arc<dyn CredentialsProvider>,
@@ -154,7 +160,7 @@ impl State {
 
         Self {
             credentials: None,
-            sign_in_task: None,
+            sign_in_state: SignInState::Idle,
             refresh_task: None,
             load_task: Some(load_task),
             credentials_provider,
@@ -177,7 +183,22 @@ impl State {
     }
 
     pub fn is_signing_in(&self) -> bool {
-        self.sign_in_task.is_some()
+        !matches!(self.sign_in_state, SignInState::Idle)
+    }
+
+    pub fn is_sign_in_cancellable(&self) -> bool {
+        matches!(self.sign_in_state, SignInState::Authorizing(_))
+    }
+
+    fn begin_persisting_credentials(&mut self, cx: &mut Context<Self>) {
+        let sign_in_state = std::mem::replace(&mut self.sign_in_state, SignInState::Idle);
+        self.sign_in_state = match sign_in_state {
+            SignInState::Authorizing(task) => {
+                cx.notify();
+                SignInState::PersistingCredentials { _task: task }
+            }
+            sign_in_state => sign_in_state,
+        };
     }
 
     pub fn last_auth_error(&self) -> Option<SharedString> {
@@ -280,6 +301,10 @@ impl State {
         let task = cx.spawn(async move |this, cx| {
             match do_oauth_flow(http_client, cx).await {
                 Ok(creds) => {
+                    this.update(cx, |state, cx| {
+                        state.begin_persisting_credentials(cx);
+                    })?;
+
                     let persist_result = async {
                         let credentials_provider =
                             this.read_with(cx, |state, _| state.credentials_provider.clone())?;
@@ -303,7 +328,7 @@ impl State {
                                 log::warn!("Failed to refresh ChatGPT models: {error:#}");
                             }
                             this.update(cx, |state, cx| {
-                                state.sign_in_task = None;
+                                state.sign_in_state = SignInState::Idle;
                                 cx.notify();
                             })?;
                         }
@@ -312,7 +337,7 @@ impl State {
                                 "ChatGPT subscription sign-in failed to persist credentials: {err:?}"
                             );
                             this.update(cx, |state, cx| {
-                                state.sign_in_task = None;
+                                state.sign_in_state = SignInState::Idle;
                                 state.last_auth_error =
                                     Some("Failed to save credentials. Please try again.".into());
                                 cx.notify();
@@ -324,7 +349,7 @@ impl State {
                 Err(err) => {
                     log::error!("ChatGPT subscription sign-in failed: {err:?}");
                     this.update(cx, |state, cx| {
-                        state.sign_in_task = None;
+                        state.sign_in_state = SignInState::Idle;
                         state.last_auth_error = Some("Sign-in failed. Please try again.".into());
                         cx.notify();
                     })
@@ -335,8 +360,15 @@ impl State {
         });
 
         self.last_auth_error = None;
-        self.sign_in_task = Some(task);
+        self.sign_in_state = SignInState::Authorizing(task);
         cx.notify();
+    }
+
+    pub fn cancel_sign_in(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.sign_in_state, SignInState::Authorizing(_)) {
+            self.sign_in_state = SignInState::Idle;
+            cx.notify();
+        }
     }
 
     /// Clears credentials and in-flight work immediately (so observers see the
@@ -345,7 +377,7 @@ impl State {
     pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         self.auth_generation += 1;
         self.credentials = None;
-        self.sign_in_task = None;
+        self.sign_in_state = SignInState::Idle;
         self.refresh_task = None;
         self.last_auth_error = None;
         self.reset_model_catalog();
@@ -1511,6 +1543,83 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_cancel_sign_in_drops_pending_task(cx: &mut TestAppContext) {
+        let http: Arc<dyn HttpClient> = FakeHttpClient::create(|_| async {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(http_client::AsyncBody::default())?)
+        });
+        let state = make_state(http, None, cx);
+        let (continue_sign_in_tx, continue_sign_in_rx) = futures::channel::oneshot::channel::<()>();
+
+        state.update(cx, |state, cx| {
+            let task = cx.spawn(async move |_this, _cx| {
+                continue_sign_in_rx.await?;
+                anyhow::Ok(())
+            });
+            state.sign_in_state = SignInState::Authorizing(task);
+        });
+
+        cx.read(|cx| assert!(state.read(cx).is_signing_in()));
+        state.update(cx, |state, cx| state.cancel_sign_in(cx));
+        cx.run_until_parked();
+        cx.read(|cx| assert!(!state.read(cx).is_signing_in()));
+        assert!(
+            continue_sign_in_tx.send(()).is_err(),
+            "canceling sign-in should drop the task"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sign_in_task_remains_alive_while_persisting_credentials(cx: &mut TestAppContext) {
+        let http: Arc<dyn HttpClient> = FakeHttpClient::create(|_| async {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(http_client::AsyncBody::default())?)
+        });
+        let state = make_state(http, None, cx);
+        let (begin_persisting_tx, begin_persisting_rx) = futures::channel::oneshot::channel::<()>();
+        let (finish_persisting_tx, finish_persisting_rx) =
+            futures::channel::oneshot::channel::<()>();
+
+        state.update(cx, |state, cx| {
+            let task = cx.spawn(async move |this, cx| {
+                begin_persisting_rx.await?;
+                this.update(cx, |state, cx| {
+                    state.begin_persisting_credentials(cx);
+                })?;
+                finish_persisting_rx.await?;
+                this.update(cx, |state, cx| {
+                    state.sign_in_state = SignInState::Idle;
+                    cx.notify();
+                })?;
+                anyhow::Ok(())
+            });
+            state.sign_in_state = SignInState::Authorizing(task);
+        });
+
+        begin_persisting_tx
+            .send(())
+            .expect("sign-in task should be waiting to persist credentials");
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let state = state.read(cx);
+            assert!(state.is_signing_in());
+            assert!(!state.is_sign_in_cancellable());
+        });
+
+        state.update(cx, |state, cx| state.cancel_sign_in(cx));
+        cx.run_until_parked();
+        cx.read(|cx| assert!(state.read(cx).is_signing_in()));
+
+        finish_persisting_tx
+            .send(())
+            .expect("sign-in task should still be persisting credentials");
+        cx.run_until_parked();
+        cx.read(|cx| assert!(!state.read(cx).is_signing_in()));
+    }
+
+    #[gpui::test]
     async fn test_sign_out_during_refresh_discards_result(cx: &mut TestAppContext) {
         let (gate_tx, gate_rx) = futures::channel::oneshot::channel::<()>();
         let gate_rx = Arc::new(Mutex::new(Some(gate_rx)));
@@ -2219,7 +2328,7 @@ mod tests {
     ) -> Entity<State> {
         cx.new(|_cx| State {
             credentials,
-            sign_in_task: None,
+            sign_in_state: SignInState::Idle,
             refresh_task: None,
             load_task: None,
             credentials_provider,
