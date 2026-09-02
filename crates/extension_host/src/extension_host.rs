@@ -1533,9 +1533,6 @@ impl ExtensionStore {
                 language.path.as_path(),
             ]);
             let rules_path = language_path.join(SemanticTokenRules::FILE_NAME);
-
-            let extension_id = language.extension.clone();
-            let language_name_for_loader = language_name.clone();
             let registered = self.proxy.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
@@ -1544,8 +1541,8 @@ impl ExtensionStore {
                 Arc::new({
                     let fs = self.fs.clone();
                     let query_files = language.query_files;
-                    let extension_id = extension_id.clone();
-                    let language_name = language_name_for_loader;
+                    let extension_id = language.extension;
+                    let language_name = language_name.clone();
                     move || {
                         let fs = fs.clone();
                         let language_path = language_path.clone();
@@ -1736,10 +1733,11 @@ impl ExtensionStore {
                 }
 
                 this.wasm_extensions.extend(wasm_extensions.clone());
-                this.extension_provider
-                    .wasm_extensions
-                    .write()
-                    .extend(wasm_extensions.into_iter().map(|(m, e)| (m.id.clone(), e)));
+                this.extension_provider.wasm_extensions.write().extend(
+                    wasm_extensions
+                        .into_iter()
+                        .map(|(manifest, extension)| (manifest.id.clone(), extension)),
+                );
                 this.proxy.set_extensions_loaded();
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);

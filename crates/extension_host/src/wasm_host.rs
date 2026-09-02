@@ -556,10 +556,10 @@ impl extension::Extension for WasmExtension {
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
 
-                let mut result = TaskVariables::default();
-                for variable in variables {
-                    result.insert(VariableName::Custom(variable.name.into()), variable.value);
-                }
+                let result = variables
+                    .into_iter()
+                    .map(|variable| (VariableName::Custom(variable.name.into()), variable.value))
+                    .collect();
                 Ok(result)
             }
             .boxed()

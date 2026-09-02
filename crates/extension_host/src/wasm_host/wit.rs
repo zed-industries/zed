@@ -1319,7 +1319,15 @@ impl Extension {
                 )
                 .await
             }
-            _ => Ok(Ok(Vec::new())),
+            Extension::V0_0_1(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_6_0(_) => Ok(Ok(Vec::new())),
         }
     }
 
@@ -1335,7 +1343,15 @@ impl Extension {
                 ext.call_associated_tasks(store, language_name, file.as_ref(), worktree)
                     .await
             }
-            _ => Ok(Ok(Vec::new())),
+            Extension::V0_0_1(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_6_0(_) => Ok(Ok(Vec::new())),
         }
     }
 }

@@ -107,8 +107,9 @@ impl language::ContextProvider for ExtensionContextProvider {
                 None
             };
 
-            if let (Some(extension), Some(worktree_delegate)) =
-                (proxy.extension_by_id(&extension_id), worktree_delegate)
+            if let Some((extension, worktree_delegate)) = proxy
+                .extension_by_id(&extension_id)
+                .zip(worktree_delegate)
             {
                 if let Some(definitions) = extension
                     .associated_tasks(language_name.to_string(), file, worktree_delegate)
