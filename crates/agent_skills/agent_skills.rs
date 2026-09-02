@@ -64,7 +64,7 @@ impl SkillLoadWarning {
                 actual_len,
                 max_len,
             } => format!(
-                "Skill description is {actual_len} bytes, exceeding the {max_len}-byte limit. The skill was loaded, but long descriptions may consume more model-context tokens."
+                "Skill description is {actual_len} characters, exceeding the {max_len}-character limit. The skill was loaded, but long descriptions may consume more model-context tokens."
             ),
         }
     }
@@ -330,9 +330,10 @@ fn validate_description_for_loading(
     }
 
     let mut warnings = Vec::new();
-    if description.len() > MAX_SKILL_DESCRIPTION_LEN {
+    let actual_len = description.chars().count();
+    if actual_len > MAX_SKILL_DESCRIPTION_LEN {
         warnings.push(SkillLoadWarning::DescriptionTooLong {
-            actual_len: description.len(),
+            actual_len,
             max_len: MAX_SKILL_DESCRIPTION_LEN,
         });
     }
@@ -416,13 +417,10 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
 /// by [`validate_name`].
 pub const MAX_SKILL_NAME_LEN: usize = 64;
 
-/// Maximum recommended length (in bytes) for a skill description. The
-/// create-skill UI enforces this as a hard limit, while the loader emits a
-/// warning and still loads longer descriptions.
-///
-/// Byte-based rather than char-based because that's what `.len()` returns
-/// and what every caller currently measures; the UI also surfaces this
-/// limit as a byte count so the editor's counter matches the validator.
+/// Maximum recommended length (in characters, as the Agent Skills
+/// specification measures it) for a skill description. The create-skill UI
+/// enforces this as a hard limit, while the loader emits a warning and still
+/// loads longer descriptions.
 pub const MAX_SKILL_DESCRIPTION_LEN: usize = 1024;
 
 /// Convert an arbitrary human-readable string into a valid skill name, or
@@ -532,9 +530,9 @@ pub fn validate_description(description: &str) -> Result<(), &'static str> {
     if description.trim().is_empty() {
         return Err("Skill description cannot be empty");
     }
-    if description.len() > MAX_SKILL_DESCRIPTION_LEN {
+    if description.chars().count() > MAX_SKILL_DESCRIPTION_LEN {
         return Err(formatcp!(
-            "Skill description must be at most {MAX_SKILL_DESCRIPTION_LEN} bytes"
+            "Skill description must be at most {MAX_SKILL_DESCRIPTION_LEN} characters"
         ));
     }
     Ok(())
@@ -1419,7 +1417,7 @@ Content.
 
         let result = parse_skill_file_content(&content);
         assert!(result.is_err());
-        let expected = format!("at most {MAX_SKILL_DESCRIPTION_LEN} bytes");
+        let expected = format!("at most {MAX_SKILL_DESCRIPTION_LEN} characters");
         assert!(result.unwrap_err().to_string().contains(&expected));
     }
 
@@ -2133,17 +2131,13 @@ description: A skill with no body content
     }
 
     #[test]
-    fn validate_description_length_is_measured_in_bytes() {
-        // "é" is 2 bytes in UTF-8. A string of MAX/2 + 1 "é" characters has
-        // only ~MAX/2 + 1 chars but exceeds MAX bytes, so it must be
-        // rejected by a byte-based validator (and accepted by a char-based
-        // one). This regression-tests the byte semantics that strict
-        // validation and load-time warnings both rely on.
-        let chars = MAX_SKILL_DESCRIPTION_LEN / 2 + 1;
-        let description = "é".repeat(chars);
-        assert!(description.chars().count() <= MAX_SKILL_DESCRIPTION_LEN);
+    fn validate_description_length_is_measured_in_chars() {
+        // Multibyte text exceeds the limit in bytes long before it does in
+        // characters; the specification's limit is in characters.
+        let description = "中".repeat(MAX_SKILL_DESCRIPTION_LEN);
         assert!(description.len() > MAX_SKILL_DESCRIPTION_LEN);
-        assert!(validate_description(&description).is_err());
+        assert!(validate_description(&description).is_ok());
+        assert!(validate_description(&format!("{description}中")).is_err());
     }
 
     #[test]

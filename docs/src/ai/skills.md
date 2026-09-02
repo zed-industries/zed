@@ -122,7 +122,7 @@ Step-by-step instructions for the agent...
 | Field                      | Required | Description                                                                                                                       |
 | -------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `name`                     | Yes      | Lowercase letters, numbers, and hyphens only. Max 64 characters. Should match the folder name.                                    |
-| `description`              | Yes      | What the skill does and when to use it. Keep it under 1024 bytes; skills with longer descriptions still load, but with a warning. |
+| `description`              | Yes      | What the skill does and when to use it. Keep it under 1024 characters; skills with longer descriptions still load, but with a warning. |
 | `disable-model-invocation` | No       | Set to `true` to hide from the agent's catalog (invocable via slash command or @-mention only).                                   |
 
 > **Tip:** Write descriptions that help the agent recognize when a skill is relevant. Include specific task types and trigger phrases: "Use when handling PDFs, extracting text, or filling forms" is better than "Helps with PDFs."
