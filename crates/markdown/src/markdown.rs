@@ -451,8 +451,11 @@ struct MermaidViewState {
     /// Vertical scroll position of the expanded overlay panel.
     expanded_vertical_scroll_handle: ScrollHandle,
     /// Focus handle of the expanded overlay panel, created lazily when the
-    /// panel first opens, so Esc can dismiss it.
+    /// panel first opens, so its keybindings resolve while it is open.
     expanded_focus_handle: Option<FocusHandle>,
+    /// Whatever held focus when the overlay panel opened, so closing the panel
+    /// can hand focus back instead of leaving it on the removed panel.
+    expanded_previous_focus_handle: Option<FocusHandle>,
     /// The pending debounced re-raster scheduled by the last zoom change.
     debounce_task: Option<Task<()>>,
     /// Overrides the scroll container width, which tests can't obtain from
@@ -484,6 +487,7 @@ impl Default for MermaidViewState {
             expanded_horizontal_scroll_handle: ScrollHandle::new(),
             expanded_vertical_scroll_handle: ScrollHandle::new(),
             expanded_focus_handle: None,
+            expanded_previous_focus_handle: None,
             debounce_task: None,
             #[cfg(test)]
             container_width_for_test: None,
@@ -583,7 +587,9 @@ actions!(
         /// Copies the selected text to the clipboard.
         Copy,
         /// Copies the selected text as markdown to the clipboard.
-        CopyAsMarkdown
+        CopyAsMarkdown,
+        /// Collapses an expanded diagram back into the document.
+        CollapseDiagram
     ]
 );
 
@@ -817,7 +823,7 @@ impl Markdown {
     }
 
     /// The focus handle of a diagram's expanded overlay panel, so the panel
-    /// can take focus while open and be dismissed with Esc.
+    /// can take focus while open and resolve its keybindings.
     pub(crate) fn mermaid_expanded_focus_handle(
         &mut self,
         source_offset: usize,
@@ -829,6 +835,27 @@ impl Markdown {
             .expanded_focus_handle
             .get_or_insert_with(|| cx.focus_handle())
             .clone()
+    }
+
+    pub(crate) fn set_mermaid_expanded_previous_focus(
+        &mut self,
+        source_offset: usize,
+        focus_handle: Option<FocusHandle>,
+    ) {
+        self.mermaid_views
+            .entry(source_offset)
+            .or_default()
+            .expanded_previous_focus_handle = focus_handle;
+    }
+
+    pub(crate) fn take_mermaid_expanded_previous_focus(
+        &mut self,
+        source_offset: usize,
+    ) -> Option<FocusHandle> {
+        self.mermaid_views
+            .get_mut(&source_offset)?
+            .expanded_previous_focus_handle
+            .take()
     }
 
     pub(crate) fn mermaid_zoom_level(&self, source_offset: usize) -> f32 {

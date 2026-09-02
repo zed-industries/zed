@@ -1,22 +1,25 @@
 use collections::HashMap;
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, Entity, ImageSource,
-    ParsedSvg, RenderImage, SMOOTH_SVG_SCALE_FACTOR, ScrollDelta, ScrollHandle, ScrollWheelEvent,
-    Size, Stateful, StyledText, Task, Window, anchored, deferred, img, point, pulsating_between,
-    px, size,
+    Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, Entity, FocusHandle,
+    ImageSource, ParsedSvg, RenderImage, SMOOTH_SVG_SCALE_FACTOR, ScrollDelta, ScrollHandle,
+    ScrollWheelEvent, Size, Stateful, StyledText, Task, Window, anchored, deferred, img, point,
+    pulsating_between, px, size,
 };
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use ui::{CopyButton, ScrollAxes, Scrollbars, TintColor, Tooltip, WithScrollbar, prelude::*};
+use ui::{CopyButton, ScrollAxes, Scrollbars, Tab, TintColor, Tooltip, WithScrollbar, prelude::*};
 
 use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 
-use super::{CopyButtonVisibility, Markdown, MarkdownStyle, MermaidZoomCallback, ParsedMarkdown};
+use super::{
+    CollapseDiagram, CopyButtonVisibility, Markdown, MarkdownStyle, MermaidZoomCallback,
+    ParsedMarkdown,
+};
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, Arc<CachedMermaidDiagram>>;
 
@@ -588,6 +591,13 @@ pub(crate) fn render_mermaid_diagram(
     let render_result = cached.and_then(|cached| cached.render_image.get());
     let show_interactive = copy_button_visibility != CopyButtonVisibility::Hidden;
     let expanded = show_interactive && markdown.read(cx).is_mermaid_expanded(source_offset);
+    // Doubles as the `expanded` flag for the controls, which need the panel's
+    // focus handle to show the `CollapseDiagram` keybinding in a tooltip.
+    let expanded_focus_handle = expanded.then(|| {
+        markdown.update(cx, |markdown, cx| {
+            markdown.mermaid_expanded_focus_handle(source_offset, cx)
+        })
+    });
 
     let code = parsed.contents.contents.clone();
 
@@ -634,7 +644,7 @@ pub(crate) fn render_mermaid_diagram(
                         source_offset,
                         code.to_string(),
                         (!showing_code).then_some(zoom),
-                        expanded,
+                        expanded_focus_handle.clone(),
                         markdown.clone(),
                         on_zoom.clone(),
                     ))
@@ -663,7 +673,7 @@ pub(crate) fn render_mermaid_diagram(
                         source_offset,
                         code.to_string(),
                         None,
-                        false,
+                        None,
                         markdown,
                         on_zoom,
                     ))
@@ -722,7 +732,7 @@ pub(crate) fn render_mermaid_diagram(
                             source_offset,
                             code.to_string(),
                             Some(zoom),
-                            expanded,
+                            expanded_focus_handle.clone(),
                             markdown.clone(),
                             on_zoom.clone(),
                         ))
@@ -882,15 +892,19 @@ fn render_mermaid_tab_header(
 /// the natural size), then the copy and expand/collapse buttons. Rendered as
 /// an always-visible toolbar row in the expanded panel, and floating over the
 /// top-right corner inline, revealed on hover unless the diagram is zoomed.
+///
+/// `expanded_focus_handle` is the expanded panel's focus handle, and is `None`
+/// exactly when the diagram isn't expanded.
 fn render_mermaid_overlay_controls(
     source_offset: usize,
     code: String,
     zoom: Option<f32>,
-    expanded: bool,
+    expanded_focus_handle: Option<FocusHandle>,
     markdown: Entity<Markdown>,
     on_zoom: Option<MermaidZoomCallback>,
 ) -> impl IntoElement {
     let showing_preview = zoom.is_some();
+    let expanded = expanded_focus_handle.is_some();
     // While zoomed, the percentage readout is visible anyway, so keep its
     // sibling buttons visible too instead of revealing them on hover.
     let hover_reveal = !expanded && zoom.is_none_or(|zoom| zoom == 1.0);
@@ -942,41 +956,86 @@ fn render_mermaid_overlay_controls(
         .when(showing_preview, |this| {
             this.child(render_mermaid_expand_button(
                 source_offset,
-                expanded,
+                expanded_focus_handle,
                 hover_reveal,
                 markdown,
             ))
         })
 }
 
-/// A button that toggles showing the diagram in a full-window overlay panel.
+/// Opens a diagram's overlay panel, focusing it so its keybindings resolve and
+/// remembering what held focus so [`collapse_mermaid_diagram`] can hand it back.
+fn expand_mermaid_diagram(
+    markdown: &Entity<Markdown>,
+    source_offset: usize,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let previous_focus_handle = window.focused(cx);
+    let panel_focus_handle = markdown.update(cx, |markdown, cx| {
+        markdown.set_mermaid_expanded(source_offset, true);
+        markdown.set_mermaid_expanded_previous_focus(source_offset, previous_focus_handle);
+        cx.notify();
+        markdown.mermaid_expanded_focus_handle(source_offset, cx)
+    });
+    panel_focus_handle.focus(window, cx);
+}
+
+/// Closes a diagram's overlay panel. Focus returns to whatever held it before
+/// the panel opened, since the panel is about to leave the dispatch tree; as in
+/// the workspace's modal layer, focus is only restored if the panel still holds
+/// it, so a panel closed while the user is working elsewhere doesn't steal it.
+fn collapse_mermaid_diagram(
+    markdown: &Entity<Markdown>,
+    source_offset: usize,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let (panel_focus_handle, previous_focus_handle) = markdown.update(cx, |markdown, cx| {
+        markdown.set_mermaid_expanded(source_offset, false);
+        cx.notify();
+        (
+            markdown.mermaid_expanded_focus_handle(source_offset, cx),
+            markdown.take_mermaid_expanded_previous_focus(source_offset),
+        )
+    });
+    if let Some(previous_focus_handle) = previous_focus_handle
+        && panel_focus_handle.contains_focused(window, cx)
+    {
+        previous_focus_handle.focus(window, cx);
+    }
+}
+
+/// A button that toggles showing the diagram in a full-window overlay panel,
+/// styled like the pane and panel zoom toggles: the icon becomes a minimize
+/// glyph tinted with the accent color while the overlay is open.
 fn render_mermaid_expand_button(
     source_offset: usize,
-    expanded: bool,
+    expanded_focus_handle: Option<FocusHandle>,
     hover_reveal: bool,
     markdown: Entity<Markdown>,
 ) -> impl IntoElement {
+    let expanded = expanded_focus_handle.is_some();
     IconButton::new(
         ElementId::named_usize("mermaid-expand", source_offset),
-        if expanded {
-            IconName::Minimize
-        } else {
-            IconName::Maximize
-        },
+        IconName::Maximize,
     )
     .icon_size(IconSize::Small)
     .icon_color(Color::Muted)
+    .toggle_state(expanded)
+    .selected_icon(IconName::Minimize)
     .when(hover_reveal, |this| this.visible_on_hover("code_block"))
-    .tooltip(Tooltip::text(if expanded { "Collapse" } else { "Expand" }))
+    .tooltip(move |_window, cx| match &expanded_focus_handle {
+        Some(focus_handle) => {
+            Tooltip::for_action_in("Collapse", &CollapseDiagram, focus_handle, cx)
+        }
+        None => Tooltip::simple("Expand", cx),
+    })
     .on_click(move |_event, window, cx| {
-        let panel_focus_handle = markdown.update(cx, |markdown, cx| {
-            markdown.set_mermaid_expanded(source_offset, !expanded);
-            cx.notify();
-            // Focus the panel when opening it so Esc dismisses it.
-            (!expanded).then(|| markdown.mermaid_expanded_focus_handle(source_offset, cx))
-        });
-        if let Some(panel_focus_handle) = panel_focus_handle {
-            panel_focus_handle.focus(window, cx);
+        if expanded {
+            collapse_mermaid_diagram(&markdown, source_offset, window, cx);
+        } else {
+            expand_mermaid_diagram(&markdown, source_offset, window, cx);
         }
     })
 }
@@ -984,7 +1043,8 @@ fn render_mermaid_expand_button(
 /// A full-window overlay showing the diagram in a panel that spans the
 /// viewport, for inspecting large diagrams that overflow their inline block.
 /// Drawn with [`deferred`]/[`anchored`] so it escapes the markdown's layout;
-/// dismissed with Esc, the collapse button, or clicking the dimmed backdrop.
+/// dismissed with [`CollapseDiagram`], the collapse button, or clicking the
+/// dimmed backdrop.
 /// The panel scrolls on both axes and shares the diagram's zoom state, so the
 /// zoom controls and ctrl/cmd+scroll zoom gesture work the same as inline.
 fn render_mermaid_expanded_overlay(
@@ -1070,6 +1130,9 @@ fn render_mermaid_expanded_overlay(
                 .child(vertical_container),
         );
 
+    // Keeps the diagram on the same surface color as the inline block it
+    // expands from, while floating over the modal layer's scrim rather than
+    // sitting flush against the window edges like the zoomed overlay.
     let panel = v_flex()
         .occlude()
         .size_full()
@@ -1082,33 +1145,14 @@ fn render_mermaid_expanded_overlay(
         .overflow_hidden()
         .key_context("ExpandedMermaidDiagram")
         .track_focus(&focus_handle)
-        // Esc handling: keybindings are dispatched before key listeners, and
-        // Zed's base keymap binds Esc to `menu::Cancel` with no context
-        // filter, so Esc arrives here as that action. The raw key listener is
-        // a fallback for hosts without such a binding.
         .on_action({
             let markdown = markdown.clone();
-            move |_: &menu::Cancel, _window, cx| {
-                markdown.update(cx, |markdown, cx| {
-                    markdown.set_mermaid_expanded(source_offset, false);
-                    cx.notify();
-                });
-            }
-        })
-        .on_key_down({
-            let markdown = markdown.clone();
-            move |event, _window, cx| {
-                if event.keystroke.key == "escape" {
-                    markdown.update(cx, |markdown, cx| {
-                        markdown.set_mermaid_expanded(source_offset, false);
-                        cx.notify();
-                    });
-                    cx.stop_propagation();
-                }
+            move |_: &CollapseDiagram, window, cx| {
+                collapse_mermaid_diagram(&markdown, source_offset, window, cx);
             }
         })
         // Clicking around the panel (e.g. dragging a scrollbar) keeps focus on
-        // it, so Esc still dismisses it afterwards.
+        // it, so its collapse keybinding still resolves afterwards.
         .capture_any_mouse_down({
             let focus_handle = focus_handle.clone();
             move |_event, window, cx| {
@@ -1117,21 +1161,19 @@ fn render_mermaid_expanded_overlay(
         })
         .on_mouse_down_out({
             let markdown = markdown.clone();
-            move |_event, _window, cx| {
-                markdown.update(cx, |markdown, cx| {
-                    markdown.set_mermaid_expanded(source_offset, false);
-                    cx.notify();
-                });
+            move |_event, window, cx| {
+                collapse_mermaid_diagram(&markdown, source_offset, window, cx);
             }
         })
-        // The controls form an always-visible toolbar above the body, styled
-        // like the agent panel's toolbar, so they never overlap the body's
-        // scrollbars.
+        // The controls form an always-visible toolbar above the body, sized
+        // and colored like Zed's panel toolbars, so they never overlap the
+        // body's scrollbars.
         .child(
             h_flex()
+                .h(Tab::container_height(cx))
+                .flex_none()
                 .w_full()
-                .px_2()
-                .py_1()
+                .px_1()
                 .bg(cx.theme().colors().tab_bar_background)
                 .border_b_1()
                 .border_color(cx.theme().colors().border)
@@ -1139,12 +1181,17 @@ fn render_mermaid_expanded_overlay(
                     source_offset,
                     code,
                     Some(zoom),
-                    true,
+                    Some(focus_handle.clone()),
                     markdown,
                     on_zoom,
                 )),
         )
         .child(div().flex_1().min_h_0().w_full().p_2().child(body));
+
+    // The same scrim the workspace's modal layer draws behind modals, so it
+    // tracks the theme instead of washing every theme with the same black.
+    let mut backdrop = cx.theme().colors().elevated_surface_background;
+    backdrop.fade_out(0.2);
 
     deferred(
         anchored()
@@ -1160,7 +1207,7 @@ fn render_mermaid_expanded_overlay(
                     .w(viewport_size.width)
                     .h(viewport_size.height)
                     .p_8()
-                    .bg(gpui::black().opacity(0.5))
+                    .bg(backdrop)
                     .child(panel),
             ),
     )
@@ -1168,9 +1215,19 @@ fn render_mermaid_expanded_overlay(
     .into_any_element()
 }
 
+/// [`on_mermaid_zoom_scroll`] accepts either ctrl or the platform key on every
+/// platform, so the buttons' hint names only the one that platform's users
+/// reach for.
+const MERMAID_ZOOM_SCROLL_MODIFIER: &str = if cfg!(target_os = "macos") {
+    "cmd"
+} else {
+    "ctrl"
+};
+
 /// A button that zooms a diagram in or out to the next multiple of
 /// [`MERMAID_ZOOM_BUTTON_STEP`] per click. Clicks past the zoom limits are
-/// no-ops, matching the scroll-wheel zoom gesture.
+/// no-ops, matching the scroll-wheel zoom gesture, which the tooltip advertises
+/// since it is otherwise undiscoverable.
 fn render_mermaid_zoom_button(
     id_name: &'static str,
     icon: IconName,
@@ -1185,7 +1242,17 @@ fn render_mermaid_zoom_button(
         .icon_size(IconSize::Small)
         .icon_color(Color::Muted)
         .when(hover_reveal, |this| this.visible_on_hover("code_block"))
-        .tooltip(Tooltip::text(tooltip_label))
+        .tooltip(move |_window, cx| {
+            // Scrolling up zooms in: the gesture adds the scroll delta to the
+            // zoom, and scrolling up reports a positive delta.
+            let scroll_direction = if zoom_in { "up" } else { "down" };
+            Tooltip::with_meta(
+                tooltip_label,
+                None,
+                format!("Or {MERMAID_ZOOM_SCROLL_MODIFIER}-scroll {scroll_direction}"),
+                cx,
+            )
+        })
         .on_click(move |_event, window, cx| {
             let zoom_changed = markdown.update(cx, |markdown, cx| {
                 let current_zoom = markdown.mermaid_zoom_level(source_offset);
@@ -1299,15 +1366,17 @@ fn render_mermaid_code_view(contents: &SharedString) -> AnyElement {
 mod tests {
     use super::{
         CachedMermaidDiagram, MermaidDiagramCache, MermaidState, ParsedMarkdownMermaidDiagram,
-        ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, parse_mermaid_info,
+        ParsedMarkdownMermaidDiagramContents, expand_mermaid_diagram, extract_mermaid_diagrams,
+        parse_mermaid_info,
     };
     use crate::{
-        CodeBlockRenderer, CopyButtonVisibility, MERMAID_ZOOM_DEBOUNCE, Markdown, MarkdownElement,
-        MarkdownOptions, MarkdownStyle, WrapButtonVisibility,
+        CodeBlockRenderer, CollapseDiagram, CopyButtonVisibility, MERMAID_ZOOM_DEBOUNCE, Markdown,
+        MarkdownElement, MarkdownOptions, MarkdownStyle, WrapButtonVisibility,
     };
     use collections::HashMap;
     use gpui::{
-        Context, Entity, IntoElement, Render, RenderImage, TestAppContext, Window, point, size,
+        Context, Entity, FocusHandle, IntoElement, KeyBinding, Render, RenderImage, TestAppContext,
+        Window, point, size,
     };
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -2196,11 +2265,12 @@ mod tests {
     fn test_mermaid_expanded_overlay_draws(cx: &mut TestAppContext) {
         struct MarkdownView {
             markdown: Entity<Markdown>,
+            focus_handle: FocusHandle,
         }
 
         impl Render for MarkdownView {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div().size_full().child(
+                div().size_full().track_focus(&self.focus_handle).child(
                     MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
                         .code_block_renderer(CodeBlockRenderer::Default {
                             copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
@@ -2212,6 +2282,16 @@ mod tests {
         }
 
         ensure_theme_initialized(cx);
+
+        // Tests load no keymap, so bind the panel's dismissal keybinding the
+        // same way the default keymaps do.
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new(
+                "shift-escape",
+                CollapseDiagram,
+                Some("ExpandedMermaidDiagram"),
+            )]);
+        });
 
         // The overlay is drawn via `defer_draw`, which only works within a
         // real window draw (`VisualTestContext::draw` draws bare elements
@@ -2230,11 +2310,15 @@ mod tests {
                     cx,
                 )
             });
-            MarkdownView { markdown }
+            MarkdownView {
+                markdown,
+                focus_handle: cx.focus_handle(),
+            }
         });
         cx.run_until_parked();
 
         let markdown = view.read_with(cx, |view, _| view.markdown.clone());
+        let view_focus_handle = view.read_with(cx, |view, _| view.focus_handle.clone());
         let render_image = mock_render_image(cx);
         let source_offset = markdown.update(cx, |markdown, cx| {
             let (source_offset, diagram) = markdown
@@ -2254,9 +2338,15 @@ mod tests {
                 )),
             );
             markdown.mermaid_state.order = vec![contents];
-            markdown.set_mermaid_expanded(source_offset, true);
             cx.notify();
             source_offset
+        });
+
+        // Expand through the same path the expand button takes, so the panel
+        // records the focus it is taking over.
+        view.update_in(cx, |view, window, cx| {
+            view.focus_handle.focus(window, cx);
+            expand_mermaid_diagram(&markdown, source_offset, window, cx);
         });
         cx.run_until_parked();
 
@@ -2269,32 +2359,19 @@ mod tests {
         });
         assert!(vertical_scroll_handle.bounds().size.width > px(0.));
 
-        // Esc dismisses the focused panel (via the raw key fallback here,
-        // since tests load no keymap).
-        let focus_handle = markdown.update(cx, |markdown, cx| {
+        let panel_focus_handle = markdown.update(cx, |markdown, cx| {
             markdown.mermaid_expanded_focus_handle(source_offset, cx)
         });
-        view.update_in(cx, |_, window, cx| focus_handle.focus(window, cx));
-        cx.run_until_parked();
-        cx.simulate_keystrokes("escape");
-        assert!(markdown.update(cx, |markdown, _| {
-            !markdown.is_mermaid_expanded(source_offset)
-        }));
+        assert!(cx.update(|window, _| panel_focus_handle.is_focused(window)));
 
-        // In production Esc arrives as `menu::Cancel` (bound in the base
-        // keymap before key listeners run), which the panel also handles.
-        markdown.update(cx, |markdown, cx| {
-            markdown.set_mermaid_expanded(source_offset, true);
-            cx.notify();
-        });
-        cx.run_until_parked();
-        view.update_in(cx, |_, window, cx| {
-            focus_handle.focus(window, cx);
-            focus_handle.dispatch_action(&menu::Cancel, window, cx);
-        });
-        cx.run_until_parked();
+        // Shift-esc dismisses the focused panel, matching the workspace's
+        // zoomed overlay, and focus returns to what the panel took it from
+        // rather than being left on the panel as it leaves the dispatch tree.
+        cx.simulate_keystrokes("shift-escape");
         assert!(markdown.update(cx, |markdown, _| {
             !markdown.is_mermaid_expanded(source_offset)
         }));
+        cx.run_until_parked();
+        assert!(cx.update(|window, _| view_focus_handle.is_focused(window)));
     }
 }

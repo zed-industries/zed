@@ -211,6 +211,13 @@
     },
   },
   {
+    "context": "ExpandedMermaidDiagram",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-escape": "markdown::CollapseDiagram",
+    },
+  },
+  {
     "context": "Editor && jupyter",
     "use_key_equivalents": true,
     "bindings": {

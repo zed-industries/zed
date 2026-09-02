@@ -178,6 +178,12 @@
     },
   },
   {
+    "context": "ExpandedMermaidDiagram",
+    "bindings": {
+      "shift-escape": "markdown::CollapseDiagram",
+    },
+  },
+  {
     "context": "Editor && jupyter",
     "bindings": {
       "ctrl-shift-enter": "repl::Run",
