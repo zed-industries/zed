@@ -10037,6 +10037,17 @@ impl Editor {
                 if !is_fresh_language {
                     self.registered_buffers.remove(&buffer_id);
                 }
+                // No event exists for a buffer detaching from a language server: a switch
+                // to a language with no server emits neither LanguageServerRemoved nor
+                // LanguageServerBufferRegistered, so the language change itself is the only
+                // signal that this buffer's server set changed. Run the same LSP data sweep
+                // as those events do, or hints and colors from the old server stay visible.
+                if self.project.is_some() {
+                    self.register_buffer(*buffer_id, cx);
+                    self.invalidate_semantic_tokens(Some(*buffer_id));
+                    self.update_lsp_data(Some(*buffer_id), window, cx);
+                    self.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
+                }
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
                 self.update_edit_prediction_settings(cx);
