@@ -7590,6 +7590,7 @@ dependencies = [
  "cocoa 0.26.0",
  "collections",
  "core-foundation 0.10.0",
+ "core-graphics 0.24.0",
  "core-video",
  "derive_more",
  "etagere",
@@ -7600,6 +7601,39 @@ dependencies = [
  "metal",
  "objc",
  "parking_lot",
+]
+
+[[package]]
+name = "gpui_ios"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "block2 0.6.2",
+ "core-foundation 0.10.0",
+ "core-foundation-sys",
+ "core-graphics 0.24.0",
+ "core-text",
+ "futures 0.3.32",
+ "gpui",
+ "gpui_apple",
+ "log",
+ "metal",
+ "objc2 0.6.3",
+ "parking_lot",
+ "pathfinder_geometry",
+ "raw-window-handle",
+ "smallvec",
+ "uuid",
+ "zed-font-kit",
+]
+
+[[package]]
+name = "gpui_ios_example"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui_ios",
+ "log",
 ]
 
 [[package]]

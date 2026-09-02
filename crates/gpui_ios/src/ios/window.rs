@@ -939,8 +939,8 @@ impl IosWindow {
             id,
             phase: touch_phase(touch).into(),
             position,
+            predicted_position: None,
             force: touch_force(touch),
-            timestamp: Some(touch_timestamp(touch)),
         };
         self.handle_keyboard_dismiss_touch(&event);
         if let Some(callback) = self.input_callback.borrow_mut().as_mut() {

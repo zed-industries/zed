@@ -22,13 +22,14 @@ use gpui::{
     Action, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardItem, CursorStyle,
     DummyKeyboardMapper, ForegroundExecutor, GestureKinds, GestureTuning, Keymap, Menu, MenuItem,
     PathPromptOptions, Platform, PlatformDisplay, PlatformGestures, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, Task, ThermalState,
-    WindowAppearance, WindowParams,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, ScrollPhysics, Task,
+    ThermalState, WindowAppearance, WindowParams,
 };
 use objc2::runtime::AnyObject;
 use objc2::{class, msg_send};
 use parking_lot::Mutex;
 use std::{
+    ffi::OsString,
     path::{Path, PathBuf},
     ptr,
     rc::Rc,
@@ -42,7 +43,7 @@ struct IosGestures;
 impl PlatformGestures for IosGestures {
     fn tuning(&self) -> GestureTuning {
         GestureTuning {
-            momentum_decay_per_ms: 0.99,
+            scroll_physics: ScrollPhysics::ios(),
             ..GestureTuning::default()
         }
     }
@@ -213,7 +214,7 @@ impl Platform for IosPlatform {
         log::warn!("iOS apps cannot programmatically quit");
     }
 
-    fn restart(&self, _binary_path: Option<PathBuf>) {
+    fn restart(&self, _binary_path: Option<PathBuf>, _arguments: Vec<OsString>) {
         // iOS apps cannot restart themselves
         log::warn!("iOS apps cannot restart themselves");
     }
@@ -360,7 +361,7 @@ impl Platform for IosPlatform {
         // Would use UIDocumentInteractionController or UIActivityViewController
     }
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>) {
         super::ffi::set_quit_callback(callback);
     }
 

@@ -8,7 +8,7 @@ type AppCallback = Box<dyn FnOnce(&mut App)>;
 struct IosCallbacks {
     finish_launching: Option<Box<dyn FnOnce()>>,
     app: Option<AppCallback>,
-    quit: Option<Box<dyn FnMut()>>,
+    quit: Option<Box<dyn FnMut() -> bool>>,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     app_lifecycle: Option<Box<dyn FnMut(AppLifecyclePhase)>>,
     memory_warning: Option<Box<dyn FnMut()>>,
@@ -100,7 +100,7 @@ pub(crate) fn set_finish_launching_callback(callback: Box<dyn FnOnce()>) {
     }
 }
 
-pub(crate) fn set_quit_callback(callback: Box<dyn FnMut()>) {
+pub(crate) fn set_quit_callback(callback: Box<dyn FnMut() -> bool>) {
     unsafe {
         (*app_state().callbacks.get()).quit = Some(callback);
     }

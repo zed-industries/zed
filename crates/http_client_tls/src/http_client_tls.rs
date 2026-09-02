@@ -38,15 +38,19 @@ pub fn tls_config() -> ClientConfig {
                     log::error!(
                         "failed to load platform TLS certificate verifier, falling back to bundled webpki roots: {error}"
                     );
-                    ClientConfig::builder()
-                        .with_root_certificates(rustls::RootCertStore {
-                            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-                        })
-                        .with_no_client_auth()
+                    bundled_tls_config()
                 })
             }
         })
         .clone()
+}
+
+fn bundled_tls_config() -> ClientConfig {
+    ClientConfig::builder()
+        .with_root_certificates(rustls::RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        })
+        .with_no_client_auth()
 }
 
 #[cfg(target_os = "ios")]
@@ -58,14 +62,31 @@ fn ios_tls_config() -> ClientConfig {
         Ok(verifier) => verifier,
         Err(error) => {
             log::error!("failed to initialize iOS WebPKI certificate fallback: {error}");
-            return ClientConfig::with_platform_verifier();
+            return ClientConfig::with_platform_verifier().unwrap_or_else(|platform_error| {
+                log::error!(
+                    "failed to load the iOS platform TLS certificate verifier: {platform_error}"
+                );
+                bundled_tls_config()
+            });
+        }
+    };
+    let config_builder = ClientConfig::builder();
+    let platform = match rustls_platform_verifier::Verifier::new(
+        config_builder.crypto_provider().clone(),
+    ) {
+        Ok(platform) => platform,
+        Err(error) => {
+            log::error!(
+                "failed to load the iOS platform TLS certificate verifier, falling back to bundled webpki roots: {error}"
+            );
+            return bundled_tls_config();
         }
     };
     let verifier = IosCertificateVerifier {
-        platform: rustls_platform_verifier::Verifier::new(),
+        platform,
         webpki: webpki_verifier,
     };
-    ClientConfig::builder()
+    config_builder
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth()
