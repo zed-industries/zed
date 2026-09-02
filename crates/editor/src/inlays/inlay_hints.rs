@@ -106,12 +106,11 @@ impl LspInlayHintData {
             return None;
         }
         self.modifiers_override = new_override;
-        if (self.enabled && self.modifiers_override) || (!self.enabled && !self.modifiers_override)
-        {
+        if self.should_show() {
+            Some(true)
+        } else {
             self.clear();
             Some(false)
-        } else {
-            Some(true)
         }
     }
 
@@ -254,6 +253,14 @@ impl LspInlayHintData {
             self.hint_refresh_tasks.remove(buffer_id);
             self.hint_chunk_fetching.remove(buffer_id);
         }
+    }
+
+    fn should_refresh(&self) -> bool {
+        self.enabled || self.modifiers_override
+    }
+
+    fn should_show(&self) -> bool {
+        self.enabled != self.modifiers_override
     }
 }
 
@@ -582,15 +589,12 @@ impl Editor {
             }
         };
 
-        match &mut self.inlay_hints {
-            Some(inlay_hints) => {
-                if !inlay_hints.enabled
-                    && !matches!(reason, InlayHintRefreshReason::ModifiersChanged(_))
-                {
-                    return None;
-                }
-            }
-            None => return None,
+        if !self
+            .inlay_hints
+            .as_ref()
+            .is_some_and(LspInlayHintData::should_refresh)
+        {
+            return None;
         }
 
         Some(invalidate_cache)
@@ -890,6 +894,7 @@ impl Editor {
         let Some(inlay_hints) = &mut self.inlay_hints else {
             return;
         };
+        let should_show = inlay_hints.should_show();
         let Some(buffer_snapshot) = self
             .buffer
             .read(cx)
@@ -984,7 +989,8 @@ impl Editor {
                 hints_deduplicated
             })
             .filter(|(hint_id, lsp_hint)| {
-                inlay_hints.allowed_hint_kinds.contains(&lsp_hint.kind)
+                should_show
+                    && inlay_hints.allowed_hint_kinds.contains(&lsp_hint.kind)
                     && inlay_hints
                         .added_hints
                         .insert(*hint_id, lsp_hint.kind)
@@ -3824,6 +3830,19 @@ let c = 3;"#
                 );
             })
             .unwrap();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(Vec::<String>::new(), visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+
         editor
             .update(cx, |editor, _, cx| {
                 editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(true), cx);
@@ -3970,6 +3989,34 @@ let c = 3;"#
                     visible_hint_labels(editor, cx),
                     "Nothing changes on consequent modifiers change of the same kind (3)"
                 );
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.toggle_inlay_hints(&crate::ToggleInlayHints, window, cx);
+                editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(true), cx);
+                editor.handle_input("x", window, cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(vec!["2".to_string()], cached_hint_labels(editor, cx));
+                assert_eq!(Vec::<String>::new(), visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(vec!["2".to_string()], cached_hint_labels(editor, cx));
+                assert_eq!(vec!["2".to_string()], visible_hint_labels(editor, cx));
             })
             .unwrap();
     }
