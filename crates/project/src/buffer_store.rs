@@ -1175,14 +1175,12 @@ impl BufferStore {
         let remote_id = buffer.read(cx).remote_id();
         if let Some(entry_id) = file.entry_id {
             if let Some(local) = self.as_local_mut() {
-                match local.local_buffer_ids_by_entry_id.get(&entry_id) {
-                    Some(_) => {
+                match local.local_buffer_ids_by_entry_id.entry(entry_id) {
+                    hash_map::Entry::Occupied(_) => {
                         return None;
                     }
-                    None => {
-                        local
-                            .local_buffer_ids_by_entry_id
-                            .insert(entry_id, remote_id);
+                    hash_map::Entry::Vacant(entry) => {
+                        entry.insert(remote_id);
                     }
                 }
             }

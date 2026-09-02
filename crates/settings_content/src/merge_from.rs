@@ -93,11 +93,9 @@ where
 {
     fn merge_from(&mut self, other: &Self) {
         for (key, value) in other {
-            if let Some(existing) = self.get_mut(key) {
-                existing.merge_from(value);
-            } else {
-                self.insert(key.clone(), value.clone());
-            }
+            self.entry(key.clone())
+                .and_modify(|existing| existing.merge_from(value))
+                .or_insert_with(|| value.clone());
         }
     }
 }
@@ -109,11 +107,9 @@ where
 {
     fn merge_from(&mut self, other: &Self) {
         for (key, value) in other {
-            if let Some(existing) = self.get_mut(key) {
-                existing.merge_from(value);
-            } else {
-                self.insert(key.clone(), value.clone());
-            }
+            self.entry(key.clone())
+                .and_modify(|existing| existing.merge_from(value))
+                .or_insert_with(|| value.clone());
         }
     }
 }
@@ -125,11 +121,9 @@ where
 {
     fn merge_from(&mut self, other: &Self) {
         for (key, value) in other {
-            if let Some(existing) = self.get_mut(key) {
-                existing.merge_from(value);
-            } else {
-                self.insert(key.clone(), value.clone());
-            }
+            self.entry(key.clone())
+                .and_modify(|existing| existing.merge_from(value))
+                .or_insert_with(|| value.clone());
         }
     }
 }
@@ -161,11 +155,9 @@ impl MergeFrom for serde_json::Value {
         match (self, other) {
             (serde_json::Value::Object(this), serde_json::Value::Object(other)) => {
                 for (key, value) in other {
-                    if let Some(existing) = this.get_mut(key) {
-                        existing.merge_from(value);
-                    } else {
-                        this.insert(key.clone(), value.clone());
-                    }
+                    this.entry(key.clone())
+                        .and_modify(|existing| existing.merge_from(value))
+                        .or_insert_with(|| value.clone());
                 }
             }
             (this, other) => *this = other.clone(),
