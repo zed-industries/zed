@@ -13,17 +13,18 @@ use http_client::{
     http::{HeaderMap, HeaderValue},
 };
 pub use language_model_core::ReasoningEffort;
+pub use language_model_core::chat_completion::{
+    ChoiceDelta, FunctionChunk, PromptTokensDetails, ResponseMessageDelta, ResponseStreamError,
+    ResponseStreamEvent, ResponseStreamResult, ToolCallChunk, Usage,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_json::value::RawValue;
 use std::{convert::TryFrom, future::Future, io};
 use strum::EnumIter;
 use thiserror::Error;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
-
-fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
-}
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -800,66 +801,6 @@ pub struct Choice {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ResponseMessageDelta {
-    pub role: Option<Role>,
-    pub content: Option<String>,
-    pub reasoning: Option<String>,
-    #[serde(default, skip_serializing_if = "is_none_or_empty")]
-    pub tool_calls: Option<Vec<ToolCallChunk>>,
-    #[serde(default, skip_serializing_if = "is_none_or_empty")]
-    pub reasoning_content: Option<String>,
-    /// Provider-defined structured reasoning metadata.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_details: Option<Value>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ToolCallChunk {
-    pub index: usize,
-    pub id: Option<String>,
-
-    // There is also an optional `type` field that would determine if a
-    // function is there. Sometimes this streams in with the `function` before
-    // it streams in the `type`
-    pub function: Option<FunctionChunk>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct FunctionChunk {
-    pub name: Option<String>,
-    pub arguments: Option<String>,
-    /// Provider-defined metadata required to replay a reasoning tool call.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thought_signature: Option<String>,
-}
-
-/// Reports prompt-cache token usage from compatible providers.
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub struct PromptTokensDetails {
-    /// Tokens read from a prompt cache.
-    pub cached_tokens: Option<u64>,
-    /// Tokens written to a prompt cache.
-    pub cache_write_tokens: Option<u64>,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct Usage {
-    pub prompt_tokens: Option<u64>,
-    pub completion_tokens: Option<u64>,
-    pub total_tokens: Option<u64>,
-    /// Prompt-cache usage when reported by the provider.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prompt_tokens_details: Option<PromptTokensDetails>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ChoiceDelta {
-    pub index: u32,
-    pub delta: Option<ResponseMessageDelta>,
-    pub finish_reason: Option<String>,
-}
-
 /// An error produced while sending an OpenAI-compatible request.
 ///
 /// Transport and wire-format failures retain their category so callers can
@@ -908,37 +849,20 @@ pub enum RequestError {
     Other(#[from] anyhow::Error),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ResponseStreamError {
-    message: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)]
-pub enum ResponseStreamResult {
-    Ok(ResponseStreamEvent),
-    Err { error: ResponseStreamError },
-}
-
 #[derive(Deserialize)]
 struct ResponseErrorEnvelope {
     error: responses::ResponseError,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ResponseStreamEvent {
-    pub choices: Vec<ChoiceDelta>,
-    pub usage: Option<Usage>,
 }
 
 /// A framed Chat Completions server-sent event.
 ///
 /// `Done` is distinct from the underlying response body ending so callers can
 /// tell whether the server completed the stream according to the protocol.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum ChatCompletionStreamEvent {
-    /// A JSON payload from a `data` field.
-    Data(Value),
+    /// A JSON payload from a `data` field, kept as raw text so consumers can
+    /// deserialize it into their own wire types in a single pass.
+    Data(Box<RawValue>),
     /// The protocol terminator `data: [DONE]`.
     Done,
 }
@@ -1117,7 +1041,7 @@ pub async fn stream_completion(
                 Ok(ChatCompletionStreamEvent::Done) => return None,
                 Err(error) => return Some(Err(anyhow!(error))),
             };
-            match ResponseStreamResult::deserialize(&value) {
+            match serde_json::from_str::<ResponseStreamResult>(value.get()) {
                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
                 Ok(ResponseStreamResult::Err { error }) => Some(Err(anyhow!(error.message))),
                 Err(error) => {
