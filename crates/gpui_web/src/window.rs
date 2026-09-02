@@ -1,5 +1,7 @@
 use crate::display::WebDisplay;
-use crate::events::{ClickState, EventListenerHandle, WebEventListeners, is_mac_platform};
+use crate::events::{
+    ClickState, EventListenerHandle, TouchIds, WebEventListeners, is_mac_platform,
+};
 use crate::ime_mirror::ImeMirror;
 use crate::platform::WebWindowLifecycle;
 use std::sync::Arc;
@@ -53,6 +55,7 @@ pub(crate) struct WebWindowInner {
     pub(crate) state: RefCell<WebWindowMutableState>,
     pub(crate) callbacks: RefCell<WebWindowCallbacks>,
     pub(crate) click_state: RefCell<ClickState>,
+    pub(crate) touch_ids: RefCell<TouchIds>,
     pub(crate) pressed_button: Cell<Option<MouseButton>>,
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
@@ -196,6 +199,7 @@ impl WebWindow {
             state: RefCell::new(mutable_state),
             callbacks: RefCell::new(WebWindowCallbacks::default()),
             click_state: RefCell::new(ClickState::default()),
+            touch_ids: RefCell::new(TouchIds::default()),
             pressed_button: Cell::new(None),
             last_physical_size: Cell::new((0, 0)),
             notify_scale: Cell::new(false),
@@ -334,6 +338,20 @@ impl WebWindow {
             inner.with_callback(
                 |callbacks| &mut callbacks.resize,
                 |callback| callback(new_size, dpr_f32),
+            );
+
+            // ResizeObserver runs after layout but before the browser paints.
+            // Render synchronously here so the newly resized CSS canvas is
+            // never presented with its previous backing image stretched into
+            // the new viewport dimensions.
+            inner.with_callback(
+                |callbacks| &mut callbacks.request_frame,
+                |callback| {
+                    callback(RequestFrameOptions {
+                        require_presentation: true,
+                        force_render: true,
+                    })
+                },
             );
         })
     }
