@@ -24,7 +24,9 @@ use project::{
 };
 use settings::Settings;
 use theme_settings::ThemeSettings;
-use ui::{ContextMenu, Divider, Tooltip, prelude::*};
+use ui::{
+    ContextMenu, Divider, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*,
+};
 use util::{ResultExt as _, paths::PathExt};
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -231,8 +233,6 @@ impl ImageView {
             ImageItemEvent::MetadataUpdated
             | ImageItemEvent::FileHandleChanged
             | ImageItemEvent::Reloaded => {
-                let image = self.image_item.read(cx).image.clone();
-                self.pending_image = Some(image);
                 self.image_size = self
                     .image_item
                     .read(cx)
@@ -288,46 +288,56 @@ impl ImageView {
     }
 
     fn next_page(&mut self, _: &NextPage, _window: &mut Window, cx: &mut Context<Self>) {
-        let changed = self.image_item.update(cx, |item, cx| {
-            item.next_page(cx)
-        });
-        if changed {
-            let cur = self.image_item.read(cx).current_page();
-            self.pdf_scroll_handle.scroll_to_top_of_item(cur);
-            cx.notify();
+        let total_pages = self.image_item.read(cx).total_pages();
+        if total_pages == 0 {
+            return;
         }
+        let cur = self.pdf_scroll_handle.top_item();
+        let target = (cur + 1).min(total_pages - 1);
+        self.image_item.update(cx, |item, cx| {
+            item.set_page(target, cx);
+        });
+        self.pdf_scroll_handle.scroll_to_top_of_item(target);
+        cx.notify();
     }
 
     fn previous_page(&mut self, _: &PreviousPage, _window: &mut Window, cx: &mut Context<Self>) {
-        let changed = self.image_item.update(cx, |item, cx| {
-            item.previous_page(cx)
-        });
-        if changed {
-            let cur = self.image_item.read(cx).current_page();
-            self.pdf_scroll_handle.scroll_to_top_of_item(cur);
-            cx.notify();
+        let total_pages = self.image_item.read(cx).total_pages();
+        if total_pages == 0 {
+            return;
         }
+        let cur = self.pdf_scroll_handle.top_item();
+        let target = cur.saturating_sub(1);
+        self.image_item.update(cx, |item, cx| {
+            item.set_page(target, cx);
+        });
+        self.pdf_scroll_handle.scroll_to_top_of_item(target);
+        cx.notify();
     }
 
     fn first_page(&mut self, _: &FirstPage, _window: &mut Window, cx: &mut Context<Self>) {
-        let changed = self.image_item.update(cx, |item, cx| {
-            item.first_page(cx)
-        });
-        if changed {
-            self.pdf_scroll_handle.scroll_to_top_of_item(0);
-            cx.notify();
+        let total_pages = self.image_item.read(cx).total_pages();
+        if total_pages == 0 {
+            return;
         }
+        self.image_item.update(cx, |item, cx| {
+            item.set_page(0, cx);
+        });
+        self.pdf_scroll_handle.scroll_to_top_of_item(0);
+        cx.notify();
     }
 
     fn last_page(&mut self, _: &LastPage, _window: &mut Window, cx: &mut Context<Self>) {
-        let changed = self.image_item.update(cx, |item, cx| {
-            item.last_page(cx)
-        });
-        if changed {
-            let cur = self.image_item.read(cx).current_page();
-            self.pdf_scroll_handle.scroll_to_top_of_item(cur);
-            cx.notify();
+        let total_pages = self.image_item.read(cx).total_pages();
+        if total_pages == 0 {
+            return;
         }
+        let target = total_pages - 1;
+        self.image_item.update(cx, |item, cx| {
+            item.set_page(target, cx);
+        });
+        self.pdf_scroll_handle.scroll_to_top_of_item(target);
+        cx.notify();
     }
 
     fn copy_text(&mut self, _: &CopyText, _window: &mut Window, cx: &mut Context<Self>) {
@@ -347,7 +357,7 @@ impl ImageView {
     fn select_all(&mut self, _: &SelectAll, _window: &mut Window, cx: &mut Context<Self>) {
         let pdf_info = self.image_item.read(cx).pdf_info.clone();
         if let Some(pdf_info) = pdf_info {
-            let cur_page = self.image_item.read(cx).current_page();
+            let cur_page = self.pdf_scroll_handle.top_item();
             let target_page = self
                 .pdf_selection
                 .as_ref()
@@ -703,9 +713,10 @@ impl ImageView {
     fn handle_mouse_down(
         &mut self,
         event: &MouseDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        window.focus(&self.focus_handle, cx);
         if event.button == MouseButton::Left || event.button == MouseButton::Middle {
             self.last_mouse_position = Some(event.position);
             cx.notify();
@@ -1146,7 +1157,7 @@ impl Focusable for ImageView {
 }
 
 impl Render for ImageView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let pdf_info = self.image_item.read(cx).pdf_info.clone();
 
         div()
@@ -1165,6 +1176,12 @@ impl Render for ImageView {
             .on_action(cx.listener(Self::copy_text))
             .on_action(cx.listener(Self::toggle_text_panel))
             .on_action(cx.listener(Self::select_all))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _event: &MouseDownEvent, window, cx| {
+                    window.focus(&this.focus_handle, cx);
+                }),
+            )
             .size_full()
             .relative()
             .bg(cx.theme().colors().editor_background)
@@ -1175,16 +1192,32 @@ impl Render for ImageView {
                     let total_pages = pdf_info.total_pages;
 
                     let main_pdf_view = div()
-                        .id("pdf-scroll-container")
-                        .track_scroll(&self.pdf_scroll_handle)
-                        .overflow_y_scroll()
+                        .id("pdf-viewport-wrapper")
+                        .relative()
                         .size_full()
-                        .on_mouse_up(MouseButton::Left, cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
-                            this.handle_pdf_mouse_up(cx);
-                        }))
                         .child(
-                            v_flex()
-                                .w_full()
+                            div()
+                                .id("pdf-scroll-container")
+                                .track_scroll(&self.pdf_scroll_handle)
+                                .overflow_y_scroll()
+                                .size_full()
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _event: &MouseDownEvent, window, cx| {
+                                        window.focus(&this.focus_handle, cx);
+                                    }),
+                                )
+                                .on_mouse_up(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
+                                        this.handle_pdf_mouse_up(cx);
+                                    }),
+                                )
+                                .on_scroll_wheel(cx.listener(|_this, _event: &ScrollWheelEvent, _window, cx| {
+                                    cx.notify();
+                                }))
+                                .flex()
+                                .flex_col()
                                 .items_center()
                                 .py_6()
                                 .gap_8()
@@ -1215,7 +1248,8 @@ impl Render for ImageView {
                                                 .cursor(gpui::CursorStyle::IBeam)
                                                 .on_mouse_down(
                                                     MouseButton::Left,
-                                                    cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                                                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                                        window.focus(&this.focus_handle, cx);
                                                         this.handle_pdf_canvas_mouse_down(page_idx, event.position, event.click_count, cx);
                                                     }),
                                                 )
@@ -1231,6 +1265,7 @@ impl Render for ImageView {
                                                 .on_mouse_down(
                                                     MouseButton::Right,
                                                     cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                                        window.focus(&this.focus_handle, cx);
                                                         this.handle_pdf_canvas_right_click(page_idx, event.position, window, cx);
                                                     }),
                                                 )
@@ -1312,6 +1347,14 @@ impl Render for ImageView {
                                                 .color(Color::Muted)
                                         )
                                 }))
+                        )
+                        .custom_scrollbars(
+                            Scrollbars::new(ScrollAxes::Vertical)
+                                .id("pdf-scrollbar")
+                                .tracked_scroll_handle(&self.pdf_scroll_handle)
+                                .notify_content(),
+                            window,
+                            cx,
                         );
 
                     if self.show_text_panel {
@@ -1520,8 +1563,13 @@ impl Render for ImageViewToolbarControls {
         let image_item = image_view.read(cx).image_item.clone();
         let (is_pdf, current_page, total_pages, show_text_panel) = {
             let item = image_item.read(cx);
-            let show_text = image_view.read(cx).show_text_panel;
-            (item.is_pdf(), item.current_page(), item.total_pages(), show_text)
+            let view = image_view.read(cx);
+            let show_text = view.show_text_panel;
+            let current_page = view
+                .pdf_scroll_handle
+                .top_item()
+                .min(item.total_pages().saturating_sub(1));
+            (item.is_pdf(), current_page, item.total_pages(), show_text)
         };
 
         h_flex()
@@ -1537,6 +1585,7 @@ impl Render for ImageViewToolbarControls {
                         .on_click(move |_, window, cx| {
                             if let Some(view) = image_view_prev.upgrade() {
                                 view.update(cx, |this, cx| {
+                                    window.focus(&this.focus_handle, cx);
                                     this.previous_page(&PreviousPage, window, cx);
                                 });
                             }
@@ -1555,6 +1604,7 @@ impl Render for ImageViewToolbarControls {
                         .on_click(move |_, window, cx| {
                             if let Some(view) = image_view_next.upgrade() {
                                 view.update(cx, |this, cx| {
+                                    window.focus(&this.focus_handle, cx);
                                     this.next_page(&NextPage, window, cx);
                                 });
                             }
