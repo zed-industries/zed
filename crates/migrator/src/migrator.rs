@@ -195,10 +195,6 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2025_05_08,
         ),
         MigrationType::TreeSitter(
-            migrations::m_2025_06_16::SETTINGS_PATTERNS,
-            &SETTINGS_QUERY_2025_06_16,
-        ),
-        MigrationType::TreeSitter(
             migrations::m_2025_06_25::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_06_25,
         ),
@@ -258,6 +254,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2026_05_04,
         ),
         MigrationType::Json(migrations::m_2026_08_17::make_git_gutter_width_an_enum),
+        MigrationType::Json(migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator),
     ];
     run_migrations(text, migrations)
 }
@@ -353,10 +350,6 @@ define_query!(
     migrations::m_2025_05_08::SETTINGS_PATTERNS
 );
 define_query!(
-    SETTINGS_QUERY_2025_06_16,
-    migrations::m_2025_06_16::SETTINGS_PATTERNS
-);
-define_query!(
     SETTINGS_QUERY_2025_06_25,
     migrations::m_2025_06_25::SETTINGS_PATTERNS
 );
@@ -417,6 +410,7 @@ static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indoc::indoc;
     use unindent::Unindent as _;
 
     #[track_caller]
@@ -997,207 +991,6 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_settings_migration() {
-        assert_migrate_with_migrations(
-            &[MigrationType::TreeSitter(
-                migrations::m_2025_06_16::SETTINGS_PATTERNS,
-                &SETTINGS_QUERY_2025_06_16,
-            )],
-            r#"{
-    "context_servers": {
-        "empty_server": {},
-        "extension_server": {
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "custom_server": {
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            }
-        },
-        "invalid_server": {
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "empty_server2": {},
-        "extension_server2": {
-            "foo": "bar",
-            "settings": {
-                "foo": "bar"
-            },
-            "bar": "foo"
-        },
-        "custom_server2": {
-            "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "bar": "foo"
-        },
-        "invalid_server2": {
-            "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "bar": "foo",
-            "settings": {
-                "foo": "bar"
-            }
-        }
-    }
-}"#,
-            Some(
-                r#"{
-    "context_servers": {
-        "empty_server": {
-            "source": "extension",
-            "settings": {}
-        },
-        "extension_server": {
-            "source": "extension",
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "custom_server": {
-            "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            }
-        },
-        "invalid_server": {
-            "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "empty_server2": {
-            "source": "extension",
-            "settings": {}
-        },
-        "extension_server2": {
-            "source": "extension",
-            "foo": "bar",
-            "settings": {
-                "foo": "bar"
-            },
-            "bar": "foo"
-        },
-        "custom_server2": {
-            "source": "custom",
-            "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "bar": "foo"
-        },
-        "invalid_server2": {
-            "source": "custom",
-            "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "bar": "foo",
-            "settings": {
-                "foo": "bar"
-            }
-        }
-    }
-}"#,
-            ),
-        );
-    }
-
-    #[test]
-    fn test_mcp_settings_migration_doesnt_change_valid_settings() {
-        let settings = r#"{
-    "context_servers": {
-        "empty_server": {
-            "source": "extension",
-            "settings": {}
-        },
-        "extension_server": {
-            "source": "extension",
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "custom_server": {
-            "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            }
-        },
-        "invalid_server": {
-            "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "settings": {
-                "foo": "bar"
-            }
-        }
-    }
-}"#;
-        assert_migrate_with_migrations(
-            &[MigrationType::TreeSitter(
-                migrations::m_2025_06_16::SETTINGS_PATTERNS,
-                &SETTINGS_QUERY_2025_06_16,
-            )],
-            settings,
-            None,
-        );
-    }
-
-    #[test]
     fn test_custom_agent_server_settings_migration() {
         assert_migrate_with_migrations(
             &[MigrationType::TreeSitter(
@@ -1320,6 +1113,44 @@ mod tests {
     }
 }"#,
             None,
+        );
+    }
+
+    #[test]
+    fn test_flatten_context_server_command_alongside_source() {
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "context_servers": {
+                        "custom_server": {
+                            "source": "custom",
+                            "command": {
+                                "path": "npx",
+                                "args": ["-y", "some-mcp-server"]
+                            }
+                        },
+                        "hand_edited_server": {
+                            "source": "extension",
+                            "command": {
+                                "path": "other-server"
+                            }
+                        }
+                    }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "context_servers": {
+                        "custom_server": {
+                            "command": "npx",
+                            "args": ["-y", "some-mcp-server"]
+                        },
+                        "hand_edited_server": {
+                            "command": "other-server"
+                        }
+                    }
+                }
+            "#}),
         );
     }
 
@@ -5095,48 +4926,32 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_settings_migration_adds_settings_to_extension_servers() {
+    fn test_context_server_types_report_no_migration() {
         assert_migrate_settings(
-            r#"{
-    "context_servers": {
-        "extension_server": {},
-        "stdio_server": {
-            "command": "npx",
-            "args": ["-y", "some-server"]
-        },
-        "http_server": {
-            "url": "https://example.com/mcp"
-        },
-        "http_server_with_headers": {
-            "url": "https://example.com/mcp",
-            "headers": {
-                "Authorization": "Bearer token"
-            }
-        }
-    }
-}"#,
-            Some(
-                r#"{
-    "context_servers": {
-        "extension_server": {
-            "settings": {}
-        },
-        "stdio_server": {
-            "command": "npx",
-            "args": ["-y", "some-server"]
-        },
-        "http_server": {
-            "url": "https://example.com/mcp"
-        },
-        "http_server_with_headers": {
-            "url": "https://example.com/mcp",
-            "headers": {
-                "Authorization": "Bearer token"
-            }
-        }
-    }
-}"#,
-            ),
+            indoc! {r#"
+                {
+                    "context_servers": {
+                        "extension_server": {},
+                        "disabled_extension_server": {
+                            "enabled": false
+                        },
+                        "stdio_server": {
+                            "command": "npx",
+                            "args": ["-y", "some-server"]
+                        },
+                        "http_server": {
+                            "url": "https://example.com/mcp"
+                        },
+                        "http_server_with_headers": {
+                            "url": "https://example.com/mcp",
+                            "headers": {
+                                "Authorization": "Bearer token"
+                            }
+                        }
+                    }
+                }
+            "#},
+            None,
         );
     }
 
@@ -5480,5 +5295,252 @@ mod tests {
 
         // no gutter key — no change
         assert_migrate_settings(&r#"{ "theme": "One Dark" }"#.unindent(), None);
+    }
+
+    #[test]
+    fn test_url_only_context_servers_are_left_alone() {
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
+                }
+            "#},
+            None,
+        );
+
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "context_servers": {
+                        "grep": { "url": "https://mcp.grep.app" },
+                        "local": {
+                            "source": "custom",
+                            "command": {
+                                "path": "npx",
+                                "args": ["-y", "some-mcp-server"]
+                            }
+                        }
+                    }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "context_servers": {
+                        "grep": { "url": "https://mcp.grep.app" },
+                        "local": {
+                            "command": "npx",
+                            "args": ["-y", "some-mcp-server"]
+                        }
+                    }
+                }
+            "#}),
+        )
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_in_all_panels() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
+            )],
+            &r#"
+            {
+                "project_panel": {
+                    "folder_icons": true
+                },
+                "outline_panel": {
+                    "folder_icons": false
+                },
+                "git_panel": {
+                    "folder_icons": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "folder_indicator": "icon"
+                    },
+                    "outline_panel": {
+                        "folder_indicator": "chevron"
+                    },
+                    "git_panel": {
+                        "folder_indicator": "icon"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    // The shared JSON migration driver applies a rename as a delete plus an add, and
+    // added keys are written to the front of their object. Comments and sibling values
+    // survive; only the renamed key's position moves.
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_preserves_comments_and_siblings() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
+            )],
+            &r#"
+            {
+                // Keep this comment.
+                "project_panel": {
+                    "file_icons": true,
+                    "folder_icons": false,
+                    "indent_size": 20
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    // Keep this comment.
+                    "project_panel": {
+                        "folder_indicator": "chevron",
+                        "file_icons": true,
+                        "indent_size": 20
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_in_platform_overrides() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
+            )],
+            &r#"
+            {
+                "macos": {
+                    "project_panel": {
+                        "folder_icons": false
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "project_panel": {
+                            "folder_indicator": "chevron"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_does_not_clobber_new_key() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
+            )],
+            &r#"
+            {
+                "project_panel": {
+                    "folder_icons": true,
+                    "folder_indicator": "both"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "folder_indicator": "both"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_no_change_cases() {
+        let migrations = &[MigrationType::Json(
+            migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
+        )];
+
+        // Already migrated.
+        assert_migrate_with_migrations(
+            migrations,
+            &r#"
+            {
+                "project_panel": {
+                    "folder_indicator": "both"
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // A non-boolean value is already invalid; leave it rather than guess.
+        assert_migrate_with_migrations(
+            migrations,
+            &r#"
+            {
+                "project_panel": {
+                    "folder_icons": 3
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // `folder_icons` outside the three panels is not ours to rename.
+        assert_migrate_with_migrations(
+            migrations,
+            &r#"
+            {
+                "terminal": {
+                    "folder_icons": true
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_is_registered() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "project_panel": {
+                    "folder_icons": false
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "folder_indicator": "chevron"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
     }
 }
