@@ -137,7 +137,7 @@ impl PendingKeystrokesIndicator {
 }
 
 impl Render for PendingKeystrokesIndicator {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(render_state) = self.render_state().cloned() else {
             return div().hidden().into_any_element();
         };
@@ -159,9 +159,14 @@ impl Render for PendingKeystrokesIndicator {
                     .color(Color::Muted)
                     .into_any_element()
             } else {
-                let progress = CircularProgress::new(remaining_fraction, 1.0, px(13.), cx)
-                    .stroke_width(px(2.))
-                    .progress_color(cx.theme().colors().text_muted);
+                let progress = CircularProgress::new(
+                    remaining_fraction,
+                    1.0,
+                    rems_from_px(13_f32).to_pixels(window.rem_size()),
+                    cx,
+                )
+                .stroke_width(rems_from_px(2_f32).to_pixels(window.rem_size()))
+                .progress_color(cx.theme().colors().text_muted);
                 if render_state.timeout_paused || render_state.remaining_duration.is_zero() {
                     progress.into_any_element()
                 } else {
