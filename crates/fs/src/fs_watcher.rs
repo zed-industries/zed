@@ -1337,7 +1337,7 @@ mod tests {
         let pending_registrations: Arc<Mutex<HashMap<Arc<Path>, Task<()>>>> = Default::default();
 
         let task = cx.executor().spawn(poll_path_until_created(
-            cx.executor().clone(),
+            cx.executor(),
             path.clone(),
             tx,
             pending_path_events,
