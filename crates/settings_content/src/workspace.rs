@@ -111,7 +111,7 @@ pub struct WorkspaceSettingsContent {
     pub max_tabs: Option<NonZeroUsize>,
     /// What to show when opening a new window.
     /// Values: empty_tab, launchpad
-    /// Default: empty_tab
+    /// Default: launchpad
     pub on_new_window: Option<OnNewWindow>,
     /// What to do when the last window is closed
     ///
@@ -704,9 +704,9 @@ pub struct CenteredLayoutSettings {
 #[serde(rename_all = "snake_case")]
 pub enum OnNewWindow {
     /// Show an empty untitled buffer when opening a new window
-    #[default]
     EmptyTab,
     /// Show the launchpad with recent projects when opening a new window
+    #[default]
     Launchpad,
 }
 

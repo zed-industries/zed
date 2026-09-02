@@ -216,7 +216,7 @@
   //         "on_new_window": "empty_tab"
   //  2. Show the launchpad with recent projects
   //         "on_new_window": "launchpad"
-  "on_new_window": "empty_tab",
+  "on_new_window": "launchpad",
   // What to do when the last window is closed.
   // May take 2 values:
   //  1. Use the current platform's convention

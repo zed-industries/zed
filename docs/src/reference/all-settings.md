@@ -3442,7 +3442,7 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 
 - Description: What to show when opening a new window.
 - Setting: `on_new_window`
-- Default: `"empty_tab"`
+- Default: `"launchpad"`
 
 **Options**
 
