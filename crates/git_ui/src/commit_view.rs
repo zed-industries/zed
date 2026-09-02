@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::{
-    Addon, Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyDiffHunkDelegate,
+    Addon, Editor, EditorEvent, EditorSettings, HiddenDiffHunkRenderer, MultiBuffer,
     SplittableEditor, hover_markdown_style, multibuffer_context_lines,
 };
 use futures_lite::future::yield_now;
@@ -26,7 +26,7 @@ use markdown::{Markdown, MarkdownElement};
 use multi_buffer::PathKey;
 use project::{
     Project, ProjectPath, WorktreeId,
-    git_store::{CommitDiff, Repository},
+    git_store::{CommitDiff, Repository, UnshallowState},
 };
 use settings::{DiffViewStyle, Settings};
 use std::{
@@ -85,6 +85,8 @@ pub struct CommitView {
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     remote: Option<GitRemote>,
+    is_shallow_boundary: bool,
+    file_filter: Option<RepoPath>,
     _load_diff_task: Task<Result<()>>,
 }
 
@@ -187,8 +189,32 @@ impl CommitView {
         window: &mut Window,
         cx: &mut App,
     ) {
+        Self::open_with_options(
+            commit_sha,
+            repo,
+            workspace,
+            stash,
+            file_filter,
+            false,
+            window,
+            cx,
+        )
+    }
+
+    fn open_with_options(
+        commit_sha: String,
+        repo: WeakEntity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        stash: Option<usize>,
+        file_filter: Option<RepoPath>,
+        ignore_shallow_boundary: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let commit_diff = repo
-            .update(cx, |repo, _| repo.load_commit_diff(commit_sha.clone()))
+            .update(cx, |repo, _| {
+                repo.load_commit_diff(commit_sha.clone(), ignore_shallow_boundary)
+            })
             .ok();
         let commit_details = repo
             .update(cx, |repo, _| repo.show(commit_sha.clone()))
@@ -223,6 +249,7 @@ impl CommitView {
                                 workspace_entity,
                                 workspace_handle,
                                 stash,
+                                file_filter,
                                 window,
                                 cx,
                             )
@@ -269,10 +296,12 @@ impl CommitView {
         workspace_entity: Entity<Workspace>,
         workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
+        file_filter: Option<RepoPath>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let language_registry = project.read(cx).languages().clone();
+        let is_shallow_boundary = commit_diff.is_shallow_boundary;
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
             multibuffer.set_all_diff_hunks_expanded(cx);
@@ -297,7 +326,7 @@ impl CommitView {
                 window,
                 cx,
             );
-            editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
+            editor.set_diff_hunk_renderer(Some(Arc::new(HiddenDiffHunkRenderer)), cx);
 
             editor.rhs_editor().update(cx, |editor, cx| {
                 editor.set_show_bookmarks(false, cx);
@@ -388,7 +417,6 @@ impl CommitView {
                                 &snapshot,
                                 snapshot.language().cloned(),
                                 Some(language_registry.clone()),
-                                buffer_diff::DiffBaseKind::Oid,
                                 cx,
                             )
                         })
@@ -497,8 +525,119 @@ impl CommitView {
             project,
             workspace,
             remote,
+            is_shallow_boundary,
+            file_filter,
             _load_diff_task: load_diff_task,
         }
+    }
+
+    fn render_shallow_boundary_notice(&self, cx: &App) -> impl IntoElement {
+        let commit_sha = self.commit.sha.to_string();
+        let repository = self.repository.clone();
+        let workspace = self.workspace.clone();
+        let stash = self.stash;
+        let file_filter = self.file_filter.clone();
+        let unshallow_state = self.repository.read(cx).unshallow_state();
+        let can_fetch = !self.project.read(cx).is_via_collab()
+            && unshallow_state != UnshallowState::Unshallowed;
+        let fetch_in_flight = unshallow_state == UnshallowState::InProgress;
+        v_flex()
+            .flex_grow(1.)
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .child(
+                Label::new("This commit is at the boundary of a shallow clone.")
+                    .color(Color::Muted),
+            )
+            .child(
+                Label::new(
+                    "Its parent history was not fetched, so the changes it introduced cannot be shown.",
+                )
+                .color(Color::Muted),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .when(can_fetch, |this| {
+                        let commit_sha = commit_sha.clone();
+                        let repository = repository.clone();
+                        let workspace = workspace.clone();
+                        let file_filter = file_filter.clone();
+                        this.child(
+                            Button::new(
+                                "fetch-unshallow",
+                                if fetch_in_flight {
+                                    "Fetching…"
+                                } else {
+                                    "Fetch Missing History"
+                                },
+                            )
+                                .style(ButtonStyle::Filled)
+                                .disabled(fetch_in_flight)
+                                .tooltip(Tooltip::text(
+                                    "Run `git fetch --unshallow` to download the full history, then show this commit's changes.",
+                                ))
+                                .on_click(move |_, window, cx| {
+                                    let fetch = crate::commit_tooltip::fetch_unshallow(
+                                        repository.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                    let commit_sha = commit_sha.clone();
+                                    let repository = repository.downgrade();
+                                    let workspace = workspace.clone();
+                                    let file_filter = file_filter.clone();
+                                    window
+                                        .spawn(cx, async move |cx| {
+                                            fetch.await?;
+                                            cx.update(|window, cx| {
+                                                Self::open_with_options(
+                                                    commit_sha,
+                                                    repository,
+                                                    workspace,
+                                                    stash,
+                                                    file_filter,
+                                                    false,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                        })
+                                        .detach_and_log_err(cx);
+                                }),
+                        )
+                    })
+                    .child(
+                        Button::new(
+                            "load-shallow-snapshot",
+                            if file_filter.is_some() {
+                                "Load File Snapshot"
+                            } else {
+                                "Load Full Snapshot"
+                            },
+                        )
+                            .style(ButtonStyle::Outlined)
+                            .tooltip(Tooltip::text(if file_filter.is_some() {
+                                "Show this file's full contents at this commit as added."
+                            } else {
+                                "Show every file at this commit as added. This can be slow in large repositories."
+                            }))
+                            .on_click(move |_, window, cx| {
+                                Self::open_with_options(
+                                    commit_sha.clone(),
+                                    repository.downgrade(),
+                                    workspace.clone(),
+                                    stash,
+                                    file_filter.clone(),
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            }),
+                    ),
+            )
     }
 
     fn render_commit_avatar(
@@ -999,7 +1138,7 @@ pub(crate) async fn build_buffer(
             line_ending,
             text,
         );
-        let mut buffer = Buffer::build(buffer, Some(blob), Capability::ReadWrite);
+        let mut buffer = Buffer::build(buffer, Some(blob), Capability::ReadWrite, cx);
         buffer.set_language_async(language, cx);
         buffer
     });
@@ -1019,15 +1158,8 @@ async fn build_buffer_diff(
     let language = cx.update(|_, cx| buffer.read(cx).language().cloned())?;
     let buffer = cx.update(|_, cx| buffer.read(cx).snapshot())?;
 
-    let diff = cx.new(|cx| {
-        BufferDiff::new(
-            &buffer.text,
-            language,
-            Some(language_registry.clone()),
-            buffer_diff::DiffBaseKind::Oid,
-            cx,
-        )
-    });
+    let diff =
+        cx.new(|cx| BufferDiff::new(&buffer.text, language, Some(language_registry.clone()), cx));
 
     diff.update(cx, |diff, cx| {
         diff.set_base_text(
@@ -1206,7 +1338,7 @@ impl Item for CommitView {
                         window,
                         cx,
                     );
-                    editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
+                    editor.set_diff_hunk_renderer(Some(Arc::new(HiddenDiffHunkRenderer)), cx);
                     editor.rhs_editor().update(cx, |editor, cx| {
                         editor.set_show_bookmarks(false, cx);
                         editor.set_show_breakpoints(false, cx);
@@ -1240,6 +1372,8 @@ impl Item for CommitView {
                 project: self.project.clone(),
                 workspace: self.workspace.clone(),
                 remote: self.remote.clone(),
+                is_shallow_boundary: self.is_shallow_boundary,
+                file_filter: self.file_filter.clone(),
                 _load_diff_task: Task::ready(Ok(())),
             }
         })))
@@ -1260,6 +1394,9 @@ impl Render for CommitView {
                 !self.editor.read(cx).rhs_editor().read(cx).is_empty(cx),
                 |this| this.child(div().flex_grow(1.).child(self.editor.clone())),
             )
+            .when(self.is_shallow_boundary, |this| {
+                this.child(self.render_shallow_boundary_notice(cx))
+            })
     }
 }
 

@@ -18,13 +18,15 @@ use crate::{
     RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 
+use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
+use crate::interactive::TouchEvent;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
@@ -1156,6 +1158,10 @@ pub struct Window {
     pub(crate) element_opacity: f32,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+    /// The [`TextInputConfiguration`] most recently forwarded to the platform
+    /// window, so that only actual changes are forwarded (reconfiguring a live
+    /// input session can restart the IME connection).
+    last_text_input_configuration: Option<TextInputConfiguration>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
@@ -1186,6 +1192,10 @@ pub struct Window {
     #[cfg(feature = "profiler")]
     window_profiler: profiler::WindowProfiler,
     last_input_modality: InputModality,
+    touch_gestures: TouchGestureRecognizer,
+    touch_prediction_enabled: bool,
+    long_press_timer: Option<Task<()>>,
+    long_press_capture: Option<EntityId>,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
@@ -1848,6 +1858,7 @@ impl Window {
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
             requested_autoscroll: None,
+            last_text_input_configuration: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
@@ -1875,6 +1886,14 @@ impl Window {
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
             last_input_modality: InputModality::Mouse,
+            touch_gestures: TouchGestureRecognizer::new(
+                cx.platform
+                    .gestures()
+                    .map_or_else(GestureTuning::default, |gestures| gestures.tuning()),
+            ),
+            touch_prediction_enabled: true,
+            long_press_timer: None,
+            long_press_capture: None,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
@@ -2054,24 +2073,15 @@ impl Window {
 
         self.focus = Some(handle.id);
         self.focus_generation = self.focus_generation.wrapping_add(1);
-        self.clear_pending_keystrokes();
-
-        // Avoid re-entrant entity updates by deferring observer notifications to the end of the
-        // current effect cycle, and only for this window.
-        let window_handle = self.handle;
-        cx.defer(move |cx| {
-            window_handle
-                .update(cx, |_, window, cx| {
-                    window.pending_input_changed(cx);
-                })
-                .ok();
-        });
+        self.clear_pending_keystrokes(cx);
 
         self.refresh();
     }
 
     /// Remove focus from all elements within this context's window.
-    pub fn blur(&mut self) {
+    pub fn blur(&mut self, cx: &mut App) {
+        self.clear_pending_keystrokes(cx);
+
         if !self.focus_enabled {
             return;
         }
@@ -2084,8 +2094,8 @@ impl Window {
     }
 
     /// Blur the window and don't allow anything in it to be focused again.
-    pub fn disable_focus(&mut self) {
-        self.blur();
+    pub fn disable_focus(&mut self, cx: &mut App) {
+        self.blur(cx);
         self.focus_enabled = false;
     }
 
@@ -2832,6 +2842,20 @@ impl Window {
         self.captured_hitbox
     }
 
+    /// Captures the current long press for the given entity.
+    ///
+    /// The capture is released when the gesture ends or is cancelled, or when
+    /// a replacement touch begins. A listener must also call
+    /// [`Self::prevent_default`] on the started event to claim the gesture.
+    pub fn capture_long_press<T: 'static>(&mut self, entity: &Entity<T>) {
+        self.long_press_capture = Some(entity.entity_id());
+    }
+
+    /// Returns whether the given entity has captured the current long press.
+    pub fn has_long_press_capture<T: 'static>(&self, entity: &Entity<T>) -> bool {
+        self.long_press_capture == Some(entity.entity_id())
+    }
+
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.modifiers
@@ -2841,6 +2865,10 @@ impl Window {
     /// This is used for focus-visible styling to show focus indicators only for keyboard navigation.
     pub fn last_input_was_keyboard(&self) -> bool {
         self.last_input_modality == InputModality::Keyboard
+    }
+
+    pub(crate) fn last_input_was_touch(&self) -> bool {
+        self.last_input_modality == InputModality::Touch
     }
 
     /// The current state of the keyboard's capslock
@@ -2916,6 +2944,7 @@ impl Window {
         {
             self.platform_window.set_input_handler(input_handler);
         }
+        self.apply_text_input_configuration(cx);
 
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
@@ -3035,7 +3064,7 @@ impl Window {
     /// Benchmarks drive drawing synchronously rather than through a platform
     /// frame-request loop, so they call this after each measured update to
     /// submit the frame like production presentation would.
-    #[cfg(any(feature = "bench", all(test, feature = "profiler")))]
+    #[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
     pub fn present_if_needed(&mut self) {
         if self.needs_present.get() {
             self.present();
@@ -4840,6 +4869,26 @@ impl Window {
         }
     }
 
+    /// Forwards the focused input handler's [`TextInputConfiguration`] to the
+    /// platform window when it differs from the last forwarded value. With no
+    /// input handler the default configuration applies, so a field's
+    /// preferences don't outlive its focus.
+    fn apply_text_input_configuration(&mut self, cx: &mut App) {
+        let configuration = match self.platform_window.take_input_handler() {
+            Some(mut input_handler) => {
+                let configuration = input_handler.text_input_configuration(self, cx);
+                self.platform_window.set_input_handler(input_handler);
+                configuration
+            }
+            None => TextInputConfiguration::default(),
+        };
+        if self.last_text_input_configuration.as_ref() != Some(&configuration) {
+            self.platform_window
+                .set_text_input_configuration(configuration.clone());
+            self.last_text_input_configuration = Some(configuration);
+        }
+    }
+
     /// Register a mouse event listener on the window for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
@@ -5004,7 +5053,7 @@ impl Window {
             .unwrap_or_else(|| action.name().to_string())
     }
 
-    /// Dispatch a mouse or keyboard event on the window.
+    /// Dispatch a mouse, keyboard, or touch event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
         #[cfg(feature = "profiler")]
@@ -5122,6 +5171,17 @@ impl Window {
                 }
             },
             PlatformInput::Touch(touch) => PlatformInput::Touch(touch),
+            PlatformInput::LongPress(long_press) => {
+                self.mouse_position = if long_press.phase == crate::TouchPhase::Started {
+                    long_press.start_position
+                } else {
+                    long_press.position
+                };
+                if long_press.phase == crate::TouchPhase::Started {
+                    self.long_press_capture = None;
+                }
+                PlatformInput::LongPress(long_press)
+            }
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
@@ -5129,6 +5189,19 @@ impl Window {
             self.dispatch_mouse_event(any_mouse_event, cx);
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
+        } else if let Some(touch_event) = event.touch_event() {
+            self.dispatch_touch_event(touch_event, cx);
+        }
+        if let PlatformInput::LongPress(long_press) = &event {
+            match long_press.phase {
+                crate::TouchPhase::Started if !self.default_prevented => {
+                    self.long_press_capture = None;
+                }
+                crate::TouchPhase::Ended | crate::TouchPhase::Cancelled => {
+                    self.long_press_capture = None;
+                }
+                crate::TouchPhase::Started | crate::TouchPhase::Moved => {}
+            }
         }
 
         // Must run after the move is dispatched: the platform owns the gesture afterwards, so this
@@ -5176,6 +5249,127 @@ impl Window {
         {
             self.refresh();
         }
+    }
+
+    /// Whether recognized touch pans may use the platform's predicted touch
+    /// positions ([`TouchEvent::predicted_position`]) to compensate for input
+    /// latency. Defaults to true.
+    pub fn touch_prediction_enabled(&self) -> bool {
+        self.touch_prediction_enabled
+    }
+
+    /// Sets whether recognized touch pans may use the platform's predicted
+    /// touch positions. Disabling drops [`TouchEvent::predicted_position`]
+    /// before gesture recognition, so pans track only raw touch positions.
+    pub fn set_touch_prediction_enabled(&mut self, enabled: bool) {
+        self.touch_prediction_enabled = enabled;
+    }
+
+    /// Runs the portable gesture recognizer over a raw touch event and
+    /// dispatches whatever it resolves (scroll steps, synthesized taps)
+    /// through the ordinary mouse-event path.
+    fn dispatch_touch_event(&mut self, event: &TouchEvent, cx: &mut App) {
+        let mut event = event.clone();
+        if !self.touch_prediction_enabled {
+            event.predicted_position = None;
+        }
+        let recognized_gestures = self.touch_gestures.handle_event(&event);
+        if event.phase == crate::TouchPhase::Started
+            && self.touch_gestures.pending_long_press().is_some()
+        {
+            self.long_press_capture = None;
+        }
+        let mut tapped = false;
+        for gesture in recognized_gestures {
+            tapped |= matches!(gesture, RecognizedTouchGesture::Tap { .. });
+            self.dispatch_recognized_touch_gesture(gesture, cx);
+        }
+        if event.phase == crate::TouchPhase::Started {
+            self.schedule_long_press_timer(cx);
+        } else if self.touch_gestures.pending_long_press().is_none() {
+            self.long_press_timer.take();
+        }
+        // The platform's touch-release handler may inspect the input handler
+        // as soon as this dispatch returns (the web platform decides virtual
+        // keyboard visibility there, inside the user gesture). Input handlers
+        // are registered during draw, so draw now to make them reflect any
+        // focus change the tap just caused.
+        if tapped && self.invalidator.is_dirty() {
+            self.draw(cx).clear(cx);
+        }
+        if self.touch_gestures.has_momentum() {
+            self.schedule_touch_momentum_tick();
+        }
+    }
+
+    fn dispatch_recognized_touch_gesture(&mut self, gesture: RecognizedTouchGesture, cx: &mut App) {
+        match gesture {
+            RecognizedTouchGesture::Scroll(scroll_wheel) => {
+                self.mouse_position = scroll_wheel.position;
+                cx.propagate_event = true;
+                self.dispatch_mouse_event(&scroll_wheel, cx);
+            }
+            RecognizedTouchGesture::Tap { down, up } => {
+                self.mouse_position = up.position;
+                cx.propagate_event = true;
+                self.dispatch_mouse_event(&down, cx);
+                cx.propagate_event = true;
+                self.dispatch_mouse_event(&up, cx);
+            }
+            RecognizedTouchGesture::LongPress(long_press) => {
+                self.mouse_position = if long_press.phase == crate::TouchPhase::Started {
+                    long_press.start_position
+                } else {
+                    long_press.position
+                };
+                cx.propagate_event = true;
+                self.default_prevented = false;
+                let started = long_press.phase == crate::TouchPhase::Started;
+                let ended = matches!(
+                    long_press.phase,
+                    crate::TouchPhase::Ended | crate::TouchPhase::Cancelled
+                );
+                self.dispatch_mouse_event(&long_press, cx);
+                if started {
+                    let claimed = self.default_prevented;
+                    self.touch_gestures.resolve_long_press(claimed);
+                    if !claimed {
+                        self.long_press_capture = None;
+                    }
+                }
+                if ended {
+                    self.long_press_capture = None;
+                }
+            }
+        }
+    }
+
+    fn schedule_long_press_timer(&mut self, cx: &mut App) {
+        self.long_press_timer.take();
+        let Some((touch_id, duration)) = self.touch_gestures.pending_long_press() else {
+            return;
+        };
+        self.long_press_timer = Some(self.spawn(cx, async move |cx| {
+            cx.background_executor.timer(duration).await;
+            cx.update(move |window, cx| {
+                window.long_press_timer.take();
+                if let Some(gesture) = window.touch_gestures.offer_long_press(touch_id) {
+                    window.dispatch_recognized_touch_gesture(gesture, cx);
+                }
+            })
+            .log_err();
+        }));
+    }
+
+    fn schedule_touch_momentum_tick(&mut self) {
+        self.on_next_frame(|window, cx| {
+            if let Some(gesture) = window.touch_gestures.tick_momentum() {
+                window.dispatch_recognized_touch_gesture(gesture, cx);
+            }
+            if window.touch_gestures.has_momentum() {
+                window.schedule_touch_momentum_tick();
+            }
+        });
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
@@ -5432,6 +5626,19 @@ impl Window {
             .retain(&(), |callback| callback(self, cx));
     }
 
+    fn defer_pending_input_changed(&self, cx: &mut App) {
+        // Avoid re-entrant entity updates by deferring observer notifications to the end of the
+        // current effect cycle, and only for this window.
+        let window_handle = self.handle;
+        cx.defer(move |cx| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    window.pending_input_changed(cx);
+                })
+                .ok();
+        });
+    }
+
     fn dispatch_key_down_up_event(
         &mut self,
         event: &dyn Any,
@@ -5496,8 +5703,15 @@ impl Window {
         self.active_pending_input().is_some()
     }
 
-    pub(crate) fn clear_pending_keystrokes(&mut self) {
-        self.pending_input.take();
+    #[cfg(test)]
+    pub(crate) fn pending_input_is_none(&self) -> bool {
+        self.pending_input.is_none()
+    }
+
+    pub(crate) fn clear_pending_keystrokes(&mut self, cx: &mut App) {
+        if self.pending_input.take().is_some() {
+            self.defer_pending_input_changed(cx);
+        }
     }
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
@@ -6155,7 +6369,7 @@ impl Window {
                 }
             }
             accesskit::Action::Blur => {
-                self.blur();
+                self.blur(cx);
             }
             _ => {
                 log::debug!(
@@ -6422,6 +6636,7 @@ impl<V: 'static + Render> WindowHandle<V> {
             any_handle: AnyWindowHandle {
                 id,
                 state_type: TypeId::of::<V>(),
+                root_entity_type_name: std::any::type_name::<V>(),
             },
             state_type: PhantomData,
         }
@@ -6544,12 +6759,18 @@ impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,
+    root_entity_type_name: &'static str,
 }
 
 impl AnyWindowHandle {
     /// Get the ID of this window.
     pub fn window_id(&self) -> WindowId {
         self.id
+    }
+
+    /// Returns the name of the window's declared root entity type.
+    pub fn root_entity_type_name(&self) -> &'static str {
+        self.root_entity_type_name
     }
 
     /// Attempt to convert this handle to a window handle with a specific root view type.
@@ -6882,15 +7103,16 @@ mod tests {
         cell::{Cell, RefCell},
         path::PathBuf,
         rc::Rc,
+        time::Duration,
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty,
+        AnyWindowHandle, AppContext as _, Bounds, Context, DispatchPhase, DragMoveEvent, Empty,
         ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
-        InputEvent as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
-        MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
-        StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
-        WindowOptions, canvas, div, point, px, size,
+        InputEvent as _, InteractiveElement as _, IntoElement, LongPressEvent, MouseButton,
+        MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
+        StatefulInteractiveElement as _, Styled, TestAppContext, TouchEvent, TouchId, TouchPhase,
+        Window, WindowAppearance, WindowOptions, canvas, div, point, px, size,
     };
 
     struct EmptyView;
@@ -7591,5 +7813,184 @@ mod tests {
             })
             .unwrap();
         assert_eq!(b_focus_count.get(), 1);
+    }
+
+    #[gpui::test]
+    fn long_press_is_claimed_only_when_started_prevents_default(cx: &mut TestAppContext) {
+        for response in [
+            LongPressResponse::PreventDefault,
+            LongPressResponse::StopPropagation,
+            LongPressResponse::None,
+        ] {
+            let phases = Rc::new(RefCell::new(Vec::new()));
+            let window = cx.add_window({
+                let phases = phases.clone();
+                move |_, _| LongPressListener { phases, response }
+            });
+            dispatch_touch(window, cx, TouchId(1), TouchPhase::Started, 0.);
+            cx.executor().advance_clock(Duration::from_millis(501));
+            cx.executor().run_until_parked();
+            window
+                .update(cx, |_, window, _| {
+                    assert_eq!(
+                        window.long_press_capture.is_some(),
+                        response == LongPressResponse::PreventDefault
+                    );
+                })
+                .unwrap();
+            dispatch_touch(window, cx, TouchId(1), TouchPhase::Moved, 2.);
+            dispatch_touch(window, cx, TouchId(1), TouchPhase::Ended, 2.);
+            window
+                .update(cx, |_, window, _| {
+                    assert!(window.long_press_capture.is_none());
+                })
+                .unwrap();
+
+            let phases = phases.borrow();
+            if response == LongPressResponse::PreventDefault {
+                assert_eq!(
+                    phases.as_slice(),
+                    [TouchPhase::Started, TouchPhase::Moved, TouchPhase::Ended]
+                );
+            } else {
+                assert_eq!(phases.as_slice(), [TouchPhase::Started]);
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn stale_default_prevention_does_not_claim_long_press(cx: &mut TestAppContext) {
+        let phases = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let phases = phases.clone();
+            move |_, _| LongPressListener {
+                phases,
+                response: LongPressResponse::None,
+            }
+        });
+        window
+            .update(cx, |_, window, _| {
+                window.prevent_default();
+            })
+            .unwrap();
+
+        dispatch_touch(window, cx, TouchId(1), TouchPhase::Started, 0.);
+        cx.executor().advance_clock(Duration::from_millis(501));
+        cx.executor().run_until_parked();
+        dispatch_touch(window, cx, TouchId(1), TouchPhase::Moved, 2.);
+
+        assert_eq!(phases.borrow().as_slice(), [TouchPhase::Started]);
+    }
+
+    #[gpui::test]
+    fn resolved_touch_cancels_scheduled_long_press(cx: &mut TestAppContext) {
+        for (phase, position) in [
+            (TouchPhase::Ended, 0.),
+            (TouchPhase::Cancelled, 0.),
+            (TouchPhase::Moved, 20.),
+        ] {
+            let phases = Rc::new(RefCell::new(Vec::new()));
+            let window = cx.add_window({
+                let phases = phases.clone();
+                move |_, _| LongPressListener {
+                    phases,
+                    response: LongPressResponse::PreventDefault,
+                }
+            });
+            dispatch_touch(window, cx, TouchId(1), TouchPhase::Started, 0.);
+            dispatch_touch(window, cx, TouchId(1), phase, position);
+            cx.executor().advance_clock(Duration::from_millis(501));
+            cx.executor().run_until_parked();
+
+            assert!(phases.borrow().is_empty(), "{phase:?} allowed long press");
+        }
+    }
+
+    #[gpui::test]
+    fn stale_long_press_timer_cannot_affect_replacement_touch(cx: &mut TestAppContext) {
+        let phases = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let phases = phases.clone();
+            move |_, _| LongPressListener {
+                phases,
+                response: LongPressResponse::PreventDefault,
+            }
+        });
+        let first_touch = TouchId(1);
+        dispatch_touch(window, cx, first_touch, TouchPhase::Started, 0.);
+        cx.executor().advance_clock(Duration::from_millis(250));
+        dispatch_touch(window, cx, first_touch, TouchPhase::Cancelled, 0.);
+        dispatch_touch(window, cx, TouchId(2), TouchPhase::Started, 10.);
+
+        cx.executor().advance_clock(Duration::from_millis(251));
+        cx.executor().run_until_parked();
+        assert!(phases.borrow().is_empty());
+
+        cx.executor().advance_clock(Duration::from_millis(250));
+        cx.executor().run_until_parked();
+        assert_eq!(phases.borrow().as_slice(), [TouchPhase::Started]);
+    }
+
+    #[derive(Clone, Copy, PartialEq)]
+    enum LongPressResponse {
+        PreventDefault,
+        StopPropagation,
+        None,
+    }
+
+    struct LongPressListener {
+        phases: Rc<RefCell<Vec<TouchPhase>>>,
+        response: LongPressResponse,
+    }
+
+    impl Render for LongPressListener {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let entity = cx.entity();
+            let phases = self.phases.clone();
+            let response = self.response;
+            canvas(
+                |_, _, _| {},
+                move |_, _, window, _| {
+                    window.on_mouse_event(move |event: &LongPressEvent, phase, window, cx| {
+                        if phase != DispatchPhase::Bubble {
+                            return;
+                        }
+                        phases.borrow_mut().push(event.phase);
+                        match response {
+                            LongPressResponse::PreventDefault => {
+                                window.capture_long_press(&entity);
+                                window.prevent_default();
+                            }
+                            LongPressResponse::StopPropagation => cx.stop_propagation(),
+                            LongPressResponse::None => {}
+                        }
+                    });
+                },
+            )
+        }
+    }
+
+    fn dispatch_touch(
+        window: crate::WindowHandle<LongPressListener>,
+        cx: &mut TestAppContext,
+        id: TouchId,
+        phase: TouchPhase,
+        x: f32,
+    ) {
+        window
+            .update(cx, |_, window, cx| {
+                window.dispatch_event(
+                    TouchEvent {
+                        id,
+                        phase,
+                        position: point(px(x), px(0.)),
+                        predicted_position: None,
+                        force: None,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
     }
 }

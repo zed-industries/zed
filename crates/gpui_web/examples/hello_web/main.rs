@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use gpui::prelude::*;
 use gpui::{
     App, Bounds, Context, ElementId, SharedString, Task, Window, WindowBounds, WindowOptions, div,
@@ -429,6 +431,17 @@ fn requested_backend() -> gpui_platform::WebBackendPreference {
 fn main() {
     gpui_platform::web_init();
     gpui_platform::application_with_web_backend(requested_backend()).run(|cx: &mut App| {
+        if let Err(error) = cx
+            .text_system()
+            .add_fonts(vec![Cow::Borrowed(include_bytes!(
+                "../../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf"
+            ))])
+        {
+            web_sys::console::error_1(
+                &format!("failed to load application fonts: {error:#}").into(),
+            );
+            return;
+        }
         let bounds = Bounds::centered(None, size(px(640.), px(560.)), cx);
         cx.open_window(
             WindowOptions {

@@ -1,3 +1,4 @@
+pub mod chat_completion;
 mod provider;
 mod rate_limiter;
 mod request;
@@ -24,7 +25,6 @@ pub use crate::provider::*;
 pub use crate::rate_limiter::*;
 pub use crate::request::*;
 pub use crate::role::*;
-pub use crate::tool_schema::LanguageModelToolSchemaFormat;
 pub use crate::util::{
     fix_streamed_json, is_context_window_exceeded_message, parse_prompt_too_long,
     parse_tool_arguments,
@@ -128,6 +128,7 @@ pub enum ProviderErrorCategory {
     InvalidEncryptedContent,
     Authentication,
     Permission,
+    ContentPolicy,
     EndpointNotFound,
     PaymentRequired,
     RateLimit,
@@ -148,9 +149,18 @@ impl ProviderErrorCategory {
             StatusCode::BAD_REQUEST if is_invalid_encrypted_content_message(message) => {
                 Self::InvalidEncryptedContent
             }
-            StatusCode::BAD_REQUEST if is_context_window_exceeded_message(message) => {
-                Self::PromptTooLarge { tokens: None }
-            }
+            // Anthropic reports a context-window overflow as HTTP 400 with a
+            // "prompt is too long" message rather than HTTP 413, so a
+            // bad request must be sniffed for both providers' phrasings.
+            StatusCode::BAD_REQUEST => match parse_prompt_too_long(message) {
+                Some(tokens) => Self::PromptTooLarge {
+                    tokens: Some(tokens),
+                },
+                None if is_context_window_exceeded_message(message) => {
+                    Self::PromptTooLarge { tokens: None }
+                }
+                None => Self::InvalidRequest,
+            },
             StatusCode::UNAUTHORIZED => Self::Authentication,
             StatusCode::FORBIDDEN => Self::Permission,
             StatusCode::NOT_FOUND => Self::EndpointNotFound,
@@ -158,7 +168,6 @@ impl ProviderErrorCategory {
             StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
                 tokens: parse_prompt_too_long(message),
             },
-            StatusCode::BAD_REQUEST => Self::InvalidRequest,
             StatusCode::CONFLICT => Self::Conflict,
             StatusCode::REQUEST_TIMEOUT | StatusCode::GATEWAY_TIMEOUT => Self::Timeout,
             StatusCode::TOO_MANY_REQUESTS => Self::RateLimit,
@@ -426,6 +435,7 @@ fn category_from_cloud_failure(code: &str, message: &str) -> ProviderErrorCatego
         "authentication_error" => ProviderErrorCategory::Authentication,
         "billing_error" | "payment_required_error" => ProviderErrorCategory::PaymentRequired,
         "permission_error" => ProviderErrorCategory::Permission,
+        "cyber_policy" | "invalid_prompt" => ProviderErrorCategory::ContentPolicy,
         "not_found_error" => ProviderErrorCategory::EndpointNotFound,
         "conflict_error" => ProviderErrorCategory::Conflict,
         "rate_limit_error" | "rate_limit_exceeded" => ProviderErrorCategory::RateLimit,
@@ -934,7 +944,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_cloud_failure_preserves_unknown_provider_rejection() {
+    fn test_from_cloud_failure_maps_content_policy_rejection() {
         let error = LanguageModelCompletionError::from_cloud_failure(
             OPEN_AI_PROVIDER_NAME,
             "cyber_policy".to_string(),
@@ -950,7 +960,7 @@ mod tests {
                 code: Some(code),
                 message,
                 retry_after: None,
-                category: ProviderErrorCategory::Other,
+                category: ProviderErrorCategory::ContentPolicy,
             } if provider == OPEN_AI_PROVIDER_NAME
                 && code == "cyber_policy"
                 && message == "This content was flagged as potentially violating our terms of use."
