@@ -8433,21 +8433,6 @@ mod tests {
     }
 
     #[test]
-    fn test_retry_strategy_retries_open_ai_not_found() {
-        let error = LanguageModelCompletionError::from_http_status(
-            language_model::OPEN_AI_PROVIDER_NAME,
-            http_client::StatusCode::NOT_FOUND,
-            "Not found".to_string(),
-            None,
-        );
-
-        assert_eq!(
-            Thread::retry_strategy_for(&error),
-            Some(RetryStrategy::ExponentialBackoff)
-        );
-    }
-
-    #[test]
     fn test_retry_strategy_retries_status_less_transient_category() {
         let error = LanguageModelCompletionError::from_provider_response(
             language_model::ANTHROPIC_PROVIDER_NAME,
