@@ -11618,6 +11618,76 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_project_search_caps_matches_from_one_file(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let maximum_results = project::project_search::Search::MAX_SEARCH_RESULT_RANGES;
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "many_matches.rs": "needle ".repeat(maximum_results + 100),
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let query = SearchQuery::text(
+        "needle",
+        false,
+        true,
+        false,
+        Default::default(),
+        Default::default(),
+        false,
+        None,
+    )
+    .unwrap();
+
+    let (range_counts, limit_reached) = search_range_counts(&project, query, cx).await;
+
+    assert_eq!(range_counts, vec![maximum_results]);
+    assert!(limit_reached);
+}
+
+#[gpui::test]
+async fn test_project_search_caps_matches_across_files(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let maximum_results = project::project_search::Search::MAX_SEARCH_RESULT_RANGES;
+    let matches_per_file = maximum_results / 2 + 100;
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.rs": "needle ".repeat(matches_per_file),
+            "b.rs": "needle ".repeat(matches_per_file),
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let query = SearchQuery::text(
+        "needle",
+        false,
+        true,
+        false,
+        Default::default(),
+        Default::default(),
+        false,
+        None,
+    )
+    .unwrap();
+
+    let (range_counts, limit_reached) = search_range_counts(&project, query, cx).await;
+
+    assert_eq!(
+        range_counts,
+        vec![matches_per_file, maximum_results - matches_per_file]
+    );
+    assert_eq!(range_counts.into_iter().sum::<usize>(), maximum_results);
+    assert!(limit_reached);
+}
+
+#[gpui::test]
 async fn test_search_multiline_crlf(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -19596,6 +19666,24 @@ async fn search(
             })
         })
         .collect())
+}
+
+async fn search_range_counts(
+    project: &Entity<Project>,
+    query: SearchQuery,
+    cx: &mut gpui::TestAppContext,
+) -> (Vec<usize>, bool) {
+    let search_results = project.update(cx, |project, cx| project.search(query, cx));
+    let mut range_counts = Vec::new();
+    let mut limit_reached = false;
+    while let Ok(search_result) = search_results.rx.recv().await {
+        match search_result {
+            SearchResult::Buffer { ranges, .. } => range_counts.push(ranges.len()),
+            SearchResult::LimitReached => limit_reached = true,
+            SearchResult::WaitingForScan | SearchResult::Searching => {}
+        }
+    }
+    (range_counts, limit_reached)
 }
 
 #[gpui::test]
