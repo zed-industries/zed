@@ -470,11 +470,73 @@ impl LspLogView {
         }
     }
 
-    fn disable_streams_for_server(&mut self, key: &LanguageServerLogKey, cx: &mut App) {
-        let log_kinds = self.enabled_streams.get(key).cloned().unwrap_or_default();
-        for log_kind in log_kinds {
-            self.set_stream_enabled(key, log_kind, false, cx);
+    fn set_visible_log_stream(
+        &mut self,
+        key: &LanguageServerLogKey,
+        log_kind: LogKind,
+        cx: &mut App,
+    ) {
+        self.set_stream_enabled(key, log_kind, true, cx);
+        let stream_is_enabled = self
+            .enabled_streams
+            .get(key)
+            .is_some_and(|log_kinds| log_kinds.contains(&log_kind));
+        if stream_is_enabled {
+            self.disable_visible_log_streams(Some((key, log_kind)), cx);
         }
+    }
+
+    fn disable_visible_log_streams(
+        &mut self,
+        except: Option<(&LanguageServerLogKey, LogKind)>,
+        cx: &mut App,
+    ) {
+        let visible_log_streams = self
+            .enabled_streams
+            .iter()
+            .flat_map(|(key, log_kinds)| {
+                log_kinds
+                    .iter()
+                    .filter(|log_kind| matches!(log_kind, LogKind::Logs | LogKind::Trace))
+                    .map(|log_kind| (key.clone(), *log_kind))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        for (key, log_kind) in visible_log_streams {
+            let should_preserve = except.is_some_and(|(except_key, except_kind)| {
+                except_key == &key && except_kind == log_kind
+            });
+            if !should_preserve {
+                self.set_stream_enabled(&key, log_kind, false, cx);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn show_entry_for_test(
+        &mut self,
+        key: LanguageServerLogKey,
+        log_kind: LogKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match log_kind {
+            LogKind::Rpc => self.show_rpc_trace_for_server(key, window, cx),
+            LogKind::Trace => self.show_trace_for_server(key, window, cx),
+            LogKind::Logs => self.show_logs_for_server(key, window, cx),
+            LogKind::ServerInfo => self.show_server_info(key, window, cx),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stream_enabled_for_test(
+        &self,
+        key: &LanguageServerLogKey,
+        log_kind: LogKind,
+    ) -> bool {
+        self.enabled_streams
+            .get(key)
+            .is_some_and(|log_kinds| log_kinds.contains(&log_kind))
     }
 
     fn show_logs_for_server(
@@ -501,10 +563,10 @@ impl LspLogView {
             let (editor, editor_subscriptions) = Self::editor_for_logs(log_contents, window, cx);
             self.editor = editor;
             self.editor_subscriptions = editor_subscriptions;
+            self.set_visible_log_stream(&key, LogKind::Logs, cx);
             cx.notify();
         }
         self.editor.read(cx).focus_handle(cx).focus(window, cx);
-        self.set_stream_enabled(&key, LogKind::Logs, true, cx);
     }
 
     fn update_log_level(
@@ -556,7 +618,7 @@ impl LspLogView {
             let (editor, editor_subscriptions) = Self::editor_for_logs(log_contents, window, cx);
             self.editor = editor;
             self.editor_subscriptions = editor_subscriptions;
-            self.set_stream_enabled(&key, LogKind::Trace, true, cx);
+            self.set_visible_log_stream(&key, LogKind::Trace, cx);
             cx.notify();
         }
         self.editor.read(cx).focus_handle(cx).focus(window, cx);
@@ -577,6 +639,7 @@ impl LspLogView {
                 .map(|state| log_contents(&state.rpc_messages, ()))
         });
         if let Some(rpc_log) = rpc_log {
+            self.disable_visible_log_streams(None, cx);
             self.current_server_key = Some(key);
             self.active_entry_kind = LogKind::Rpc;
             let (editor, editor_subscriptions) = Self::editor_for_logs(rpc_log, window, cx);
@@ -695,14 +758,14 @@ impl LspLogView {
         let Some(server_info) = server_info else {
             return;
         };
-        self.current_server_key = Some(key.clone());
+        self.current_server_key = Some(key);
         self.active_entry_kind = LogKind::ServerInfo;
         let (editor, editor_subscriptions) = Self::editor_for_server_info(server_info, window, cx);
         self.editor = editor;
         self.editor_subscriptions = editor_subscriptions;
         cx.notify();
         self.editor.read(cx).focus_handle(cx).focus(window, cx);
-        self.disable_streams_for_server(&key, cx);
+        self.disable_visible_log_streams(None, cx);
     }
 }
 

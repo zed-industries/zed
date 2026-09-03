@@ -553,6 +553,18 @@ async fn test_lsp_log_view(cx: &mut TestAppContext) {
     language_server
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
         .await;
+    let server_key = LanguageServerLogKey::new(
+        LanguageServerKind::Local {
+            project: project.downgrade(),
+        },
+        language_server.server.server_id(),
+    );
+    let unavailable_server_key = LanguageServerLogKey::new(
+        LanguageServerKind::Local {
+            project: project.downgrade(),
+        },
+        LanguageServerId(999),
+    );
 
     let window =
         cx.add_window(|window, cx| LspLogView::new(project.clone(), log_store.clone(), window, cx));
@@ -588,6 +600,45 @@ async fn test_lsp_log_view(cx: &mut TestAppContext) {
             }]
         );
         assert_eq!(view.editor.read(cx).text(cx), "hello from the server\n");
+    });
+
+    log_view.update_in(&mut cx, |view, window, cx| {
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Logs));
+
+        view.show_entry_for_test(server_key.clone(), LogKind::Trace, window, cx);
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Trace));
+
+        view.show_entry_for_test(server_key.clone(), LogKind::Rpc, window, cx);
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Trace));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Rpc));
+
+        view.show_entry_for_test(server_key.clone(), LogKind::Logs, window, cx);
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Trace));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Rpc));
+
+        view.show_entry_for_test(server_key.clone(), LogKind::Trace, window, cx);
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Trace));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Rpc));
+
+        view.show_entry_for_test(server_key.clone(), LogKind::ServerInfo, window, cx);
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Trace));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Rpc));
+
+        view.show_entry_for_test(server_key.clone(), LogKind::Logs, window, cx);
+        view.show_entry_for_test(unavailable_server_key.clone(), LogKind::Logs, window, cx);
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(!view.stream_enabled_for_test(&unavailable_server_key, LogKind::Logs));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Rpc));
+
+        view.show_entry_for_test(unavailable_server_key.clone(), LogKind::Rpc, window, cx);
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(!view.stream_enabled_for_test(&unavailable_server_key, LogKind::Rpc));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Rpc));
     });
 }
 
