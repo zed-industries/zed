@@ -5133,35 +5133,40 @@ impl ThreadView {
             return None;
         }
 
-        // A toggle would be dishonest for models that always think: only
-        // offer the effort selector.
-        if !model.supports_disabling_thinking() {
-            let effort_levels = model.supported_effort_levels();
+        let effort_levels = model.supported_effort_levels();
+        let selected_effort = thread.thinking_effort().cloned();
+        let supports_disabling_thinking =
+            model.supports_disabling_thinking_at_effort(selected_effort.as_deref());
+        let supports_disabling_thinking_at_any_effort = supports_disabling_thinking
+            || effort_levels.iter().any(|effort_level| {
+                model.supports_disabling_thinking_at_effort(Some(effort_level.value.as_ref()))
+            });
+
+        // A toggle would be dishonest for models that always think at every
+        // effort level: only offer the effort selector.
+        if !supports_disabling_thinking_at_any_effort {
             if effort_levels.is_empty() {
                 return None;
             }
             return Some(
-                self.render_effort_selector(
-                    effort_levels,
-                    thread.thinking_effort().cloned(),
-                    true,
-                    cx,
-                )
-                .into_any_element(),
+                self.render_effort_selector(effort_levels, selected_effort, true, cx)
+                    .into_any_element(),
             );
         }
 
-        let thinking = thread.thinking_enabled();
+        let thinking = thread.thinking_enabled() || !supports_disabling_thinking;
 
-        let (tooltip_label, icon, color) = if thinking {
+        let (tooltip_label, icon, color) = if !supports_disabling_thinking {
+            (None, IconName::ThinkingMode, Color::Accent)
+        } else if thinking {
             (
-                "Disable Thinking Mode",
+                Some("Disable Thinking Mode"),
                 IconName::ThinkingMode,
                 Color::Accent,
             )
         } else {
             (
-                "Enable Thinking Mode",
+                Some("Enable Thinking Mode"),
                 IconName::ThinkingModeOff,
                 Color::Custom(cx.theme().colors().icon_disabled.opacity(0.8)),
             )
@@ -5172,10 +5177,24 @@ impl ThreadView {
         let thinking_toggle = IconButton::new("thinking-mode", icon)
             .icon_size(IconSize::Small)
             .icon_color(color)
-            .tooltip(move |_, cx| {
-                Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
-            })
-            .on_click(cx.listener(move |this, _, _window, cx| {
+            .map(|this| {
+                if let Some(tooltip_label) = tooltip_label {
+                    this.tooltip(move |_, cx| {
+                        Tooltip::for_action_in(
+                            tooltip_label,
+                            &ToggleThinkingMode,
+                            &focus_handle,
+                            cx,
+                        )
+                    })
+                } else {
+                    this.tooltip(Tooltip::text(
+                        "Thinking is always on at this effort level. Select a lower effort level to make it optional.",
+                    ))
+                }
+            });
+        let thinking_toggle = if supports_disabling_thinking {
+            thinking_toggle.on_click(cx.listener(move |this, _, _window, cx| {
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
                         let enable_thinking = !thread.thinking_enabled();
@@ -5201,23 +5220,21 @@ impl ThreadView {
                         });
                     });
                 }
-            }));
+            }))
+        } else {
+            thinking_toggle.cursor_style(CursorStyle::Arrow)
+        };
 
-        if model.supported_effort_levels().is_empty() {
+        if effort_levels.is_empty() {
             return Some(thinking_toggle.into_any_element());
         }
 
-        if !model.supported_effort_levels().is_empty() && !thinking {
+        if !thinking {
             return Some(thinking_toggle.into_any_element());
         }
 
         let left_btn = thinking_toggle;
-        let right_btn = self.render_effort_selector(
-            model.supported_effort_levels(),
-            thread.thinking_effort().cloned(),
-            false,
-            cx,
-        );
+        let right_btn = self.render_effort_selector(effort_levels, selected_effort, false, cx);
 
         Some(
             SplitButton::new(left_btn, right_btn.into_any_element())
@@ -12078,7 +12095,11 @@ impl ThreadView {
             let Some(model) = thread_ref.model() else {
                 return;
             };
-            if !model.supports_thinking() || !thread_ref.thinking_enabled() {
+            let thinking_enabled = thread_ref.thinking_enabled()
+                || !model.supports_disabling_thinking_at_effort(
+                    thread_ref.thinking_effort().map(String::as_str),
+                );
+            if !model.supports_thinking() || !thinking_enabled {
                 return;
             }
             let effort_levels = model.supported_effort_levels();
@@ -12278,9 +12299,11 @@ impl Render for ThreadView {
                 }
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
-                        let model_allows_disabling = thread
-                            .model()
-                            .is_none_or(|model| model.supports_disabling_thinking());
+                        let model_allows_disabling = thread.model().is_none_or(|model| {
+                            model.supports_disabling_thinking_at_effort(
+                                thread.thinking_effort().map(String::as_str),
+                            )
+                        });
                         if model_allows_disabling {
                             thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
                         }
