@@ -2112,10 +2112,10 @@ mod tests {
     use language::{Buffer, DiskState, Point};
     use project::{Project, ProjectPath};
     use serde_json::json;
+    use std::cell::Cell;
     use std::path::{Path, PathBuf};
+    use std::rc::Rc;
     use std::sync::Arc;
-    use std::sync::atomic;
-    use std::sync::atomic::AtomicUsize;
     use std::time::Duration;
     use util::path;
     use util::paths::PathStyle;
@@ -3702,17 +3702,7 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        let notification_count = Arc::new(AtomicUsize::new(0));
-
-        let markdown = preview.read_with(cx, |preview, _| preview.markdown.clone());
-        let _subscription = cx.update({
-            let notify_count = notification_count.clone();
-            move |cx| {
-                cx.observe(&markdown, move |_, _| {
-                    notify_count.fetch_add(1, atomic::Ordering::SeqCst);
-                })
-            }
-        });
+        let (notification_count, _subscription) = observe_markdown_notifications(&preview, cx);
 
         multi_workspace
             .update(cx, |_, window, cx| {
@@ -3735,7 +3725,7 @@ mod tests {
         });
 
         assert_eq!(
-            notification_count.load(atomic::Ordering::SeqCst),
+            notification_count.get(),
             1,
             "highlight should repaint when content was already focused"
         );
@@ -3765,6 +3755,23 @@ mod tests {
         )));
     }
 
+    fn observe_markdown_notifications(
+        preview: &Entity<MarkdownPreviewView>,
+        cx: &mut TestAppContext,
+    ) -> (Rc<Cell<usize>>, gpui::Subscription) {
+        let notification_count = Rc::new(Cell::new(0));
+        let markdown = preview.read_with(cx, |preview, _| preview.markdown.clone());
+        let subscription = cx.update({
+            let notification_count = notification_count.clone();
+            move |cx| {
+                cx.observe(&markdown, move |_, _| {
+                    notification_count.set(notification_count.get() + 1);
+                })
+            }
+        });
+        (notification_count, subscription)
+    }
+
     async fn open_preview_and_dispatch_select_all_with_container_focus(
         cx: &mut TestAppContext,
         source: &str,
@@ -3779,6 +3786,8 @@ mod tests {
             })
             .unwrap();
         cx.run_until_parked();
+
+        let (notification_count, _subscription) = observe_markdown_notifications(&preview, cx);
 
         multi_workspace
             .update(cx, |_, window, cx| {
@@ -3813,6 +3822,12 @@ mod tests {
                 );
             })
             .unwrap();
+
+        assert_eq!(
+            notification_count.get(),
+            1,
+            "highlight should repaint when the container was focused"
+        );
 
         preview
     }
