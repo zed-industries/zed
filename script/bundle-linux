@@ -83,7 +83,7 @@ if [[ "$(uname -m)" == "aarch64" ]]; then
 else
     export RUSTFLAGS="${RUSTFLAGS:-} -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
 fi
-cargo --config .cargo/bundle-config.toml build --release --target "${target_triple}" --package zed --package cli
+cargo --config .cargo/bundle-config.toml build ${ZED_CRATE_FEATURES:+--features ${ZED_CRATE_FEATURES}} --release --target "${target_triple}" --package zed --package cli
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
 if [[ "$remote_server_triple" == "$musl_triple" ]]; then
