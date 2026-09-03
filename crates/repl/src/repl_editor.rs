@@ -58,8 +58,8 @@ pub fn assign_kernelspec(
                 let store = store.clone();
                 move |_this, _session, event, cx| match event {
                     SessionEvent::Shutdown(shutdown_event) => {
-                        store.update(cx, |store, _cx| {
-                            store.remove_session(shutdown_event.entity_id());
+                        store.update(cx, |store, cx| {
+                            store.remove_session(shutdown_event.entity_id(), cx);
                         });
                     }
                 }
@@ -68,8 +68,8 @@ pub fn assign_kernelspec(
         })
         .ok();
 
-    store.update(cx, |store, _cx| {
-        store.insert_session(weak_editor.entity_id(), session.clone());
+    store.update(cx, |store, cx| {
+        store.insert_session(weak_editor.entity_id(), session.clone(), cx);
     });
 
     Ok(())
@@ -260,8 +260,8 @@ pub fn run(
                     let store = store.clone();
                     move |_this, _session, event, cx| match event {
                         SessionEvent::Shutdown(shutdown_event) => {
-                            store.update(cx, |store, _cx| {
-                                store.remove_session(shutdown_event.entity_id());
+                            store.update(cx, |store, cx| {
+                                store.remove_session(shutdown_event.entity_id(), cx);
                             });
                         }
                     }
@@ -269,8 +269,8 @@ pub fn run(
                 .detach();
             });
 
-            store.update(cx, |store, _cx| {
-                store.insert_session(editor.entity_id(), session.clone());
+            store.update(cx, |store, cx| {
+                store.insert_session(editor.entity_id(), session.clone(), cx);
             });
 
             session

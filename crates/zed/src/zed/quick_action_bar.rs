@@ -1,48 +1,50 @@
+mod buffer_search_button;
+mod code_actions_button;
+mod editor_settings_menu;
+mod inline_assist_button;
 mod preview;
+mod quick_action_bar_item;
 mod repl_menu;
+mod selections_menu;
 
-use agent_settings::AgentSettings;
-use editor::actions::{
-    AddSelectionAbove, AddSelectionBelow, CodeActionSource, DuplicateLineDown, GoToDiagnostic,
-    GoToHunk, GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
-    SelectLargerSyntaxNode, SelectNext, SelectSmallerSyntaxNode, ToggleCodeActions,
-    ToggleDiagnostics, ToggleGoToLine, ToggleInlineDiagnostics,
-};
-use editor::code_context_menus::{CodeContextMenu, ContextMenuOrigin};
-use editor::{Editor, EditorSettings};
+use editor::EditorSettings;
 use gpui::{
-    Action, Anchor, AnchoredPositionMode, ClickEvent, Context, ElementId, Entity, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
-    WeakEntity, Window, anchored, deferred, point,
+    Action, Anchor, AnchoredPositionMode, AnyElement, AnyView, Context, ElementId, Entity,
+    EventEmitter, FocusHandle, InteractiveElement, ParentElement, Render, SharedString, Styled,
+    Subscription, WeakEntity, Window, anchored, deferred, point,
 };
-use project::{
-    DisableAiSettings,
-    project_settings::{DiagnosticSeverity, ProjectSettings},
-};
-use search::{BufferSearchBar, buffer_search};
-use settings::{GitDiffBaseSetting, Settings, SettingsStore, update_settings_file};
+use repl::components::KernelSelector;
+use search::BufferSearchBar;
+use settings::{Settings, SettingsStore};
 use ui::{
-    ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
-    PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
+    ButtonLike, ButtonStyle, CommonAnimationExt, ContextMenu, IconButton, IconSize,
+    IconWithIndicator, PopoverMenu, PopoverTrigger, Tooltip, prelude::*,
 };
-use vim_mode_setting::{HelixModeSetting, VimModeSetting};
-use workspace::item::ItemBufferKind;
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle,
 };
-use zed_actions::{agent::AddSelectionToThread, assistant::InlineAssist, outline::ToggleOutline};
 
-const MAX_CODE_ACTION_MENU_LINES: u32 = 16;
+use quick_action_bar_item::{
+    AnyQuickActionItem, QuickActionBarItem, QuickActionButton, QuickActionElement,
+    QuickActionKernelSelector, QuickActionMenu, QuickActionTarget, VisibilityTrigger, erase,
+};
+
+use buffer_search_button::BufferSearchButton;
+use code_actions_button::CodeActionsButton;
+use editor_settings_menu::EditorSettingsMenu;
+use inline_assist_button::InlineAssistButton;
+use preview::PreviewButton;
+use repl_menu::ReplMenu;
+use selections_menu::SelectionsMenu;
 
 pub struct QuickActionBar {
-    _inlay_hints_enabled_subscription: Option<Subscription>,
-    _ai_settings_subscription: Subscription,
-    active_item: Option<Box<dyn ItemHandle>>,
-    buffer_search_bar: Entity<BufferSearchBar>,
+    items: Vec<Box<dyn AnyQuickActionItem>>,
+    target: Option<QuickActionTarget>,
+    /// Mirrors the `toolbar.quick_actions` editor setting.
     show: bool,
-    toggle_selections_handle: PopoverMenuHandle<ContextMenu>,
-    toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
     workspace: WeakEntity<Workspace>,
+    _global_subscriptions: Vec<Subscription>,
+    _editor_subscription: Option<Subscription>,
 }
 
 impl QuickActionBar {
@@ -51,724 +53,321 @@ impl QuickActionBar {
         workspace: &Workspace,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut was_agent_enabled = AgentSettings::get_global(cx).enabled(cx);
-        let mut was_agent_button = AgentSettings::get_global(cx).button;
+        let items = vec![
+            erase(ReplMenu),
+            erase(PreviewButton),
+            erase(BufferSearchButton::new(buffer_search_bar)),
+            erase(InlineAssistButton),
+            erase(CodeActionsButton),
+            erase(SelectionsMenu),
+            erase(EditorSettingsMenu),
+        ];
+        Self::with_items(items, workspace.weak_handle(), cx)
+    }
 
-        let ai_settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-            let agent_settings = AgentSettings::get_global(cx);
-            let is_agent_enabled = agent_settings.enabled(cx);
-
-            if was_agent_enabled != is_agent_enabled || was_agent_button != agent_settings.button {
-                was_agent_enabled = is_agent_enabled;
-                was_agent_button = agent_settings.button;
-                cx.notify();
-            }
-        });
-
+    fn with_items(
+        items: Vec<Box<dyn AnyQuickActionItem>>,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut this = Self {
-            _inlay_hints_enabled_subscription: None,
-            _ai_settings_subscription: ai_settings_subscription,
-            active_item: None,
-            buffer_search_bar,
-            show: true,
-            toggle_selections_handle: Default::default(),
-            toggle_settings_handle: Default::default(),
-            workspace: workspace.weak_handle(),
+            items,
+            target: None,
+            show: EditorSettings::get_global(cx).toolbar.quick_actions,
+            workspace,
+            _global_subscriptions: Vec::new(),
+            _editor_subscription: None,
         };
-        this.apply_settings(cx);
-        cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx))
-            .detach();
+
+        // Settings are always observed because the bar's own visibility depends on them.
+        this._global_subscriptions
+            .push(cx.observe_global::<SettingsStore>(|this, cx| {
+                this.refresh(Some(VisibilityTrigger::Settings), cx)
+            }));
+        // `ReplStore::global` requires `repl::init` to have run before the bar is built.
+        if this.uses_trigger(VisibilityTrigger::ReplStore) {
+            this._global_subscriptions.push(
+                cx.observe(&repl::ReplStore::global(cx), |this, _, cx| {
+                    this.refresh(Some(VisibilityTrigger::ReplStore), cx)
+                }),
+            );
+        }
+
         this
     }
 
-    fn active_editor(&self) -> Option<Entity<Editor>> {
-        self.active_item
-            .as_ref()
-            .and_then(|item| item.downcast::<Editor>())
+    fn uses_trigger(&self, trigger: VisibilityTrigger) -> bool {
+        self.items
+            .iter()
+            .any(|item| item.triggers().contains(&trigger))
     }
 
-    fn apply_settings(&mut self, cx: &mut Context<Self>) {
-        let new_show = EditorSettings::get_global(cx).toolbar.quick_actions;
-        if new_show != self.show {
-            self.show = new_show;
-            cx.emit(ToolbarItemEvent::ChangeLocation(
-                self.get_toolbar_item_location(),
-            ));
-        }
-    }
-
-    fn get_toolbar_item_location(&self) -> ToolbarItemLocation {
-        if self.show && self.active_editor().is_some() {
+    fn toolbar_item_location(&self) -> ToolbarItemLocation {
+        if self.show && self.items.iter().any(|item| item.is_visible()) {
             ToolbarItemLocation::PrimaryRight
         } else {
             ToolbarItemLocation::Hidden
+        }
+    }
+
+    /// Re-resolves the items declaring `trigger`, or every item when `trigger` is `None`.
+    fn refresh(&mut self, trigger: Option<VisibilityTrigger>, cx: &mut Context<Self>) {
+        let previous_location = self.toolbar_item_location();
+        if trigger == Some(VisibilityTrigger::Settings) {
+            self.show = EditorSettings::get_global(cx).toolbar.quick_actions;
+        }
+
+        let mut changed = false;
+        for item in &mut self.items {
+            if trigger.is_none_or(|trigger| item.triggers().contains(&trigger)) {
+                changed |= item.refresh(self.target.as_ref(), cx);
+            }
+        }
+        if changed {
+            cx.notify();
+        }
+
+        let location = self.toolbar_item_location();
+        if location != previous_location {
+            cx.emit(ToolbarItemEvent::ChangeLocation(location));
+        }
+    }
+
+    /// Element ids are scoped by their parents, so composite variants wrap their children in
+    /// an identified container and hand out short child ids instead of composing names.
+    fn render_element(
+        id: ElementId,
+        element: QuickActionElement,
+        focus_handle: &FocusHandle,
+        cx: &mut App,
+    ) -> AnyElement {
+        match element {
+            QuickActionElement::Button(button) => {
+                Self::render_button(ButtonLike::new(id), button, focus_handle, cx)
+            }
+            QuickActionElement::Dropdown { icon, menu } => Self::render_menu(
+                id,
+                menu,
+                IconButton::new("trigger", icon).icon_size(IconSize::Small),
+            )
+            .into_any_element(),
+            QuickActionElement::SplitButton { button, menu } => {
+                let trigger = ButtonLike::new_rounded_right("trigger")
+                    .width(rems(1.))
+                    .child(
+                        Icon::new(IconName::ChevronDown)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    );
+                h_flex()
+                    .id(id)
+                    .child(Self::render_button(
+                        ButtonLike::new_rounded_left("button"),
+                        button,
+                        focus_handle,
+                        cx,
+                    ))
+                    .child(Self::render_menu("menu".into(), menu, trigger))
+                    .into_any_element()
+            }
+            QuickActionElement::KernelSelector(selector) => {
+                Self::render_kernel_selector(id, selector).into_any_element()
+            }
+            QuickActionElement::Group(elements) => h_flex()
+                .id(id)
+                .children(elements.into_iter().enumerate().map(|(index, element)| {
+                    Self::render_element(index.into(), element, focus_handle, cx)
+                }))
+                .into_any_element(),
+        }
+    }
+
+    fn render_button(
+        base: ButtonLike,
+        button: QuickActionButton,
+        focus_handle: &FocusHandle,
+        cx: &App,
+    ) -> AnyElement {
+        let QuickActionButton {
+            icon,
+            tooltip,
+            action,
+            tooltip_meta,
+            toggled,
+            disabled,
+            icon_color,
+            indicator,
+            animating,
+            popup,
+            on_click,
+        } = button;
+
+        let icon_color = if disabled {
+            Color::Disabled
+        } else if toggled {
+            Color::Selected
+        } else {
+            icon_color.unwrap_or_default()
+        };
+        let icon = Icon::new(icon).size(IconSize::Small).color(icon_color);
+        let icon = if animating {
+            icon.with_rotate_animation(5).into_any_element()
+        } else {
+            IconWithIndicator::new(icon, indicator)
+                .indicator_border_color(Some(cx.theme().colors().toolbar_background))
+                .into_any_element()
+        };
+
+        let button = base
+            .style(ButtonStyle::Subtle)
+            .toggle_state(toggled)
+            .disabled(disabled)
+            .child(icon)
+            .when(popup.is_none(), |this| {
+                this.tooltip(Self::tooltip(
+                    tooltip,
+                    action,
+                    tooltip_meta,
+                    focus_handle.clone(),
+                ))
+            })
+            .on_click(move |_, window, cx| on_click(window, cx));
+
+        match popup {
+            None => button.into_any_element(),
+            Some(popup) => v_flex()
+                .child(button)
+                .child(deferred(
+                    anchored()
+                        .position_mode(AnchoredPositionMode::Local)
+                        .position(point(px(20.), px(20.)))
+                        .anchor(Anchor::TopRight)
+                        .child(popup),
+                ))
+                .into_any_element(),
+        }
+    }
+
+    fn render_menu<T: PopoverTrigger + ButtonCommon + Disableable>(
+        id: ElementId,
+        menu: QuickActionMenu,
+        trigger: T,
+    ) -> PopoverMenu<ContextMenu> {
+        let QuickActionMenu {
+            tooltip,
+            disabled,
+            build_menu,
+        } = menu;
+
+        PopoverMenu::new(id)
+            .trigger_with_tooltip(
+                trigger.style(ButtonStyle::Subtle).disabled(disabled),
+                Tooltip::text(tooltip),
+            )
+            .anchor(Anchor::TopRight)
+            .menu(move |window, cx| Some(build_menu(window, cx)))
+    }
+
+    fn render_kernel_selector(
+        id: ElementId,
+        selector: QuickActionKernelSelector,
+    ) -> impl IntoElement {
+        let QuickActionKernelSelector {
+            current_kernel,
+            worktree_id,
+            on_select,
+        } = selector;
+
+        let label_color = if current_kernel.is_some() {
+            Color::Default
+        } else {
+            Color::Placeholder
+        };
+        let trigger = ButtonLike::new(id)
+            .style(ButtonStyle::Subtle)
+            .size(ButtonSize::Compact)
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .overflow_x_hidden()
+                            .flex_grow_1()
+                            .whitespace_nowrap()
+                            .child(
+                                Label::new(current_kernel.unwrap_or("Select Kernel".into()))
+                                    .size(LabelSize::Small)
+                                    .color(label_color),
+                            ),
+                    )
+                    .child(
+                        Icon::new(IconName::ChevronDown)
+                            .color(Color::Muted)
+                            .size(IconSize::XSmall),
+                    ),
+            );
+
+        KernelSelector::new(
+            on_select,
+            worktree_id,
+            trigger,
+            Tooltip::text("Select Kernel"),
+        )
+    }
+
+    fn tooltip(
+        title: SharedString,
+        action: Option<Box<dyn Action>>,
+        meta: Option<SharedString>,
+        focus_handle: FocusHandle,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView {
+        move |_window, cx| match (&action, &meta) {
+            (Some(action), Some(meta)) => Tooltip::with_meta_in(
+                title.clone(),
+                Some(action.as_ref()),
+                meta.clone(),
+                &focus_handle,
+                cx,
+            ),
+            (Some(action), None) => {
+                Tooltip::for_action_in(title.clone(), action.as_ref(), &focus_handle, cx)
+            }
+            (None, Some(meta)) => Tooltip::with_meta(title.clone(), None, meta.clone(), cx),
+            (None, None) => Tooltip::simple(title.clone(), cx),
         }
     }
 }
 
 impl Render for QuickActionBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(editor) = self.active_editor() else {
-            return div().id("empty quick action bar");
+        let Some(target) = self.target.as_ref() else {
+            return div().id("empty quick action bar").into_any_element();
         };
 
-        let supports_inlay_hints = editor.update(cx, |editor, cx| editor.supports_inlay_hints(cx));
-        let supports_semantic_tokens =
-            editor.update(cx, |editor, cx| editor.supports_semantic_tokens(cx));
-        let supports_code_lens = editor.update(cx, |editor, cx| editor.supports_code_lens(cx));
-        let editor_value = editor.read(cx);
-        let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
-        let inlay_hints_enabled = editor_value.inlay_hints_enabled();
-        let inline_values_enabled = editor_value.inline_values_enabled();
-        let semantic_highlights_enabled = editor_value.semantic_highlights_enabled();
-        let code_lens_enabled = editor_value.code_lens_enabled();
-        let is_full = editor_value.mode().is_full();
-        let diagnostics_enabled = editor_value.diagnostics_enabled()
-            && editor_value.diagnostics_max_severity != DiagnosticSeverity::Off;
-        let supports_inline_diagnostics = editor_value.inline_diagnostics_enabled();
-        let inline_diagnostics_enabled = editor_value.show_inline_diagnostics();
-        let git_blame_inline_enabled = editor_value.git_blame_inline_enabled();
-        let show_git_blame_gutter = editor_value.show_git_blame_gutter();
-        let auto_signature_help_enabled = editor_value.auto_signature_help_enabled(cx);
-        let show_line_numbers = editor_value.line_numbers_enabled(cx);
-        let has_edit_prediction_provider = editor_value.edit_prediction_provider().is_some();
-        let show_edit_predictions = editor_value.edit_predictions_enabled();
-        let edit_predictions_enabled_at_cursor =
-            editor_value.edit_predictions_enabled_at_cursor(cx);
-        let supports_minimap = editor_value.supports_minimap(cx);
-        let minimap_enabled = supports_minimap && editor_value.minimap().is_some();
-        let has_available_code_actions = editor_value.has_available_code_actions_for_selection();
-        let code_action_enabled = editor_value.code_actions_enabled_for_toolbar(cx);
-        let focus_handle = editor_value.focus_handle(cx);
+        let focus_handle = target.item().item_focus_handle(cx);
 
-        let search_button = (editor.buffer_kind(cx) == ItemBufferKind::Singleton).then(|| {
-            QuickActionBarButton::new(
-                "toggle buffer search",
-                search::SEARCH_ICON,
-                !self.buffer_search_bar.read(cx).is_dismissed(),
-                Box::new(buffer_search::Deploy::find()),
-                focus_handle.clone(),
-                "Buffer Search",
-                {
-                    let buffer_search_bar = self.buffer_search_bar.clone();
-                    move |_, window, cx| {
-                        buffer_search_bar.update(cx, |search_bar, cx| {
-                            search_bar.toggle(&buffer_search::Deploy::find(), window, cx)
-                        });
-                    }
-                },
-            )
-        });
-
-        let assistant_button = QuickActionBarButton::new(
-            "toggle inline assistant",
-            IconName::ZedAssistant,
-            false,
-            Box::new(InlineAssist::default()),
-            focus_handle,
-            "Inline Assist",
-            move |_, window, cx| {
-                window.dispatch_action(Box::new(InlineAssist::default()), cx);
-            },
-        );
-
-        let code_actions_dropdown = code_action_enabled.then(|| {
-            let is_deployed = {
-                let menu_ref = editor.read(cx).context_menu().borrow();
-                let code_action_menu = menu_ref
-                    .as_ref()
-                    .filter(|menu| matches!(menu, CodeContextMenu::CodeActions(..)));
-                code_action_menu
-                    .as_ref()
-                    .is_some_and(|menu| matches!(menu.origin(), ContextMenuOrigin::QuickActionBar))
-            };
-            let code_action_element = is_deployed
-                .then(|| {
-                    editor.update(cx, |editor, cx| {
-                        editor.render_context_menu(MAX_CODE_ACTION_MENU_LINES, window, cx)
-                    })
-                })
-                .flatten();
-            v_flex()
-                .child(
-                    IconButton::new("toggle_code_actions_icon", IconName::BoltOutlined)
-                        .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Subtle)
-                        .disabled(!has_available_code_actions)
-                        .toggle_state(is_deployed)
-                        .when(!is_deployed, |this| {
-                            this.when(has_available_code_actions, |this| {
-                                this.tooltip(Tooltip::for_action_title(
-                                    "Code Actions",
-                                    &ToggleCodeActions::default(),
-                                ))
-                            })
-                            .when(
-                                !has_available_code_actions,
-                                |this| {
-                                    this.tooltip(Tooltip::for_action_title(
-                                        "No Code Actions Available",
-                                        &ToggleCodeActions::default(),
-                                    ))
-                                },
-                            )
-                        })
-                        .on_click({
-                            let editor = editor.clone();
-                            move |_, window, cx| {
-                                editor.update(cx, |editor, cx| {
-                                    editor.toggle_code_actions(
-                                        &ToggleCodeActions {
-                                            deployed_from: Some(CodeActionSource::QuickActionBar),
-                                            quick_launch: false,
-                                        },
-                                        window,
-                                        cx,
-                                    );
-                                })
-                            }
-                        }),
-                )
-                .children(code_action_element.map(|menu| {
-                    deferred(
-                        anchored()
-                            .position_mode(AnchoredPositionMode::Local)
-                            .position(point(px(20.), px(20.)))
-                            .anchor(Anchor::TopRight)
-                            .child(menu),
-                    )
-                }))
-        });
-
-        let editor_selections_dropdown = selection_menu_enabled.then(|| {
-            let has_diff_hunks = editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .snapshot(cx)
-                .has_diff_hunks();
-            let has_selection = editor.update(cx, |editor, cx| {
-                editor.has_non_empty_selection(&editor.display_snapshot(cx))
-            });
-
-            let focus = editor.focus_handle(cx);
-
-            let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
-
-            PopoverMenu::new("editor-selections-dropdown")
-                .trigger_with_tooltip(
-                    IconButton::new("toggle_editor_selections_icon", IconName::CursorIBeam)
-                        .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Subtle)
-                        .toggle_state(self.toggle_selections_handle.is_deployed()),
-                    Tooltip::text("Selection Controls"),
-                )
-                .with_handle(self.toggle_selections_handle.clone())
-                .anchor(Anchor::TopRight)
-                .menu(move |window, cx| {
-                    let focus = focus.clone();
-                    let menu = ContextMenu::build(window, cx, move |menu, _, _| {
-                        menu.context(focus.clone())
-                            .action("Select All", Box::new(SelectAll))
-                            .action(
-                                "Select Next Occurrence",
-                                Box::new(SelectNext {
-                                    replace_newest: false,
-                                }),
-                            )
-                            .action("Expand Selection", Box::new(SelectLargerSyntaxNode))
-                            .action("Shrink Selection", Box::new(SelectSmallerSyntaxNode))
-                            .action(
-                                "Add Cursor Above",
-                                Box::new(AddSelectionAbove {
-                                    skip_soft_wrap: true,
-                                }),
-                            )
-                            .action(
-                                "Add Cursor Below",
-                                Box::new(AddSelectionBelow {
-                                    skip_soft_wrap: true,
-                                }),
-                            )
-                            .when(!disable_ai, |this| {
-                                this.separator().action_disabled_when(
-                                    !has_selection,
-                                    "Add to Agent Thread",
-                                    Box::new(AddSelectionToThread),
-                                )
-                            })
-                            .separator()
-                            .action("Go to Symbol", Box::new(ToggleOutline))
-                            .action("Go to Line/Column", Box::new(ToggleGoToLine))
-                            .separator()
-                            .action("Next Problem", Box::new(GoToDiagnostic::default()))
-                            .action(
-                                "Previous Problem",
-                                Box::new(GoToPreviousDiagnostic::default()),
-                            )
-                            .separator()
-                            .action_disabled_when(!has_diff_hunks, "Next Hunk", Box::new(GoToHunk))
-                            .action_disabled_when(
-                                !has_diff_hunks,
-                                "Previous Hunk",
-                                Box::new(GoToPreviousHunk),
-                            )
-                            .separator()
-                            .action("Move Line Up", Box::new(MoveLineUp))
-                            .action("Move Line Down", Box::new(MoveLineDown))
-                            .action("Duplicate Selection", Box::new(DuplicateLineDown))
-                    });
-                    Some(menu)
-                })
-        });
-
-        let editor_focus_handle = editor.focus_handle(cx);
-        let editor = editor.downgrade();
-        let editor_settings_dropdown = {
-            let vim_mode_enabled = VimModeSetting::get_global(cx).0;
-            let helix_mode_enabled = HelixModeSetting::get_global(cx).0;
-            let diff_against_default_branch =
-                ProjectSettings::get_global(cx).git.diff_base == GitDiffBaseSetting::DefaultBranch;
-            let fs = self
-                .workspace
-                .upgrade()
-                .map(|workspace| workspace.read(cx).app_state().fs.clone());
-
-            PopoverMenu::new("editor-settings")
-                .trigger_with_tooltip(
-                    IconButton::new("toggle_editor_settings_icon", IconName::Filter)
-                        .icon_size(IconSize::Small)
-                        .toggle_state(self.toggle_settings_handle.is_deployed()),
-                    Tooltip::text("Editor Controls"),
-                )
-                .anchor(Anchor::TopRight)
-                .with_handle(self.toggle_settings_handle.clone())
-                .menu(move |window, cx| {
-                    let menu = ContextMenu::build(window, cx, {
-                        let focus_handle = editor_focus_handle.clone();
-                        |mut menu, _, _| {
-                            menu = menu.context(focus_handle);
-
-                            if supports_inlay_hints {
-                                menu = menu.toggleable_entry(
-                                    "Inlay Hints",
-                                    inlay_hints_enabled,
-                                    IconPosition::Start,
-                                    Some(editor::actions::ToggleInlayHints.boxed_clone()),
-                                    {
-                                        let editor = editor.clone();
-                                        move |window, cx| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.toggle_inlay_hints(
-                                                        &editor::actions::ToggleInlayHints,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    },
-                                );
-
-                                menu = menu.toggleable_entry(
-                                    "Inline Values",
-                                    inline_values_enabled,
-                                    IconPosition::Start,
-                                    Some(editor::actions::ToggleInlineValues.boxed_clone()),
-                                    {
-                                        let editor = editor.clone();
-                                        move |window, cx| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.toggle_inline_values(
-                                                        &editor::actions::ToggleInlineValues,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    }
-                                );
-                            }
-
-                            if supports_semantic_tokens {
-                                menu = menu.toggleable_entry(
-                                    "Semantic Highlights",
-                                    semantic_highlights_enabled,
-                                    IconPosition::Start,
-                                    Some(editor::actions::ToggleSemanticHighlights.boxed_clone()),
-                                    {
-                                        let editor = editor.clone();
-                                        move |window, cx| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.toggle_semantic_highlights(
-                                                        &editor::actions::ToggleSemanticHighlights,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    },
-                                );
-                            }
-
-                            if supports_code_lens {
-                                menu = menu.toggleable_entry(
-                                    "Code Lens",
-                                    code_lens_enabled,
-                                    IconPosition::Start,
-                                    Some(editor::actions::ToggleCodeLens.boxed_clone()),
-                                    {
-                                        let editor = editor.clone();
-                                        move |window, cx| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.toggle_code_lens_action(
-                                                        &editor::actions::ToggleCodeLens,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    },
-                                );
-                            }
-
-                            if supports_minimap {
-                                menu = menu.toggleable_entry("Minimap", minimap_enabled, IconPosition::Start, Some(editor::actions::ToggleMinimap.boxed_clone()), {
-                                    let editor = editor.clone();
-                                    move |window, cx| {
-                                        editor
-                                            .update(cx, |editor, cx| {
-                                                editor.toggle_minimap(
-                                                    &editor::actions::ToggleMinimap,
-                                                    window,
-                                                    cx,
-                                                );
-                                            })
-                                            .ok();
-                                    }
-                                },)
-                            }
-
-                            if has_edit_prediction_provider {
-                                let mut edit_prediction_entry = ContextMenuEntry::new("Edit Predictions")
-                                    .toggleable(IconPosition::Start, edit_predictions_enabled_at_cursor && show_edit_predictions)
-                                    .disabled(!edit_predictions_enabled_at_cursor)
-                                    .action(
-                                        editor::actions::ToggleEditPrediction.boxed_clone(),
-                                    ).handler({
-                                        let editor = editor.clone();
-                                        move |window, cx| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.toggle_edit_predictions(
-                                                        &editor::actions::ToggleEditPrediction,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    });
-                                if !edit_predictions_enabled_at_cursor {
-                                    edit_prediction_entry = edit_prediction_entry.documentation_aside(DocumentationSide::Left, |_| {
-                                        Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
-                                    });
-                                }
-
-                                menu = menu.item(edit_prediction_entry);
-                            }
-
-                            menu = menu.separator();
-
-                            if is_full {
-                                menu = menu.toggleable_entry(
-                                    "Diagnostics",
-                                    diagnostics_enabled,
-                                    IconPosition::Start,
-                                    Some(ToggleDiagnostics.boxed_clone()),
-                                    {
-                                        let editor = editor.clone();
-                                        move |window, cx| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.toggle_diagnostics(
-                                                        &ToggleDiagnostics,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    },
-                                );
-
-                                if supports_inline_diagnostics {
-                                    let mut inline_diagnostics_item = ContextMenuEntry::new("Inline Diagnostics")
-                                        .toggleable(IconPosition::Start, diagnostics_enabled && inline_diagnostics_enabled)
-                                        .action(ToggleInlineDiagnostics.boxed_clone())
-                                        .handler({
-                                            let editor = editor.clone();
-                                            move |window, cx| {
-                                                editor
-                                                    .update(cx, |editor, cx| {
-                                                        editor.toggle_inline_diagnostics(
-                                                            &ToggleInlineDiagnostics,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .ok();
-                                            }
-                                        });
-                                    if !diagnostics_enabled {
-                                        inline_diagnostics_item = inline_diagnostics_item.disabled(true).documentation_aside(DocumentationSide::Left, |_|  Label::new("Inline diagnostics are not available until regular diagnostics are enabled.").into_any_element());
-                                    }
-                                    menu = menu.item(inline_diagnostics_item)
-                                }
-
-                                menu = menu.separator();
-                            }
-
-                            menu = menu.toggleable_entry(
-                                "Line Numbers",
-                                show_line_numbers,
-                                IconPosition::Start,
-                                Some(editor::actions::ToggleLineNumbers.boxed_clone()),
-                                {
-                                    let editor = editor.clone();
-                                    move |window, cx| {
-                                        editor
-                                            .update(cx, |editor, cx| {
-                                                editor.toggle_line_numbers(
-                                                    &editor::actions::ToggleLineNumbers,
-                                                    window,
-                                                    cx,
-                                                );
-                                            })
-                                            .ok();
-                                    }
-                                },
-                            );
-
-                            menu = menu.toggleable_entry(
-                                "Selection Menu",
-                                selection_menu_enabled,
-                                IconPosition::Start,
-                                Some(editor::actions::ToggleSelectionMenu.boxed_clone()),
-                                {
-                                    let editor = editor.clone();
-                                    move |window, cx| {
-                                        editor
-                                            .update(cx, |editor, cx| {
-                                                editor.toggle_selection_menu(
-                                                    &editor::actions::ToggleSelectionMenu,
-                                                    window,
-                                                    cx,
-                                                )
-                                            })
-                                            .ok();
-                                    }
-                                },
-                            );
-
-                            menu = menu.toggleable_entry(
-                                "Auto Signature Help",
-                                auto_signature_help_enabled,
-                                IconPosition::Start,
-                                Some(editor::actions::ToggleAutoSignatureHelp.boxed_clone()),
-                                {
-                                    let editor = editor.clone();
-                                    move |window, cx| {
-                                        editor
-                                            .update(cx, |editor, cx| {
-                                                editor.toggle_auto_signature_help_menu(
-                                                    &editor::actions::ToggleAutoSignatureHelp,
-                                                    window,
-                                                    cx,
-                                                );
-                                            })
-                                            .ok();
-                                    }
-                                },
-                            );
-
-                            menu = menu.separator();
-
-                            menu = menu.toggleable_entry(
-                                "Inline Git Blame",
-                                git_blame_inline_enabled,
-                                IconPosition::Start,
-                                Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
-                                {
-                                    let editor = editor.clone();
-                                    move |window, cx| {
-                                        editor
-                                            .update(cx, |editor, cx| {
-                                                editor.toggle_git_blame_inline(
-                                                    &editor::actions::ToggleGitBlameInline,
-                                                    window,
-                                                    cx,
-                                                )
-                                            })
-                                            .ok();
-                                    }
-                                },
-                            );
-
-                            menu = menu.toggleable_entry(
-                                "Column Git Blame",
-                                show_git_blame_gutter,
-                                IconPosition::Start,
-                                Some(git::Blame.boxed_clone()),
-                                {
-                                    let editor = editor.clone();
-                                    move |window, cx| {
-                                        editor
-                                            .update(cx, |editor, cx| {
-                                                editor.toggle_git_blame(
-                                                    &git::Blame,
-                                                    window,
-                                                    cx,
-                                                )
-                                            })
-                                            .ok();
-                                    }
-                                },
-                            );
-
-                            if let Some(fs) = fs.clone() {
-                                menu = menu.toggleable_entry(
-                                    "Diff Against Default Branch",
-                                    diff_against_default_branch,
-                                    IconPosition::Start,
-                                    None,
-                                    {
-                                        move |_window, cx| {
-                                            let diff_base = if diff_against_default_branch {
-                                                GitDiffBaseSetting::Head
-                                            } else {
-                                                GitDiffBaseSetting::DefaultBranch
-                                            };
-                                            update_settings_file(fs.clone(), cx, move |settings, _| {
-                                                settings.git.get_or_insert_default().diff_base =
-                                                    Some(diff_base);
-                                            });
-                                        }
-                                    },
-                                );
-                            }
-
-                            menu = menu.separator();
-
-                            menu = menu.toggleable_entry(
-                                "Vim Mode",
-                                vim_mode_enabled,
-                                IconPosition::Start,
-                                None,
-                                {
-                                    move |window, cx| {
-                                        let new_value = !vim_mode_enabled;
-                                        VimModeSetting::override_global(VimModeSetting(new_value), cx);
-                                        HelixModeSetting::override_global(HelixModeSetting(false), cx);
-                                        window.refresh();
-                                    }
-                                },
-                            );
-                            menu = menu.toggleable_entry(
-                                "Helix Mode",
-                                helix_mode_enabled,
-                                IconPosition::Start,
-                                None,
-                                {
-                                    move |window, cx| {
-                                        let new_value = !helix_mode_enabled;
-                                        HelixModeSetting::override_global(HelixModeSetting(new_value), cx);
-                                        VimModeSetting::override_global(VimModeSetting(false), cx);
-                                        window.refresh();
-                                    }
-                                }
-                            );
-
-                            menu
-                        }
-                    });
-                    Some(menu)
-                })
-        };
-
-        h_flex()
+        let mut container = h_flex()
             .id("quick action bar")
-            .gap(DynamicSpacing::Base01.rems(cx))
-            .children(self.render_repl_menu(cx))
-            .children(self.render_preview_button(cx))
-            .children(search_button)
-            .when(
-                AgentSettings::get_global(cx).enabled(cx) && AgentSettings::get_global(cx).button,
-                |bar| bar.child(assistant_button),
-            )
-            .children(code_actions_dropdown)
-            .children(editor_selections_dropdown)
-            .child(editor_settings_dropdown)
+            .gap(DynamicSpacing::Base01.rems(cx));
+
+        for item in &self.items {
+            let Some(element) = item.render(window, cx) else {
+                continue;
+            };
+            container = container.child(Self::render_element(
+                item.id().into(),
+                element,
+                &focus_handle,
+                cx,
+            ));
+        }
+
+        container.into_any_element()
     }
 }
 
 impl EventEmitter<ToolbarItemEvent> for QuickActionBar {}
-
-#[derive(IntoElement)]
-struct QuickActionBarButton {
-    id: ElementId,
-    icon: IconName,
-    toggled: bool,
-    action: Box<dyn Action>,
-    focus_handle: FocusHandle,
-    tooltip: SharedString,
-    on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
-}
-
-impl QuickActionBarButton {
-    fn new(
-        id: impl Into<ElementId>,
-        icon: IconName,
-        toggled: bool,
-        action: Box<dyn Action>,
-        focus_handle: FocusHandle,
-        tooltip: impl Into<SharedString>,
-        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            icon,
-            toggled,
-            action,
-            focus_handle,
-            tooltip: tooltip.into(),
-            on_click: Box::new(on_click),
-        }
-    }
-}
-
-impl RenderOnce for QuickActionBarButton {
-    fn render(self, _window: &mut Window, _: &mut App) -> impl IntoElement {
-        let tooltip = self.tooltip.clone();
-        let action = self.action.boxed_clone();
-
-        IconButton::new(self.id.clone(), self.icon)
-            .icon_size(IconSize::Small)
-            .style(ButtonStyle::Subtle)
-            .toggle_state(self.toggled)
-            .tooltip(move |_window, cx| {
-                Tooltip::for_action_in(tooltip.clone(), &*action, &self.focus_handle, cx)
-            })
-            .on_click(move |event, window, cx| (self.on_click)(event, window, cx))
-    }
-}
 
 impl ToolbarItemView for QuickActionBar {
     fn set_active_pane_item(
@@ -777,47 +376,400 @@ impl ToolbarItemView for QuickActionBar {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        self.active_item = active_pane_item.map(ItemHandle::boxed_clone);
-        if let Some(active_item) = active_pane_item {
-            self._inlay_hints_enabled_subscription.take();
+        self.target =
+            active_pane_item.map(|item| QuickActionTarget::new(item, self.workspace.clone()));
 
-            if let Some(editor) = active_item.downcast::<Editor>() {
-                let (
-                    mut inlay_hints_enabled,
-                    mut supports_inlay_hints,
-                    mut supports_semantic_tokens,
-                ) = editor.update(cx, |editor, cx| {
-                    (
-                        editor.inlay_hints_enabled(),
-                        editor.supports_inlay_hints(cx),
-                        editor.supports_semantic_tokens(cx),
-                    )
-                });
-                self._inlay_hints_enabled_subscription =
-                    Some(cx.observe(&editor, move |_, editor, cx| {
-                        let (
-                            new_inlay_hints_enabled,
-                            new_supports_inlay_hints,
-                            new_supports_semantic_tokens,
-                        ) = editor.update(cx, |editor, cx| {
-                            (
-                                editor.inlay_hints_enabled(),
-                                editor.supports_inlay_hints(cx),
-                                editor.supports_semantic_tokens(cx),
-                            )
-                        });
-                        let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
-                            || supports_inlay_hints != new_supports_inlay_hints
-                            || supports_semantic_tokens != new_supports_semantic_tokens;
-                        inlay_hints_enabled = new_inlay_hints_enabled;
-                        supports_inlay_hints = new_supports_inlay_hints;
-                        supports_semantic_tokens = new_supports_semantic_tokens;
-                        if should_notify {
-                            cx.notify()
-                        }
-                    }));
-            }
+        self._editor_subscription = self
+            .target
+            .as_ref()
+            .and_then(|target| target.editor())
+            .filter(|_| self.uses_trigger(VisibilityTrigger::Editor))
+            .map(|editor| {
+                cx.observe(editor, |this, _, cx| {
+                    this.refresh(Some(VisibilityTrigger::Editor), cx)
+                })
+            });
+
+        // Drop contexts resolved against the previous target right away; they may hold
+        // handles to it.
+        for item in &mut self.items {
+            item.refresh(None, cx);
         }
-        self.get_toolbar_item_location()
+
+        // Toolbar items are routinely activated from within an update of another entity (for
+        // example the workspace opening a path), so resolving items right here would forbid
+        // them from reading such entities. Report the bar as hidden for now and resolve once
+        // the current effect cycle ends, which still happens before the next frame is drawn.
+        let bar = cx.weak_entity();
+        cx.defer(move |cx| {
+            bar.update(cx, |bar, cx| bar.refresh(None, cx)).ok();
+        });
+        self.toolbar_item_location()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::zed::tests::init_test;
+    use editor::Editor;
+    use gpui::{TestAppContext, UpdateGlobal, WindowHandle};
+    use project::Project;
+    use std::{
+        cell::{Cell, RefCell},
+        marker::PhantomData,
+        rc::Rc,
+    };
+    use workspace::MultiWorkspace;
+
+    trait TestConfig: 'static {
+        const ID: &'static str;
+        const TRIGGERS: &'static [VisibilityTrigger];
+    }
+
+    struct NoTriggers;
+    impl TestConfig for NoTriggers {
+        const ID: &'static str = "none";
+        const TRIGGERS: &'static [VisibilityTrigger] = &[];
+    }
+
+    struct SettingsTrigger;
+    impl TestConfig for SettingsTrigger {
+        const ID: &'static str = "settings";
+        const TRIGGERS: &'static [VisibilityTrigger] = &[VisibilityTrigger::Settings];
+    }
+
+    struct EditorTrigger;
+    impl TestConfig for EditorTrigger {
+        const ID: &'static str = "editor";
+        const TRIGGERS: &'static [VisibilityTrigger] = &[VisibilityTrigger::Editor];
+    }
+
+    struct SettingsAndEditorTriggers;
+    impl TestConfig for SettingsAndEditorTriggers {
+        const ID: &'static str = "both";
+        const TRIGGERS: &'static [VisibilityTrigger] =
+            &[VisibilityTrigger::Settings, VisibilityTrigger::Editor];
+    }
+
+    struct ReplStoreTrigger;
+    impl TestConfig for ReplStoreTrigger {
+        const ID: &'static str = "repl";
+        const TRIGGERS: &'static [VisibilityTrigger] = &[VisibilityTrigger::ReplStore];
+    }
+
+    #[derive(Clone, Default)]
+    struct TestItemState {
+        visible: Rc<Cell<bool>>,
+        context_checks: Rc<Cell<usize>>,
+        clicks: Rc<Cell<usize>>,
+    }
+
+    struct TestItem<C: TestConfig> {
+        state: TestItemState,
+        _config: PhantomData<C>,
+    }
+
+    impl<C: TestConfig> TestItem<C> {
+        fn new(visible: bool) -> (Self, TestItemState) {
+            let state = TestItemState::default();
+            state.visible.set(visible);
+            let item = Self {
+                state: state.clone(),
+                _config: PhantomData,
+            };
+            (item, state)
+        }
+    }
+
+    impl<C: TestConfig> QuickActionBarItem for TestItem<C> {
+        type Context = ();
+        const ID: &'static str = C::ID;
+        const TRIGGERS: &'static [VisibilityTrigger] = C::TRIGGERS;
+
+        fn context(&self, _target: &QuickActionTarget, _cx: &mut App) -> Option<()> {
+            self.state
+                .context_checks
+                .set(self.state.context_checks.get() + 1);
+            self.state.visible.get().then_some(())
+        }
+
+        fn render(&self, _: &(), _window: &mut Window, _cx: &mut App) -> QuickActionElement {
+            let clicks = self.state.clicks.clone();
+            QuickActionElement::Button(QuickActionButton::new(
+                IconName::Check,
+                C::ID,
+                move |_, _| clicks.set(clicks.get() + 1),
+            ))
+        }
+    }
+
+    struct TestBar {
+        window: WindowHandle<MultiWorkspace>,
+        editor: Entity<Editor>,
+        bar: Entity<QuickActionBar>,
+        locations: Rc<RefCell<Vec<ToolbarItemLocation>>>,
+    }
+
+    async fn build_bar(
+        cx: &mut TestAppContext,
+        items: Vec<Box<dyn AnyQuickActionItem>>,
+    ) -> TestBar {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let locations = Rc::new(RefCell::new(Vec::new()));
+
+        let (editor, bar) = window
+            .update(cx, |_, window, cx| {
+                let editor = cx.new(|cx| Editor::single_line(window, cx));
+                let bar = cx.new(|cx| {
+                    QuickActionBar::with_items(items, workspace.read(cx).weak_handle(), cx)
+                });
+                (editor, bar)
+            })
+            .unwrap();
+        cx.update(|cx| {
+            cx.subscribe(&bar, {
+                let locations = locations.clone();
+                move |_, event, _| {
+                    let ToolbarItemEvent::ChangeLocation(location) = event;
+                    locations.borrow_mut().push(*location);
+                }
+            })
+            .detach();
+        });
+
+        TestBar {
+            window,
+            editor,
+            bar,
+            locations,
+        }
+    }
+
+    impl TestBar {
+        /// Activates `item` and returns the location the bar settled on once the deferred
+        /// evaluation ran; `set_active_pane_item` itself always reports `Hidden`.
+        fn set_active_item(
+            &self,
+            item: Option<Entity<Editor>>,
+            cx: &mut TestAppContext,
+        ) -> ToolbarItemLocation {
+            let provisional_location = self
+                .window
+                .update(cx, |_, window, cx| {
+                    self.bar.update(cx, |bar, cx| {
+                        bar.set_active_pane_item(
+                            item.as_ref().map(|editor| editor as &dyn ItemHandle),
+                            window,
+                            cx,
+                        )
+                    })
+                })
+                .unwrap();
+            assert_eq!(provisional_location, ToolbarItemLocation::Hidden);
+            cx.run_until_parked();
+            self.bar.read_with(cx, |bar, _| bar.toolbar_item_location())
+        }
+
+        fn notify_editor(&self, cx: &mut TestAppContext) {
+            self.editor.update(cx, |_, cx| cx.notify());
+            cx.run_until_parked();
+        }
+
+        fn notify_repl_store(&self, cx: &mut TestAppContext) {
+            cx.update(|cx| repl::ReplStore::global(cx).update(cx, |_, cx| cx.notify()));
+            cx.run_until_parked();
+        }
+
+        fn set_quick_actions_setting(&self, enabled: bool, cx: &mut TestAppContext) {
+            cx.update(|cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings
+                            .editor
+                            .toolbar
+                            .get_or_insert_default()
+                            .quick_actions = Some(enabled);
+                    });
+                });
+            });
+            cx.run_until_parked();
+        }
+
+        fn visible_ids(&self, cx: &mut TestAppContext) -> Vec<&'static str> {
+            self.bar.read_with(cx, |bar, _| {
+                bar.items
+                    .iter()
+                    .filter(|item| item.is_visible())
+                    .map(|item| item.id())
+                    .collect()
+            })
+        }
+
+        /// Renders every item the bar would show and clicks each resulting button.
+        fn click_all_visible(&self, cx: &mut TestAppContext) {
+            self.window
+                .update(cx, |_, window, cx| {
+                    self.bar.update(cx, |bar, cx| {
+                        for item in &bar.items {
+                            match item.render(window, cx) {
+                                Some(QuickActionElement::Button(button)) => {
+                                    (button.on_click)(window, cx)
+                                }
+                                Some(_) => panic!("test items only render buttons"),
+                                None => {}
+                            }
+                        }
+                    })
+                })
+                .unwrap();
+        }
+
+        fn take_locations(&self) -> Vec<ToolbarItemLocation> {
+            std::mem::take(&mut *self.locations.borrow_mut())
+        }
+    }
+
+    #[gpui::test]
+    async fn test_context_is_only_refreshed_for_declared_triggers(cx: &mut TestAppContext) {
+        let (none, none_state) = TestItem::<NoTriggers>::new(true);
+        let (settings, settings_state) = TestItem::<SettingsTrigger>::new(true);
+        let (editor, editor_state) = TestItem::<EditorTrigger>::new(true);
+        let (both, both_state) = TestItem::<SettingsAndEditorTriggers>::new(true);
+        let states = [none_state, settings_state, editor_state, both_state];
+        let checks = || {
+            states
+                .iter()
+                .map(|state| state.context_checks.get())
+                .collect::<Vec<_>>()
+        };
+
+        let bar = build_bar(
+            cx,
+            vec![erase(none), erase(settings), erase(editor), erase(both)],
+        )
+        .await;
+        assert_eq!(
+            checks(),
+            [0, 0, 0, 0],
+            "nothing is resolved without a target"
+        );
+
+        let location = bar.set_active_item(Some(bar.editor.clone()), cx);
+        assert_eq!(location, ToolbarItemLocation::PrimaryRight);
+        assert_eq!(checks(), [1, 1, 1, 1], "a new target resolves every item");
+
+        bar.notify_editor(cx);
+        assert_eq!(
+            checks(),
+            [1, 1, 2, 2],
+            "editor notifications only hit editor triggers"
+        );
+
+        // The editor reacts to settings changes by notifying, so editor-triggered items may
+        // legitimately be re-resolved here as well; only the other two counts are exact.
+        bar.set_quick_actions_setting(false, cx);
+        let checks = checks();
+        assert_eq!(checks[0], 1, "items without triggers are never re-resolved");
+        assert_eq!(checks[1], 2, "settings changes hit settings triggers");
+
+        // Hiding an item is only picked up through one of its declared triggers.
+        states[0].visible.set(false);
+        states[1].visible.set(false);
+        bar.notify_editor(cx);
+        assert_eq!(bar.visible_ids(cx), ["none", "settings", "editor", "both"]);
+        bar.set_quick_actions_setting(true, cx);
+        assert_eq!(bar.visible_ids(cx), ["none", "editor", "both"]);
+
+        states[2].visible.set(false);
+        bar.notify_editor(cx);
+        assert_eq!(bar.visible_ids(cx), ["none", "both"]);
+    }
+
+    #[gpui::test]
+    async fn test_repl_store_trigger_is_only_observed_when_declared(cx: &mut TestAppContext) {
+        let (none, none_state) = TestItem::<NoTriggers>::new(true);
+        let (repl, repl_state) = TestItem::<ReplStoreTrigger>::new(true);
+        let bar = build_bar(cx, vec![erase(none), erase(repl)]).await;
+        bar.set_active_item(Some(bar.editor.clone()), cx);
+
+        repl_state.visible.set(false);
+        bar.notify_repl_store(cx);
+        assert_eq!(none_state.context_checks.get(), 1);
+        assert_eq!(repl_state.context_checks.get(), 2);
+        assert_eq!(bar.visible_ids(cx), ["none"]);
+
+        let (none, _) = TestItem::<NoTriggers>::new(true);
+        let bar_without_repl = build_bar(cx, vec![erase(none)]).await;
+        assert_eq!(
+            bar_without_repl
+                .bar
+                .read_with(cx, |bar, _| bar._global_subscriptions.len()),
+            1,
+            "only the settings store is observed when no item needs the repl store"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_location_follows_visibility_and_setting(cx: &mut TestAppContext) {
+        let (item, state) = TestItem::<EditorTrigger>::new(false);
+        let bar = build_bar(cx, vec![erase(item)]).await;
+
+        assert_eq!(
+            bar.set_active_item(Some(bar.editor.clone()), cx),
+            ToolbarItemLocation::Hidden,
+            "hidden while no item is visible"
+        );
+
+        state.visible.set(true);
+        bar.notify_editor(cx);
+        assert_eq!(bar.take_locations(), [ToolbarItemLocation::PrimaryRight]);
+
+        bar.notify_editor(cx);
+        assert_eq!(bar.take_locations(), [], "no event when nothing changed");
+
+        bar.set_quick_actions_setting(false, cx);
+        assert_eq!(bar.take_locations(), [ToolbarItemLocation::Hidden]);
+
+        bar.set_quick_actions_setting(true, cx);
+        assert_eq!(bar.take_locations(), [ToolbarItemLocation::PrimaryRight]);
+
+        state.visible.set(false);
+        bar.notify_editor(cx);
+        assert_eq!(bar.take_locations(), [ToolbarItemLocation::Hidden]);
+
+        state.visible.set(true);
+        assert_eq!(
+            bar.set_active_item(None, cx),
+            ToolbarItemLocation::Hidden,
+            "hidden without a target regardless of item state"
+        );
+        assert_eq!(bar.visible_ids(cx), Vec::<&str>::new());
+    }
+
+    #[gpui::test]
+    async fn test_only_items_with_a_context_are_rendered(cx: &mut TestAppContext) {
+        let (hidden, hidden_state) = TestItem::<NoTriggers>::new(false);
+        let (shown, shown_state) = TestItem::<EditorTrigger>::new(true);
+        let bar = build_bar(cx, vec![erase(hidden), erase(shown)]).await;
+        bar.set_active_item(Some(bar.editor.clone()), cx);
+
+        bar.click_all_visible(cx);
+        assert_eq!(hidden_state.clicks.get(), 0);
+        assert_eq!(shown_state.clicks.get(), 1);
+
+        shown_state.visible.set(false);
+        bar.notify_editor(cx);
+        bar.click_all_visible(cx);
+        assert_eq!(
+            shown_state.clicks.get(),
+            1,
+            "items lose their context when hidden"
+        );
     }
 }

@@ -295,10 +295,13 @@ impl ReplStore {
         &mut self,
         worktree_id: WorktreeId,
         kernelspec: KernelSpecification,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.selected_kernel_for_worktree
             .insert(worktree_id, kernelspec);
+        // The selection is per worktree, so editors other than the one it was picked from may
+        // become REPL-capable and need to learn about it.
+        cx.notify();
     }
 
     pub fn active_python_toolchain_path(&self, worktree_id: WorktreeId) -> Option<&SharedString> {
@@ -404,12 +407,19 @@ impl ReplStore {
         self.sessions.get(&entity_id)
     }
 
-    pub fn insert_session(&mut self, entity_id: EntityId, session: Entity<Session>) {
+    pub fn insert_session(
+        &mut self,
+        entity_id: EntityId,
+        session: Entity<Session>,
+        cx: &mut Context<Self>,
+    ) {
         self.sessions.insert(entity_id, session);
+        cx.notify();
     }
 
-    pub fn remove_session(&mut self, entity_id: EntityId) {
+    pub fn remove_session(&mut self, entity_id: EntityId, cx: &mut Context<Self>) {
         self.sessions.remove(&entity_id);
+        cx.notify();
     }
 
     fn shutdown_all_sessions(
