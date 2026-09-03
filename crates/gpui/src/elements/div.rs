@@ -2346,9 +2346,10 @@ impl Interactivity {
             }
 
             let rem_size = window.rem_size();
-            // Taffy lays the box out with the padding snapped to the device pixel grid
-            // (`to_taffy`); recomputed unsnapped, e.g. `py_1` at a fractional rem size, it
-            // exceeds `bounds` and leaves the box scrollable by the sub-pixel difference.
+            // Taffy lays the box out with the padding snapped to the device pixel
+            // grid (`to_taffy`); recomputed unsnapped, e.g. py_1 at a fractional
+            // rem size, it exceeds `bounds` and leaves the box scrollable by the
+            // sub-pixel difference.
             let padding = style
                 .padding
                 .to_pixels(bounds.size.into(), rem_size)
@@ -5171,6 +5172,48 @@ mod tests {
         assert_eq!(focused, Some(item_b.id));
     }
 
+    #[gpui::test]
+    fn test_fractional_padding_does_not_make_a_fitting_container_scrollable(
+        cx: &mut TestAppContext,
+    ) {
+        struct PaddedContainer {
+            scroll_handle: ScrollHandle,
+        }
+
+        impl Render for PaddedContainer {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
+                // 4.25px of padding snaps to 4px in layout, so a 42px child
+                // fits the 50px box exactly.
+                div().size_full().child(
+                    div()
+                        .id("container")
+                        .h(px(50.))
+                        .w(px(100.))
+                        .py(px(4.25))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle)
+                        .child(div().w_full().h(px(42.))),
+                )
+            }
+        }
+
+        let scroll_handle = ScrollHandle::new();
+        let window: AnyWindowHandle = cx
+            .add_window({
+                let scroll_handle = scroll_handle.clone();
+                move |_, _| PaddedContainer { scroll_handle }
+            })
+            .into();
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+
+        assert_eq!(scroll_handle.max_offset().y, px(0.));
+    }
+
     struct ContentSizedGrid;
 
     impl Render for ContentSizedGrid {
@@ -5208,47 +5251,5 @@ mod tests {
         assert_eq!(bounds("cell-0").origin.x, px(0.));
         assert_eq!(bounds("cell-1").origin.x, px(100.));
         assert_eq!(bounds("cell-2").origin.x, px(300.));
-    }
-
-    #[gpui::test]
-    fn test_fractional_padding_does_not_make_a_fitting_container_scrollable(
-        cx: &mut TestAppContext,
-    ) {
-        struct PaddedContainer {
-            scroll_handle: ScrollHandle,
-        }
-
-        impl Render for PaddedContainer {
-            fn render(
-                &mut self,
-                _window: &mut Window,
-                _cx: &mut Context<Self>,
-            ) -> impl IntoElement {
-                // 4.25px of padding snaps to 4px in layout, so a 42px child fits the 50px box
-                // exactly.
-                div().size_full().child(
-                    div()
-                        .id("container")
-                        .h(px(50.))
-                        .w(px(100.))
-                        .py(px(4.25))
-                        .overflow_y_scroll()
-                        .track_scroll(&self.scroll_handle)
-                        .child(div().w_full().h(px(42.))),
-                )
-            }
-        }
-
-        let scroll_handle = ScrollHandle::new();
-        let window: AnyWindowHandle = cx
-            .add_window({
-                let scroll_handle = scroll_handle.clone();
-                move |_, _| PaddedContainer { scroll_handle }
-            })
-            .into();
-        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
-            .unwrap();
-
-        assert_eq!(scroll_handle.max_offset().y, px(0.));
     }
 }

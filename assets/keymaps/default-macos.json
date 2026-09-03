@@ -889,6 +889,13 @@
     },
   },
   {
+    "context": "Editor && inline_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm",
+    },
+  },
+  {
     "context": "Editor && showing_completions",
     "use_key_equivalents": true,
     "bindings": {
@@ -1479,6 +1486,13 @@
       "cmd-shift-c": "keymap_editor::CopyContext",
       "cmd-t": "keymap_editor::ShowMatchingKeybinds",
       "cmd-e": "zed::OpenKeymapFile",
+    },
+  },
+  {
+    "context": "KeymapEditor > BufferSearchBar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-alt-f": "keymap_editor::ToggleKeystrokeSearch",
     },
   },
   {

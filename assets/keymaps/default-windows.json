@@ -826,6 +826,13 @@
     },
   },
   {
+    "context": "Editor && inline_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm",
+    },
+  },
+  {
     "context": "Editor && showing_completions",
     "use_key_equivalents": true,
     "bindings": {

@@ -836,6 +836,12 @@
     },
   },
   {
+    "context": "Editor && inline_input",
+    "bindings": {
+      "enter": "menu::Confirm",
+    },
+  },
+  {
     "context": "Editor && showing_completions",
     "bindings": {
       "enter": "editor::ConfirmCompletion",
@@ -1395,6 +1401,12 @@
       "ctrl-shift-c": "keymap_editor::CopyContext",
       "ctrl-t": "keymap_editor::ShowMatchingKeybinds",
       "ctrl-e": "zed::OpenKeymapFile",
+    },
+  },
+  {
+    "context": "KeymapEditor > BufferSearchBar",
+    "bindings": {
+      "alt-ctrl-f": "keymap_editor::ToggleKeystrokeSearch",
     },
   },
   {

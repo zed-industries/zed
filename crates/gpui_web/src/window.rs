@@ -11,8 +11,9 @@ use gpui::{
     AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs,
     Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, Scene, Size, TextInputConfiguration, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
+    ResizeEdge, Scene, Size, TextInputConfiguration, TextInputStateChange, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
+    WindowParams, px,
 };
 use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 use wasm_bindgen::prelude::*;
@@ -689,6 +690,14 @@ impl PlatformWindow for WebWindow {
 
     fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
         self.inner.ime_mirror.apply_configuration(&configuration);
+    }
+
+    fn text_input_state_changed(&self, change: TextInputStateChange) {
+        match change {
+            TextInputStateChange::FocusGained => self.inner.sync_virtual_keyboard(true),
+            TextInputStateChange::FocusLost => self.inner.sync_virtual_keyboard(false),
+            TextInputStateChange::SelectionChanged | TextInputStateChange::ContentChanged => {}
+        }
     }
 
     fn prompt(

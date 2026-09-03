@@ -1,6 +1,6 @@
 use crate::{
     Bounds, Capslock, Context, Empty, IntoElement, Keystroke, LongPressEvent, Modifiers, Pixels,
-    Point, Render, Window, point, seal::Sealed,
+    Point, Render, TouchDragEvent, Window, point, seal::Sealed,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
@@ -791,6 +791,8 @@ pub enum PlatformInput {
     Pinch(PinchEvent),
     /// A long-press gesture recognized from touch input.
     LongPress(LongPressEvent),
+    /// A direct touch drag claimed by an element.
+    TouchDrag(TouchDragEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
     /// A raw touch event on a touch screen.
@@ -811,6 +813,7 @@ impl PlatformInput {
             PlatformInput::ScrollWheel(event) => Some(event),
             PlatformInput::Pinch(event) => Some(event),
             PlatformInput::LongPress(event) => Some(event),
+            PlatformInput::TouchDrag(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
             PlatformInput::Touch(_) => None,
         }
@@ -829,6 +832,7 @@ impl PlatformInput {
             PlatformInput::ScrollWheel(_) => None,
             PlatformInput::Pinch(_) => None,
             PlatformInput::LongPress(_) => None,
+            PlatformInput::TouchDrag(_) => None,
             PlatformInput::FileDrop(_) => None,
             PlatformInput::Touch(_) => None,
         }
@@ -849,6 +853,7 @@ impl PlatformInput {
             PlatformInput::ScrollWheel(_) => "scroll_wheel",
             PlatformInput::Pinch(_) => "pinch",
             PlatformInput::LongPress(_) => "long_press",
+            PlatformInput::TouchDrag(_) => "touch_drag",
             PlatformInput::FileDrop(_) => "file_drop",
             PlatformInput::Touch(_) => "touch",
         }
