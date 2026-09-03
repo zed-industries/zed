@@ -1050,6 +1050,93 @@ fn test_comment_triggered_injection_toggle(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_injections_are_preserved_when_a_sibling_layer_is_reparsed(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let markdown = markdown_lang();
+    registry.add(markdown.clone());
+    registry.add(Arc::new(markdown_inline_lang_with_html_injections()));
+    registry.add(Arc::new(html_lang_with_injections()));
+
+    // Each list item is a separate inline layer, so the inline HTML of each item lives
+    // in its own injection layer.
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "- one <!--first-->\n- two <!--second-->\n- three <b>3</b>".to_string(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(markdown.clone(), &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["comment", "tag"],
+        "- one «<!--first-->»\n- two «<!--second-->»\n- three <«b»>3</«b»>",
+    );
+
+    // Editing one list item must not invalidate the injections of the adjacent items,
+    // whose own layers are not reparsed and would therefore never be restored.
+    let second_item_end = buffer.as_rope().to_string().rfind('\n').unwrap();
+    buffer.edit([(second_item_end..second_item_end, " ")]);
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(markdown, &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["comment", "tag"],
+        "- one «<!--first-->»\n- two «<!--second-->» \n- three <«b»>3</«b»>",
+    );
+}
+
+#[gpui::test]
+fn test_injections_are_preserved_when_an_abutting_layer_is_reparsed(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let markdown = markdown_lang();
+    registry.add(markdown.clone());
+    registry.add(Arc::new(markdown_inline_lang_with_html_injections()));
+    registry.add(Arc::new(html_lang_with_injections()));
+
+    // A line starting with a comment is an HTML block, so the first two lines become HTML
+    // layers of their own, while the last two lines are one paragraph whose inline layer
+    // has HTML injected into it. The second HTML block ends exactly where that paragraph
+    // begins.
+    let text = "<!--first--> a\n<!--second--> b\n<b>c</b> d\n<i>e</i> f";
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        text.to_string(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(markdown.clone(), &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["comment", "tag"],
+        "«<!--first-->» a\n«<!--second-->» b\n<«b»>c</«b»> d\n<«i»>e</«i»> f",
+    );
+
+    // Reparsing the second HTML block must not invalidate the HTML injected into the
+    // paragraph that starts at its end offset.
+    let second_block_end = text.find("\n<b>").unwrap();
+    buffer.edit([(second_block_end..second_block_end, " ")]);
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(markdown, &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["comment", "tag"],
+        "«<!--first-->» a\n«<!--second-->» b \n<«b»>c</«b»> d\n<«i»>e</«i»> f",
+    );
+}
+
+#[gpui::test]
 fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     let text = r#"
         <body>
@@ -1476,6 +1563,56 @@ fn html_lang() -> Language {
             (tag_name) @tag
             (erroneous_end_tag_name) @tag
             (attribute_name) @property
+        "#,
+    )
+    .unwrap()
+}
+
+/// Like [`markdown_inline_lang`], but injecting HTML into inline HTML tags, the way
+/// the real Markdown-Inline queries do.
+fn markdown_inline_lang_with_html_injections() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Markdown-Inline".into(),
+            hidden: true,
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_md::INLINE_LANGUAGE.into()),
+    )
+    .with_highlights_query("(emphasis) @emphasis")
+    .unwrap()
+    .with_injection_query(
+        r#"
+            ((html_tag) @injection.content
+              (#set! injection.language "html")
+              (#set! injection.combined))
+        "#,
+    )
+    .unwrap()
+}
+
+/// Like [`html_lang`], but with an injection query, so that reparsing an HTML layer
+/// invalidates the layers injected into it.
+fn html_lang_with_injections() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "HTML".into(),
+            matcher: (LanguageMatcher {
+                path_suffixes: vec!["html".to_string()],
+                ..Default::default()
+            })
+            .into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_html::LANGUAGE.into()),
+    )
+    .with_highlights_query("(comment) @comment (tag_name) @tag")
+    .unwrap()
+    .with_injection_query(
+        r#"
+            (script_element
+              (raw_text) @injection.content
+              (#set! injection.language "javascript"))
         "#,
     )
     .unwrap()
