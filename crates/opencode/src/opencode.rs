@@ -78,6 +78,8 @@ pub enum Model {
     ClaudeSonnet5,
     #[serde(rename = "claude-fable-5")]
     ClaudeFable5,
+    #[serde(rename = "claude-fable-5-1")]
+    ClaudeFable5_1,
 
     // -- OpenAI Responses API models --
     #[serde(rename = "gpt-5.6-sol")]
@@ -274,6 +276,7 @@ impl Model {
             Self::ClaudeHaiku4_5 => "claude-haiku-4-5",
             Self::ClaudeSonnet5 => "claude-sonnet-5",
             Self::ClaudeFable5 => "claude-fable-5",
+            Self::ClaudeFable5_1 => "claude-fable-5-1",
 
             Self::Gpt5_6Sol => "gpt-5.6-sol",
             Self::Gpt5_6Terra => "gpt-5.6-terra",
@@ -349,6 +352,7 @@ impl Model {
             Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
             Self::ClaudeSonnet5 => "Claude Sonnet 5",
             Self::ClaudeFable5 => "Claude Fable 5",
+            Self::ClaudeFable5_1 => "Claude Fable 5.1",
 
             Self::Gpt5_6Sol => "GPT 5.6 Sol",
             Self::Gpt5_6Terra => "GPT 5.6 Terra",
@@ -426,6 +430,7 @@ impl Model {
             }
 
             Self::ClaudeFable5
+            | Self::ClaudeFable5_1
             | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
@@ -533,7 +538,7 @@ impl Model {
             Self::ClaudeOpus4_5 | Self::ClaudeHaiku4_5 => 200_000,
             Self::ClaudeSonnet4 => 1_000_000,
             Self::ClaudeSonnet5 => 1_000_000,
-            Self::ClaudeFable5 => 1_000_000,
+            Self::ClaudeFable5 | Self::ClaudeFable5_1 => 1_000_000,
 
             // OpenAI models
             Self::Gpt5_6Sol | Self::Gpt5_6Terra | Self::Gpt5_6Luna => 1_050_000,
@@ -612,7 +617,7 @@ impl Model {
             | Self::ClaudeHaiku4_5
             | Self::ClaudeSonnet4 => Some(64_000),
             Self::ClaudeSonnet5 => Some(128_000),
-            Self::ClaudeFable5 => Some(128_000),
+            Self::ClaudeFable5 | Self::ClaudeFable5_1 => Some(128_000),
 
             // OpenAI models
             Self::Gpt5_6Sol
@@ -706,7 +711,8 @@ impl Model {
             | Self::ClaudeSonnet4
             | Self::ClaudeHaiku4_5
             | Self::ClaudeSonnet5
-            | Self::ClaudeFable5 => true,
+            | Self::ClaudeFable5
+            | Self::ClaudeFable5_1 => true,
 
             // OpenAI models support images
             Self::Gpt5_6Sol
@@ -786,6 +792,7 @@ impl Model {
         match self {
             // Anthropic models
             Self::ClaudeFable5
+            | Self::ClaudeFable5_1
             | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
