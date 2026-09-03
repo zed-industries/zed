@@ -7,6 +7,7 @@ use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use semver::Version as SemanticVersion;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use std::{
     path::{Path, PathBuf},
@@ -53,7 +54,13 @@ pub struct DockerConnectionOptions {
 }
 
 pub(crate) struct DockerExecConnection {
-    proxy_process: Mutex<Option<u32>>,
+    /// PIDs of the local `docker exec` processes running a proxy over this
+    /// connection. The connection is shared between all workspaces open in
+    /// the same container, each running its own proxy.
+    proxy_processes: Arc<Mutex<Vec<u32>>>,
+    /// Whether `kill()` has been called. Separate from `proxy_processes`
+    /// because a connection with no live proxies is still usable.
+    killed: AtomicBool,
     remote_dir_for_server: String,
     remote_binary_relpath: Option<Arc<RelPath>>,
     connection_options: DockerConnectionOptions,
@@ -70,7 +77,8 @@ impl DockerExecConnection {
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let mut this = Self {
-            proxy_process: Mutex::new(None),
+            proxy_processes: Arc::new(Mutex::new(Vec::new())),
+            killed: AtomicBool::new(false),
             remote_dir_for_server: "/".to_string(),
             remote_binary_relpath: None,
             connection_options,
@@ -628,19 +636,16 @@ impl DockerExecConnection {
         Ok(())
     }
 
-    fn kill_inner(&self) -> Result<()> {
-        if let Some(pid) = self.proxy_process.lock().take() {
-            if let Ok(_) = util::command::new_command("kill")
-                .arg(pid.to_string())
-                .spawn()
-            {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Failed to kill process"))
-            }
-        } else {
-            Ok(())
-        }
+}
+
+/// Deregisters a proxy process once the task driving it completes or is
+/// dropped, so that `kill()` only ever signals live processes. Removes a
+/// single occurrence: if the OS reused the pid for another proxy registered
+/// concurrently, that proxy's entry must stay tracked.
+fn deregister_proxy_process(proxy_processes: &Mutex<Vec<u32>>, pid: u32) {
+    let mut proxy_processes = proxy_processes.lock();
+    if let Some(index) = proxy_processes.iter().position(|p| *p == pid) {
+        proxy_processes.remove(index);
     }
 }
 
@@ -659,13 +664,6 @@ impl RemoteConnection for DockerExecConnection {
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
-        // We'll try connecting anew every time we open a devcontainer, so proactively try to kill any old connections.
-        if !self.has_been_killed() {
-            if let Err(e) = self.kill_inner() {
-                return Task::ready(Err(e));
-            };
-        }
-
         delegate.set_status(Some("Starting proxy"), cx);
 
         let Some(remote_binary_relpath) = self.remote_binary_relpath.clone() else {
@@ -718,10 +716,15 @@ impl RemoteConnection for DockerExecConnection {
             )));
         };
 
-        let mut proxy_process = self.proxy_process.lock();
-        *proxy_process = Some(child.id());
+        self.proxy_processes.lock().push(child.id());
+        let deregister_proxy = util::defer({
+            let pid = child.id();
+            let proxy_processes = self.proxy_processes.clone();
+            move || deregister_proxy_process(&proxy_processes, pid)
+        });
 
         cx.spawn(async move |cx| {
+            let _deregister_proxy = deregister_proxy;
             super::handle_rpc_messages_over_child_process_stdio(
                 child,
                 incoming_tx,
@@ -759,11 +762,37 @@ impl RemoteConnection for DockerExecConnection {
     }
 
     async fn kill(&self) -> Result<()> {
-        self.kill_inner()
+        self.killed.store(true, Ordering::Release);
+        let pids = std::mem::take(&mut *self.proxy_processes.lock());
+        let mut errors = Vec::new();
+        for pid in pids {
+            if let Err(error) = util::command::new_command("kill")
+                .arg(pid.to_string())
+                .spawn()
+            {
+                // Keep the pid tracked so a later `kill()` can retry it.
+                self.proxy_processes.lock().push(pid);
+                errors.push(format!("{pid}: {error}"));
+            }
+        }
+        anyhow::ensure!(
+            errors.is_empty(),
+            "failed to kill proxy processes: {}",
+            errors.join(", ")
+        );
+        Ok(())
     }
 
     fn has_been_killed(&self) -> bool {
-        self.proxy_process.lock().is_none()
+        self.killed.load(Ordering::Acquire)
+    }
+
+    fn kill_before_reconnect(&self) -> bool {
+        // Each client runs its own `docker exec` proxy and the reconnecting
+        // client's proxy is already gone by the time `reconnect` runs, so
+        // killing the shared connection would only tear down the proxies of
+        // other workspaces open in the same container.
+        false
     }
 
     fn build_command(
@@ -875,5 +904,114 @@ impl RemoteConnection for DockerExecConnection {
 
     fn default_system_shell(&self) -> String {
         String::from("/bin/sh")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_connection() -> DockerExecConnection {
+        DockerExecConnection {
+            proxy_processes: Arc::new(Mutex::new(Vec::new())),
+            killed: AtomicBool::new(false),
+            remote_dir_for_server: "/".to_string(),
+            remote_binary_relpath: None,
+            connection_options: DockerConnectionOptions::default(),
+            remote_platform: None,
+            os_version: None,
+            path_style: None,
+            shell: "sh".to_owned(),
+        }
+    }
+
+    #[cfg(unix)]
+    fn spawn_stand_in_proxy() -> util::command::Child {
+        util::command::new_command("sleep")
+            .arg("600")
+            // Panic-safe cleanup: a failed assertion must not leak the process.
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn stand-in proxy process")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_kill_terminates_all_registered_proxies() {
+        let connection = test_connection();
+        assert!(
+            !connection.has_been_killed(),
+            "a connection with no proxies started yet must not read as killed, \
+             or the pool would refuse to share it"
+        );
+
+        let mut first_proxy = spawn_stand_in_proxy();
+        let mut second_proxy = spawn_stand_in_proxy();
+        connection.proxy_processes.lock().push(first_proxy.id());
+        connection.proxy_processes.lock().push(second_proxy.id());
+
+        smol::block_on(async {
+            connection.kill().await.expect("kill failed");
+            for child in [&mut first_proxy, &mut second_proxy] {
+                let status = child
+                    .status()
+                    .await
+                    .expect("failed to await stand-in proxy process");
+                assert!(!status.success(), "process should have been signalled");
+            }
+        });
+
+        assert!(connection.has_been_killed());
+        assert!(connection.proxy_processes.lock().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_start_proxy_does_not_kill_existing_proxies(cx: &mut gpui::TestAppContext) {
+        let connection = test_connection();
+        let mut existing_proxy = spawn_stand_in_proxy();
+        let existing_pid = existing_proxy.id();
+        connection.proxy_processes.lock().push(existing_pid);
+
+        let (incoming_tx, _incoming_rx) = futures::channel::mpsc::unbounded();
+        let (_outgoing_tx, outgoing_rx) = futures::channel::mpsc::unbounded();
+        let (connection_activity_tx, _connection_activity_rx) =
+            futures::channel::mpsc::channel(1);
+
+        // `test_connection` has no remote binary path, so `start_proxy` fails
+        // before spawning anything; the regression this guards against is it
+        // signalling existing proxies before that point (#63568).
+        connection
+            .start_proxy(
+                "test".to_string(),
+                false,
+                incoming_tx,
+                outgoing_rx,
+                connection_activity_tx,
+                Arc::new(crate::transport::mock::MockDelegate),
+                &mut cx.to_async(),
+            )
+            .await
+            .expect_err("start_proxy should fail without a remote binary path");
+
+        // Give a wrongly-sent signal time to be delivered before polling.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(*connection.proxy_processes.lock(), vec![existing_pid]);
+        assert!(
+            existing_proxy
+                .try_status()
+                .expect("failed to poll stand-in proxy process")
+                .is_none(),
+            "existing proxy process should not have been signalled"
+        );
+    }
+
+    #[test]
+    fn test_deregister_proxy_process_removes_a_single_occurrence() {
+        let proxy_processes = Mutex::new(vec![1, 2, 2, 3]);
+        deregister_proxy_process(&proxy_processes, 2);
+        assert_eq!(*proxy_processes.lock(), vec![1, 2, 3]);
+        deregister_proxy_process(&proxy_processes, 4);
+        assert_eq!(*proxy_processes.lock(), vec![1, 2, 3]);
     }
 }
