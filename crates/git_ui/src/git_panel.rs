@@ -3936,6 +3936,14 @@ impl GitPanel {
 
         compressed = Self::truncate_iteratively(&compressed, max_bytes);
 
+        // truncate_iteratively cannot reduce single-hunk files (e.g. newly
+        // added files with one giant hunk), so the limit must be enforced
+        // unconditionally here.
+        if compressed.len() > max_bytes {
+            compressed.truncate(compressed.floor_char_boundary(max_bytes));
+            compressed.push_str("\n...[diff truncated to size limit]...\n");
+        }
+
         compressed
     }
 
@@ -13114,8 +13122,80 @@ mod tests {
              more context
         ", long_line};
         let result = GitPanel::compress_commit_diff(&diff, 100);
-        assert!(result.contains("...[truncated]"));
+        // With max_bytes=100 the size cap fires before the line-level
+        // "...[truncated]" marker becomes reachable, so only verify the
+        // bound and that some truncation indicator is present.
+        let marker = "\n...[diff truncated to size limit]...\n";
+        assert!(
+            result.len() <= 100 + marker.len(),
+            "result length {} exceeds size cap",
+            result.len()
+        );
         assert!(result.len() < diff.len());
+        assert!(
+            result.contains("truncated"),
+            "result must contain a truncation indicator"
+        );
+    }
+
+    #[test]
+    fn test_compress_diff_line_truncation_without_size_cap() {
+        // The raw diff must exceed max_bytes so the function proceeds past
+        // the early-return guard. After line-level truncation (256 chars)
+        // the result falls under max_bytes, so the size cap does not fire
+        // and the "...[truncated]" marker is preserved.
+        let long_line = "x".repeat(1000);
+        let diff = indoc::formatdoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,3 @@
+             context
+            +{}
+             more context
+        ", long_line};
+        assert!(diff.len() > 1000, "raw diff must exceed max_bytes");
+
+        let result = GitPanel::compress_commit_diff(&diff, 1000);
+        assert!(
+            result.contains("...[truncated]"),
+            "line-level truncation marker must be present when the size cap does not fire"
+        );
+        assert!(result.len() < diff.len());
+    }
+
+    #[test]
+    fn test_compress_diff_single_hunk_size_cap() {
+        // Simulate a newly added file with a single large hunk.
+        // truncate_iteratively cannot drop hunks when only 1 remains,
+        // so the size cap must enforce the byte limit.
+        let large_content = "+line of content\n".repeat(500);
+        let diff = format!(
+            "--- /dev/null\n+++ b/big_file.txt\n@@ -0,0 +1,500 @@\n{}",
+            large_content
+        );
+        assert!(
+            diff.len() > 2000,
+            "test precondition: diff must exceed limit"
+        );
+
+        let max_bytes = 2000;
+        let result = GitPanel::compress_commit_diff(&diff, max_bytes);
+
+        let marker = "\n...[diff truncated to size limit]...\n";
+        assert!(
+            result.len() <= max_bytes + marker.len(),
+            "result length {} exceeds size cap {} + marker",
+            result.len(),
+            max_bytes
+        );
+        assert!(
+            result.contains("[diff truncated to size limit]"),
+            "result must contain the truncation marker"
+        );
+        assert!(
+            result.contains("+++ b/big_file.txt"),
+            "file header must be preserved"
+        );
     }
 
     #[test]
