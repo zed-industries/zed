@@ -22,10 +22,9 @@ use futures::{
 use futures_lite::future::yield_now;
 use fuzzy::CharBag;
 use git::{
-    BISECT_LOG, COMMIT_MESSAGE, DOT_GIT, FETCH_HEAD, FSMONITOR_DAEMON, GC_PID, GITIGNORE,
-    HOOKS_DIR, INFO_DIR, LFS_DIR, LOGS_DIR, LOGS_REF_STASH, OBJECTS_DIR, ORIG_HEAD,
-    REBASE_APPLY_DIR, REBASE_MERGE_DIR, REFS_DIR, REFTABLE_DIR, REPO_EXCLUDE, SEQUENCER_DIR,
-    status::GitSummary,
+    DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, HOOKS_DIR, INFO_DIR, LFS_DIR, LOGS_DIR, LOGS_REF_STASH,
+    OBJECTS_DIR, REBASE_APPLY_DIR, REBASE_MERGE_DIR, REFS_DIR, REFTABLE_DIR, REPO_EXCLUDE,
+    SEQUENCER_DIR, status::GitSummary,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
@@ -4818,8 +4817,6 @@ impl BackgroundScanner {
         //
         // Certain directories may have FS changes, but do not lead to git data changes that Zed cares about.
         // Ignore these, to avoid Zed unnecessarily rescanning git metadata.
-        let skipped_file_names_in_dot_git =
-            [COMMIT_MESSAGE, FETCH_HEAD, ORIG_HEAD, BISECT_LOG, GC_PID];
         let skipped_dirs_in_dot_git = [
             FSMONITOR_DAEMON,
             LFS_DIR,
@@ -4869,11 +4866,7 @@ impl BackgroundScanner {
                 }
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
-                    let is_ignored = skipped_file_names_in_dot_git.iter().any(|skipped| {
-                        path_in_git_dir
-                            .file_name()
-                            .is_some_and(|file_name| file_name == OsStr::new(skipped))
-                    }) || (path_in_git_dir.starts_with(LOGS_DIR)
+                    let is_ignored = (path_in_git_dir.starts_with(LOGS_DIR)
                         && path_in_git_dir != Path::new(LOGS_REF_STASH))
                         || (path_in_git_dir.starts_with(INFO_DIR)
                             && path_in_git_dir != Path::new(REPO_EXCLUDE))

@@ -4822,7 +4822,8 @@ async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
     // reflogs of HEAD/branches/remote-tracking branches carry no git state
     // changes that Zed cares about beyond what the accompanying ref or index
     // events already convey, so they must not trigger a git metadata rescan.
-    // The stash reflog and ref updates themselves must still trigger one.
+    // Low-frequency signal files (FETCH_HEAD, ORIG_HEAD, COMMIT_EDITMSG,
+    // BISECT_LOG, gc.pid) and ref updates must still trigger one.
     //
     init_test(cx);
 
@@ -4899,17 +4900,12 @@ async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
         path!("/main_repo/.git/sequencer/todo"),
         path!("/main_repo/.git/index.lock"),
         path!("/main_repo/.git/refs/heads/main.lock"),
-        path!("/main_repo/.git/COMMIT_EDITMSG"),
         path!("/main_repo/.git/packed-refs.new"),
         path!("/main_repo/.git/config.new"),
         path!("/main_repo/.git/index.new"),
         path!("/main_repo/.git/index-abc123.tmp"),
-        path!("/main_repo/.git/FETCH_HEAD"),
-        path!("/main_repo/.git/ORIG_HEAD"),
-        path!("/main_repo/.git/BISECT_LOG"),
         path!("/main_repo/.git/info/refs"),
         path!("/main_repo/.git/info/refs_lzOf51"),
-        path!("/main_repo/.git/gc.pid"),
         // Linked-worktree specific skipped paths
         path!("/main_repo/.git/worktrees/feature/index.lock"),
     ];
@@ -4925,6 +4921,11 @@ async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
 
     let rescan_paths = [
         // Standard common git dir rescan paths
+        path!("/main_repo/.git/FETCH_HEAD"),
+        path!("/main_repo/.git/COMMIT_EDITMSG"),
+        path!("/main_repo/.git/ORIG_HEAD"),
+        path!("/main_repo/.git/BISECT_LOG"),
+        path!("/main_repo/.git/gc.pid"),
         path!("/main_repo/.git/logs/refs/stash"),
         path!("/main_repo/.git/refs/heads/main"),
         path!("/main_repo/.git/info/exclude"),
