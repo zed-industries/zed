@@ -992,5 +992,166 @@ impl Render for ConfigurationView {
 }
 
 #[cfg(test)]
-#[path = "opencode_tests.rs"]
-mod tests;
+mod tests {
+    use super::*;
+    use http_client::{FakeHttpClient, Response};
+    use language_model::{LanguageModelRequestMessage, MessageContent, Role};
+    use parking_lot::Mutex;
+
+    #[test]
+    fn test_opencode_session_header_uses_thread_id() {
+        let value = opencode_session_header_value(Some("thread-123"));
+
+        assert_eq!(value, "thread-123");
+    }
+
+    #[test]
+    fn test_opencode_session_header_without_thread_id() {
+        let value = opencode_session_header_value(None);
+
+        assert_generated_session_id(&value);
+    }
+
+    #[test]
+    fn test_opencode_session_header_with_empty_thread_id() {
+        let value = opencode_session_header_value(Some(""));
+
+        assert_generated_session_id(&value);
+    }
+
+    #[test]
+    fn test_opencode_session_header_with_invalid_thread_id() {
+        let value = opencode_session_header_value(Some("thread\n123"));
+
+        assert_generated_session_id(&value);
+    }
+
+    #[test]
+    fn test_inject_header_client_adds_session_header() -> Result<()> {
+        let captured_header = Arc::new(Mutex::new(None));
+        let inner = FakeHttpClient::create({
+            let captured_header = captured_header.clone();
+            move |request| {
+                let captured_header = captured_header.clone();
+                async move {
+                    *captured_header.lock() =
+                        request.headers().get(OPENCODE_SESSION_HEADER_NAME).cloned();
+                    Ok(Response::builder().status(200).body(AsyncBody::default())?)
+                }
+            }
+        });
+        let client: Arc<dyn HttpClient> = Arc::new(InjectHeaderClient {
+            inner,
+            name: http::HeaderName::from_static(OPENCODE_SESSION_HEADER_NAME),
+            value: opencode_session_header_value(Some("thread-123")),
+        });
+        let request = http::Request::builder()
+            .uri("https://opencode.ai/zen/v1/messages")
+            .body(AsyncBody::default())?;
+
+        futures::executor::block_on(client.send(request))?;
+
+        assert_eq!(
+            captured_header
+                .lock()
+                .as_ref()
+                .map(http::HeaderValue::as_bytes),
+            Some(b"thread-123".as_slice())
+        );
+        Ok(())
+    }
+
+    #[gpui::test]
+    async fn test_stream_completion_sends_session_header_without_thread_id(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let captured_header = Arc::new(Mutex::new(None));
+        let http_client = FakeHttpClient::create({
+            let captured_header = captured_header.clone();
+            move |request| {
+                let captured_header = captured_header.clone();
+                async move {
+                    *captured_header.lock() =
+                        Some(request.headers().get(OPENCODE_SESSION_HEADER_NAME).cloned());
+                    Ok(Response::builder().status(200).body(AsyncBody::from(
+                        "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+                    ))?)
+                }
+            }
+        });
+        let provider = cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            OpenCodeLanguageModelProvider::new(http_client, Arc::new(TestCredentialsProvider), cx)
+        });
+        let store_key = provider.state.update(cx, |state, cx| {
+            state.set_api_key(Some("test-key".to_string()), cx)
+        });
+        store_key.await.unwrap();
+        let model =
+            provider.create_language_model(opencode::Model::default(), OpenCodeSubscription::Go);
+        let request = LanguageModelRequest {
+            thread_id: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let stream = model
+            .stream_completion(request, &cx.to_async())
+            .await
+            .unwrap();
+        drop(stream);
+
+        let captured_header = captured_header
+            .lock()
+            .take()
+            .expect("request should reach the http client")
+            .expect("request should carry the session header");
+        assert_generated_session_id(&captured_header);
+    }
+
+    fn assert_generated_session_id(value: &http::HeaderValue) {
+        value
+            .to_str()
+            .unwrap()
+            .parse::<u64>()
+            .expect("generated session id should be a u64");
+    }
+
+    struct TestCredentialsProvider;
+
+    impl CredentialsProvider for TestCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+}
