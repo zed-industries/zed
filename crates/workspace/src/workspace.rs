@@ -2999,14 +2999,24 @@ impl Workspace {
                         .and_then(|v| pane.index_for_item(v.as_ref()))
                     {
                         let prev_active_item_index = pane.active_item_index();
+                        let active_preview_item_id = pane
+                            .preview_item_id()
+                            .filter(|_| pane.preview_item_idx() == Some(prev_active_item_index));
                         pane.nav_history_mut().set_mode(mode);
                         pane.activate_item(index, true, true, window, cx);
-                        pane.nav_history_mut().set_mode(NavigationMode::Normal);
 
-                        let mut navigated = prev_active_item_index != pane.active_item_index();
+                        let navigated_to_different_item =
+                            prev_active_item_index != pane.active_item_index();
+                        let mut navigated = navigated_to_different_item;
                         if let Some(data) = entry.data {
                             navigated |= pane.active_item()?.navigate(data, window, cx);
                         }
+                        if navigated_to_different_item
+                            && let Some(preview_item_id) = active_preview_item_id
+                        {
+                            pane.remove_item(preview_item_id, false, false, window, cx);
+                        }
+                        pane.nav_history_mut().set_mode(NavigationMode::Normal);
 
                         if navigated {
                             break None;
@@ -3037,10 +3047,18 @@ impl Workspace {
                     .with_context(|| format!("Navigating to {project_path:?}"))
                 {
                     Ok((project_entry_id, build_item)) => {
-                        let prev_active_item_id = pane.update(cx, |pane, _| {
-                            pane.nav_history_mut().set_mode(mode);
-                            pane.active_item().map(|p| p.item_id())
-                        })?;
+                        let (prev_active_item_id, active_preview_item_id) =
+                            pane.update(cx, |pane, _| {
+                                pane.nav_history_mut().set_mode(mode);
+                                let prev_active_item_id =
+                                    pane.active_item().map(|item| item.item_id());
+                                let active_preview_item_id = pane.preview_item_id().filter(
+                                    |preview_item_id| {
+                                        Some(*preview_item_id) == prev_active_item_id
+                                    },
+                                );
+                                (prev_active_item_id, active_preview_item_id)
+                            })?;
 
                         pane.update_in(cx, |pane, window, cx| {
                             let item = pane.open_item(
@@ -3054,6 +3072,11 @@ impl Workspace {
                                 build_item,
                             );
                             navigated |= Some(item.item_id()) != prev_active_item_id;
+                            if navigated
+                                && let Some(preview_item_id) = active_preview_item_id
+                            {
+                                pane.remove_item(preview_item_id, false, false, window, cx);
+                            }
                             pane.nav_history_mut().set_mode(NavigationMode::Normal);
                             if let Some(data) = entry.data {
                                 navigated |= item.navigate(data, window, cx);
@@ -3064,10 +3087,18 @@ impl Workspace {
                         // Fall back to opening by abs path, in case an external file was opened and closed,
                         // and its worktree is now dropped
                         if let Some(abs_path) = abs_path {
-                            let prev_active_item_id = pane.update(cx, |pane, _| {
-                                pane.nav_history_mut().set_mode(mode);
-                                pane.active_item().map(|p| p.item_id())
-                            })?;
+                            let (prev_active_item_id, active_preview_item_id) =
+                                pane.update(cx, |pane, _| {
+                                    pane.nav_history_mut().set_mode(mode);
+                                    let prev_active_item_id =
+                                        pane.active_item().map(|item| item.item_id());
+                                    let active_preview_item_id = pane.preview_item_id().filter(
+                                        |preview_item_id| {
+                                            Some(*preview_item_id) == prev_active_item_id
+                                        },
+                                    );
+                                    (prev_active_item_id, active_preview_item_id)
+                                })?;
                             let open_by_abs_path = workspace.update_in(cx, |workspace, window, cx| {
                                 workspace.open_abs_path(abs_path.clone(), OpenOptions { visible: Some(OpenVisible::None), ..Default::default() }, window, cx)
                             })?;
@@ -3078,6 +3109,16 @@ impl Workspace {
                                 Ok(item) => {
                                     pane.update_in(cx, |pane, window, cx| {
                                         navigated |= Some(item.item_id()) != prev_active_item_id;
+                                        if navigated
+                                            && let Some(preview_item_id) = active_preview_item_id
+                                        {
+                                            pane.remove_item(preview_item_id, false, false, window, cx);
+                                        }
+                                        if entry.is_preview
+                                            && pane.index_for_item(item.as_ref()).is_some()
+                                        {
+                                            pane.set_preview_item_id(Some(item.item_id()), cx);
+                                        }
                                         pane.nav_history_mut().set_mode(NavigationMode::Normal);
                                         if let Some(data) = entry.data {
                                             navigated |= item.navigate(data, window, cx);
@@ -13568,6 +13609,60 @@ mod tests {
         pane.read_with(cx, |pane, _| {
             assert!(!pane.can_navigate_backward());
             assert!(pane.can_navigate_forward());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_navigating_back_closes_preview_item(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        cx.update_global::<SettingsStore, ()>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.preview_tabs.get_or_insert_default().enabled = Some(true);
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "a.txt", cx)])
+        });
+        let item_b = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "b.txt", cx)])
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_a.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_b.clone()), None, true, window, cx);
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.set_preview_item_id(Some(item_b.entity_id()), cx);
+            });
+        });
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.active_item().unwrap().item_id(), item_b.entity_id());
+            assert_eq!(pane.preview_item_id(), Some(item_b.entity_id()));
+            assert!(pane.can_navigate_backward());
+        });
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.go_back(pane.downgrade(), window, cx)
+            })
+            .await
+            .unwrap();
+
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.active_item().unwrap().item_id(), item_a.entity_id());
+            assert_eq!(pane.preview_item_id(), None);
+            assert_eq!(pane.items_len(), 1);
         });
     }
 
