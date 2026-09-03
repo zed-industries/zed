@@ -498,26 +498,79 @@ impl Search {
                     }
                     let tx = tx.clone();
                     let results = results.clone();
+                    let query = query.clone();
+                    let executor = cx.background_executor().clone();
                     let snapshot = Arc::new(snapshot);
 
-                    cx.background_executor()
+                    executor
+                        .clone()
                         .spawn(async move {
-                            for entry in snapshot.files(include_ignored, 0) {
-                                let (should_scan_tx, should_scan_rx) = oneshot::channel();
-
-                                let Ok(_) = tx
-                                    .send(InputPath {
-                                        entry: entry.clone(),
-                                        snapshot: snapshot.clone(),
-                                        should_scan_tx,
-                                    })
+                            if !query.filters_path() {
+                                for entry in snapshot.files(include_ignored, 0) {
+                                    if entry.is_fifo {
+                                        continue;
+                                    }
+                                    if Self::enqueue_search_path(
+                                        &tx,
+                                        &results,
+                                        entry.id,
+                                        entry.path.clone(),
+                                        &snapshot,
+                                    )
                                     .await
-                                else {
-                                    return;
-                                };
-                                if results.send(should_scan_rx).await.is_err() {
-                                    return;
-                                };
+                                    .is_err()
+                                    {
+                                        return;
+                                    }
+                                }
+                                return;
+                            }
+
+                            let file_count = if include_ignored {
+                                snapshot.file_count()
+                            } else {
+                                snapshot.visible_file_count()
+                            };
+                            let worker_count =
+                                executor.num_cpus().saturating_sub(1).max(1).min(file_count);
+                            if worker_count == 0 {
+                                return;
+                            }
+                            let segment_size = file_count.div_ceil(worker_count);
+                            let filtered_paths = (0..file_count)
+                                .step_by(segment_size)
+                                .map(|start| {
+                                    let query = query.clone();
+                                    let snapshot = snapshot.clone();
+                                    executor.spawn(async move {
+                                        snapshot
+                                            .files(include_ignored, start)
+                                            .take(segment_size)
+                                            .filter(|entry| {
+                                                !entry.is_fifo
+                                                    && query_matches_entry_path(
+                                                        &query, entry, &snapshot,
+                                                    )
+                                            })
+                                            .map(|entry| (entry.id, entry.path.clone()))
+                                            .collect::<Vec<_>>()
+                                    })
+                                })
+                                .collect::<FuturesOrdered<_>>();
+                            let mut filtered_paths = pin!(filtered_paths);
+
+                            // Segments are consumed in path order so limit handling remains deterministic.
+                            while let Some(matches) = filtered_paths.next().await {
+                                for (entry_id, path) in matches {
+                                    if Self::enqueue_search_path(
+                                        &tx, &results, entry_id, path, &snapshot,
+                                    )
+                                    .await
+                                    .is_err()
+                                    {
+                                        return;
+                                    }
+                                }
                             }
                         })
                         .await;
@@ -526,6 +579,25 @@ impl Search {
             })
             .await;
         }
+    }
+
+    async fn enqueue_search_path(
+        tx: &Sender<InputPath>,
+        results: &Sender<oneshot::Receiver<(ProjectPath, MatchPositionHint)>>,
+        entry_id: ProjectEntryId,
+        path: Arc<RelPath>,
+        snapshot: &Arc<Snapshot>,
+    ) -> anyhow::Result<()> {
+        let (should_scan_tx, should_scan_rx) = oneshot::channel();
+        tx.send(InputPath {
+            entry_id,
+            path,
+            snapshot: snapshot.clone(),
+            should_scan_tx,
+        })
+        .await?;
+        results.send(should_scan_rx).await?;
+        Ok(())
     }
 
     async fn maintain_sorted_search_results(
@@ -711,6 +783,20 @@ fn path_key_sort_key(
     }
 }
 
+fn query_matches_entry_path(query: &SearchQuery, entry: &Entry, snapshot: &Snapshot) -> bool {
+    if !query.filters_path() {
+        return true;
+    }
+
+    if query.match_full_paths() {
+        let mut full_path = snapshot.root_name().to_owned();
+        full_path.push(&entry.path);
+        query.match_path(&full_path)
+    } else {
+        query.match_path(&entry.path)
+    }
+}
+
 struct Worker {
     query: Arc<SearchQuery>,
     open_buffers: Arc<HashSet<ProjectEntryId>>,
@@ -889,36 +975,20 @@ impl RequestHandler<'_> {
     async fn handle_scan_path(&self, req: InputPath) {
         _ = maybe!(async move {
             let InputPath {
-                entry,
+                entry_id,
+                path,
                 snapshot,
                 mut should_scan_tx,
             } = req;
 
-            if entry.is_fifo || !entry.is_file() {
-                return Ok(());
-            }
-
-            if self.query.filters_path() {
-                let matched_path = if self.query.match_full_paths() {
-                    let mut full_path = snapshot.root_name().to_owned();
-                    full_path.push(&entry.path);
-                    self.query.match_path(&full_path)
-                } else {
-                    self.query.match_path(&entry.path)
-                };
-                if !matched_path {
-                    return Ok(());
-                }
-            }
-
-            if self.open_entries.contains(&entry.id) {
+            if self.open_entries.contains(&entry_id) {
                 // The buffer is already in memory and that's the version we want to scan;
                 // hence skip the dilly-dally and look for all matches straight away.
                 should_scan_tx
                     .send((
                         ProjectPath {
                             worktree_id: snapshot.id(),
-                            path: entry.path.clone(),
+                            path,
                         },
                         MatchPositionHint::default(),
                     ))
@@ -930,7 +1000,7 @@ impl RequestHandler<'_> {
                         worktree_root: snapshot.abs_path().clone(),
                         path: ProjectPath {
                             worktree_id: snapshot.id(),
-                            path: entry.path.clone(),
+                            path,
                         },
                     })
                     .await?;
@@ -950,7 +1020,8 @@ fn is_utf8_prefix(bytes: &[u8]) -> bool {
 }
 
 struct InputPath {
-    entry: Entry,
+    entry_id: ProjectEntryId,
+    path: Arc<RelPath>,
     snapshot: Arc<Snapshot>,
     should_scan_tx: oneshot::Sender<(ProjectPath, MatchPositionHint)>,
 }
