@@ -343,7 +343,16 @@ impl StackFrameList {
             .filter(|_| open_first_stack_frame)
         {
             self.select_ix(Some(ix), cx);
-            self.activate_selected_entry(window, cx);
+            let stack_frame = match self.entries.get(ix) {
+                Some(StackFrameEntry::Normal(stack_frame)) => stack_frame.clone(),
+                _ => return,
+            };
+            // Frames auto-opened when the debuggee stops open in the
+            // background so the user's focus and caret are never stolen from
+            // wherever they are typing. Explicit actions (clicking a frame)
+            // still focus the editor.
+            self.go_to_stack_frame_inner(stack_frame, false, window, cx)
+                .detach_and_log_err(cx);
         } else if let Some(old_selected_frame_id) = old_selected_frame_id {
             let ix = self.entries.iter().position(|entry| match entry {
                 StackFrameEntry::Normal(frame) => frame.id == old_selected_frame_id,
@@ -383,12 +392,13 @@ impl StackFrameList {
         else {
             return Task::ready(Err(anyhow!("No stack frame for ID")));
         };
-        self.go_to_stack_frame_inner(stack_frame, window, cx)
+        self.go_to_stack_frame_inner(stack_frame, true, window, cx)
     }
 
     fn go_to_stack_frame_inner(
         &mut self,
         stack_frame: dap::StackFrame,
+        focus_item: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -441,8 +451,6 @@ impl StackFrameList {
                             .project_path(cx)
                             .context("Could not select a stack frame for unnamed buffer")?;
 
-                        let open_preview = true;
-
                         let active_debug_line_pane = workspace
                             .project()
                             .read(cx)
@@ -469,9 +477,9 @@ impl StackFrameList {
                         anyhow::Ok(workspace.open_path_preview(
                             project_path,
                             debug_pane,
+                            focus_item,
                             true,
-                            true,
-                            open_preview,
+                            focus_item,
                             window,
                             cx,
                         ))
@@ -823,7 +831,7 @@ impl StackFrameList {
         match entry {
             StackFrameEntry::Normal(stack_frame) => {
                 let stack_frame = stack_frame.clone();
-                self.go_to_stack_frame_inner(stack_frame, window, cx)
+                self.go_to_stack_frame_inner(stack_frame, true, window, cx)
                     .detach_and_log_err(cx)
             }
             StackFrameEntry::Label(_) => {
