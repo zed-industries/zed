@@ -180,14 +180,28 @@ impl GitHostingProvider for Forgejo {
     fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
         let url = RemoteUrl::from_str(url).ok()?;
 
-        let host = url.host_str()?;
-        if host != self.base_url.host_str()? {
+        if url.host_str()? != self.base_url.host_str()? {
             return None;
         }
 
-        let mut path_segments = url.path_segments()?;
+        // Filter out empty segments (e.g. from leading/trailing slashes)
+        let mut path_segments = url.path_segments()?.filter(|s| !s.is_empty());
+
+        // Skip prefix segments matching base_url's path
+        if let Some(base_segments) = self.base_url.path_segments() {
+            for base_seg in base_segments.filter(|s| !s.is_empty()) {
+                if path_segments.next()? != base_seg {
+                    return None;
+                }
+            }
+        }
+
         let owner = path_segments.next()?;
         let repo = path_segments.next()?.trim_end_matches(".git");
+
+        if owner.is_empty() || repo.is_empty() {
+            return None;
+        }
 
         Some(ParsedGitRemote {
             owner: owner.into(),
@@ -431,4 +445,53 @@ mod tests {
         let expected_url = "https://forgejo-instance.big-co.com/zed-industries/zed/src/commit/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
+
+    #[test]
+        fn test_parse_remote_url_with_subpath() {
+            let provider = Forgejo {
+                base_url: Url::parse("https://myhost.com/forgejo/").unwrap(),
+            };
+
+            // Standard subpath remote URL
+            let parsed = provider
+                .parse_remote_url("https://myhost.com/forgejo/my-org/my-repo.git")
+                .unwrap();
+            assert_eq!(parsed.owner, "my-org");
+            assert_eq!(parsed.repo, "my-repo");
+
+            // Base URL without trailing slash
+            let provider_no_slash = Forgejo {
+                base_url: Url::parse("https://myhost.com/forgejo").unwrap(),
+            };
+            let parsed_no_slash = provider_no_slash
+                .parse_remote_url("https://myhost.com/forgejo/my-org/my-repo.git")
+                .unwrap();
+            assert_eq!(parsed_no_slash.owner, "my-org");
+            assert_eq!(parsed_no_slash.repo, "my-repo");
+        }
+
+        #[test]
+        fn test_parse_remote_url_root() {
+            let provider = Forgejo {
+                base_url: Url::parse("https://myhost.com/").unwrap(),
+            };
+
+            // Standard root domain deployment
+            let parsed = provider
+                .parse_remote_url("https://myhost.com/my-org/my-repo.git")
+                .unwrap();
+            assert_eq!(parsed.owner, "my-org");
+            assert_eq!(parsed.repo, "my-repo");
+        }
+
+        #[test]
+        fn test_parse_remote_url_mismatched_subpath() {
+            let provider = Forgejo {
+                base_url: Url::parse("https://myhost.com/forgejo/").unwrap(),
+            };
+
+            // Should return None when remote URL path does not match base_url subpath
+            let parsed = provider.parse_remote_url("https://myhost.com/other/my-org/my-repo.git");
+            assert!(parsed.is_none());
+        }
 }
