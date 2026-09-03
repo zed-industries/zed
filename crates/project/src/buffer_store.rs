@@ -911,7 +911,18 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         if let Some(buffer) = self.get_by_path(&project_path) {
-            return Task::ready(Ok(buffer));
+            // A clean buffer left over from a previous open can be stale if the file changed on
+            // disk since (e.g. `zed --wait` as $GIT_EDITOR reused for a second commit before the
+            // file watcher caught up, zed-industries/zed#61278). Reload before handing it back;
+            // `reload` is a no-op for buffers with unsaved edits or without a local file.
+            if buffer.read(cx).is_dirty() {
+                return Task::ready(Ok(buffer));
+            }
+            return cx.spawn(async move |_, cx| {
+                let reload = buffer.update(cx, |buffer, cx| buffer.reload(cx));
+                reload.await.ok();
+                Ok(buffer)
+            });
         }
 
         let task = match self.loading_buffers.entry(project_path.clone()) {

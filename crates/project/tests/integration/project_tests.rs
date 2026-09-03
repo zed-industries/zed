@@ -9164,6 +9164,54 @@ async fn test_dirty_buffer_reloads_after_undo(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_reopening_clean_buffer_reflects_external_disk_change(cx: &mut gpui::TestAppContext) {
+    // Simulates `zed --wait` as $GIT_EDITOR: the same path gets opened, closed, and reopened
+    // by an external process (git) rewriting the file in between (zed-industries/zed#61278).
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "COMMIT_EDITMSG": "first commit message",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/COMMIT_EDITMSG"), cx))
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "first commit message");
+        assert!(!buffer.is_dirty());
+    });
+
+    // git rewrites the file for the next commit while nothing has the buffer open.
+    fs.save(
+        path!("/dir/COMMIT_EDITMSG").as_ref(),
+        &"second commit message".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    // Reopening the same path (as `zed --wait` does) must reflect current disk content,
+    // not the buffer cached from the first open.
+    let reopened_buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/COMMIT_EDITMSG"), cx))
+        .await
+        .unwrap();
+
+    reopened_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "second commit message");
+        assert!(!buffer.is_dirty());
+    });
+}
+
+#[gpui::test]
 async fn test_buffer_file_change_to_binary_fails(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
