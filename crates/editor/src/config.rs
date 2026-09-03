@@ -246,7 +246,7 @@ impl Editor {
         let settings = self.buffer.read(cx).language_settings(cx);
         if settings.show_wrap_guides {
             match self.soft_wrap_mode(cx) {
-                SoftWrap::Bounded(soft_wrap) => {
+                SoftWrap::Fixed(soft_wrap) | SoftWrap::Bounded(soft_wrap) => {
                     wrap_guides.push((soft_wrap as usize, true));
                 }
                 SoftWrap::GitDiff | SoftWrap::None | SoftWrap::EditorWidth => {}
@@ -265,6 +265,9 @@ impl Editor {
                 SoftWrap::None
             }
             language_settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
+            language_settings::SoftWrap::PreferredLineLength => {
+                SoftWrap::Fixed(settings.preferred_line_length)
+            }
             language_settings::SoftWrap::Bounded => {
                 SoftWrap::Bounded(settings.preferred_line_length)
             }
@@ -293,7 +296,9 @@ impl Editor {
             let soft_wrap = match self.soft_wrap_mode(cx) {
                 SoftWrap::GitDiff => return,
                 SoftWrap::None => language_settings::SoftWrap::EditorWidth,
-                SoftWrap::EditorWidth | SoftWrap::Bounded(_) => language_settings::SoftWrap::None,
+                SoftWrap::EditorWidth | SoftWrap::Fixed(_) | SoftWrap::Bounded(_) => {
+                    language_settings::SoftWrap::None
+                }
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
