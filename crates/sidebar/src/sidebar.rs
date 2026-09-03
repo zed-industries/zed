@@ -7338,41 +7338,52 @@ impl Sidebar {
             })
             .when(!right_window_controls, |this| this.pr_1p5())
             .gap_1()
-            .when(!no_open_projects, |this| {
-                this.border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .when(traffic_lights, |this| {
-                        this.child(Divider::vertical().color(ui::DividerColor::Border))
-                    })
-                    .child(
-                        div().ml_1().child(
-                            Icon::new(IconName::MagnifyingGlass)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
-                    )
-                    .child(self.render_filter_input(cx))
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .when(
-                                self.selection.is_some()
-                                    && !self.filter_editor.focus_handle(cx).is_focused(window),
-                                |this| this.child(KeyBinding::for_action(&FocusSidebarFilter, cx)),
-                            )
-                            .when(has_query, |this| {
-                                this.child(
-                                    IconButton::new("clear_filter", IconName::Close)
-                                        .icon_size(IconSize::Small)
-                                        .tooltip(Tooltip::text("Clear Search"))
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.reset_filter_editor_text(window, cx);
-                                            this.update_entries(cx);
-                                        })),
+            .when_else(
+                no_open_projects,
+                // Nothing else is rendered in the header, so nothing pushes the window
+                // controls to the far edge. Add an explicit spacer to keep them flush
+                // with the sidebar's edge, matching the layout used when projects are
+                // open. A spacer rather than `justify_end` so that left-side window
+                // controls stay flush with the opposite edge.
+                |this| this.child(div().flex_1()),
+                |this| {
+                    this.border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .when(traffic_lights, |this| {
+                            this.child(Divider::vertical().color(ui::DividerColor::Border))
+                        })
+                        .child(
+                            div().ml_1().child(
+                                Icon::new(IconName::MagnifyingGlass)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                        )
+                        .child(self.render_filter_input(cx))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .when(
+                                    self.selection.is_some()
+                                        && !self.filter_editor.focus_handle(cx).is_focused(window),
+                                    |this| {
+                                        this.child(KeyBinding::for_action(&FocusSidebarFilter, cx))
+                                    },
                                 )
-                            }),
-                    )
-            })
+                                .when(has_query, |this| {
+                                    this.child(
+                                        IconButton::new("clear_filter", IconName::Close)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text("Clear Search"))
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.reset_filter_editor_text(window, cx);
+                                                this.update_entries(cx);
+                                            })),
+                                    )
+                                }),
+                        )
+                },
+            )
             .when(right_window_controls, |this| {
                 this.children(Self::render_right_window_controls(window, cx))
             })
