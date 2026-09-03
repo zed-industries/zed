@@ -23,6 +23,37 @@ impl Editor {
         self.use_autoclose = autoclose;
     }
 
+    fn shift_selections_by_relative_utf16_range(
+        &mut self,
+        relative_utf16_range: Range<isize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selections = self
+            .selections
+            .all::<MultiBufferOffsetUtf16>(&self.display_snapshot(cx));
+        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            let new_ranges = selections.into_iter().map(|range| {
+                let start = MultiBufferOffsetUtf16(OffsetUtf16(
+                    range
+                        .head()
+                        .0
+                        .0
+                        .saturating_add_signed(relative_utf16_range.start),
+                ));
+                let end = MultiBufferOffsetUtf16(OffsetUtf16(
+                    range
+                        .head()
+                        .0
+                        .0
+                        .saturating_add_signed(relative_utf16_range.end),
+                ));
+                start..end
+            });
+            s.select_ranges(new_ranges);
+        });
+    }
+
     pub fn replay_insert_event(
         &mut self,
         text: &str,
@@ -41,32 +72,43 @@ impl Editor {
         });
 
         if let Some(relative_utf16_range) = relative_utf16_range {
-            let selections = self
-                .selections
-                .all::<MultiBufferOffsetUtf16>(&self.display_snapshot(cx));
-            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                let new_ranges = selections.into_iter().map(|range| {
-                    let start = MultiBufferOffsetUtf16(OffsetUtf16(
-                        range
-                            .head()
-                            .0
-                            .0
-                            .saturating_add_signed(relative_utf16_range.start),
-                    ));
-                    let end = MultiBufferOffsetUtf16(OffsetUtf16(
-                        range
-                            .head()
-                            .0
-                            .0
-                            .saturating_add_signed(relative_utf16_range.end),
-                    ));
-                    start..end
-                });
-                s.select_ranges(new_ranges);
-            });
+            self.shift_selections_by_relative_utf16_range(relative_utf16_range, window, cx);
         }
 
         self.handle_input(text, window, cx);
+    }
+
+    pub fn replay_snippet_insertion(
+        &mut self,
+        snippet_source: &str,
+        relative_utf16_range: Option<Range<isize>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Parse before any early return so that the unexpanded source, which still
+        // contains tabstop syntax like `${1:name}`, can never escape as literal text.
+        let Some(snippet) = Snippet::parse(snippet_source).log_err() else {
+            return;
+        };
+        if !self.input_enabled {
+            cx.emit(EditorEvent::InputIgnored {
+                text: snippet.text.as_str().into(),
+            });
+            return;
+        }
+        if self.read_only(cx) {
+            return;
+        }
+        if let Some(relative_utf16_range) = relative_utf16_range {
+            self.shift_selections_by_relative_utf16_range(relative_utf16_range, window, cx);
+        }
+        let ranges = self
+            .selections
+            .all::<MultiBufferOffset>(&self.display_snapshot(cx))
+            .into_iter()
+            .map(|selection| selection.range())
+            .collect::<Vec<_>>();
+        self.insert_snippet(&ranges, snippet, window, cx).log_err();
     }
 
     pub fn handle_input(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
