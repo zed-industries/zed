@@ -1,15 +1,16 @@
+{"SetOption":{"value":"startofline"}}
 {"Put":{"state":"The qˇuick\n\nbrown fox jumps\nover the lazy dog"}}
 {"Key":"g"}
 {"Key":"g"}
-{"Get":{"state":"The qˇuick\n\nbrown fox jumps\nover the lazy dog","mode":"Normal"}}
+{"Get":{"state":"ˇThe quick\n\nbrown fox jumps\nover the lazy dog","mode":"Normal"}}
 {"Put":{"state":"The quick\n\nbrown fox jumps\nover ˇthe lazy dog"}}
 {"Key":"g"}
 {"Key":"g"}
-{"Get":{"state":"The qˇuick\n\nbrown fox jumps\nover the lazy dog","mode":"Normal"}}
+{"Get":{"state":"ˇThe quick\n\nbrown fox jumps\nover the lazy dog","mode":"Normal"}}
 {"Put":{"state":"The quick\n\nbrown fox jumps\nover the laˇzy dog"}}
 {"Key":"g"}
 {"Key":"g"}
-{"Get":{"state":"The quicˇk\n\nbrown fox jumps\nover the lazy dog","mode":"Normal"}}
+{"Get":{"state":"ˇThe quick\n\nbrown fox jumps\nover the lazy dog","mode":"Normal"}}
 {"Put":{"state":"\n\nbrown fox jumps\nover the laˇzy dog"}}
 {"Key":"g"}
 {"Key":"g"}
@@ -19,3 +20,26 @@
 {"Key":"g"}
 {"Key":"g"}
 {"Get":{"state":"\nˇ\nbrown fox jumps\nover the lazydog","mode":"Normal"}}
+{"Put":{"state":"    fiˇrst line\nsecond line"}}
+{"Key":"g"}
+{"Key":"g"}
+{"Get":{"state":"    ˇfirst line\nsecond line","mode":"Normal"}}
+{"Put":{"state":"    first line\nsecond lˇine"}}
+{"Key":"1"}
+{"Key":"g"}
+{"Key":"g"}
+{"Get":{"state":"    ˇfirst line\nsecond line","mode":"Normal"}}
+{"Put":{"state":"first line\n    second line\nthird lˇine"}}
+{"Key":"2"}
+{"Key":"g"}
+{"Key":"g"}
+{"Get":{"state":"first line\n    ˇsecond line\nthird line","mode":"Normal"}}
+{"Put":{"state":"    \nsecond lˇine"}}
+{"Key":"g"}
+{"Key":"g"}
+{"Get":{"state":"   ˇ \nsecond line","mode":"Normal"}}
+{"Put":{"state":"    first line\nsecond lˇine"}}
+{"Key":"v"}
+{"Key":"g"}
+{"Key":"g"}
+{"Get":{"state":"    «ˇfirst line\nsecond li»ne","mode":"Visual"}}
