@@ -59,6 +59,7 @@ struct DevContainerManifest {
     config_directory: PathBuf,
     file_name: String,
     root_image: Option<DockerInspect>,
+    dockerfile_image_user: Option<String>,
     features_build_info: Option<FeaturesBuildInfo>,
     features: Vec<FeatureManifest>,
 }
@@ -105,6 +106,7 @@ impl DevContainerManifest {
             config_directory: devcontainer_directory.to_path_buf(),
             file_name: file_name.to_string(),
             root_image: None,
+            dockerfile_image_user: None,
             features_build_info: None,
             features: Vec::new(),
         })
@@ -373,6 +375,21 @@ impl DevContainerManifest {
                 return Err(DevContainerError::NotInValidProject);
             }
         }
+    }
+
+    /// The user the features image should be left running as. A Dockerfile's
+    /// target stage takes precedence over the base image it was built from,
+    /// because `FROM base AS final`-style Dockerfiles commonly set their own
+    /// `USER` that the base image does not have.
+    fn features_image_user(&self) -> String {
+        self.dockerfile_image_user
+            .clone()
+            .or_else(|| {
+                self.root_image
+                    .as_ref()
+                    .and_then(|docker_image| docker_image.config.image_user.clone())
+            })
+            .unwrap_or_else(|| "root".to_string())
     }
 
     async fn copy_local_feature(
@@ -660,6 +677,15 @@ impl DevContainerManifest {
                 .and_then(|b| b.target)
         } else {
             dev_container.build.as_ref().and_then(|b| b.target.clone())
+        };
+
+        self.dockerfile_image_user = match &dockerfile_base_content {
+            Some(_) => self
+                .expanded_dockerfile_content()
+                .await
+                .ok()
+                .and_then(|content| image_user_from_dockerfile(&content, &build_target)),
+            None => None,
         };
 
         let dockerfile_content = dockerfile_base_content
@@ -1110,7 +1136,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                         "_DEV_CONTAINERS_BASE_IMAGE".to_string(),
                         "dev_container_auto_added_stage_label".to_string(),
                     ),
-                    ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()),
+                    (
+                        "_DEV_CONTAINERS_IMAGE_USER".to_string(),
+                        self.features_image_user(),
+                    ),
                 ])
             } else {
                 HashMap::from([
@@ -1119,7 +1148,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                         "_DEV_CONTAINERS_BASE_IMAGE".to_string(),
                         "dev_container_auto_added_stage_label".to_string(),
                     ),
-                    ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()),
+                    (
+                        "_DEV_CONTAINERS_IMAGE_USER".to_string(),
+                        self.features_image_user(),
+                    ),
                 ])
             };
 
@@ -1218,13 +1250,19 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 let build_args = if !supports_buildkit {
                     HashMap::from([
                         ("_DEV_CONTAINERS_BASE_IMAGE".to_string(), image.clone()),
-                        ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()),
+                        (
+                            "_DEV_CONTAINERS_IMAGE_USER".to_string(),
+                            self.features_image_user(),
+                        ),
                     ])
                 } else {
                     HashMap::from([
                         ("BUILDKIT_INLINE_CACHE".to_string(), "1".to_string()),
                         ("_DEV_CONTAINERS_BASE_IMAGE".to_string(), image.clone()),
-                        ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()),
+                        (
+                            "_DEV_CONTAINERS_IMAGE_USER".to_string(),
+                            self.features_image_user(),
+                        ),
                     ])
                 };
 
@@ -1941,15 +1979,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             ]);
         }
 
+        let image_user = self.features_image_user();
         command.args([
             "--build-arg",
-            &format!(
-                "_DEV_CONTAINERS_IMAGE_USER={}",
-                self.root_image
-                    .as_ref()
-                    .and_then(|docker_image| docker_image.config.image_user.as_ref())
-                    .unwrap_or(&"root".to_string())
-            ),
+            &format!("_DEV_CONTAINERS_IMAGE_USER={}", image_user),
         ]);
 
         command.args([
@@ -3235,6 +3268,76 @@ fn image_from_dockerfile(dockerfile_contents: String, target: &Option<String>) -
     }
 }
 
+/// Returns the user a Dockerfile's selected stage ends up running as: the
+/// last literal `USER` instruction in that stage, walking back through
+/// parent stages (`FROM base AS final`) when a stage sets none. `USER` values
+/// that reference build args or environment variables cannot be resolved
+/// statically and are skipped, as are `USER` lines inside a `\`-continued
+/// instruction.
+fn image_user_from_dockerfile(
+    dockerfile_contents: &str,
+    target: &Option<String>,
+) -> Option<String> {
+    struct Stage<'a> {
+        image: &'a str,
+        alias: Option<&'a str>,
+        user: Option<&'a str>,
+    }
+
+    let mut stages: Vec<Stage> = Vec::new();
+    let mut continued = false;
+    for line in dockerfile_contents.lines() {
+        if !continued {
+            if let Some(parsed) = parse_from_line(line) {
+                stages.push(Stage {
+                    image: parsed.image,
+                    alias: parsed.alias,
+                    user: None,
+                });
+            } else {
+                let mut tokens = line.split_whitespace();
+                if let Some(keyword) = tokens.next() {
+                    if keyword.eq_ignore_ascii_case("USER") {
+                        if let Some(user) = tokens.next() {
+                            if !user.starts_with('#') && !user.contains('$') {
+                                if let Some(stage) = stages.last_mut() {
+                                    stage.user = Some(user);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        continued = line.trim_end().ends_with('\\');
+    }
+
+    let start_index = match target {
+        Some(target) => stages.iter().rposition(|stage| {
+            stage
+                .alias
+                .is_some_and(|alias| alias.eq_ignore_ascii_case(target))
+        })?,
+        None => stages.len().checked_sub(1)?,
+    };
+
+    // Walk back through parent stages (`FROM base AS final`) when a stage
+    // does not set its own user, mirroring `image_from_dockerfile`'s
+    // resolution of the base image.
+    let mut index = start_index;
+    loop {
+        let stage = stages.get(index)?;
+        if let Some(user) = stage.user {
+            return Some(user.to_string());
+        }
+        index = stages[..index].iter().rposition(|previous| {
+            previous
+                .alias
+                .is_some_and(|alias| alias.eq_ignore_ascii_case(stage.image))
+        })?;
+    }
+}
+
 fn get_remote_user_from_config(
     docker_config: &DockerInspect,
     devcontainer: &DevContainerManifest,
@@ -3498,7 +3601,8 @@ mod test {
             ConfigStatus, DevContainerManifest, DockerBuildResources, DockerComposeResources,
             DockerInspect, dockerfile_inject_alias, escape_compose_interpolation,
             extract_feature_id, find_primary_service, get_remote_user_from_config,
-            image_from_dockerfile, is_local_feature_ref, resolve_compose_dockerfile,
+            image_from_dockerfile, image_user_from_dockerfile, is_local_feature_ref,
+            resolve_compose_dockerfile,
         },
         docker::{
             DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -7009,6 +7113,211 @@ FROM ${IMAGE} AS production
             image_from_dockerfile(dockerfile, &Some("final".to_string())),
             Some("scratch".to_string())
         );
+    }
+
+    #[test]
+    fn test_image_user_from_dockerfile_last_stage() {
+        let dockerfile = "FROM ubuntu:24.04\nRUN useradd esp\nUSER esp\nWORKDIR /home/esp";
+        assert_eq!(
+            image_user_from_dockerfile(dockerfile, &None),
+            Some("esp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_user_from_dockerfile_target_stage() {
+        let dockerfile =
+            "FROM ubuntu:24.04 AS base\nUSER baseuser\nFROM base AS final\nUSER finaluser";
+        assert_eq!(
+            image_user_from_dockerfile(dockerfile, &Some("final".to_string())),
+            Some("finaluser".to_string())
+        );
+        assert_eq!(
+            image_user_from_dockerfile(dockerfile, &Some("base".to_string())),
+            Some("baseuser".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_user_from_dockerfile_skips_non_literal_users() {
+        let dockerfile = "FROM ubuntu:24.04\nARG UNAME\nUSER ${UNAME}\nUSER $ROOT";
+        assert_eq!(image_user_from_dockerfile(dockerfile, &None), None);
+    }
+
+    #[test]
+    fn test_image_user_from_dockerfile_inherits_parent_stage() {
+        let dockerfile = "FROM ubuntu:24.04 AS base\nUSER esp\nFROM base AS final";
+        assert_eq!(
+            image_user_from_dockerfile(dockerfile, &None),
+            Some("esp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_user_from_dockerfile_child_stage_overrides_parent() {
+        let dockerfile = "FROM ubuntu:24.04 AS base\nUSER esp\nFROM base AS final\nUSER root";
+        assert_eq!(
+            image_user_from_dockerfile(dockerfile, &None),
+            Some("root".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_user_from_dockerfile_case_insensitive_instruction() {
+        let dockerfile = "FROM ubuntu:24.04\nuser esp";
+        assert_eq!(
+            image_user_from_dockerfile(dockerfile, &None),
+            Some("esp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_user_from_dockerfile_preserves_group() {
+        let dockerfile = "FROM ubuntu:24.04\nUSER esp:dialout";
+        assert_eq!(
+            image_user_from_dockerfile(dockerfile, &None),
+            Some("esp:dialout".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_user_from_dockerfile_ignores_commented_user() {
+        let dockerfile = "FROM ubuntu:24.04\n# USER esp";
+        assert_eq!(image_user_from_dockerfile(dockerfile, &None), None);
+    }
+
+    #[test]
+    fn test_image_user_from_dockerfile_ignores_continued_instruction_body() {
+        let dockerfile = "FROM ubuntu:24.04\nRUN echo one \\\nUSER esp";
+        assert_eq!(image_user_from_dockerfile(dockerfile, &None), None);
+    }
+
+    #[test]
+    fn test_image_user_from_dockerfile_missing_target() {
+        let dockerfile = "FROM ubuntu:24.04 AS base\nUSER esp";
+        assert_eq!(
+            image_user_from_dockerfile(dockerfile, &Some("nonexistent".to_string())),
+            None
+        );
+    }
+
+    #[test]
+    fn test_image_user_from_dockerfile_no_user() {
+        let dockerfile = "FROM ubuntu:24.04\nRUN echo hello";
+        assert_eq!(image_user_from_dockerfile(dockerfile, &None), None);
+    }
+
+    #[gpui::test]
+    async fn test_dockerfile_user_is_used_for_features_image(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+            {
+              "name": "cli-${devcontainerId}",
+              "build": {
+                "dockerfile": "Dockerfile",
+              },
+            }
+            "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
+                r#"
+FROM mcr.microsoft.com/devcontainers/typescript-node:1-18-bookworm
+RUN useradd -ms /bin/bash esp
+USER esp
+WORKDIR /home/esp
+                "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        devcontainer_manifest
+            .download_feature_and_dockerfile_resources()
+            .await
+            .unwrap();
+
+        // The Dockerfile's `USER esp` wins over the base image's `root`.
+        assert_eq!(devcontainer_manifest.features_image_user(), "esp");
+
+        let command = devcontainer_manifest.create_docker_build().unwrap();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            args.iter()
+                .any(|arg| arg == "_DEV_CONTAINERS_IMAGE_USER=esp")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_dockerfile_user_is_used_for_compose_features_image(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+            {
+              "name": "compose-${devcontainerId}",
+              "dockerComposeFile": "docker-compose.yml",
+              "service": "app",
+            }
+            "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/docker-compose.yml"),
+                r#"
+services:
+    app:
+        build:
+            context: .
+            dockerfile: Dockerfile
+                "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
+                r#"
+FROM mcr.microsoft.com/devcontainers/typescript-node:1-18-bookworm
+RUN useradd -ms /bin/bash esp
+USER esp
+                "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        devcontainer_manifest
+            .download_feature_and_dockerfile_resources()
+            .await
+            .unwrap();
+
+        // Compose services built from a Dockerfile must resolve its `USER` too.
+        assert_eq!(devcontainer_manifest.features_image_user(), "esp");
     }
 
     #[gpui::test]
