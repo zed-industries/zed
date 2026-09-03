@@ -194,6 +194,8 @@ pub enum Model {
     Qwen3_8Flash,
     #[serde(rename = "hy3")]
     Hy3,
+    #[serde(rename = "hy4-preview")]
+    Hy4Preview,
 
     // -- Custom model --
     #[serde(rename = "custom")]
@@ -248,7 +250,8 @@ impl Model {
             | Self::Qwen3_7Max
             | Self::Qwen3_8Max
             | Self::Qwen3_8Flash
-            | Self::Hy3 => &[OpenCodeSubscription::Go],
+            | Self::Hy3
+            | Self::Hy4Preview => &[OpenCodeSubscription::Go],
 
             // Deprecated on Go (per models.dev); still offered on Zen
             Self::Glm5 | Self::Grok4_5 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus => {
@@ -334,6 +337,7 @@ impl Model {
             Self::Qwen3_8Max => "qwen3.8-max",
             Self::Qwen3_8Flash => "qwen3.8-flash",
             Self::Hy3 => "hy3",
+            Self::Hy4Preview => "hy4-preview",
 
             Self::Custom { name, .. } => name,
         }
@@ -410,6 +414,7 @@ impl Model {
             Self::Qwen3_8Max => "Qwen3.8 Max",
             Self::Qwen3_8Flash => "Qwen3.8 Flash",
             Self::Hy3 => "Hy3",
+            Self::Hy4Preview => "Hy4 (Preview)",
 
             Self::Custom {
                 name, display_name, ..
@@ -491,7 +496,8 @@ impl Model {
             | Self::MimoV2_5
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
-            | Self::Hy3 => ApiProtocol::OpenAiChat,
+            | Self::Hy3
+            | Self::Hy4Preview => ApiProtocol::OpenAiChat,
 
             Self::Grok4_6 | Self::Grok4_5 | Self::GrokBuild0_1 | Self::MuseSpark1_2 => {
                 ApiProtocol::OpenAiResponses
@@ -600,6 +606,7 @@ impl Model {
                 1_000_000
             }
             Self::Hy3 => 256_000,
+            Self::Hy4Preview => 1_024_000,
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 1_000_000,
 
             Self::Custom { max_tokens, .. } => *max_tokens,
@@ -688,6 +695,7 @@ impl Model {
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
             Self::MimoV2_5Pro | Self::MimoV2_5 => Some(128_000),
             Self::Hy3 => Some(128_000),
+            Self::Hy4Preview => Some(64_000),
 
             Self::Custom {
                 max_output_tokens, ..
@@ -777,7 +785,8 @@ impl Model {
             | Self::DeepSeekV4Flash
             | Self::Qwen3_7Max
             | Self::LongCat2_0
-            | Self::Hy3 => false,
+            | Self::Hy3
+            | Self::Hy4Preview => false,
 
             Self::Custom { protocol, .. } => matches!(
                 protocol,
@@ -949,6 +958,7 @@ impl Model {
                 ReasoningEffort::Low,
                 ReasoningEffort::High,
             ]),
+            Self::Hy4Preview => Some(vec![ReasoningEffort::None, ReasoningEffort::High]),
 
             // SpaceXAI models
             Self::Grok4_6 => Some(vec![
