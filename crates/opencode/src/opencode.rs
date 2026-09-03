@@ -483,7 +483,6 @@ impl Model {
             | Self::Glm5_3
             | Self::Glm5_3Flash
             | Self::LongCat2_0
-            | Self::GrokBuild0_1
             | Self::KimiK2_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
@@ -494,7 +493,9 @@ impl Model {
             | Self::DeepSeekV4Flash
             | Self::Hy3 => ApiProtocol::OpenAiChat,
 
-            Self::Grok4_6 | Self::Grok4_5 | Self::MuseSpark1_2 => ApiProtocol::OpenAiResponses,
+            Self::Grok4_6 | Self::Grok4_5 | Self::GrokBuild0_1 | Self::MuseSpark1_2 => {
+                ApiProtocol::OpenAiResponses
+            }
 
             Self::Custom { protocol, .. } => *protocol,
         }
