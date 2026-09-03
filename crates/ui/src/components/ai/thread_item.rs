@@ -61,6 +61,7 @@ pub struct ThreadItem {
     is_remote: bool,
     archived: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_aux_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
     action_slot: Option<AnyElement>,
     base_bg: Option<Hsla>,
@@ -96,6 +97,7 @@ impl ThreadItem {
             is_remote: false,
             archived: false,
             on_click: None,
+            on_aux_click: None,
             on_hover: Box::new(|_, _, _| {}),
             action_slot: None,
             base_bg: None,
@@ -229,6 +231,14 @@ impl ThreadItem {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_aux_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_aux_click = Some(Box::new(handler));
         self
     }
 
@@ -426,6 +436,7 @@ impl RenderOnce for ThreadItem {
 
         v_flex()
             .id(self.id.clone())
+            .debug_selector(|| format!("THREAD_ITEM-{}", self.id))
             .cursor_pointer()
             .group("thread-item")
             .relative()
@@ -631,6 +642,9 @@ impl RenderOnce for ThreadItem {
                 }))
             })
             .when_some(self.on_click, |this, on_click| this.on_click(on_click))
+            .when_some(self.on_aux_click, |this, on_aux_click| {
+                this.on_aux_click(on_aux_click)
+            })
     }
 }
 

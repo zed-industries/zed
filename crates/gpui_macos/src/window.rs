@@ -1,6 +1,7 @@
 use crate::{
     BoolExt, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
-    TISGetInputSourceProperty, WindowFrameSource, events::platform_input_from_native,
+    TISGetInputSourceProperty, WindowFrameSource,
+    events::{current_modifiers, platform_input_from_native},
     kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
     ns_string, renderer,
 };
@@ -1470,23 +1471,7 @@ impl PlatformWindow for MacWindow {
     }
 
     fn modifiers(&self) -> Modifiers {
-        unsafe {
-            let modifiers: NSEventModifierFlags = msg_send![class!(NSEvent), modifierFlags];
-
-            let control = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
-            let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
-            let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
-            let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-            let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
-
-            Modifiers {
-                control,
-                alt,
-                shift,
-                platform: command,
-                function,
-            }
-        }
+        current_modifiers()
     }
 
     fn capslock(&self) -> Capslock {
@@ -3356,7 +3341,12 @@ async fn synthetic_drag(
             if lock.synthetic_drag_counter == drag_id {
                 if let Some(mut callback) = lock.event_callback.take() {
                     drop(lock);
-                    callback(PlatformInput::MouseMove(event.clone()));
+                    // The replayed event predates any modifier changes made since the
+                    // real drag event, so report the live modifier state instead.
+                    callback(PlatformInput::MouseMove(MouseMoveEvent {
+                        modifiers: current_modifiers(),
+                        ..event.clone()
+                    }));
                     window_state.lock().event_callback = Some(callback);
                 }
             } else {

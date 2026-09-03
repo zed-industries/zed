@@ -885,7 +885,7 @@ impl VisualTestContext {
     }
 
     /// debug_bounds returns the bounds of the element with the given selector.
-    pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
+    pub fn debug_bounds(&mut self, selector: &str) -> Option<Bounds<Pixels>> {
         self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())
     }
 
