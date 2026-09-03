@@ -1174,6 +1174,10 @@ async fn test_remote_project_root_dir_changes_update_groups(cx: &mut TestAppCont
                         seconds: 0,
                         nanos: 0,
                     }),
+                    ctime: Some(proto::Timestamp {
+                        seconds: 0,
+                        nanos: 0,
+                    }),
                     is_ignored: false,
                     is_hidden: false,
                     is_external: false,

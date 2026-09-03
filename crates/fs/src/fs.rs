@@ -296,6 +296,7 @@ pub struct RemoveOptions {
 pub struct Metadata {
     pub inode: u64,
     pub mtime: MTime,
+    pub ctime: MTime,
     pub is_symlink: bool,
     pub is_dir: bool,
     pub len: u64,
@@ -1081,6 +1082,12 @@ impl Fs for RealFs {
         #[cfg(windows)]
         let inode = file_id(path).await?;
 
+        #[cfg(unix)]
+        let ctime = UNIX_EPOCH + Duration::from_secs(metadata.ctime().max(0) as u64);
+
+        #[cfg(windows)]
+        let ctime = change_time(path).await?;
+
         #[cfg(windows)]
         let is_fifo = false;
 
@@ -1096,6 +1103,7 @@ impl Fs for RealFs {
         Ok(Some(Metadata {
             inode,
             mtime: MTime(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH)),
+            ctime: MTime(ctime),
             len: metadata.len(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
@@ -1407,6 +1415,7 @@ struct FakeFsState {
     root: FakeFsEntry,
     next_inode: u64,
     next_mtime: SystemTime,
+    next_ctime: SystemTime,
     git_event_tx: async_channel::Sender<PathBuf>,
     event_txs: Vec<(PathBuf, async_channel::Sender<Vec<PathEvent>>)>,
     events_paused: bool,
@@ -1436,6 +1445,7 @@ impl FakeFsState {
 
         let inode = self.get_and_increment_inode();
         let mtime = self.get_and_increment_mtime();
+        let ctime = self.get_and_increment_ctime();
         self.write_path(&file_path, |entry| {
             let btree_map::Entry::Vacant(entry) = entry else {
                 anyhow::bail!("file already exists: {}", file_path.display());
@@ -1443,6 +1453,7 @@ impl FakeFsState {
             entry.insert(FakeFsEntry::File {
                 inode,
                 mtime,
+                ctime,
                 len: 0,
                 content: Vec::new(),
                 git_dir_path: None,
@@ -1460,6 +1471,7 @@ enum FakeFsEntry {
     File {
         inode: u64,
         mtime: MTime,
+        ctime: MTime,
         len: u64,
         content: Vec<u8>,
         // The path to the repository state directory, if this is a gitfile.
@@ -1468,6 +1480,7 @@ enum FakeFsEntry {
     Dir {
         inode: u64,
         mtime: MTime,
+        ctime: MTime,
         len: u64,
         entries: BTreeMap<String, FakeFsEntry>,
         git_repo_state: Option<Arc<Mutex<FakeGitRepositoryState>>>,
@@ -1485,6 +1498,7 @@ impl PartialEq for FakeFsEntry {
                 Self::File {
                     inode: l_inode,
                     mtime: l_mtime,
+                    ctime: l_ctime,
                     len: l_len,
                     content: l_content,
                     git_dir_path: l_git_dir_path,
@@ -1492,6 +1506,7 @@ impl PartialEq for FakeFsEntry {
                 Self::File {
                     inode: r_inode,
                     mtime: r_mtime,
+                    ctime: r_ctime,
                     len: r_len,
                     content: r_content,
                     git_dir_path: r_git_dir_path,
@@ -1499,6 +1514,7 @@ impl PartialEq for FakeFsEntry {
             ) => {
                 l_inode == r_inode
                     && l_mtime == r_mtime
+                    && l_ctime == r_ctime
                     && l_len == r_len
                     && l_content == r_content
                     && l_git_dir_path == r_git_dir_path
@@ -1507,6 +1523,7 @@ impl PartialEq for FakeFsEntry {
                 Self::Dir {
                     inode: l_inode,
                     mtime: l_mtime,
+                    ctime: l_ctime,
                     len: l_len,
                     entries: l_entries,
                     git_repo_state: l_git_repo_state,
@@ -1514,6 +1531,7 @@ impl PartialEq for FakeFsEntry {
                 Self::Dir {
                     inode: r_inode,
                     mtime: r_mtime,
+                    ctime: r_ctime,
                     len: r_len,
                     entries: r_entries,
                     git_repo_state: r_git_repo_state,
@@ -1526,6 +1544,7 @@ impl PartialEq for FakeFsEntry {
                 };
                 l_inode == r_inode
                     && l_mtime == r_mtime
+                    && l_ctime == r_ctime
                     && l_len == r_len
                     && l_entries == r_entries
                     && same_repo_state
@@ -1544,6 +1563,12 @@ impl FakeFsState {
         let mtime = self.next_mtime;
         self.next_mtime += FakeFs::SYSTEMTIME_INTERVAL;
         MTime(mtime)
+    }
+
+    fn get_and_increment_ctime(&mut self) -> MTime {
+        let ctime = self.next_ctime;
+        self.next_mtime += FakeFs::SYSTEMTIME_INTERVAL;
+        MTime(ctime)
     }
 
     fn get_and_increment_inode(&mut self) -> u64 {
@@ -1735,12 +1760,14 @@ impl FakeFs {
                 root: FakeFsEntry::Dir {
                     inode: 0,
                     mtime: MTime(UNIX_EPOCH),
+                    ctime: MTime(UNIX_EPOCH),
                     len: 0,
                     entries: Default::default(),
                     git_repo_state: None,
                 },
                 git_event_tx: tx,
                 next_mtime: UNIX_EPOCH + Self::SYSTEMTIME_INTERVAL,
+                next_ctime: UNIX_EPOCH + Self::SYSTEMTIME_INTERVAL,
                 next_inode: 1,
                 event_txs: Default::default(),
                 buffered_events: Vec::new(),
@@ -1792,6 +1819,7 @@ impl FakeFs {
         let mut state = self.state.lock();
         let path = path.as_ref();
         let new_mtime = state.get_and_increment_mtime();
+        let new_ctime = state.get_and_increment_ctime();
         let new_inode = state.get_and_increment_inode();
         state
             .write_path(path, move |entry| {
@@ -1800,14 +1828,21 @@ impl FakeFs {
                         e.insert(FakeFsEntry::File {
                             inode: new_inode,
                             mtime: new_mtime,
+                            ctime: new_ctime,
                             content: Vec::new(),
                             len: 0,
                             git_dir_path: None,
                         });
                     }
                     btree_map::Entry::Occupied(mut e) => match &mut *e.get_mut() {
-                        FakeFsEntry::File { mtime, .. } => *mtime = new_mtime,
-                        FakeFsEntry::Dir { mtime, .. } => *mtime = new_mtime,
+                        FakeFsEntry::File { mtime, ctime, .. } => {
+                            *mtime = new_mtime;
+                            *ctime = new_ctime;
+                        }
+                        FakeFsEntry::Dir { mtime, ctime, .. } => {
+                            *mtime = new_mtime;
+                            *ctime = new_ctime;
+                        }
                         FakeFsEntry::Symlink { .. } => {}
                     },
                 }
@@ -1857,6 +1892,7 @@ impl FakeFs {
             *state.path_write_counts.entry(path_buf).or_insert(0) += 1;
             let new_inode = state.get_and_increment_inode();
             let new_mtime = state.get_and_increment_mtime();
+            let new_ctime = state.get_and_increment_ctime();
             let new_len = new_content.len() as u64;
             let mut kind = None;
             state.write_path(path, |entry| {
@@ -1866,6 +1902,7 @@ impl FakeFs {
                         e.insert(FakeFsEntry::File {
                             inode: new_inode,
                             mtime: new_mtime,
+                            ctime: new_ctime,
                             len: new_len,
                             content: new_content,
                             git_dir_path: None,
@@ -2875,12 +2912,14 @@ impl Fs for FakeFs {
 
             let inode = state.get_and_increment_inode();
             let mtime = state.get_and_increment_mtime();
+            let ctime = state.get_and_increment_ctime();
             state.write_path(&cur_path, |entry| {
                 entry.or_insert_with(|| {
                     created_dirs.push((cur_path.clone(), Some(PathEventKind::Created)));
                     FakeFsEntry::Dir {
                         inode,
                         mtime,
+                        ctime,
                         len: 0,
                         entries: Default::default(),
                         git_repo_state: None,
@@ -2899,9 +2938,11 @@ impl Fs for FakeFs {
         let mut state = self.state.lock();
         let inode = state.get_and_increment_inode();
         let mtime = state.get_and_increment_mtime();
+        let ctime = state.get_and_increment_ctime();
         let file = FakeFsEntry::File {
             inode,
             mtime,
+            ctime,
             len: 0,
             content: Vec::new(),
             git_dir_path: None,
@@ -3064,6 +3105,7 @@ impl Fs for FakeFs {
         let target = normalize_path(target);
         let mut state = self.state.lock();
         let mtime = state.get_and_increment_mtime();
+        let ctime = state.get_and_increment_ctime();
         let inode = state.get_and_increment_inode();
         let source_entry = state.entry(&source)?;
         let content = source_entry.file_content(&source)?.clone();
@@ -3083,6 +3125,7 @@ impl Fs for FakeFs {
                 e.insert(FakeFsEntry::File {
                     inode,
                     mtime,
+                    ctime,
                     len: content.len() as u64,
                     content,
                     git_dir_path: None,
@@ -3233,10 +3276,15 @@ impl Fs for FakeFs {
 
             Ok(Some(match &*entry {
                 FakeFsEntry::File {
-                    inode, mtime, len, ..
+                    inode,
+                    mtime,
+                    ctime,
+                    len,
+                    ..
                 } => Metadata {
                     inode: *inode,
                     mtime: *mtime,
+                    ctime: *ctime,
                     len: *len,
                     is_dir: false,
                     is_symlink,
@@ -3245,10 +3293,15 @@ impl Fs for FakeFs {
                     is_writable: true,
                 },
                 FakeFsEntry::Dir {
-                    inode, mtime, len, ..
+                    inode,
+                    mtime,
+                    ctime,
+                    len,
+                    ..
                 } => Metadata {
                     inode: *inode,
                     mtime: *mtime,
+                    ctime: *ctime,
                     len: *len,
                     is_dir: true,
                     is_symlink,
@@ -3570,4 +3623,38 @@ fn atomic_replace<P: AsRef<Path>>(
             None,
         )
     }
+}
+
+#[cfg(target_os = "windows")]
+async fn change_time(path: impl AsRef<Path>) -> Result<SystemTime> {
+    use smol::fs::windows::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS, FileBasicInfo, GetFileInformationByHandleEx,
+    };
+    let file = smol::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
+        .open(path)
+        .await?;
+    let mut info: FILE_BASIC_INFO = unsafe { std::mem::zeroed() };
+    smol::unblock(move || {
+        unsafe {
+            GetFileInformationByHandleEx(
+                HANDLE(file.as_raw_handle() as _),
+                FileBasicInfo,
+                &mut info as *mut _ as *mut _,
+                std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+            )?;
+        }
+        const EPOCH_DIFF_100NS: i64 = 116_444_736_000_000_000;
+        let unix_100ns = (info.ChangeTime - EPOCH_DIFF_100NS).max(0) as u64;
+        Ok(UNIX_EPOCH
+            + Duration::new(
+                unix_100ns / 10_000_000,
+                ((unix_100ns % 10_000_000) * 100) as u32,
+            ))
+    })
+    .await
 }

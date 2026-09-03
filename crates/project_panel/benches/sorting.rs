@@ -26,6 +26,7 @@ fn load_linux_repo_snapshot() -> Vec<GitEntry> {
                 size: 0,
                 inode: 0,
                 mtime: None,
+                ctime: None,
                 canonical_path: None,
                 is_ignored: false,
                 is_always_included: false,

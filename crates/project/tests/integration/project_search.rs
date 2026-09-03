@@ -51,6 +51,7 @@ async fn test_path_inclusion_matcher(cx: &mut gpui::TestAppContext) {
         path: Arc::from(RelPath::from_unix_str(Path::new("src/data")).unwrap()),
         inode: 0,
         mtime: None,
+        ctime: None,
         canonical_path: None,
         is_ignored: true,
         is_hidden: false,

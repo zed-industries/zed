@@ -78,6 +78,8 @@ CREATE TABLE "worktree_entries" (
     "inode" INTEGER NOT NULL,
     "mtime_seconds" INTEGER NOT NULL,
     "mtime_nanos" INTEGER NOT NULL,
+    "ctime_seconds" INTEGER NOT NULL,
+    "ctime_nanos" INTEGER NOT NULL,
     "is_external" BOOL NOT NULL,
     "is_ignored" BOOL NOT NULL,
     "is_deleted" BOOL NOT NULL,

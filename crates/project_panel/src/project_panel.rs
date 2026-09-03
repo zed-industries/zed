@@ -4329,6 +4329,7 @@ impl ProjectPanel {
                     .into(),
                 inode: 0,
                 mtime: parent_entry.mtime,
+                ctime: parent_entry.ctime,
                 size: parent_entry.size,
                 is_ignored: parent_entry.is_ignored,
                 is_hidden: parent_entry.is_hidden,

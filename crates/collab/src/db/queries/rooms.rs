@@ -669,6 +669,10 @@ impl Database {
                                 seconds: db_entry.mtime_seconds as u64,
                                 nanos: db_entry.mtime_nanos as u32,
                             }),
+                            ctime: Some(proto::Timestamp {
+                                seconds: db_entry.ctime_seconds as u64,
+                                nanos: db_entry.ctime_nanos as u32,
+                            }),
                             canonical_path: db_entry.canonical_path,
                             is_ignored: db_entry.is_ignored,
                             is_external: db_entry.is_external,

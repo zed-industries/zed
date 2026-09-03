@@ -6015,6 +6015,10 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                         seconds: 0,
                         nanos: 0,
                     }),
+                    ctime: Some(proto::Timestamp {
+                        seconds: 0,
+                        nanos: 0,
+                    }),
                     is_ignored: false,
                     is_hidden: false,
                     is_external: false,
@@ -6107,6 +6111,10 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                     path: "".to_string(),
                     inode: 1,
                     mtime: Some(proto::Timestamp {
+                        seconds: 0,
+                        nanos: 0,
+                    }),
+                    ctime: Some(proto::Timestamp {
                         seconds: 0,
                         nanos: 0,
                     }),

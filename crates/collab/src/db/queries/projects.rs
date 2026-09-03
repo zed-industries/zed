@@ -277,6 +277,7 @@ impl Database {
             if !update.updated_entries.is_empty() {
                 worktree_entry::Entity::insert_many(update.updated_entries.iter().map(|entry| {
                     let mtime = entry.mtime.unwrap_or_default();
+                    let ctime = entry.ctime.unwrap_or_default();
                     worktree_entry::ActiveModel {
                         project_id: ActiveValue::set(project_id),
                         worktree_id: ActiveValue::set(worktree_id),
@@ -286,6 +287,8 @@ impl Database {
                         inode: ActiveValue::set(entry.inode as i64),
                         mtime_seconds: ActiveValue::set(mtime.seconds as i64),
                         mtime_nanos: ActiveValue::set(mtime.nanos as i32),
+                        ctime_seconds: ActiveValue::set(ctime.seconds as i64),
+                        ctime_nanos: ActiveValue::set(ctime.nanos as i32),
                         canonical_path: ActiveValue::set(entry.canonical_path.clone()),
                         is_ignored: ActiveValue::set(entry.is_ignored),
                         git_status: ActiveValue::set(None),
@@ -801,6 +804,10 @@ impl Database {
                         mtime: Some(proto::Timestamp {
                             seconds: db_entry.mtime_seconds as u64,
                             nanos: db_entry.mtime_nanos as u32,
+                        }),
+                        ctime: Some(proto::Timestamp {
+                            seconds: db_entry.ctime_seconds as u64,
+                            nanos: db_entry.ctime_nanos as u32,
                         }),
                         canonical_path: db_entry.canonical_path,
                         is_ignored: db_entry.is_ignored,

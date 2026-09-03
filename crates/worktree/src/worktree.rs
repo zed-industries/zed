@@ -3956,6 +3956,7 @@ pub struct Entry {
     pub path: Arc<RelPath>,
     pub inode: u64,
     pub mtime: Option<MTime>,
+    pub ctime: Option<MTime>,
 
     pub canonical_path: Option<Arc<Path>>,
     /// Whether this entry is ignored by Git.
@@ -4139,6 +4140,7 @@ impl Entry {
             path,
             inode: metadata.inode,
             mtime: Some(metadata.mtime),
+            ctime: Some(metadata.ctime),
             size: metadata.len,
             canonical_path,
             is_ignored: false,
@@ -7001,6 +7003,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             path: entry.path.as_ref().as_unix_str().to_owned(),
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
+            ctime: entry.ctime.map(|time| time.into()),
             is_ignored: entry.is_ignored,
             is_hidden: entry.is_hidden,
             is_external: entry.is_external,
@@ -7041,6 +7044,7 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
             path: path.into(),
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
+            ctime: entry.ctime.map(|time| time.into()),
             size: entry.size.unwrap_or(0),
             canonical_path: entry
                 .canonical_path
