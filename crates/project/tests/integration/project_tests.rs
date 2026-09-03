@@ -8370,6 +8370,196 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     });
 }
 
+#[gpui::test]
+async fn test_reopening_git_editor_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/repo"),
+        json!({
+            ".git": {
+                "COMMIT_EDITMSG": "first commit\n",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/repo").as_ref()], cx).await;
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .expect("project should have a worktree")
+            .read(cx)
+            .id()
+    });
+    let commit_message_path: ProjectPath = (worktree_id, rel_path(".git/COMMIT_EDITMSG")).into();
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(commit_message_path.clone(), cx)
+        })
+        .await
+        .expect("opening commit message buffer should succeed");
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.text()),
+        "first commit\n"
+    );
+    assert!(buffer.read_with(cx, |buffer, _| {
+        worktree::File::from_dyn(buffer.file())
+            .expect("buffer should have a worktree file")
+            .entry_id
+            .is_none()
+    }));
+
+    fs.save(
+        Path::new(path!("/repo/.git/COMMIT_EDITMSG")),
+        &"second commit\n".into(),
+        Default::default(),
+    )
+    .await
+    .expect("saving commit message should succeed");
+
+    let reopened_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(commit_message_path.clone(), cx)
+        })
+        .await
+        .expect("reopening commit message buffer should succeed");
+
+    assert_eq!(buffer.entity_id(), reopened_buffer.entity_id());
+    reopened_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "second commit\n");
+        assert!(!buffer.is_dirty());
+    });
+
+    fs.save(
+        Path::new(path!("/repo/.git/COMMIT_EDITMSG")),
+        &"third commit\n".into(),
+        Default::default(),
+    )
+    .await
+    .expect("saving commit message should succeed");
+    let load_count = fs.load_count_for_path(path!("/repo/.git/COMMIT_EDITMSG"));
+
+    let first_reopen = project.update(cx, |project, cx| {
+        project.open_buffer(commit_message_path.clone(), cx)
+    });
+    let second_reopen = project.update(cx, |project, cx| {
+        project.open_buffer(commit_message_path.clone(), cx)
+    });
+    let (first_reopened_buffer, second_reopened_buffer) =
+        future::join(first_reopen, second_reopen).await;
+
+    let first_reopened_buffer = first_reopened_buffer.expect("first concurrent reopen should work");
+    let second_reopened_buffer =
+        second_reopened_buffer.expect("second concurrent reopen should work");
+    assert_eq!(
+        first_reopened_buffer.entity_id(),
+        second_reopened_buffer.entity_id()
+    );
+    assert_eq!(
+        fs.load_count_for_path(path!("/repo/.git/COMMIT_EDITMSG")),
+        load_count + 1
+    );
+    first_reopened_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "third commit\n");
+        assert!(!buffer.is_dirty());
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_text("unsaved edit\n", cx);
+    });
+    fs.save(
+        Path::new(path!("/repo/.git/COMMIT_EDITMSG")),
+        &"fourth commit\n".into(),
+        Default::default(),
+    )
+    .await
+    .expect("saving commit message should succeed");
+
+    let reopened_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(commit_message_path, cx)
+        })
+        .await
+        .expect("reopening dirty commit message buffer should succeed");
+
+    assert_eq!(buffer.entity_id(), reopened_buffer.entity_id());
+    reopened_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "unsaved edit\n");
+        assert!(buffer.is_dirty());
+    });
+}
+
+#[gpui::test]
+async fn test_reopening_linked_worktree_git_editor_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {
+                "worktrees": {
+                    "linked": {
+                        "COMMIT_EDITMSG": "first commit\n",
+                    },
+                },
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .expect("project should have a worktree")
+            .read(cx)
+            .id()
+    });
+    let commit_message_path: ProjectPath = (
+        worktree_id,
+        rel_path(".git/worktrees/linked/COMMIT_EDITMSG"),
+    )
+        .into();
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(commit_message_path.clone(), cx)
+        })
+        .await
+        .expect("opening linked worktree commit message should succeed");
+    buffer.read_with(cx, |buffer, _cx| {
+        let file =
+            worktree::File::from_dyn(buffer.file()).expect("buffer should have a worktree file");
+        assert!(file.entry_id.is_none());
+        assert_eq!(buffer.text(), "first commit\n");
+    });
+
+    fs.save(
+        Path::new(path!("/project/.git/worktrees/linked/COMMIT_EDITMSG")),
+        &"second commit\n".into(),
+        Default::default(),
+    )
+    .await
+    .expect("saving linked worktree commit message should succeed");
+
+    let reopened_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(commit_message_path, cx)
+        })
+        .await
+        .expect("reopening linked worktree commit message should succeed");
+
+    assert_eq!(buffer.entity_id(), reopened_buffer.entity_id());
+    reopened_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "second commit\n");
+        assert!(!buffer.is_dirty());
+    });
+}
+
 #[gpui::test(iterations = 30)]
 async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     init_test(cx);
