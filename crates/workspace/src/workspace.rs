@@ -4126,7 +4126,14 @@ impl Workspace {
 
     pub fn active_item_as<I: 'static>(&self, cx: &App) -> Option<Entity<I>> {
         let item = self.active_item(cx)?;
-        item.to_any_view().downcast::<I>().ok()
+        // Prefer an exact downcast so that we return the active item itself when
+        // its concrete type matches, preserving entity identity for callers that
+        // compare `entity_id`s. Fall back to `act_as` so that wrapper items (e.g.
+        // diff views) resolve to the inner view they expose.
+        item.to_any_view()
+            .downcast::<I>()
+            .ok()
+            .or_else(|| item.act_as::<I>(cx))
     }
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
