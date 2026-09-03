@@ -916,7 +916,10 @@ fn normalize_scenario_config(scenario: &mut DebugScenario) {
 fn ensure_console_output(scenario: &mut DebugScenario) {
     let console_value = match scenario.adapter.as_ref() {
         "Debugpy" => "internalConsole",
-        "CodeLLDB" => "console",
+        // CodeLLDB rejects unknown `console` variants, so use one of its
+        // declared values: integratedTerminal | externalTerminal |
+        // internalConsole (its serde enum is case-sensitive camelCase).
+        "CodeLLDB" => "internalConsole",
         _ => return,
     };
     let Value::Object(config) = &mut scenario.config else {
@@ -1258,8 +1261,6 @@ async fn choose_thread_for_action(
     action: ControlAction,
     cx: &mut gpui::AsyncApp,
 ) -> Result<project::debugger::session::ThreadId> {
-    let snapshot_task = cx.update(|cx| api.snapshot(session_id, thread_picker_limits(), cx));
-    let snapshot = snapshot_task.await?;
     let preferred_status = match action {
         ControlAction::Pause => AgentDebuggerThreadStatus::Running,
         ControlAction::Continue
@@ -1268,45 +1269,71 @@ async fn choose_thread_for_action(
         | ControlAction::StepOut
         | ControlAction::RunToLine => AgentDebuggerThreadStatus::Stopped,
     };
-    if let Some(thread) = snapshot
-        .threads
-        .iter()
-        .find(|thread| thread.status == preferred_status)
-    {
-        return Ok(thread.thread_id);
-    }
 
-    let has_threads = !snapshot.threads.is_empty();
-    match action {
-        ControlAction::Pause => {
-            if has_threads {
-                // Some adapters accept a pause-by-thread-id even when no thread
-                // is currently running, so fall back to the first thread.
-                Ok(snapshot.threads[0].thread_id)
-            } else {
-                Err(anyhow!(
-                    "No debugger threads available in session {:?}. The session must be running before it can be paused.",
-                    session_id
-                ))
-            }
+    // The session state machine races adapter boot: right after
+    // `start_session` the adapter may not have reported threads yet, and for
+    // launches with `stopOnEntry` the first `stopped` event can land a
+    // moment after the session is listed as started. Poll briefly so the
+    // first control operation doesn't fail spuriously (a hard error is only
+    // correct once the session has had a chance to settle).
+    let mut attempts = 0u32;
+    // Allow the adapter up to ~3s to surface threads before giving up, and a
+    // shorter grace window after the session settles so the first `stopped`
+    // event of a stopOnEntry launch isn't raced.
+    let max_attempts = 30;
+    let grace_attempts = 5;
+    let poll_interval = std::time::Duration::from_millis(100);
+    loop {
+        let snapshot_task = cx.update(|cx| api.snapshot(session_id, thread_picker_limits(), cx));
+        let snapshot = snapshot_task.await?;
+
+        if let Some(thread) = snapshot
+            .threads
+            .iter()
+            .find(|thread| thread.status == preferred_status)
+        {
+            return Ok(thread.thread_id);
         }
-        ControlAction::Continue
-        | ControlAction::StepOver
-        | ControlAction::StepIn
-        | ControlAction::StepOut
-        | ControlAction::RunToLine => {
-            if has_threads {
-                Err(anyhow!(
-                    "No stopped debugger thread is available in session {:?}. The debugger must be paused at a breakpoint before this action can run; pause the session or wait for a breakpoint to hit.",
-                    session_id
-                ))
-            } else {
-                Err(anyhow!(
-                    "No debugger threads available in session {:?}. Inspect a snapshot to confirm the session is still running.",
-                    session_id
-                ))
-            }
+
+        let settled = !snapshot.session.status.is_booting();
+        let has_threads = !snapshot.threads.is_empty();
+        if attempts >= max_attempts || (settled && has_threads && attempts >= grace_attempts) {
+            return match action {
+                ControlAction::Pause => {
+                    if has_threads {
+                        // Some adapters accept a pause-by-thread-id even when no
+                        // thread is currently running, so fall back to the
+                        // first thread.
+                        Ok(snapshot.threads[0].thread_id)
+                    } else {
+                        Err(anyhow!(
+                            "No debugger threads available in session {:?}. The session must be running before it can be paused.",
+                            session_id
+                        ))
+                    }
+                }
+                ControlAction::Continue
+                | ControlAction::StepOver
+                | ControlAction::StepIn
+                | ControlAction::StepOut
+                | ControlAction::RunToLine => {
+                    if has_threads {
+                        Err(anyhow!(
+                            "No stopped debugger thread is available in session {:?}. The debugger must be paused at a breakpoint before this action can run; pause the session or wait for a breakpoint to hit.",
+                            session_id
+                        ))
+                    } else {
+                        Err(anyhow!(
+                            "No debugger threads available in session {:?}. Inspect a snapshot to confirm the session is still running.",
+                            session_id
+                        ))
+                    }
+                }
+            };
         }
+
+        attempts += 1;
+        cx.background_executor().timer(poll_interval).await;
     }
 }
 
@@ -1435,4 +1462,81 @@ fn output_to_json(output: AgentDebuggerOutputEvent) -> Value {
         "line": output.line,
         "column": output.column,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use task::TcpArgumentsTemplate;
+
+    fn scenario(adapter: &str, config: Value) -> DebugScenario {
+        DebugScenario {
+            adapter: adapter.into(),
+            label: "test".into(),
+            build: None,
+            config,
+            tcp_connection: None::<TcpArgumentsTemplate>,
+        }
+    }
+
+    #[test]
+    fn ensure_console_output_uses_values_every_adapter_accepts() {
+        // Regression: CodeLLDB was given `"console": "console"`, which its
+        // launch-config parser rejects with `unknown variant 'console'`,
+        // killing every CodeLLDB launch.
+        for (adapter, expected) in [
+            ("Debugpy", "internalConsole"),
+            ("CodeLLDB", "internalConsole"),
+        ] {
+            let mut scenario = scenario(adapter, json!({"request": "launch"}));
+            ensure_console_output(&mut scenario);
+            assert_eq!(scenario.config["console"], Value::String(expected.into()));
+        }
+
+        // Adapters that route output themselves are left untouched.
+        let mut js_scenario = scenario("JavaScript", json!({"request": "launch"}));
+        ensure_console_output(&mut js_scenario);
+        assert!(js_scenario.config.get("console").is_none());
+
+        // An explicit console config is never overridden.
+        let mut explicit_scenario = scenario(
+            "Debugpy",
+            json!({"request": "launch", "console": "integratedTerminal"}),
+        );
+        ensure_console_output(&mut explicit_scenario);
+        assert_eq!(explicit_scenario.config["console"], "integratedTerminal");
+    }
+
+    #[test]
+    fn ensure_stop_on_entry_skips_attach_and_explicit_configs() {
+        let mut launch = scenario("Debugpy", json!({"request": "launch"}));
+        ensure_stop_on_entry(&mut launch);
+        assert_eq!(launch.config["stopOnEntry"], true);
+
+        let mut attach = scenario("Debugpy", json!({"request": "attach", "pid": 1}));
+        ensure_stop_on_entry(&mut attach);
+        assert!(attach.config.get("stopOnEntry").is_none());
+
+        let mut explicit = scenario(
+            "Debugpy",
+            json!({"request": "launch", "stopOnEntry": false}),
+        );
+        ensure_stop_on_entry(&mut explicit);
+        assert_eq!(explicit.config["stopOnEntry"], false);
+    }
+
+    #[test]
+    fn normalize_scenario_config_unwraps_nested_config() {
+        let mut nested = scenario(
+            "Debugpy",
+            json!({"config": {"request": "launch", "program": "main.py"}}),
+        );
+        normalize_scenario_config(&mut nested);
+        assert_eq!(nested.config["program"], "main.py");
+        assert!(nested.config.get("config").is_none());
+
+        let mut spread = scenario("Debugpy", json!({"request": "launch"}));
+        normalize_scenario_config(&mut spread);
+        assert_eq!(spread.config["request"], "launch");
+    }
 }
