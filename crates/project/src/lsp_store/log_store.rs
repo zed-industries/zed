@@ -16,6 +16,7 @@ use lsp::{
 use rpc::proto;
 use serde::Deserialize;
 use settings::WorktreeId;
+use util::ResultExt as _;
 
 use crate::{LanguageServerLogType, LspStore, Project, ProjectItem as _};
 
@@ -141,12 +142,39 @@ pub struct LanguageServerState {
     pub log_level: MessageType,
     io_logs_subscription: Option<lsp::Subscription>,
     view_log_stream_refcounts: HashMap<LogKind, usize>,
-    downstream_log_kinds: HashSet<LogKind>,
+    downstream_log_streams: HashMap<proto::PeerId, HashSet<LogKind>>,
 }
 
 impl LanguageServerState {
     pub fn server(&self) -> Option<Arc<LanguageServer>> {
         self.server.as_ref()?.upgrade()
+    }
+
+    fn has_view_log_stream(&self, log_kind: LogKind) -> bool {
+        self.view_log_stream_refcounts.contains_key(&log_kind)
+    }
+
+    fn has_downstream_log_stream(&self, log_kind: LogKind) -> bool {
+        self.downstream_log_streams
+            .values()
+            .any(|log_kinds| log_kinds.contains(&log_kind))
+    }
+
+    fn has_log_stream(&self, log_kind: LogKind) -> bool {
+        self.has_view_log_stream(log_kind) || self.has_downstream_log_stream(log_kind)
+    }
+
+    fn synchronize_rpc_state(&mut self) {
+        if self.has_log_stream(LogKind::Rpc) {
+            self.rpc_state
+                .get_or_insert_with(|| LanguageServerRpcState {
+                    rpc_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
+                    header_state: RpcLogHeaderState::default(),
+                    request_tracker: RpcRequestTracker::default(),
+                });
+        } else {
+            self.rpc_state.take();
+        }
     }
 }
 
@@ -161,7 +189,7 @@ impl std::fmt::Debug for LanguageServerState {
             .field("trace_level", &self.trace_level)
             .field("log_level", &self.log_level)
             .field("view_log_stream_refcounts", &self.view_log_stream_refcounts)
-            .field("downstream_log_kinds", &self.downstream_log_kinds)
+            .field("downstream_log_streams", &self.downstream_log_streams)
             .finish_non_exhaustive()
     }
 }
@@ -437,6 +465,15 @@ impl LogKind {
             LanguageServerLogType::Rpc { .. } => Self::Rpc,
         }
     }
+
+    fn to_proto(self) -> Option<proto::toggle_lsp_logs::LogType> {
+        match self {
+            Self::Rpc => Some(proto::toggle_lsp_logs::LogType::Rpc),
+            Self::Trace => Some(proto::toggle_lsp_logs::LogType::Trace),
+            Self::Logs => Some(proto::toggle_lsp_logs::LogType::Log),
+            Self::ServerInfo => None,
+        }
+    }
 }
 
 impl LogStore {
@@ -630,6 +667,7 @@ impl LogStore {
                                 }
                             }
                             crate::Event::ToggleLspLogs {
+                                peer_id,
                                 server_id,
                                 enabled,
                                 toggled_log_kind,
@@ -638,7 +676,30 @@ impl LogStore {
                                     server_kind_for_id(log_store, *server_id),
                                     *server_id,
                                 );
-                                log_store.toggle_lsp_logs(&server_key, *enabled, *toggled_log_kind);
+                                log_store.set_downstream_log_stream(
+                                    &server_key,
+                                    *peer_id,
+                                    *toggled_log_kind,
+                                    *enabled,
+                                    cx,
+                                );
+                            }
+                            crate::Event::CollaboratorLeft(peer_id) => {
+                                log_store.release_downstream_log_streams_for_peer(
+                                    &project.downgrade(),
+                                    *peer_id,
+                                    cx,
+                                );
+                            }
+                            crate::Event::CollaboratorUpdated {
+                                old_peer_id,
+                                new_peer_id,
+                            } => {
+                                log_store.update_downstream_peer_id(
+                                    &project.downgrade(),
+                                    *old_peer_id,
+                                    *new_peer_id,
+                                );
                             }
                             _ => {}
                         }
@@ -683,7 +744,7 @@ impl LogStore {
                     log_level: MessageType::LOG,
                     io_logs_subscription: None,
                     view_log_stream_refcounts: HashMap::default(),
-                    downstream_log_kinds: HashSet::default(),
+                    downstream_log_streams: HashMap::default(),
                 }
             });
 
@@ -970,10 +1031,7 @@ impl LogStore {
                     }
                     .and_then(|lsp_store| lsp_store.read(cx).downstream_client());
                     if let Some((client, project_id)) = downstream_client {
-                        if state
-                            .downstream_log_kinds
-                            .contains(&LogKind::from_server_log_type(kind))
-                        {
+                        if state.has_downstream_log_stream(LogKind::from_server_log_type(kind)) {
                             client
                                 .send(proto::LanguageServerLog {
                                     project_id,
@@ -995,72 +1053,159 @@ impl LogStore {
         &mut self,
         key: &LanguageServerLogKey,
         log_kind: LogKind,
-    ) -> Option<bool> {
-        let state = self.get_language_server_state(key)?;
-        let refcount = state.view_log_stream_refcounts.entry(log_kind).or_default();
-        let is_first = *refcount == 0;
-        *refcount += 1;
-        if log_kind == LogKind::Rpc {
-            state
-                .rpc_state
-                .get_or_insert_with(|| LanguageServerRpcState {
-                    rpc_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
-                    header_state: RpcLogHeaderState::default(),
-                    request_tracker: RpcRequestTracker::default(),
-                });
-        }
-        Some(is_first)
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        self.update_log_stream_ownership(
+            key,
+            log_kind,
+            |state| {
+                *state.view_log_stream_refcounts.entry(log_kind).or_default() += 1;
+            },
+            cx,
+        )
     }
 
     pub fn release_view_log_stream(
         &mut self,
         key: &LanguageServerLogKey,
         log_kind: LogKind,
-    ) -> Option<bool> {
-        let state = self.get_language_server_state(key)?;
-        let refcount = state.view_log_stream_refcounts.get_mut(&log_kind)?;
-        if *refcount > 1 {
-            *refcount -= 1;
-            return Some(false);
-        }
-        state.view_log_stream_refcounts.remove(&log_kind);
-        if log_kind == LogKind::Rpc && !state.downstream_log_kinds.contains(&log_kind) {
-            state.rpc_state.take();
-        }
-        Some(true)
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        self.update_log_stream_ownership(
+            key,
+            log_kind,
+            |state| match state.view_log_stream_refcounts.get_mut(&log_kind) {
+                Some(refcount) if *refcount > 1 => *refcount -= 1,
+                Some(_) => {
+                    state.view_log_stream_refcounts.remove(&log_kind);
+                }
+                None => {}
+            },
+            cx,
+        )
     }
 
-    pub fn toggle_lsp_logs(
+    pub fn set_downstream_log_stream(
         &mut self,
         key: &LanguageServerLogKey,
+        peer_id: proto::PeerId,
+        log_kind: LogKind,
         enabled: bool,
-        toggled_log_kind: LogKind,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        self.update_log_stream_ownership(
+            key,
+            log_kind,
+            |state| {
+                if enabled {
+                    state
+                        .downstream_log_streams
+                        .entry(peer_id)
+                        .or_default()
+                        .insert(log_kind);
+                } else if let Some(log_kinds) = state.downstream_log_streams.get_mut(&peer_id) {
+                    log_kinds.remove(&log_kind);
+                    if log_kinds.is_empty() {
+                        state.downstream_log_streams.remove(&peer_id);
+                    }
+                }
+            },
+            cx,
+        )
+    }
+
+    fn release_downstream_log_streams_for_peer(
+        &mut self,
+        project: &WeakEntity<Project>,
+        peer_id: proto::PeerId,
+        cx: &mut Context<Self>,
     ) {
-        let Some(server_state) = self.get_language_server_state(key) else {
-            return;
-        };
-        if enabled {
-            server_state.downstream_log_kinds.insert(toggled_log_kind);
-        } else {
-            server_state.downstream_log_kinds.remove(&toggled_log_kind);
+        let mut streams = Vec::new();
+        for (key, state) in &self.language_servers {
+            if key.kind.project() == Some(project)
+                && let Some(log_kinds) = state.downstream_log_streams.get(&peer_id)
+            {
+                streams.extend(log_kinds.iter().map(|log_kind| (key.clone(), *log_kind)));
+            }
         }
-        if toggled_log_kind == LogKind::Rpc {
-            let has_view = server_state
-                .view_log_stream_refcounts
-                .contains_key(&toggled_log_kind);
-            if enabled || has_view {
-                server_state
-                    .rpc_state
-                    .get_or_insert_with(|| LanguageServerRpcState {
-                        rpc_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
-                        header_state: RpcLogHeaderState::default(),
-                        request_tracker: RpcRequestTracker::default(),
-                    });
-            } else {
-                server_state.rpc_state.take();
+
+        for (key, log_kind) in streams {
+            self.set_downstream_log_stream(&key, peer_id, log_kind, false, cx);
+        }
+    }
+
+    fn update_downstream_peer_id(
+        &mut self,
+        project: &WeakEntity<Project>,
+        old_peer_id: proto::PeerId,
+        new_peer_id: proto::PeerId,
+    ) {
+        for (key, state) in &mut self.language_servers {
+            if key.kind.project() == Some(project)
+                && let Some(log_kinds) = state.downstream_log_streams.remove(&old_peer_id)
+            {
+                state
+                    .downstream_log_streams
+                    .entry(new_peer_id)
+                    .or_default()
+                    .extend(log_kinds);
             }
         }
     }
+
+    fn update_log_stream_ownership(
+        &mut self,
+        key: &LanguageServerLogKey,
+        log_kind: LogKind,
+        update: impl FnOnce(&mut LanguageServerState),
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let (was_enabled, is_enabled) = {
+            let state = self.get_language_server_state(key)?;
+            let was_enabled = state.has_log_stream(log_kind);
+            update(state);
+            let is_enabled = state.has_log_stream(log_kind);
+            if log_kind == LogKind::Rpc {
+                state.synchronize_rpc_state();
+            }
+            (was_enabled, is_enabled)
+        };
+
+        if was_enabled != is_enabled {
+            Self::send_toggle_log_message(key, is_enabled, log_kind, cx);
+        }
+        Some(())
+    }
+
+    fn send_toggle_log_message(
+        key: &LanguageServerLogKey,
+        enabled: bool,
+        log_kind: LogKind,
+        cx: &mut App,
+    ) {
+        let LanguageServerKind::Remote { project } = &key.kind else {
+            return;
+        };
+        let Some(log_type) = log_kind.to_proto() else {
+            return;
+        };
+        let Some(project) = project.upgrade() else {
+            return;
+        };
+        let lsp_store = project.read(cx).lsp_store();
+        let Some((client, project_id)) = lsp_store.read(cx).upstream_client() else {
+            return;
+        };
+        client
+            .send(proto::ToggleLspLogs {
+                project_id,
+                log_type: log_type as i32,
+                server_id: key.server_id.to_proto(),
+                enabled,
+            })
+            .log_err();
+    }
+
     pub fn sync_copilot_for_project(
         &mut self,
         project: &WeakEntity<Project>,

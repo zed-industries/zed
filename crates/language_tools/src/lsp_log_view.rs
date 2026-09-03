@@ -18,11 +18,9 @@ use project::{
     },
     search::SearchQuery,
 };
-use proto::toggle_lsp_logs::LogType;
 use settings::SeedQuerySetting;
 use std::{any::TypeId, borrow::Cow, sync::Arc};
 use ui::{Checkbox, ContextMenu, PopoverMenu, ToggleState, prelude::*};
-use util::ResultExt as _;
 use workspace::{
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemHandle},
@@ -447,8 +445,8 @@ impl LspLogView {
             if already_enabled {
                 return;
             }
-            let Some(is_first) = self.log_store.update(cx, |log_store, _| {
-                log_store.retain_view_log_stream(key, log_kind)
+            let Some(()) = self.log_store.update(cx, |log_store, cx| {
+                log_store.retain_view_log_stream(key, log_kind, cx)
             }) else {
                 return;
             };
@@ -456,9 +454,6 @@ impl LspLogView {
                 .entry(key.clone())
                 .or_default()
                 .insert(log_kind);
-            if is_first && let Some(log_type) = log_type(log_kind) {
-                send_toggle_log_message(key, true, log_type, cx);
-            }
         } else {
             let Some(log_kinds) = self.enabled_streams.get_mut(key) else {
                 return;
@@ -469,15 +464,9 @@ impl LspLogView {
             if log_kinds.is_empty() {
                 self.enabled_streams.remove(key);
             }
-            let is_last = self
-                .log_store
-                .update(cx, |log_store, _| {
-                    log_store.release_view_log_stream(key, log_kind)
-                })
-                .unwrap_or(true);
-            if is_last && let Some(log_type) = log_type(log_kind) {
-                send_toggle_log_message(key, false, log_type, cx);
-            }
+            self.log_store.update(cx, |log_store, cx| {
+                log_store.release_view_log_stream(key, log_kind, cx);
+            });
         }
     }
 
@@ -714,39 +703,6 @@ impl LspLogView {
         cx.notify();
         self.editor.read(cx).focus_handle(cx).focus(window, cx);
         self.disable_streams_for_server(&key, cx);
-    }
-}
-
-fn log_type(log_kind: LogKind) -> Option<LogType> {
-    match log_kind {
-        LogKind::Rpc => Some(LogType::Rpc),
-        LogKind::Trace => Some(LogType::Trace),
-        LogKind::Logs => Some(LogType::Log),
-        LogKind::ServerInfo => None,
-    }
-}
-
-fn send_toggle_log_message(
-    key: &LanguageServerLogKey,
-    enabled: bool,
-    log_type: LogType,
-    cx: &mut App,
-) {
-    if let LanguageServerKind::Remote { project } = &key.kind {
-        project
-            .update(cx, |project, cx| {
-                if let Some((client, project_id)) = project.lsp_store().read(cx).upstream_client() {
-                    client
-                        .send(proto::ToggleLspLogs {
-                            project_id,
-                            log_type: log_type as i32,
-                            server_id: key.server_id.to_proto(),
-                            enabled,
-                        })
-                        .log_err();
-                }
-            })
-            .ok();
     }
 }
 
