@@ -3770,13 +3770,36 @@ mod tests {
         multi_workspace
             .update(cx, |_, window, cx| {
                 assert!(
-                    preview.read(cx).focus_handle.contains_focused(window, cx),
-                    "outer preview should be focused, not the content"
+                    preview.read(cx).focus_handle.is_focused(window),
+                    "outer preview should be focused"
+                );
+                assert!(
+                    !preview
+                        .read(cx)
+                        .markdown
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window),
+                    "content should not be focused"
                 );
                 window.dispatch_action(Box::new(editor::actions::SelectAll), cx);
             })
             .unwrap();
         cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                assert!(
+                    preview
+                        .read(cx)
+                        .markdown
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window),
+                    "content should be focused"
+                );
+            })
+            .unwrap();
 
         preview
     }
