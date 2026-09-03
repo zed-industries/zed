@@ -935,6 +935,14 @@ impl Model {
                 ReasoningEffort::XHigh,
             ]),
 
+            Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
+                Some(vec![
+                    ReasoningEffort::None,
+                    ReasoningEffort::High,
+                    ReasoningEffort::Max,
+                ])
+            }
+
             // Tencent models
             Self::Hy3 => Some(vec![
                 ReasoningEffort::None,
