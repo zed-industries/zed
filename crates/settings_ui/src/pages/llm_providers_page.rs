@@ -1328,7 +1328,7 @@ fn parse_u64_field(value: &str, name: &str) -> Result<u64, SharedString> {
 #[cfg(test)]
 mod tests {
     use gpui::{TestAppContext, VisualTestContext, size};
-    use language_models::provider::cloud::young_account_configuration_for_test;
+    use language_models::provider::cloud;
     use settings::SettingsStore;
 
     use super::*;
@@ -1348,7 +1348,7 @@ mod tests {
                             "You have access to Zed's hosted models through your organization."
                                 .into(),
                         )),
-                        young_account_configuration_for_test(),
+                        cloud::test_support::young_account_configuration(),
                     )),
             )
         }

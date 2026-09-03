@@ -437,17 +437,21 @@ struct ZedAiConfiguration {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub fn young_account_configuration_for_test() -> AnyElement {
-    ZedAiConfiguration {
-        is_connected: true,
-        plan: Some(Plan::ZedBusiness),
-        is_zed_model_provider_enabled: true,
-        eligible_for_trial: false,
-        account_too_young: true,
-        compact: true,
-        sign_in_callback: Arc::new(|_, _| {}),
+pub mod test_support {
+    use super::*;
+
+    pub fn young_account_configuration() -> AnyElement {
+        ZedAiConfiguration {
+            is_connected: true,
+            plan: Some(Plan::ZedBusiness),
+            is_zed_model_provider_enabled: true,
+            eligible_for_trial: false,
+            account_too_young: true,
+            compact: true,
+            sign_in_callback: Arc::new(|_, _| {}),
+        }
+        .into_any_element()
     }
-    .into_any_element()
 }
 
 fn zed_ai_description(
