@@ -42259,6 +42259,80 @@ async fn test_tab_list_indent(cx: &mut TestAppContext) {
     "};
     cx.assert_editor_state(expected.replace("$", " ").as_str());
 
+    cx.set_state(indoc! {"
+        1. first item
+        2. ˇsecond item
+        3. third item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        1. first item
+        $$1. ˇsecond item
+        2. third item
+    "};
+    cx.assert_editor_state(expected.replace("$", " ").as_str());
+
+    cx.set_state(indoc! {"
+        1. first item
+          1. nested item
+        2. ˇsecond item
+        3. third item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+          1. nested item
+          2. ˇsecond item
+        2. third item
+    "});
+
+    cx.set_state(indoc! {"
+        9. first item
+        10. ˇsecond item
+        11. third item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        9. first item
+          1. ˇsecond item
+        10. third item
+    "});
+
+    cx.set_state(indoc! {"
+        1. first item
+        2. ˇsecond item
+        3. ˇthird item
+        4. fourth item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+          1. ˇsecond item
+          2. ˇthird item
+        2. fourth item
+    "});
+
+    cx.set_state(indoc! {"
+        1. first item
+        2. ˇsecond item
+        3. third item
+        4. ˇfourth item
+        5. fifth item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+          1. ˇsecond item
+        2. third item
+          1. ˇfourth item
+        3. fifth item
+    "});
+
     // Case 4: With existing indentation - adds more indent
     let initial = indoc! {"
         $$- ˇitem
