@@ -227,7 +227,6 @@ impl Model {
             // Models available in both Zen and Go
             Self::Glm5_1
             | Self::Glm5_2
-            | Self::Grok4_5
             | Self::Grok4_6
             | Self::KimiK2_6
             | Self::KimiK2_7Code
@@ -252,7 +251,7 @@ impl Model {
             | Self::Hy3 => &[OpenCodeSubscription::Go],
 
             // Deprecated on Go (per models.dev); still offered on Zen
-            Self::Glm5 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus => {
+            Self::Glm5 | Self::Grok4_5 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus => {
                 &[OpenCodeSubscription::Zen]
             }
 
