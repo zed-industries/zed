@@ -528,6 +528,44 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn ambiguous_relative_path_without_cwd_is_not_guessed(cx: &mut TestAppContext) {
+        let mut test_path_like = init_test(
+            cx,
+            vec![
+                (
+                    path!("/project-a"),
+                    json!({ "src": { "main.go": "" } }),
+                ),
+                (
+                    path!("/project-b"),
+                    json!({ "src": { "main.go": "" } }),
+                ),
+            ],
+            vec![path!("/project-a"), path!("/project-b")],
+        )
+        .await;
+
+        let (_, open_target) = test_path_like(
+            HoveredWord {
+                word: "src/main.go".to_string(),
+                word_match: Range::new(Point::new(0, 0), Point::new(0, 0)),
+                id: 0,
+            },
+            PathLikeTarget {
+                maybe_path: "src/main.go".to_string(),
+                working_directory: None,
+            },
+            BackgroundPathChecks::LocalFileSystem,
+        )
+        .await;
+
+        assert!(
+            open_target.is_none(),
+            "an ambiguous relative path with no known cwd must not silently pick a worktree"
+        );
+    }
+
+    #[gpui::test]
     async fn worktree_file_preferred(cx: &mut TestAppContext) {
         test_path_likes!(
             cx,
