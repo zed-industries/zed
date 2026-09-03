@@ -2471,6 +2471,11 @@ impl ProjectPanel {
                     repository.read(cx).repo_path_to_project_path(repo_path, cx)
                 })
                 .collect::<Vec<_>>();
+            let checkout_paths = if is_dir {
+                vec![repo_path.clone()]
+            } else {
+                repo_paths.clone()
+            };
 
             let answer = if !action.skip_prompt {
                 let (prompt, detail) = if is_dir {
@@ -2478,10 +2483,12 @@ impl ProjectPanel {
                         .iter()
                         .take(MAX_LISTED_PATHS)
                         .map(|path| {
-                            path.strip_prefix(&repo_path)
+                            let path = path
+                                .strip_prefix(&repo_path)
                                 .unwrap_or(path)
                                 .display(path_style)
-                                .into_owned()
+                                .into_owned();
+                            MarkdownInlineCode(&path).to_string()
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -2529,7 +2536,9 @@ impl ProjectPanel {
                 }
 
                 let task = panel.update(cx, |_panel, cx| {
-                    repository.update(cx, |repo, cx| repo.checkout_files("HEAD", repo_paths, cx))
+                    repository.update(cx, |repo, cx| {
+                        repo.checkout_files("HEAD", checkout_paths, cx)
+                    })
                 })?;
 
                 if let Err(e) = task.await {

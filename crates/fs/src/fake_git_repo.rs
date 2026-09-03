@@ -381,19 +381,28 @@ impl GitRepository for FakeGitRepository {
             );
             let contents = self
                 .with_state_async(false, move |state| {
-                    paths
-                        .into_iter()
-                        .map(|path| {
-                            let content =
-                                state.head_contents.get(&path).cloned().with_context(|| {
-                                    format!(
-                                        "pathspec '{}' did not match any file(s) known to git",
-                                        path.as_unix_str()
-                                    )
-                                })?;
-                            Ok((path, content))
-                        })
-                        .collect::<Result<Vec<_>>>()
+                    let mut contents = Vec::new();
+                    for path in paths {
+                        if let Some(content) = state.head_contents.get(&path).cloned() {
+                            contents.push((path, content));
+                            continue;
+                        }
+
+                        let initial_len = contents.len();
+                        contents.extend(
+                            state
+                                .head_contents
+                                .iter()
+                                .filter(|(head_path, _)| head_path.starts_with(&path))
+                                .map(|(head_path, content)| (head_path.clone(), content.clone())),
+                        );
+                        anyhow::ensure!(
+                            contents.len() > initial_len,
+                            "pathspec '{}' did not match any file(s) known to git",
+                            path.as_unix_str()
+                        );
+                    }
+                    Ok(contents)
                 })
                 .await?;
 
