@@ -1,0 +1,19 @@
+[package]
+name = "tree-sitter-jinja2"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Jinja2 grammar for tree-sitter, vendored from geigerzaehler/tree-sitter-jinja2 @ 7af726f with modernized (LanguageFn) bindings"
+repository = "https://github.com/geigerzaehler/tree-sitter-jinja2"
+build = "bindings/rust/build.rs"
+links = "tree-sitter-jinja2"
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter-language = "0.1"
+
+[build-dependencies]
+cc = "1"

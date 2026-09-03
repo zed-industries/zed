@@ -1,0 +1,5 @@
+name = "SQL (dbt)"
+grammar = "sql"
+hidden = true
+line_comments = ["-- "]
+block_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }

@@ -65,6 +65,8 @@ url.workspace = true
 util.workspace = true
 
 [dev-dependencies]
+tree-sitter-jinja2.workspace = true
+tree-sitter-sequel.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 tempfile = { workspace = true}

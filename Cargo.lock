@@ -2843,9 +2843,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.4.3"
+version = "1.2.67"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "509591b7bcd67f4ef775afad7662703b4935daaa6ec0e5605cfb1090b32a2b6d"
+checksum = "e17dd265a7d0f31ef544e1b20e03add05d3b45b491b633b10d67145d2acc1a38"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -6969,8 +6969,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.1.3",
- "windows-result 0.3.4",
+ "windows-link 0.2.1",
+ "windows-result 0.4.1",
 ]
 
 [[package]]
@@ -7814,12 +7814,14 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-gomod",
  "tree-sitter-gowork",
+ "tree-sitter-jinja2",
  "tree-sitter-jsdoc",
  "tree-sitter-json",
  "tree-sitter-md",
  "tree-sitter-python",
  "tree-sitter-regex",
  "tree-sitter-rust",
+ "tree-sitter-sequel",
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "util",
@@ -8478,7 +8480,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.57.0",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -9843,8 +9845,10 @@ dependencies = [
  "tree-sitter-css",
  "tree-sitter-gitcommit",
  "tree-sitter-go",
+ "tree-sitter-jinja2",
  "tree-sitter-python",
  "tree-sitter-rust",
+ "tree-sitter-sequel",
  "tree-sitter-typescript",
  "unindent",
  "url",
@@ -19062,7 +19066,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fb391ac70462b3097a755618fbf9c8f95ecc1eb379a414f7b46f202ed10db1f"
 dependencies = [
  "cc",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -19222,6 +19226,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-jinja2"
+version = "0.0.1"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-jsdoc"
 version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -19290,6 +19302,16 @@ name = "tree-sitter-rust"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439e577dbe07423ec2582ac62c7531120dbfccfa6e5f92406f93dd271a120e45"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-sequel"
+version = "0.3.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d198ad3c319c02e43c21efa1ec796b837afcb96ffaef1a40c1978fbdcec7d17"
 dependencies = [
  "cc",
  "tree-sitter-language",

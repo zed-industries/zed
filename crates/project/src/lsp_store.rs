@@ -641,9 +641,13 @@ impl LocalLspStore {
                             }
                         })?;
 
-                    language_server.notify::<lsp::notification::DidChangeConfiguration>(
-                        did_change_configuration_params,
-                    )?;
+                    // dbt Fusion's `dbt lsp` treats this notification as a fatal
+                    // routing error and exits; never send it to that server.
+                    if language_server.name().0.as_ref() != "dbt-lsp" {
+                        language_server.notify::<lsp::notification::DidChangeConfiguration>(
+                            did_change_configuration_params,
+                        )?;
+                    }
 
                     anyhow::Ok(language_server)
                 }
@@ -9597,11 +9601,14 @@ impl LspStore {
                                             )
                                             .await
                                             .ok()?;
-                                        server
-                                            .notify::<lsp::notification::DidChangeConfiguration>(
-                                                lsp::DidChangeConfigurationParams { settings },
-                                            )
-                                            .ok()?;
+                                        // Skip dbt-lsp: it exits on this notification.
+                                        if server.name().0.as_ref() != "dbt-lsp" {
+                                            server
+                                                .notify::<lsp::notification::DidChangeConfiguration>(
+                                                    lsp::DidChangeConfigurationParams { settings },
+                                                )
+                                                .ok()?;
+                                        }
                                         Some(())
                                     }))
                                 }
