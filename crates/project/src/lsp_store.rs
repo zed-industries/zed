@@ -5874,10 +5874,8 @@ impl LspStore {
         let changes = SyncedServerCapabilitiesChanges {
             document_highlights_changed: previous_document_highlight_provider
                 != current_document_highlight_provider
-                || !dynamic_text_document_registration_value_sets_equal(
-                    previous_document_highlight_registrations,
-                    current_document_highlight_registrations,
-                ),
+                || previous_document_highlight_registrations
+                    != current_document_highlight_registrations,
         };
 
         self.lsp_server_capabilities
@@ -14821,34 +14819,6 @@ impl LspStore {
         }
         lsp_data
     }
-}
-
-fn dynamic_text_document_registration_value_sets_equal(
-    previous: Option<
-        &collections::IndexMap<String, dynamic_registration::DynamicTextDocumentRegistration>,
-    >,
-    current: Option<
-        &collections::IndexMap<String, dynamic_registration::DynamicTextDocumentRegistration>,
-    >,
-) -> bool {
-    previous
-        .into_iter()
-        .flat_map(|registrations| registrations.values())
-        .all(|previous_registration| {
-            current
-                .into_iter()
-                .flat_map(|registrations| registrations.values())
-                .any(|current_registration| current_registration == previous_registration)
-        })
-        && current
-            .into_iter()
-            .flat_map(|registrations| registrations.values())
-            .all(|current_registration| {
-                previous
-                    .into_iter()
-                    .flat_map(|registrations| registrations.values())
-                    .any(|previous_registration| previous_registration == current_registration)
-            })
 }
 
 fn document_selector_context_for_buffer(
