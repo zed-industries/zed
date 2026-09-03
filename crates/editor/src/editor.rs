@@ -109,9 +109,8 @@ pub use element::{
 };
 pub use git::blame::{BlameRenderer, GitBlame};
 pub use git::{
-    DiffHunkDelegate, ResolvedDiffHunk, ResolvedDiffHunks, RestoreOnlyDiffHunkDelegate,
-    RestoreOnlyUnstagedDiffHunkDelegate, UncommittedDiffHunkDelegate, render_diff_hunk_controls,
-    set_blame_renderer,
+    DefaultDiffHunkRenderer, DiffHunkRenderer, HiddenDiffHunkRenderer,
+    HiddenUnstagedDiffHunkRenderer, render_diff_hunk_controls, set_blame_renderer,
 };
 pub(crate) use git::{DiffHunkKey, StoredReviewComment};
 use git::{DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover};
@@ -1161,7 +1160,8 @@ pub struct Editor {
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     language_detection_task: Task<()>,
     load_diff_task: Option<Shared<Task<()>>>,
-    diff_hunk_delegate: Option<Arc<dyn DiffHunkDelegate>>,
+    diff_hunk_renderer: Option<Arc<dyn DiffHunkRenderer>>,
+    diff_hunk_action_target: Option<WeakEntity<Editor>>,
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
@@ -2512,7 +2512,8 @@ impl Editor {
             serialize_folds: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: None,
-            diff_hunk_delegate: None,
+            diff_hunk_renderer: None,
+            diff_hunk_action_target: None,
             minimap: None,
             change_list: ChangeList::new(),
             mode,

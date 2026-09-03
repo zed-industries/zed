@@ -5398,6 +5398,7 @@ dependencies = [
  "lsp",
  "menu",
  "node_runtime",
+ "ollama",
  "open_ai",
  "parking_lot",
  "postage",
@@ -20615,6 +20616,7 @@ checksum = "2857dd20b54e916ec7253b3d6b4d5c4d7d4ca2c33c2e11c6c76a99bd8744755d"
 dependencies = [
  "cc",
  "downcast-rs",
+ "log",
  "rustix",
  "scoped-tls",
  "smallvec",
