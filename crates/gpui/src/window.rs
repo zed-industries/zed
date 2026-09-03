@@ -4596,10 +4596,10 @@ impl Window {
             let max_x = tile_origin_x + tile_width;
             let max_y = tile_origin_y + tile_height;
 
-            let clamped_origin_x = sub_origin_x.clamp(tile_origin_x, max_x);
-            let clamped_origin_y = sub_origin_y.clamp(tile_origin_y, max_y);
-            let clamped_width = sub_width.min(max_x - clamped_origin_x).max(0);
-            let clamped_height = sub_height.min(max_y - clamped_origin_y).max(0);
+            let clamped_origin_x = sub_origin_x.clamp(tile_origin_x, max_x - 1);
+            let clamped_origin_y = sub_origin_y.clamp(tile_origin_y, max_y - 1);
+            let clamped_width = sub_width.min(max_x - clamped_origin_x).max(1);
+            let clamped_height = sub_height.min(max_y - clamped_origin_y).max(1);
 
             AtlasTile {
                 bounds: Bounds {
