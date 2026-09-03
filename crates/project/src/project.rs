@@ -3960,6 +3960,7 @@ impl Project {
                 self.client()
                     .telemetry()
                     .report_discovered_project_type_events(*worktree_id, changes);
+                self.emit_group_key_changed_if_needed(cx);
                 cx.emit(Event::WorktreeUpdatedEntries(*worktree_id, changes.clone()))
             }
             WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, id) => {

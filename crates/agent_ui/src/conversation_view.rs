@@ -853,6 +853,21 @@ impl ConversationView {
                 }
             }
         }));
+        subscriptions.push(cx.subscribe_in(
+            &project,
+            window,
+            |this, project, event, window, cx| {
+                if let project::Event::WorktreePathsChanged { old_worktree_paths } = event {
+                    let paths_old = old_worktree_paths.folder_path_list();
+                    let paths_new = project.read(cx).worktree_paths(cx);
+                    let paths_new = paths_new.folder_path_list();
+                    if paths_old.paths().len() == paths_new.paths().len() && paths_old != paths_new
+                    {
+                        this.reset(window, cx);
+                    }
+                }
+            },
+        ));
 
         cx.on_release(|this, cx| {
             this.request_elicitation_form_states.clear();
