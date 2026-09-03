@@ -346,6 +346,8 @@ impl UserMessage {
         const MERGE_CONFLICT_TAG: &str = "<merge_conflicts>";
         const OPEN_SKILLS_TAG: &str =
             "<skills>\nThe user has attached the following agent skills:\n";
+        const OPEN_MCP_TAG: &str =
+            "<mcp_servers>\nThe user has explicitly mentioned the following MCP context servers:\n";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
@@ -358,6 +360,7 @@ impl UserMessage {
         let mut diffs_context = OPEN_DIFFS_TAG.to_string();
         let mut merge_conflict_context = MERGE_CONFLICT_TAG.to_string();
         let mut skills_context = OPEN_SKILLS_TAG.to_string();
+        let mut mcp_context = OPEN_MCP_TAG.to_string();
 
         for chunk in &*self.content {
             let chunk = match chunk {
@@ -479,6 +482,13 @@ impl UserMessage {
                             let label = format!("{} ({})", name, source);
                             write!(&mut skills_context, "\nSkill: {}\n{}\n", label, content).ok();
                         }
+                        MentionUri::ContextServer { server_id } => {
+                            write!(
+                                &mut mcp_context,
+                                "\n- Server: {server_id}\n  Server ID: mcp:{server_id}:\n",
+                            )
+                            .ok();
+                        }
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())
@@ -565,6 +575,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(merge_conflict_context));
+        }
+
+        if mcp_context.len() > OPEN_MCP_TAG.len() {
+            mcp_context.push_str("</mcp_servers>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(mcp_context));
         }
 
         if message.content.len() > len_before_context {
