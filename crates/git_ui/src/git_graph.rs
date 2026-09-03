@@ -58,7 +58,7 @@ use ui::{
 };
 use util::{ResultExt, debug_panic};
 use workspace::{
-    ModalView, Workspace,
+    ItemNavHistory, ModalView, Workspace,
     item::{Item, ItemEvent, TabTooltipContent},
 };
 
@@ -1329,6 +1329,7 @@ pub struct GitGraph {
     changed_files_view_mode: ChangedFilesViewMode,
     changed_files_expanded_dirs: HashMap<RepoPath, bool>,
     pending_select_sha: Option<Oid>,
+    nav_history: Option<ItemNavHistory>,
 }
 
 impl GitGraph {
@@ -1575,6 +1576,7 @@ impl GitGraph {
             changed_files_view_mode: ChangedFilesViewMode::default(),
             changed_files_expanded_dirs: HashMap::default(),
             pending_select_sha: None,
+            nav_history: None,
         };
 
         this.fetch_initial_graph_data(cx);
@@ -4177,6 +4179,21 @@ impl Item for GitGraph {
 
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
         f(*event)
+    }
+
+    fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(nav_history) = self.nav_history.as_mut() {
+            nav_history.push::<()>(None, None, cx);
+        }
+    }
+
+    fn set_nav_history(
+        &mut self,
+        nav_history: ItemNavHistory,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        self.nav_history = Some(nav_history);
     }
 }
 
@@ -6849,6 +6866,130 @@ mod tests {
 
         git_graph.read_with(&*cx, |graph, _| {
             assert_eq!(graph.selected_entry_idx, Some(1));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_go_back_from_commit_view_returns_to_git_graph(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+        let first_sha = Oid::from_bytes(&[1; 20]).expect("valid commit SHA");
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: first_sha,
+                parents: smallvec![],
+                ref_names: vec!["HEAD -> main".into()],
+            })],
+        );
+        fs.set_commit_data(
+            Path::new("/project/.git"),
+            [(
+                CommitData {
+                    sha: first_sha,
+                    parents: smallvec![],
+                    author_name: "Author".into(),
+                    author_email: "author@example.com".into(),
+                    commit_timestamp: 1_700_000_000,
+                    subject: "Commit subject".into(),
+                    message: "Commit message".into(),
+                },
+                false,
+            )],
+        );
+
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+
+        // Open a file first, so there's something in nav history before the Git Graph tab.
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(Path::new("/project/file.txt"), cx)
+            })
+            .await
+            .expect("file should open");
+        let buffer_editor = cx.new_window_entity(|window, cx| {
+            Editor::for_buffer(buffer, Some(project.clone()), window, cx)
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(buffer_editor.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace.downgrade(),
+                None,
+                window,
+                cx,
+            )
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.update(cx, |graph, cx| {
+            graph.select_commit_by_sha(first_sha, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.open_selected_commit_view(window, cx);
+        });
+        cx.run_until_parked();
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        pane.read_with(cx, |pane, _cx| {
+            assert!(
+                pane.active_item()
+                    .and_then(|item| item.downcast::<CommitView>())
+                    .is_some(),
+                "expected the commit diff view to be active after opening a commit"
+            );
+        });
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.navigate_backward(&Default::default(), window, cx);
+        });
+        cx.run_until_parked();
+
+        pane.read_with(cx, |pane, _cx| {
+            let active_git_graph = pane
+                .active_item()
+                .and_then(|item| item.downcast::<GitGraph>());
+            assert_eq!(
+                active_git_graph,
+                Some(git_graph.clone()),
+                "Go Back from the commit diff view should return to the Git Graph view"
+            );
         });
     }
 
