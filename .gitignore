@@ -11,6 +11,7 @@
 .blob_store
 .build
 .claude/settings.local.json
+.agents/*
 .envrc
 .flatpak-builder
 .idea
