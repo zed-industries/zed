@@ -278,6 +278,13 @@ impl EditorElement {
 
         crate::rust_analyzer_ext::apply_related_actions(editor, window, cx);
         crate::clangd_ext::apply_related_actions(editor, window, cx);
+        crate::emmet_ext::apply_related_actions(editor, window, cx);
+
+        if editor.read(cx).pending_inline_input().is_some() {
+            register_action(editor, window, |editor, _: &menu::Confirm, window, cx| {
+                editor.confirm_inline_input(window, cx);
+            });
+        }
 
         register_action(editor, window, Editor::open_context_menu);
         register_action(editor, window, Editor::move_left);
@@ -511,8 +518,16 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_git_blame_inline);
         if editor.read(cx).blame().is_some() {
             register_action(editor, window, Editor::open_git_blame_commit);
-            register_action(editor, window, Editor::blame_revision);
-            register_action(editor, window, Editor::blame_previous_revision);
+            if editor.update(cx, |editor, cx| {
+                editor.blame_revision_target(window, cx).is_some()
+            }) {
+                register_action(editor, window, Editor::blame_revision);
+            }
+            if editor.update(cx, |editor, cx| {
+                editor.blame_previous_revision_target(window, cx).is_some()
+            }) {
+                register_action(editor, window, Editor::blame_previous_revision);
+            }
         }
         register_action(editor, window, Editor::toggle_selected_diff_hunks);
         register_action(editor, window, Editor::toggle_staged_selected_diff_hunks);
@@ -4656,7 +4671,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (Vec<AnyElement>, Vec<(DisplayRow, Bounds<Pixels>)>) {
-        let diff_hunk_delegate = editor.read(cx).diff_hunk_delegate();
+        let diff_hunk_renderer = editor.read(cx).diff_hunk_renderer();
         let hovered_diff_hunk_row = editor.read(cx).hovered_diff_hunk_row;
         let sticky_top = text_hitbox.bounds.top() + sticky_header_height;
 
@@ -4728,7 +4743,7 @@ impl EditorElement {
                         sticky_top.min(max_y)
                     };
 
-                    let mut element = diff_hunk_delegate.render_hunk_controls(
+                    let mut element = diff_hunk_renderer.render_hunk_controls(
                         display_row_range.start.0,
                         status,
                         multi_buffer_range.clone(),
@@ -6601,7 +6616,7 @@ impl EditorElement {
         let unstaged = !self
             .editor
             .read(cx)
-            .diff_hunk_delegate()
+            .diff_hunk_renderer()
             .render_hunk_as_staged(&status, cx);
         let unstaged_hollow = matches!(
             ProjectSettings::get_global(cx).git.hunk_style,
@@ -8207,9 +8222,13 @@ impl Element for EditorElement {
                         )
                     };
 
-                    let mut highlighted_rows = self
-                        .editor
-                        .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
+                    let mut highlighted_rows =
+                        self.editor.read(cx).highlighted_display_rows_in_range(
+                            start_anchor..end_anchor,
+                            start_row..end_row,
+                            &snapshot.display_snapshot,
+                            cx,
+                        );
 
                     let mut highlighted_ranges = self
                         .editor_with_selections(cx)
@@ -9050,14 +9069,39 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let frozen_scroll_state = if self.editor.read(cx).search_results_hold.is_some()
+                    {
+                        let is_rewrapping =
+                            self.editor.read(cx).display_map.read(cx).is_rewrapping(cx);
+                        self.editor.update(cx, |editor, _| {
+                            editor.frozen_scroll_range(
+                                is_rewrapping,
+                                scrollbar_layout_information.scroll_range,
+                                editor_width,
+                                scrollbar_layout_information.editor_bounds.size,
+                            )
+                        })
+                    } else {
+                        None
+                    };
+                    let effective_scrollbar_layout_information =
+                        frozen_scroll_state.map_or(scrollbar_layout_information, |settled| {
+                            ScrollbarLayoutInformation {
+                                scroll_range: settled.range,
+                                ..scrollbar_layout_information
+                            }
+                        });
+                    let effective_editor_width =
+                        frozen_scroll_state.map_or(editor_width, |settled| settled.editor_width);
+
                     let scrollbars_layout = self.layout_scrollbars(
                         &snapshot,
-                        &scrollbar_layout_information,
+                        &effective_scrollbar_layout_information,
                         content_offset,
                         scroll_position,
                         non_visible_cursors,
                         right_margin,
-                        editor_width,
+                        effective_editor_width,
                         window,
                         cx,
                     );
@@ -9281,7 +9325,7 @@ impl Element for EditorElement {
                             &snapshot,
                             minimap_width,
                             scroll_position,
-                            &scrollbar_layout_information,
+                            &effective_scrollbar_layout_information,
                             scrollbars_layout.as_ref(),
                             window,
                             cx,
@@ -9361,7 +9405,7 @@ impl Element for EditorElement {
                     };
 
                     let (diff_hunk_controls, diff_hunk_control_bounds) =
-                        if is_read_only && self.editor.read(cx).diff_hunk_delegate.is_none() {
+                        if is_read_only && self.editor.read(cx).diff_hunk_renderer.is_none() {
                             (vec![], vec![])
                         } else {
                             self.layout_diff_hunk_controls(
@@ -9589,6 +9633,7 @@ struct ContextMenuLayout {
 }
 
 /// Holds information required for layouting the editor scrollbars.
+#[derive(Clone, Copy)]
 struct ScrollbarLayoutInformation {
     /// The bounds of the editor area (excluding the content offset).
     editor_bounds: Bounds<Pixels>,
@@ -10646,9 +10691,24 @@ pub fn register_action<T: Action>(
     window: &mut Window,
     listener: impl Fn(&mut Editor, &T, &mut Window, &mut Context<Editor>) + 'static,
 ) {
+    register_action_erased(
+        editor,
+        window,
+        TypeId::of::<T>(),
+        Box::new(move |editor, action, window, cx| {
+            listener(editor, action.downcast_ref().unwrap(), window, cx)
+        }),
+    )
+}
+
+fn register_action_erased(
+    editor: &Entity<Editor>,
+    window: &mut Window,
+    action_type: TypeId,
+    listener: Box<dyn Fn(&mut Editor, &dyn std::any::Any, &mut Window, &mut Context<Editor>)>,
+) {
     let editor = editor.clone();
-    window.on_action(TypeId::of::<T>(), move |action, phase, window, cx| {
-        let action = action.downcast_ref().unwrap();
+    window.on_action(action_type, move |action, phase, window, cx| {
         if phase == DispatchPhase::Bubble {
             editor.update(cx, |editor, cx| {
                 listener(editor, action, window, cx);
@@ -11113,6 +11173,7 @@ mod tests {
                         summary: None,
                         previous: None,
                         filename: String::new(),
+                        boundary: false,
                     }],
                     ..Default::default()
                 },
@@ -11799,7 +11860,7 @@ mod tests {
                 );
 
                 // Blur the editor so that it displays placeholder text.
-                window.blur();
+                window.blur(cx);
             })
             .unwrap();
 

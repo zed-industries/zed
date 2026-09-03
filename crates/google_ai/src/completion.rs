@@ -139,7 +139,8 @@ pub fn into_google(
                         Ok(FunctionDeclaration {
                             name: tool.name,
                             description: tool.description,
-                            parameters: input_schema,
+                            parameters: None,
+                            parameters_json_schema: Some(input_schema),
                         })
                     }
                     LanguageModelRequestToolInput::Custom { .. } => {
@@ -484,7 +485,7 @@ mod tests {
         Content, FunctionCall, FunctionCallPart, GenerateContentCandidate, GenerateContentResponse,
         Part, Role as GoogleRole,
     };
-    use language_model_core::LanguageModelRequestMessage;
+    use language_model_core::{LanguageModelRequestMessage, LanguageModelRequestTool};
     use serde_json::json;
 
     fn text_request() -> LanguageModelRequest {
@@ -521,6 +522,43 @@ mod tests {
         let serialized = serde_json::to_value(thinking_config).unwrap();
         assert_eq!(serialized["thinkingLevel"], "LOW");
         assert_eq!(serialized["includeThoughts"], true);
+    }
+
+    #[test]
+    fn into_google_uses_json_schema_function_parameters() {
+        let input_schema = json!({
+            "type": "object",
+            "properties": {
+                "globs": {
+                    "anyOf": [
+                        { "type": "string" },
+                        {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
+                    ]
+                }
+            }
+        });
+        let mut request = text_request();
+        request.tools = vec![LanguageModelRequestTool::function(
+            "grep".to_string(),
+            "Search files".to_string(),
+            input_schema.clone(),
+            false,
+        )];
+
+        let request = into_google(
+            request,
+            "gemini-3.5-flash".to_string(),
+            GoogleModelMode::Default,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(request).unwrap();
+        let declaration = &serialized["tools"][0]["functionDeclarations"][0];
+
+        assert_eq!(declaration["parametersJsonSchema"], input_schema);
+        assert_eq!(declaration.get("parameters"), None);
     }
 
     #[test]

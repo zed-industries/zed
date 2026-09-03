@@ -8,7 +8,7 @@ use crate::{
 use anyhow::{Context as _, Result};
 use buffer_diff::DiffHunkSecondaryStatus;
 use editor::{
-    Editor, EditorEvent, SplittableEditor, UncommittedDiffHunkDelegate,
+    DefaultDiffHunkRenderer, Editor, EditorEvent, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
 };
 use git::{Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext};
@@ -48,6 +48,8 @@ actions!(
         Diff,
         /// Shows working changes relative to HEAD.
         DiffHead,
+        /// Toggles the git diff base between HEAD and the default branch.
+        ToggleDiffBase,
         /// Adds files to the git staging area.
         Add,
         /// Opens a new agent thread with the branch diff for review.
@@ -76,6 +78,19 @@ impl ProjectDiff {
         workspace.register_action(Self::deploy);
         workspace.register_action(|workspace, _: &DiffHead, window, cx| {
             Self::deploy_at(workspace, None, window, cx);
+        });
+        workspace.register_action(|workspace, _: &ToggleDiffBase, _window, cx| {
+            settings::update_settings_file(
+                workspace.app_state().fs.clone(),
+                cx,
+                move |settings, _| {
+                    let git = settings.git.get_or_insert_default();
+                    git.diff_base = Some(match git.diff_base.unwrap_or_default() {
+                        GitDiffBaseSetting::Head => GitDiffBaseSetting::DefaultBranch,
+                        GitDiffBaseSetting::DefaultBranch => GitDiffBaseSetting::Head,
+                    });
+                },
+            );
         });
         workspace.register_action(
             |workspace, _: &git_actions::ViewUncommittedChanges, window, cx| {
@@ -228,7 +243,7 @@ impl ProjectDiff {
                 Capability::ReadWrite,
                 "No uncommitted changes",
                 move |editor, cx| {
-                    editor.set_diff_hunk_delegate(Some(Arc::new(UncommittedDiffHunkDelegate)), cx);
+                    editor.set_diff_hunk_renderer(Some(Arc::new(DefaultDiffHunkRenderer)), cx);
                     editor.rhs_editor().update(cx, |rhs_editor, _cx| {
                         rhs_editor.set_read_only(false);
                         rhs_editor.register_addon(GitPanelAddon {
@@ -607,7 +622,6 @@ impl SerializableItem for ProjectDiff {
         _: &mut Workspace,
         _: workspace::ItemId,
         _: bool,
-        _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         Some(Task::ready(Ok(())))
@@ -1116,6 +1130,33 @@ mod tests {
                 GitDiffBaseSetting::DefaultBranch
             );
         });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(ToggleDiffBase.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.git_store().read(cx).diff_base(),
+                GitDiffBaseSetting::DefaultBranch
+            );
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(ToggleDiffBase.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.git_store().read(cx).diff_base(),
+                GitDiffBaseSetting::Head
+            );
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(ToggleDiffBase.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
 
         cx.update(|window, cx| {
             window.dispatch_action(Diff.boxed_clone(), cx);

@@ -1,5 +1,8 @@
 use crate::display::WebDisplay;
-use crate::events::{ClickState, EventListenerHandle, WebEventListeners, is_mac_platform};
+use crate::events::{
+    ClickState, EventListenerHandle, TouchIds, WebEventListeners, is_mac_platform,
+};
+use crate::ime_mirror::ImeMirror;
 use crate::platform::WebWindowLifecycle;
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
@@ -8,8 +11,9 @@ use gpui::{
     AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs,
     Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
+    ResizeEdge, Scene, Size, TextInputConfiguration, TextInputStateChange, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
+    WindowParams, px,
 };
 use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 use wasm_bindgen::prelude::*;
@@ -46,16 +50,39 @@ pub(crate) struct WebWindowMutableState {
 pub(crate) struct WebWindowInner {
     pub(crate) browser_window: web_sys::Window,
     pub(crate) canvas: web_sys::HtmlCanvasElement,
-    pub(crate) input_element: web_sys::HtmlInputElement,
+    pub(crate) ime_mirror: ImeMirror,
     pub(crate) has_device_pixel_support: bool,
     pub(crate) is_mac: bool,
     pub(crate) state: RefCell<WebWindowMutableState>,
     pub(crate) callbacks: RefCell<WebWindowCallbacks>,
     pub(crate) click_state: RefCell<ClickState>,
+    pub(crate) touch_ids: RefCell<TouchIds>,
     pub(crate) pressed_button: Cell<Option<MouseButton>>,
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
     pub(crate) is_composing: Cell<bool>,
+    /// Set while `sync_virtual_keyboard` blur/focus-cycles the hidden input.
+    /// The cycle is a keyboard-visibility hint, not a real activity change;
+    /// letting the focus/blur listeners report it would re-enter GPUI
+    /// synchronously from inside an input dispatch, and a `RefCell`
+    /// double-borrow panic on wasm never unwinds, wedging the app.
+    pub(crate) suppress_focus_status_events: Cell<bool>,
+    /// The visual viewport's width and greatest height seen at that width,
+    /// in layout pixels. The keyboard-visibility probe compares the current
+    /// height against this maximum; the width detects rotation, which must
+    /// restart the calibration.
+    pub(crate) visual_viewport_probe: Cell<(f64, f64)>,
+    /// The visual viewport height when the current pointer gesture began.
+    /// A mid-gesture change means the software keyboard opened or closed and
+    /// reflowed the layout, so the release position no longer refers to what
+    /// the user aimed at.
+    pub(crate) gesture_start_visual_viewport_height: Cell<f64>,
+    /// A touch that may still resolve into a tap: its pointer id and starting
+    /// position, cleared once it travels beyond touch slop. Virtual keyboard
+    /// and IME focus may only change when a touch release completes a tap;
+    /// pans must leave them untouched, or scrolling over editable content
+    /// flickers the keyboard and drags the caret around.
+    pub(crate) touch_tap_candidate: Cell<Option<(i32, Point<Pixels>)>>,
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
     raf_id: Cell<Option<i32>>,
@@ -138,21 +165,7 @@ impl WebWindow {
         };
         let renderer = WgpuRenderer::new_from_surface(context, surface, renderer_config)?;
 
-        let input_element: web_sys::HtmlInputElement = document
-            .create_element("input")
-            .map_err(|e| anyhow::anyhow!("Failed to create input element: {e:?}"))?
-            .dyn_into()
-            .map_err(|e| anyhow::anyhow!("Created element is not an input: {e:?}"))?;
-        let input_style = input_element.style();
-        input_style.set_property("position", "fixed").ok();
-        input_style.set_property("top", "0").ok();
-        input_style.set_property("left", "0").ok();
-        input_style.set_property("width", "1px").ok();
-        input_style.set_property("height", "1px").ok();
-        input_style.set_property("opacity", "0").ok();
-        body.append_child(&input_element)
-            .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
-        input_element.focus().ok();
+        let ime_mirror = ImeMirror::new(&document, &body)?;
 
         let display: Rc<dyn PlatformDisplay> = Rc::new(WebDisplay::new(browser_window.clone()));
 
@@ -181,16 +194,21 @@ impl WebWindow {
         let inner = Rc::new(WebWindowInner {
             browser_window,
             canvas,
-            input_element,
+            ime_mirror,
             has_device_pixel_support,
             is_mac,
             state: RefCell::new(mutable_state),
             callbacks: RefCell::new(WebWindowCallbacks::default()),
             click_state: RefCell::new(ClickState::default()),
+            touch_ids: RefCell::new(TouchIds::default()),
             pressed_button: Cell::new(None),
             last_physical_size: Cell::new((0, 0)),
             notify_scale: Cell::new(false),
             is_composing: Cell::new(false),
+            suppress_focus_status_events: Cell::new(false),
+            visual_viewport_probe: Cell::new((0.0, 0.0)),
+            gesture_start_visual_viewport_height: Cell::new(0.0),
+            touch_tap_candidate: Cell::new(None),
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
             raf_id: Cell::new(None),
@@ -321,6 +339,20 @@ impl WebWindow {
             inner.with_callback(
                 |callbacks| &mut callbacks.resize,
                 |callback| callback(new_size, dpr_f32),
+            );
+
+            // ResizeObserver runs after layout but before the browser paints.
+            // Render synchronously here so the newly resized CSS canvas is
+            // never presented with its previous backing image stretched into
+            // the new viewport dimensions.
+            inner.with_callback(
+                |callbacks| &mut callbacks.request_frame,
+                |callback| {
+                    callback(RequestFrameOptions {
+                        require_presentation: true,
+                        force_render: true,
+                    })
+                },
             );
         })
     }
@@ -528,8 +560,7 @@ impl Drop for WebWindow {
 
         let canvas: &web_sys::Element = self.inner.canvas.as_ref();
         canvas.remove();
-        let input_element: &web_sys::Element = self.inner.input_element.as_ref();
-        input_element.remove();
+        self.inner.ime_mirror.remove();
         self.active_window.borrow_mut().take();
         self.lifecycle.set(WebWindowLifecycle::Closed);
     }
@@ -655,6 +686,18 @@ impl PlatformWindow for WebWindow {
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         self.inner.state.borrow_mut().input_handler.take()
+    }
+
+    fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
+        self.inner.ime_mirror.apply_configuration(&configuration);
+    }
+
+    fn text_input_state_changed(&self, change: TextInputStateChange) {
+        match change {
+            TextInputStateChange::FocusGained => self.inner.sync_virtual_keyboard(true),
+            TextInputStateChange::FocusLost => self.inner.sync_virtual_keyboard(false),
+            TextInputStateChange::SelectionChanged | TextInputStateChange::ContentChanged => {}
+        }
     }
 
     fn prompt(
@@ -788,10 +831,6 @@ impl PlatformWindow for WebWindow {
         }
 
         self.inner.state.borrow_mut().renderer.draw(scene);
-    }
-
-    fn completed_frame(&self) {
-        // On web, presentation happens automatically via wgpu surface present
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

@@ -95,6 +95,7 @@ async fn test_current_state(cx: &mut TestAppContext) {
             project.clone(),
             buffer1.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         )
@@ -130,6 +131,64 @@ async fn test_current_state(cx: &mut TestAppContext) {
     ep_store.update(cx, |ep_store, cx| {
         ep_store.reject_current_prediction(EditPredictionRejectReason::Discarded, &project, cx);
     });
+}
+
+#[gpui::test]
+async fn test_refresh_prediction_from_buffer_honors_debounce_duration(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    cx.update(|cx| set_jumps_feature_flag_override(cx, "on"));
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": "Hello!\n"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(0, 0));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_project(&project, cx);
+        ep_store.register_buffer(&buffer, &project, cx);
+        ep_store.refresh_prediction_from_buffer(
+            project.clone(),
+            buffer.clone(),
+            position,
+            Duration::from_millis(100),
+            EditPredictionRequestTrigger::Other,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    // The configured debounce duration should prevent the request from being sent immediately.
+    assert_no_predict_request_ready(&mut requests.predict_v4);
+
+    cx.background_executor
+        .advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+
+    let (_request, respond_tx) = requests.predict_v4.next().await.unwrap();
+    respond_tx
+        .send(PredictEditsV4Response {
+            request_id: Uuid::new_v4().to_string(),
+            patch: "--- a/root/foo.md\n+++ b/root/foo.md\n@@ ... @@\n Hello!\n+world\n".to_string(),
+            model_version: None,
+        })
+        .unwrap();
+
+    cx.run_until_parked();
 }
 
 #[gpui::test]
@@ -186,6 +245,7 @@ async fn test_refresh_prediction_from_buffer_suppressed_while_following(cx: &mut
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -707,8 +767,8 @@ fn make_collaborator_replica(
 ) -> (Entity<Buffer>, clock::Global) {
     let (state, version) =
         buffer.read_with(cx, |buffer, _cx| (buffer.to_proto(_cx), buffer.version()));
-    let collaborator = cx.new(|_cx| {
-        Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None).unwrap()
+    let collaborator = cx.new(|cx| {
+        Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None, cx).unwrap()
     });
     (collaborator, version)
 }
@@ -1298,6 +1358,7 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Explicit,
             cx,
         );
@@ -1384,6 +1445,7 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1457,6 +1519,7 @@ async fn test_interpolate_failed(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1536,6 +1599,7 @@ async fn test_replace_current(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1565,6 +1629,7 @@ async fn test_replace_current(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1632,6 +1697,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1661,6 +1727,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1747,6 +1814,7 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1759,6 +1827,7 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1853,6 +1922,7 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1865,6 +1935,7 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1881,6 +1952,7 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2018,6 +2090,7 @@ async fn test_cloud_timeout_backs_off_zeta_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2031,6 +2104,7 @@ async fn test_cloud_timeout_backs_off_zeta_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2051,6 +2125,7 @@ async fn test_cloud_timeout_backs_off_zeta_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2092,6 +2167,7 @@ async fn test_same_frame_duplicate_requests_deduplicated(cx: &mut TestAppContext
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2099,6 +2175,7 @@ async fn test_same_frame_duplicate_requests_deduplicated(cx: &mut TestAppContext
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2291,9 +2368,9 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
                             _ => DiagnosticSeverity::HINT,
                         },
                         message: match index {
-                            0 => "first warning".to_string(),
-                            1 => "second error".to_string(),
-                            _ => "third hint".to_string(),
+                            0 => "first warning".into(),
+                            1 => "second error".into(),
+                            _ => "third hint".into(),
                         },
                         group_id: index + 1,
                         is_primary: true,
@@ -2374,7 +2451,7 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
                     text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 3),
                     Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
-                        message: "row zero".to_string(),
+                        message: "row zero".into(),
                         group_id: 1,
                         is_primary: true,
                         source_kind: language::DiagnosticSourceKind::Pushed,
@@ -2385,7 +2462,7 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
                     text::PointUtf16::new(2, 0)..text::PointUtf16::new(2, 5),
                     Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
-                        message: "row two".to_string(),
+                        message: "row two".into(),
                         group_id: 2,
                         is_primary: true,
                         source_kind: language::DiagnosticSourceKind::Pushed,
@@ -2396,7 +2473,7 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
                     text::PointUtf16::new(4, 0)..text::PointUtf16::new(4, 4),
                     Diagnostic {
                         severity: DiagnosticSeverity::INFORMATION,
-                        message: "row four".to_string(),
+                        message: "row four".into(),
                         group_id: 3,
                         is_primary: true,
                         source_kind: language::DiagnosticSourceKind::Pushed,
@@ -2460,7 +2537,7 @@ fn test_active_buffer_diagnostics_collection_limits(cx: &mut TestAppContext) {
                         text::PointUtf16::new(row, 0)..text::PointUtf16::new(row, 4),
                         Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
-                            message: format!("row {row}"),
+                            message: format!("row {row}").into(),
                             group_id: row as usize,
                             is_primary: true,
                             source_kind: language::DiagnosticSourceKind::Pushed,
@@ -2503,7 +2580,7 @@ fn test_active_buffer_diagnostics_collection_limits(cx: &mut TestAppContext) {
                 text::PointUtf16::new(150, 0)..text::PointUtf16::new(150, 4),
                 Diagnostic {
                     severity: DiagnosticSeverity::ERROR,
-                    message: long_message.clone(),
+                    message: long_message.clone().into(),
                     group_id: 1,
                     is_primary: true,
                     source_kind: language::DiagnosticSourceKind::Pushed,
@@ -3004,6 +3081,7 @@ async fn test_edit_prediction_v4_end_of_buffer(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -3065,6 +3143,7 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -3135,6 +3214,7 @@ async fn test_v3_prediction_strips_cursor_marker_from_edit_text(cx: &mut TestApp
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -3388,6 +3468,7 @@ async fn make_sweep_prompt_test_ep_store(
                                     settings::EditPredictionPromptFormatContent::Sweep,
                                 ),
                                 max_output_tokens: Some(64),
+                                prediction_debounce: None,
                             },
                         ),
                         ..Default::default()
