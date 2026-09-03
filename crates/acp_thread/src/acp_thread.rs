@@ -2702,6 +2702,37 @@ impl AcpThread {
         let path_style = self.project.read(cx).path_style(cx);
         let entries_len = self.entries.len();
 
+        if let Some(target_protocol_id) = protocol_id.as_ref() {
+            if let Some((idx, message)) = self
+                .entries
+                .iter_mut()
+                .enumerate()
+                .rev()
+                .find_map(|(idx, entry)| {
+                    if let AgentThreadEntry::UserMessage(message) = entry {
+                        if message.indented == indented
+                            && message.protocol_id.as_ref() == Some(target_protocol_id)
+                        {
+                            return Some((idx, message));
+                        }
+                    }
+                    None
+                })
+            {
+                Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
+                if let Some(incoming_client_id) = incoming_client_id {
+                    message.client_id = Some(incoming_client_id);
+                }
+                message.is_optimistic |= is_optimistic;
+                message
+                    .content
+                    .append(chunk.clone(), &language_registry, path_style, cx);
+                message.chunks.push(chunk);
+                cx.emit(AcpThreadEvent::EntryUpdated(idx));
+                return;
+            }
+        }
+
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::UserMessage(UserMessage {
                 protocol_id: existing_protocol_id,
@@ -2780,11 +2811,10 @@ impl AcpThread {
         // For text chunks going to an existing Markdown block, buffer for smooth
         // streaming instead of appending all at once which may feel more choppy.
         if let acp::ContentBlock::Text(text_content) = &chunk {
-            if let Some(markdown) =
+            if let Some((entry_idx, markdown)) =
                 self.streaming_markdown_target(message_id.as_ref(), is_thought, indented)
             {
-                let entries_len = self.entries.len();
-                cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
+                cx.emit(AcpThreadEvent::EntryUpdated(entry_idx));
                 self.buffer_streaming_text(&markdown, text_content.text.clone(), cx);
                 return;
             }
@@ -2792,6 +2822,72 @@ impl AcpThread {
 
         let language_registry = self.project.read(cx).languages().clone();
         let entries_len = self.entries.len();
+
+        if let Some(target_id) = message_id.as_ref() {
+            if let Some((idx, message)) = self
+                .entries
+                .iter_mut()
+                .enumerate()
+                .rev()
+                .find_map(|(idx, entry)| {
+                    if let AgentThreadEntry::AssistantMessage(message) = entry {
+                        if message.indented == indented {
+                            let has_matching_id = message.chunks.iter().any(|c| match c {
+                                AssistantMessageChunk::Message { id: Some(id), .. }
+                                | AssistantMessageChunk::Thought { id: Some(id), .. } => {
+                                    id == target_id
+                                }
+                                _ => false,
+                            });
+                            if has_matching_id {
+                                return Some((idx, message));
+                            }
+                        }
+                    }
+                    None
+                })
+            {
+                Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
+                cx.emit(AcpThreadEvent::EntryUpdated(idx));
+                match (message.chunks.last_mut(), is_thought) {
+                    (
+                        Some(AssistantMessageChunk::Message {
+                            id: existing_id,
+                            block,
+                        }),
+                        false,
+                    )
+                    | (
+                        Some(AssistantMessageChunk::Thought {
+                            id: existing_id,
+                            block,
+                        }),
+                        true,
+                    ) if can_merge_message_chunks(existing_id.as_ref(), message_id.as_ref()) => {
+                        if existing_id.is_none() {
+                            *existing_id = message_id;
+                        }
+                        block.append(chunk, &language_registry, path_style, cx)
+                    }
+                    _ => {
+                        let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
+                        if is_thought {
+                            message.chunks.push(AssistantMessageChunk::Thought {
+                                id: message_id,
+                                block,
+                            })
+                        } else {
+                            message.chunks.push(AssistantMessageChunk::Message {
+                                id: message_id,
+                                block,
+                            })
+                        }
+                    }
+                }
+                return;
+            }
+        }
+
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::AssistantMessage(AssistantMessage {
                 chunks,
@@ -2868,7 +2964,44 @@ impl AcpThread {
         message_id: Option<&acp::MessageId>,
         is_thought: bool,
         indented: bool,
-    ) -> Option<Entity<Markdown>> {
+    ) -> Option<(usize, Entity<Markdown>)> {
+        if let Some(target_id) = message_id {
+            for (idx, entry) in self.entries.iter_mut().enumerate().rev() {
+                if let AgentThreadEntry::AssistantMessage(AssistantMessage {
+                    chunks,
+                    indented: existing_indented,
+                    ..
+                }) = entry
+                {
+                    if *existing_indented == indented && let [.., chunk] = chunks.as_mut_slice() {
+                        match (chunk, is_thought) {
+                            (
+                                AssistantMessageChunk::Message {
+                                    id: existing_id,
+                                    block: ContentBlock::Markdown { markdown },
+                                },
+                                false,
+                            )
+                            | (
+                                AssistantMessageChunk::Thought {
+                                    id: existing_id,
+                                    block: ContentBlock::Markdown { markdown },
+                                },
+                                true,
+                            ) if can_merge_message_chunks(existing_id.as_ref(), Some(target_id)) => {
+                                if existing_id.is_none() {
+                                    *existing_id = Some(target_id.clone());
+                                }
+                                return Some((idx, markdown.clone()));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        let idx = self.entries.len().checked_sub(1)?;
         let last_entry = self.entries.last_mut()?;
         if let AgentThreadEntry::AssistantMessage(AssistantMessage {
             chunks,
@@ -2896,7 +3029,7 @@ impl AcpThread {
                     if existing_id.is_none() {
                         *existing_id = message_id.cloned();
                     }
-                    Some(markdown.clone())
+                    Some((idx, markdown.clone()))
                 }
                 _ => None,
             }
@@ -5793,6 +5926,112 @@ mod tests {
                 id.as_ref().map(ToString::to_string).as_deref(),
                 Some("msg_agent_2")
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_assistant_chunks_with_interleaved_tool_calls_merge_into_matching_message_id(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            // 1. Assistant starts streaming message A (opening a python code block)
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::AgentMessageChunk(
+                        acp::ContentChunk::new("```python\ndef first_half():\n    return 1\n\n".into())
+                            .message_id("msg_repro_a"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+
+            // 2. An interleaved tool call arrives (e.g. from a background subagent)
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("call_1", "Run bash")
+                            .kind(acp::ToolKind::Execute)
+                            .status(acp::ToolCallStatus::Completed),
+                    ),
+                    cx,
+                )
+                .unwrap();
+
+            // 3. Message A continues streaming and closes the code block
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::AgentMessageChunk(
+                        acp::ContentChunk::new("\ndef second_half():\n    return 2\n```\n".into())
+                            .message_id("msg_repro_a"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+
+            // 4. A new assistant message B arrives at a real message boundary
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::AgentMessageChunk(
+                        acp::ContentChunk::new("Case 2: control".into())
+                            .message_id("msg_repro_b"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        // Flush any streaming text reveal tasks
+        cx.run_until_parked();
+
+        thread.update(cx, |thread, cx| {
+            assert_eq!(
+                thread.entries.len(),
+                3,
+                "interleaved message chunks with the same message_id should merge instead of splitting"
+            );
+
+            // Entry 0: complete message A with both chunks merged into one Markdown document
+            let AgentThreadEntry::AssistantMessage(message_a) = &thread.entries[0] else {
+                panic!("expected entry 0 to be AssistantMessage");
+            };
+            assert_eq!(message_a.chunks.len(), 1);
+            let AssistantMessageChunk::Message { id, block } = &message_a.chunks[0] else {
+                panic!("expected message chunk in entry 0");
+            };
+            assert_eq!(id.as_ref().map(ToString::to_string).as_deref(), Some("msg_repro_a"));
+            assert_eq!(
+                block.to_markdown(cx),
+                "```python\ndef first_half():\n    return 1\n\n\ndef second_half():\n    return 2\n```\n"
+            );
+
+            // Entry 1: interleaved ToolCall
+            let AgentThreadEntry::ToolCall(tool_call) = &thread.entries[1] else {
+                panic!("expected entry 1 to be ToolCall");
+            };
+            assert_eq!(tool_call.id.to_string(), "call_1");
+
+            // Entry 2: distinct message B
+            let AgentThreadEntry::AssistantMessage(message_b) = &thread.entries[2] else {
+                panic!("expected entry 2 to be AssistantMessage");
+            };
+            assert_eq!(message_b.chunks.len(), 1);
+            let AssistantMessageChunk::Message { id, block } = &message_b.chunks[0] else {
+                panic!("expected message chunk in entry 2");
+            };
+            assert_eq!(id.as_ref().map(ToString::to_string).as_deref(), Some("msg_repro_b"));
+            assert_eq!(block.to_markdown(cx), "Case 2: control");
         });
     }
 
