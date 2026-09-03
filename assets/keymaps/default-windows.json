@@ -1397,7 +1397,7 @@
       "ctrl-shift-v": "markdown::CloseAndReturnToEditor",
       "find": "buffer_search::Deploy",
       "ctrl-f": "buffer_search::Deploy",
-      "ctrl-a": "editor::SelectAll"
+      "ctrl-a": "editor::SelectAll",
     },
   },
   {

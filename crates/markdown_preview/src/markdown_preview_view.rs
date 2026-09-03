@@ -3674,43 +3674,15 @@ mod tests {
         })
     }
 
-    async fn open_preview_and_dispatch_select_all_with_container_focus(
-        cx: &mut TestAppContext,
-        source: &str,
-    ) -> Entity<MarkdownPreviewView> {
-        let (multi_workspace, _editor) = open_markdown_file(cx, "test.md", source).await;
-        let preview = open_preview_for_active_editor(cx, &multi_workspace);
-
-        multi_workspace
-            .update(cx, |_, window, cx| {
-                let handle = preview.read(cx).focus_handle.clone();
-                window.focus(&handle, cx);
-            })
-            .unwrap();
-        cx.run_until_parked();
-
-        multi_workspace
-            .update(cx, |_, window, cx| {
-                assert!(
-                    preview.read(cx).focus_handle.contains_focused(window, cx),
-                    "outer preview should be focused, not the content"
-                );
-                window.dispatch_action(Box::new(editor::actions::SelectAll), cx);
-            })
-            .unwrap();
-        cx.run_until_parked();
-
-        preview
-    }
-
     #[gpui::test]
-    async fn test_select_all_when_container_focused(cx: &mut TestAppContext) {
+    async fn test_select_all_with_trailing_newlines_when_container_focused(
+        cx: &mut TestAppContext,
+    ) {
         let source = "Hello\n\nworld\n\n\n";
         let preview = open_preview_and_dispatch_select_all_with_container_focus(cx, source).await;
         preview.read_with(cx, |preview, cx| {
             assert_eq!(
                 preview.markdown.read(cx).selected_source(),
-                // Should not select the trailing newlines
                 Some("Hello\n\nworld")
             );
         });
@@ -3778,6 +3750,35 @@ mod tests {
 
     fn markdown_fixture_directory(tree: &TempTree) -> PathBuf {
         tree.path().join("docs")
+    }
+
+    async fn open_preview_and_dispatch_select_all_with_container_focus(
+        cx: &mut TestAppContext,
+        source: &str,
+    ) -> Entity<MarkdownPreviewView> {
+        let (multi_workspace, _editor) = open_markdown_file(cx, "test.md", source).await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                let handle = preview.read(cx).focus_handle.clone();
+                window.focus(&handle, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                assert!(
+                    preview.read(cx).focus_handle.contains_focused(window, cx),
+                    "outer preview should be focused, not the content"
+                );
+                window.dispatch_action(Box::new(editor::actions::SelectAll), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        preview
     }
 
     #[track_caller]
