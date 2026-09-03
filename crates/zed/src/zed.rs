@@ -16,7 +16,7 @@ pub mod visual_tests;
 pub(crate) mod windows_only_instance;
 
 use agent_settings::{UserAgentsMdState, init_user_agents_md};
-use agent_ui::AgentDiffToolbar;
+use agent_ui::{AgentDiffToolbar, set_app_quitting};
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -1789,6 +1789,10 @@ fn quit(_: &Quit, cx: &mut App) {
         if !workspace::prepare_windows_to_quit(&workspace_windows, cx).await {
             return Ok(());
         }
+
+        // Signal that the app is quitting so pasted-image temp files are kept
+        // (they back open tabs that should be restored on the next launch).
+        set_app_quitting();
 
         cx.update(|cx| cx.quit());
         anyhow::Ok(())
