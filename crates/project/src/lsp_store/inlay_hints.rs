@@ -221,6 +221,7 @@ impl BufferInlayHints {
         if !self.pending_refreshes.remove(&for_server) {
             return false;
         }
+        self.work_end_refreshes.remove(&for_server);
 
         for (chunk_id, chunk_data) in self.hints_by_chunks.iter_mut().enumerate() {
             if let Some(removed_hints) = chunk_data
