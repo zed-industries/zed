@@ -6,7 +6,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
-    Editor, EditorEvent, EditorMode, MinimapVisibility, RestoreOnlyUnstagedDiffHunkDelegate,
+    Editor, EditorEvent, EditorMode, HiddenUnstagedDiffHunkRenderer, MinimapVisibility,
     SizingBehavior,
 };
 use gpui::{
@@ -685,7 +685,7 @@ fn create_editor_diff(
         editor.set_show_code_actions(false, cx);
         editor.set_show_git_diff_gutter(false, cx);
         editor.set_expand_all_diff_hunks(cx);
-        editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
+        editor.set_diff_hunk_renderer(Some(Arc::new(HiddenUnstagedDiffHunkRenderer)), cx);
         editor.set_text_style_refinement(diff_editor_text_style_refinement(cx));
         editor
     })
