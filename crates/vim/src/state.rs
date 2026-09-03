@@ -182,8 +182,10 @@ pub struct HelixJumpLabel {
 pub enum HelixJumpBehaviour {
     Move,
     MoveToWordStart,
+    MoveToWordEnd,
     Extend,
     ExtendToWordStart,
+    ExtendToWordEnd,
 }
 
 #[derive(Default, Clone, Debug)]

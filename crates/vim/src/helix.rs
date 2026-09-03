@@ -61,6 +61,8 @@ actions!(
         HelixSubstituteNoYank,
         /// Activate Helix-style word jump labels.
         HelixJumpToWord,
+        /// Activate Helix-style jump labels at word ends.
+        HelixJumpToWordEnd,
         /// Select the next match for the current search query.
         HelixSelectNext,
         /// Select the previous match for the current search query.
@@ -93,6 +95,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_substitute);
     Vim::action(editor, cx, Vim::helix_substitute_no_yank);
     Vim::action(editor, cx, Vim::helix_jump_to_word);
+    Vim::action(editor, cx, Vim::helix_jump_to_word_end);
     Vim::action(editor, cx, Vim::helix_select_next);
     Vim::action(editor, cx, Vim::helix_select_previous);
     Vim::action(editor, cx, Vim::helix_trim_selections);
@@ -1159,6 +1162,22 @@ impl Vim {
         self.start_helix_jump(behaviour, window, cx);
     }
 
+    pub fn helix_jump_to_word_end(
+        &mut self,
+        _: &HelixJumpToWordEnd,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let behaviour = match self.mode {
+            Mode::Normal => HelixJumpBehaviour::MoveToWordEnd,
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
+                HelixJumpBehaviour::ExtendToWordEnd
+            }
+            _ => HelixJumpBehaviour::MoveToWordEnd,
+        };
+        self.start_helix_jump(behaviour, window, cx);
+    }
+
     fn start_helix_jump(
         &mut self,
         behaviour: HelixJumpBehaviour,
@@ -1166,7 +1185,14 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let allow_targets_in_selection = self.mode.has_selection();
-        let Some(data) = self.collect_helix_jump_data(allow_targets_in_selection, window, cx)
+        let label_position = match behaviour {
+            HelixJumpBehaviour::MoveToWordEnd | HelixJumpBehaviour::ExtendToWordEnd => {
+                HelixJumpLabelPosition::WordEnd
+            }
+            _ => HelixJumpLabelPosition::WordStart,
+        };
+        let Some(data) =
+            self.collect_helix_jump_data(allow_targets_in_selection, label_position, window, cx)
         else {
             return;
         };
@@ -1194,6 +1220,7 @@ impl Vim {
     fn collect_helix_jump_data(
         &mut self,
         allow_targets_in_selection: bool,
+        label_position: HelixJumpLabelPosition,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<HelixJumpUiData> {
@@ -1203,7 +1230,11 @@ impl Vim {
             let buffer_snapshot = display_snapshot.buffer_snapshot();
             let visible_range = Self::visible_jump_range(editor, &snapshot, display_snapshot, cx);
             let start_offset = buffer_snapshot.point_to_offset(visible_range.start);
-            let end_offset = buffer_snapshot.point_to_offset(visible_range.end);
+            let end_offset = if visible_range.end.row == buffer_snapshot.max_point().row {
+                buffer_snapshot.len()
+            } else {
+                buffer_snapshot.point_to_offset(visible_range.end)
+            };
 
             let selections = editor.selections.all::<Point>(&display_snapshot);
             let skip_data = Self::selection_skip_offsets(
@@ -1228,6 +1259,7 @@ impl Vim {
                 start_offset,
                 end_offset,
                 cursor_offset,
+                label_position,
                 label_color,
                 &skip_data,
                 window.text_system(),
@@ -1269,6 +1301,7 @@ impl Vim {
         start_offset: MultiBufferOffset,
         end_offset: MultiBufferOffset,
         cursor_offset: MultiBufferOffset,
+        label_position: HelixJumpLabelPosition,
         label_color: Hsla,
         skip_data: &HelixJumpSkipData,
         text_system: &WindowTextSystem,
@@ -1312,8 +1345,11 @@ impl Vim {
         let is_monospace = Self::is_monospace_jump_font(text_system, &font, font_size);
 
         for (label_index, candidate) in ordered_candidates.into_iter().enumerate() {
-            let start_anchor = buffer.anchor_after(candidate.word_start);
-            let end_anchor = buffer.anchor_after(candidate.word_end);
+            let word_start_anchor = buffer.anchor_after(candidate.word_range.start);
+            let word_end_anchor = buffer.anchor_after(candidate.word_range.end);
+            let label_range = candidate.label_range(buffer, label_position);
+            let label_start_anchor = buffer.anchor_after(label_range.start);
+            let label_end_anchor = buffer.anchor_after(label_range.end);
             let label = Self::jump_label_for_index(label_index);
             let label_text = label.iter().collect::<String>();
             // Monospace fonts: the label always matches the width of the first two characters,
@@ -1322,12 +1358,12 @@ impl Vim {
             // so we hide enough of the word (and possibly trailing whitespace) to make room,
             // or shift the label left into preceding whitespace.
             let fit = if is_monospace {
-                JumpLabelFit::monospace(candidate.first_two_end)
+                JumpLabelFit::monospace(label_range.end)
             } else {
                 let label_width = width_of(&label_text);
                 Self::fit_proportional_jump_label(
                     buffer,
-                    &candidate,
+                    &label_range,
                     end_offset,
                     label_width,
                     &width_of,
@@ -1338,18 +1374,18 @@ impl Vim {
 
             labels.push(HelixJumpLabel {
                 label,
-                range: start_anchor..end_anchor,
+                range: word_start_anchor..word_end_anchor,
             });
 
             overlays.push(NavigationTargetOverlay {
-                target_range: start_anchor..end_anchor,
+                target_range: label_start_anchor..label_end_anchor,
                 label: NavigationOverlayLabel {
                     text: label_text.into(),
                     text_color: label_color,
                     x_offset: -fit.left_shift,
                     scale_factor: fit.scale_factor,
                 },
-                covered_text_range: Some(start_anchor..hide_end_anchor),
+                covered_text_range: Some(label_start_anchor..hide_end_anchor),
             });
         }
 
@@ -1391,9 +1427,8 @@ impl Vim {
                         && !Self::should_skip_jump_candidate(word_start, absolute, skip_data)
                     {
                         candidates.push(JumpCandidate {
-                            word_start,
-                            word_end: absolute,
-                            first_two_end,
+                            word_range: word_start..absolute,
+                            prefix_end: first_two_end,
                         });
                     }
                     in_word = false;
@@ -1408,9 +1443,8 @@ impl Vim {
             && !Self::should_skip_jump_candidate(word_start, end_offset, skip_data)
         {
             candidates.push(JumpCandidate {
-                word_start,
-                word_end: end_offset,
-                first_two_end,
+                word_range: word_start..end_offset,
+                prefix_end: first_two_end,
             });
         }
 
@@ -1497,7 +1531,7 @@ impl Vim {
         let mut backward = Vec::new();
 
         for candidate in candidates {
-            if candidate.word_start < cursor_offset {
+            if candidate.word_range.start < cursor_offset {
                 backward.push(candidate);
             } else {
                 forward.push(candidate);
@@ -1565,21 +1599,21 @@ impl Vim {
         diff_1 <= HELIX_JUMP_MONOSPACE_TOLERANCE && diff_2 <= HELIX_JUMP_MONOSPACE_TOLERANCE
     }
 
-    /// Fit a jump label over a word in a proportional font.
+    /// Fit a jump label over its selected range in a proportional font.
     ///
-    /// Prefer fitting within the word itself, using available whitespace to the left
-    /// before consuming trailing whitespace after the word. If the label still cannot
-    /// fit cleanly, allow a small amount of scaling.
+    /// Prefer fitting within the selected range, using available whitespace to the left
+    /// before consuming whitespace after the range. If the label still cannot fit cleanly,
+    /// allow a small amount of scaling.
     fn fit_proportional_jump_label<F: Fn(&str) -> Pixels>(
         buffer: &MultiBufferSnapshot,
-        candidate: &JumpCandidate,
+        label_range: &Range<MultiBufferOffset>,
         end_offset: MultiBufferOffset,
         label_width: Pixels,
         width_of: &F,
     ) -> JumpLabelFit {
-        let fit_budget = Self::jump_label_fit_budget(buffer, candidate, end_offset, width_of);
+        let fit_budget = Self::jump_label_fit_budget(buffer, label_range, end_offset, width_of);
 
-        let mut hidden_prefix = HiddenPrefixFitState::new(candidate.first_two_end);
+        let mut hidden_prefix = HiddenPrefixFitState::new(label_range.end);
         let min_label_scale = if fit_budget.preserve_full_scale {
             1.0
         } else {
@@ -1588,9 +1622,9 @@ impl Vim {
 
         hidden_prefix.extend_to_fit(
             buffer,
-            candidate.word_start,
-            candidate.word_end,
-            candidate.word_end,
+            label_range.start,
+            label_range.end,
+            label_range.end,
             label_width,
             fit_budget.max_left_shift,
             min_label_scale,
@@ -1599,13 +1633,13 @@ impl Vim {
 
         if label_width > px(0.0)
             && hidden_prefix.needs_more_width(label_width, fit_budget.max_left_shift)
-            && fit_budget.allowed_trailing_hide_end > candidate.word_end
+            && fit_budget.allowed_trailing_hide_end > label_range.end
         {
             hidden_prefix.extend_to_fit(
                 buffer,
-                candidate.word_end,
+                label_range.end,
                 fit_budget.allowed_trailing_hide_end,
-                candidate.word_end,
+                label_range.end,
                 label_width,
                 fit_budget.max_left_shift,
                 min_label_scale,
@@ -1613,8 +1647,8 @@ impl Vim {
             );
         }
 
-        // Jump candidates always contain at least two word characters, and the initial
-        // scan above always measures through that second character before we read the width.
+        // Label ranges always contain two word characters, so the initial scan measures
+        // both before we read the width.
         let hidden_width = hidden_prefix.hidden_width;
 
         let left_shift = if label_width > hidden_width {
@@ -1643,7 +1677,7 @@ impl Vim {
 
     fn jump_label_fit_budget<F: Fn(&str) -> Pixels>(
         buffer: &MultiBufferSnapshot,
-        candidate: &JumpCandidate,
+        label_range: &Range<MultiBufferOffset>,
         end_offset: MultiBufferOffset,
         width_of: &F,
     ) -> JumpLabelFitBudget {
@@ -1653,7 +1687,7 @@ impl Vim {
         let mut left_stopped_at_non_ws = false;
         let mut left_hit_limit = false;
 
-        for ch in buffer.reversed_chars_at(candidate.word_start) {
+        for ch in buffer.reversed_chars_at(label_range.start) {
             if ch == '\n' || ch == '\r' {
                 left_stopped_at_line_break = true;
                 break;
@@ -1686,15 +1720,15 @@ impl Vim {
         };
         let max_left_shift = (left_ws_width - min_left_gap).max(px(0.0));
 
-        let mut allowed_trailing_hide_end = candidate.word_end;
+        let mut allowed_trailing_hide_end = label_range.end;
         let mut ws_count = 0usize;
-        let mut last_ws_start = candidate.word_end;
-        let mut ws_end_offset = candidate.word_end;
+        let mut last_ws_start = label_range.end;
+        let mut ws_end_offset = label_range.end;
         let mut next_non_ws = None;
         let mut hit_line_break_after_word = false;
 
-        let mut ws_scan_offset = candidate.word_end;
-        'scan: for chunk in buffer.text_for_range(candidate.word_end..end_offset) {
+        let mut ws_scan_offset = label_range.end;
+        'scan: for chunk in buffer.text_for_range(label_range.end..end_offset) {
             for (idx, ch) in chunk.char_indices() {
                 let absolute = ws_scan_offset + idx;
                 if ch == '\n' || ch == '\r' {
@@ -1715,7 +1749,7 @@ impl Vim {
 
         let preserve_full_scale = hit_line_break_after_word && next_non_ws.is_none()
             || matches!(
-                buffer.chars_at(candidate.word_end).next(),
+                buffer.chars_at(label_range.end).next(),
                 None | Some('\n') | Some('\r')
             );
 
@@ -1760,11 +1794,35 @@ fn is_jump_word_char(ch: char) -> bool {
 }
 
 /// A word candidate for jump labels, before label assignment.
-#[derive(Clone)]
 struct JumpCandidate {
-    word_start: MultiBufferOffset,
-    word_end: MultiBufferOffset,
-    first_two_end: MultiBufferOffset,
+    word_range: Range<MultiBufferOffset>,
+    prefix_end: MultiBufferOffset,
+}
+
+impl JumpCandidate {
+    fn label_range(
+        &self,
+        buffer: &MultiBufferSnapshot,
+        position: HelixJumpLabelPosition,
+    ) -> Range<MultiBufferOffset> {
+        match position {
+            HelixJumpLabelPosition::WordStart => self.word_range.start..self.prefix_end,
+            HelixJumpLabelPosition::WordEnd => {
+                let suffix_start = buffer
+                    .reversed_chars_at(self.word_range.end)
+                    .take(2)
+                    .fold(self.word_range.end, |offset, ch| offset - ch.len_utf8())
+                    .max(self.word_range.start);
+                suffix_start..self.word_range.end
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum HelixJumpLabelPosition {
+    WordStart,
+    WordEnd,
 }
 
 struct HelixJumpSkipData {
@@ -1894,7 +1952,9 @@ mod test {
     use util::path;
     use workspace::{DeploySearch, MultiWorkspace};
 
-    use super::{HELIX_JUMP_LABEL_LIMIT, HelixJumpToWord};
+    use super::{
+        HELIX_JUMP_LABEL_LIMIT, HelixJumpLabelPosition, HelixJumpToWord, HelixJumpToWordEnd,
+    };
     use crate::{
         HELIX_JUMP_OVERLAY_KEY, SwitchToHelixNormalMode, Vim, VimAddon,
         state::{Mode, Operator},
@@ -1951,6 +2011,10 @@ mod test {
         jump_to_word_with_keystrokes(cx, "g w", target_word);
     }
 
+    fn jump_to_word_end(cx: &mut VimTestContext, target_word: &str) {
+        jump_to_word_with_keystrokes(cx, "g shift-w", target_word);
+    }
+
     fn jump_to_word_with_keystrokes(cx: &mut VimTestContext, keystrokes: &str, target_word: &str) {
         cx.simulate_keystrokes(keystrokes);
 
@@ -1967,6 +2031,16 @@ mod test {
             cx.bind_keys([KeyBinding::new(
                 keystrokes,
                 HelixJumpToWord,
+                Some("vim_mode == normal || vim_mode == visual"),
+            )])
+        });
+    }
+
+    fn bind_vim_jump_to_word_end(cx: &mut VimTestContext, keystrokes: &'static str) {
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                keystrokes,
+                HelixJumpToWordEnd,
                 Some("vim_mode == normal || vim_mode == visual"),
             )])
         });
@@ -2018,6 +2092,30 @@ mod test {
         (covered_text_range_count, label_count)
     }
 
+    fn active_helix_jump_overlay_prefixes(cx: &mut VimTestContext) -> Vec<String> {
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let buffer_snapshot = snapshot.display_snapshot.buffer_snapshot();
+            snapshot
+                .text_highlight_ranges(HighlightKey::NavigationOverlay(HELIX_JUMP_OVERLAY_KEY))
+                .map(|ranges| {
+                    ranges
+                        .1
+                        .iter()
+                        .map(|range| {
+                            buffer_snapshot
+                                .text_for_range(range.clone())
+                                .collect::<String>()
+                                .chars()
+                                .take(2)
+                                .collect()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+    }
+
     fn assert_helix_jump_cleared(cx: &mut VimTestContext, expected_overlay_counts: (usize, usize)) {
         assert_eq!(cx.active_operator(), None);
         assert_eq!(
@@ -2047,6 +2145,7 @@ mod test {
                 MultiBufferOffset(0),
                 buffer_snapshot.len(),
                 cursor_offset,
+                HelixJumpLabelPosition::WordStart,
                 label_color,
                 &skip_data,
                 window.text_system(),
@@ -3858,6 +3957,45 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_vim_jump_moves_to_target_word_end(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word_end(&mut cx, "g shift-w");
+        cx.set_state("ˇone two three", Mode::Normal);
+
+        jump_to_word_end(&mut cx, "three");
+
+        cx.assert_state("one two threˇe", Mode::Normal);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_vim_jump_to_word_end_places_labels_at_word_ends(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word_end(&mut cx, "g shift-w");
+        cx.set_state("ˇone two three four", Mode::Normal);
+
+        cx.simulate_keystrokes("g shift-w");
+
+        assert_eq!(
+            active_helix_jump_overlay_prefixes(&mut cx),
+            ["wo", "ee", "ur"]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_vim_jump_to_word_end_includes_last_buffer_character(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word_end(&mut cx, "g shift-w");
+        cx.set_state("ˇone final", Mode::Normal);
+
+        cx.simulate_keystrokes("g shift-w");
+
+        assert_eq!(active_helix_jump_overlay_prefixes(&mut cx), ["al"]);
+    }
+
+    #[gpui::test]
     async fn test_helix_jump_consumes_label_keystrokes_before_ime(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         bind_vim_jump_to_word(&mut cx, "s");
@@ -3939,6 +4077,32 @@ mod test {
         jump_to_word_with_keystrokes(&mut cx, "g z", "one");
 
         cx.assert_state("«ˇone two three» four", Mode::Visual);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_vim_visual_jump_extends_selection_to_word_end(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word_end(&mut cx, "g shift-w");
+        cx.set_state("one «twoˇ» three four", Mode::Visual);
+
+        jump_to_word_end(&mut cx, "three");
+
+        cx.assert_state("one «two threeˇ» four", Mode::Visual);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_vim_visual_jump_extends_selection_backward_to_word_end(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word_end(&mut cx, "g shift-w");
+        cx.set_state("one two «threeˇ» four", Mode::Visual);
+
+        jump_to_word_end(&mut cx, "one");
+
+        cx.assert_state("on«ˇe two three» four", Mode::Visual);
         assert_eq!(cx.active_operator(), None);
     }
 
@@ -4086,6 +4250,7 @@ mod test {
                 MultiBufferOffset(0),
                 buffer_snapshot.len(),
                 cursor_offset,
+                HelixJumpLabelPosition::WordStart,
                 configured_label_color,
                 &skip_data,
                 window.text_system(),
