@@ -5850,6 +5850,67 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_file_history_action_resolves_through_project_diff(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new(util::path!("/project")),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(util::path!("/project/.git")),
+            &[("file.txt", "tracked".to_owned())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx).await;
+        cx.run_until_parked();
+
+        let tracked_repo_path = RepoPath::new(&"file.txt").unwrap();
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(cx, |multi, _| multi.workspace().clone());
+
+        // A project diff is a `ProjectDiff` item wrapping a `SplittableEditor`, not
+        // an `Editor` itself, so resolving the file-history target must go through
+        // `act_as` rather than a direct downcast of the active item.
+        cx.update(|window, cx| {
+            window.dispatch_action(Box::new(crate::project_diff::Diff), cx);
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<crate::ProjectDiff>(cx)
+                .expect("project diff should be the active item");
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(Box::new(git::FileHistory), cx);
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            let graphs = workspace.items_of_type::<GitGraph>(cx).collect::<Vec<_>>();
+            assert_eq!(
+                graphs.len(),
+                1,
+                "dispatching FileHistory from a project diff should open a git graph"
+            );
+            assert_eq!(
+                graphs[0].read(cx).log_source,
+                LogSource::Path(tracked_repo_path)
+            );
+        });
+    }
+
+    #[gpui::test]
     fn test_serialized_state_roundtrip(_cx: &mut TestAppContext) {
         use persistence::SerializedGitGraphState;
 
