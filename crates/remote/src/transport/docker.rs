@@ -14,7 +14,7 @@ use std::{
 };
 use util::ResultExt;
 use util::command::Stdio;
-use util::redact::redact_command;
+use util::redact::should_redact;
 use util::shell::ShellKind;
 use util::{
     paths::{PathStyle, RemotePathBuf},
@@ -513,14 +513,7 @@ impl DockerExecConnection {
             command.arg(arg.as_ref());
         }
         let output = command.output().await?;
-        let redacted_command = redact_command(&format!(
-            "{} {subcommand} {}",
-            self.docker_cli(),
-            args.iter()
-                .map(|arg| arg.as_ref())
-                .collect::<Vec<_>>()
-                .join(" ")
-        ));
+        let redacted_command = self.redacted_command(subcommand, args);
 
         log::debug!("{redacted_command}: {:?}", output.status);
         anyhow::ensure!(
@@ -531,13 +524,18 @@ impl DockerExecConnection {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
-    async fn run_docker_exec(
+    // The log and error lines below are the only place these arguments are ever printed.
+    fn redacted_command(&self, subcommand: &str, args: &[impl AsRef<str>]) -> String {
+        redact_args(self.docker_cli(), subcommand, args)
+    }
+
+    fn exec_args(
         &self,
         inner_program: &str,
         working_directory: Option<&str>,
         env: &HashMap<String, String>,
         program_args: &[impl AsRef<str>],
-    ) -> Result<String> {
+    ) -> Vec<String> {
         let mut args = match working_directory {
             Some(dir) => vec!["-w".to_string(), dir.to_string()],
             None => vec![],
@@ -562,6 +560,18 @@ impl DockerExecConnection {
         for arg in program_args {
             args.push(arg.as_ref().to_owned());
         }
+        args
+    }
+
+    // Arguments are built separately from spawning so they can be tested without a container.
+    async fn run_docker_exec(
+        &self,
+        inner_program: &str,
+        working_directory: Option<&str>,
+        env: &HashMap<String, String>,
+        program_args: &[impl AsRef<str>],
+    ) -> Result<String> {
+        let args = self.exec_args(inner_program, working_directory, env, program_args);
         self.run_docker_command("exec", args.as_ref()).await
     }
 
@@ -888,47 +898,173 @@ impl RemoteConnection for DockerExecConnection {
     }
 }
 
+/// Redacts every `-e` value regardless of its name, since a forwarded secret can
+/// be called anything, and redacts per argument so a value containing whitespace
+/// cannot leak its tail past the join. Other arguments keep the `should_redact`
+/// name rule.
+fn redact_args(docker_cli: &str, subcommand: &str, args: &[impl AsRef<str>]) -> String {
+    let mut redacted = vec![docker_cli.to_string(), subcommand.to_string()];
+    let mut next_arg_is_env = false;
+
+    for arg in args {
+        let arg = arg.as_ref();
+        if next_arg_is_env {
+            next_arg_is_env = false;
+            redacted.push(redact_env(arg));
+        } else if arg == "-e" || arg == "--env" {
+            next_arg_is_env = true;
+            redacted.push(arg.to_string());
+        } else if let Some(assignment) = arg.strip_prefix("--env=") {
+            redacted.push(format!("--env={}", redact_env(assignment)));
+        } else if let Some(assignment) = arg.strip_prefix("-e").filter(|rest| !rest.is_empty()) {
+            redacted.push(format!("-e{}", redact_env(assignment)));
+        } else if let Some((name, _)) = arg.split_once('=').filter(|(name, _)| should_redact(name))
+        {
+            redacted.push(format!("{name}=<redacted>"));
+        } else {
+            redacted.push(arg.to_string());
+        }
+    }
+
+    redacted.join(" ")
+}
+
+fn redact_env(assignment: &str) -> String {
+    match assignment.split_once('=') {
+        Some((name, _)) => format!("{name}=<redacted>"),
+        // `-e NAME` forwards the value from the host environment without
+        // naming it, so there is nothing to redact.
+        None => assignment.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::redact_command;
+    use super::*;
+
+    fn connection(remote_env: &[(&str, &str)]) -> DockerExecConnection {
+        DockerExecConnection {
+            proxy_process: Mutex::new(None),
+            remote_dir_for_server: "/tmp/zed".to_string(),
+            remote_binary_relpath: None,
+            connection_options: DockerConnectionOptions {
+                name: "container".to_string(),
+                container_id: "container_id".to_string(),
+                remote_user: "user".to_string(),
+                upload_binary_over_docker_exec: false,
+                use_podman: false,
+                remote_env: remote_env
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+            },
+            remote_platform: None,
+            os_version: None,
+            path_style: None,
+            shell: "/bin/sh".to_string(),
+        }
+    }
+
+    fn redacted_exec(
+        connection: &DockerExecConnection,
+        env: &[(&str, &str)],
+        program_args: &[&str],
+    ) -> String {
+        let env = env
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect::<HashMap<_, _>>();
+        let args = connection.exec_args("sh", Some("/workspace"), &env, program_args);
+        connection.redacted_command("exec", &args)
+    }
 
     #[test]
-    fn test_redact_command_hides_forwarded_secrets() {
-        let redacted = redact_command(
-            "docker exec -u user -e GH_TOKEN=ghp_supersecret -e PATH=/usr/bin container_id sh -c echo hi",
-        );
+    fn redacts_forwarded_env() {
+        let connection = connection(&[
+            ("DATABASE_URL", "postgres://user:password@host/db"),
+            ("GH_TOKEN", "ghp_supersecret"),
+            ("PATH", "/usr/bin"),
+            ("lowercase_token", "secret"),
+        ]);
 
-        assert!(!redacted.contains("ghp_supersecret"));
+        let redacted = redacted_exec(&connection, &[], &["-c", "echo hi"]);
+
         assert_eq!(
             redacted,
-            r#"docker exec -u user -e GH_TOKEN="[REDACTED]" -e PATH=/usr/bin container_id sh -c echo hi"#
+            concat!(
+                "docker exec -w /workspace -u user",
+                " -e DATABASE_URL=<redacted> -e GH_TOKEN=<redacted>",
+                " -e PATH=<redacted> -e lowercase_token=<redacted>",
+                " container_id sh -c echo hi"
+            )
         );
     }
 
     #[test]
-    fn test_redact_command_redacts_the_whole_value() {
-        // Values can themselves contain `=` (base64 padding, connection strings).
+    fn redacts_whole_value() {
+        // Joining the arguments must not let a value's tail escape redaction,
+        // and values can themselves contain `=` (base64 padding, URLs).
+        let connection = connection(&[("GH_TOKEN", "first secret tail")]);
         assert_eq!(
-            redact_command("docker exec -e TOKEN=a=b=c== container_id"),
-            r#"docker exec -e TOKEN="[REDACTED]" container_id"#
+            redacted_exec(&connection, &[("API_KEY", "a=b=c==")], &[]),
+            "docker exec -w /workspace -u user -e GH_TOKEN=<redacted> -e API_KEY=<redacted> container_id sh"
         );
     }
 
     #[test]
-    fn test_redact_command_leaves_other_args_alone() {
+    fn redacts_command_env() {
+        let connection = connection(&[]);
         assert_eq!(
-            redact_command("docker exec -w /workspace container_id"),
-            "docker exec -w /workspace container_id"
+            redacted_exec(&connection, &[("ZED_SECRET_VALUE", "hunter2")], &[]),
+            "docker exec -w /workspace -u user -e ZED_SECRET_VALUE=<redacted> container_id sh"
         );
     }
 
     #[test]
-    fn test_redact_command_redacts_assignments_in_any_position() {
-        // The rule is not keyed off a preceding `-e`, so assignments passed through
-        // any other flag are redacted too.
+    fn keeps_plain_args() {
+        let connection = connection(&[]);
         assert_eq!(
-            redact_command("docker exec --env GH_TOKEN=ghp_supersecret container_id"),
-            r#"docker exec --env GH_TOKEN="[REDACTED]" container_id"#
+            redacted_exec(&connection, &[], &["-c", "ls /workspace"]),
+            "docker exec -w /workspace -u user container_id sh -c ls /workspace"
+        );
+    }
+
+    #[test]
+    fn redacts_program_args_by_name() {
+        // Arguments that are not values of a `-e` keep the name-based rule.
+        let connection = connection(&[]);
+        assert_eq!(
+            redacted_exec(&connection, &[], &["-c", "GH_TOKEN=ghp_supersecret run"]),
+            "docker exec -w /workspace -u user container_id sh -c GH_TOKEN=<redacted>"
+        );
+    }
+
+    #[test]
+    fn redacts_attached_env_flags() {
+        // Other callers pass argument lists directly to run_docker_command.
+        let connection = connection(&[]);
+        assert_eq!(
+            connection.redacted_command(
+                "run",
+                &[
+                    "-eAPI_KEY=sk-123",
+                    "--env=lowercase_token=secret",
+                    "--env",
+                    "GH_TOKEN",
+                    "image",
+                ]
+            ),
+            "docker run -eAPI_KEY=<redacted> --env=lowercase_token=<redacted> --env GH_TOKEN image"
+        );
+    }
+
+    #[test]
+    fn uses_podman_cli() {
+        let mut connection = connection(&[("GH_TOKEN", "ghp_supersecret")]);
+        connection.connection_options.use_podman = true;
+        assert_eq!(
+            redacted_exec(&connection, &[], &[]),
+            "podman exec -w /workspace -u user -e GH_TOKEN=<redacted> container_id sh"
         );
     }
 }
