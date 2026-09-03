@@ -228,6 +228,7 @@ impl Model {
             Self::Glm5_1
             | Self::Glm5_2
             | Self::Grok4_5
+            | Self::Grok4_6
             | Self::KimiK2_6
             | Self::KimiK2_7Code
             | Self::KimiK3
