@@ -188,6 +188,8 @@ pub enum Model {
     Qwen3_7Max,
     #[serde(rename = "qwen3.8-max")]
     Qwen3_8Max,
+    #[serde(rename = "qwen3.8-flash")]
+    Qwen3_8Flash,
     #[serde(rename = "hy3")]
     Hy3,
 
@@ -243,6 +245,7 @@ impl Model {
             | Self::Qwen3_7Plus
             | Self::Qwen3_7Max
             | Self::Qwen3_8Max
+            | Self::Qwen3_8Flash
             | Self::Hy3 => &[OpenCodeSubscription::Go],
 
             // Deprecated on Go (per models.dev); still offered on Zen
@@ -326,6 +329,7 @@ impl Model {
             Self::Qwen3_7Plus => "qwen3.7-plus",
             Self::Qwen3_7Max => "qwen3.7-max",
             Self::Qwen3_8Max => "qwen3.8-max",
+            Self::Qwen3_8Flash => "qwen3.8-flash",
             Self::Hy3 => "hy3",
 
             Self::Custom { name, .. } => name,
@@ -400,6 +404,7 @@ impl Model {
             Self::Qwen3_7Plus => "Qwen3.7 Plus",
             Self::Qwen3_7Max => "Qwen3.7 Max",
             Self::Qwen3_8Max => "Qwen3.8 Max",
+            Self::Qwen3_8Flash => "Qwen3.8 Flash",
             Self::Hy3 => "Hy3",
 
             Self::Custom {
@@ -461,6 +466,7 @@ impl Model {
             | Self::Gemini3_7Flash => ApiProtocol::Google,
 
             Self::Qwen3_8Max
+            | Self::Qwen3_8Flash
             | Self::Qwen3_7Max
             | Self::Qwen3_7Plus
             | Self::Qwen3_6Plus
@@ -584,7 +590,9 @@ impl Model {
                     262_144
                 }
             }
-            Self::Qwen3_8Max | Self::Qwen3_7Max | Self::Qwen3_7Plus => 1_000_000,
+            Self::Qwen3_8Max | Self::Qwen3_8Flash | Self::Qwen3_7Max | Self::Qwen3_7Plus => {
+                1_000_000
+            }
             Self::Hy3 => 256_000,
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 1_000_000,
 
@@ -670,7 +678,7 @@ impl Model {
             Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
                 Some(65_536)
             }
-            Self::Qwen3_8Max => Some(131_072),
+            Self::Qwen3_8Max | Self::Qwen3_8Flash => Some(131_072),
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
             Self::MimoV2_5Pro | Self::MimoV2_5 => Some(128_000),
             Self::Hy3 => Some(64_000),
@@ -746,6 +754,7 @@ impl Model {
             | Self::Qwen3_6Plus
             | Self::Qwen3_7Plus
             | Self::Qwen3_8Max
+            | Self::Qwen3_8Flash
             | Self::Glm5_3Flash
             | Self::MiniMaxM3 => true,
 
@@ -910,6 +919,13 @@ impl Model {
             ]),
 
             Self::LongCat2_0 => Some(vec![ReasoningEffort::None, ReasoningEffort::Max]),
+
+            // Alibaba models
+            Self::Qwen3_8Flash => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::XHigh,
+            ]),
 
             // Tencent models
             Self::Hy3 => Some(vec![
