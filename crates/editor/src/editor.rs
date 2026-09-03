@@ -2046,7 +2046,7 @@ impl Editor {
             project_subscriptions.push(cx.subscribe_in(
                 project,
                 window,
-                |editor, _, event, window, cx| match event {
+                |editor, project, event, window, cx| match event {
                     project::Event::RefreshCodeLens { .. } => {
                         editor.refresh_code_lenses(None, window, cx);
                     }
@@ -2056,8 +2056,29 @@ impl Editor {
                     project::Event::RefreshDocumentLinks { .. } => {
                         editor.refresh_document_links(None, cx);
                     }
-                    project::Event::RefreshDocumentHighlights { .. } => {
-                        editor.refresh_document_highlights(cx);
+                    project::Event::RefreshDocumentHighlights {
+                        server_id,
+                        registration_change,
+                    } => {
+                        let cursor_buffer = {
+                            let buffer = editor.buffer.read(cx);
+                            let cursor_position = editor.selections.newest_anchor().head();
+                            buffer
+                                .text_anchor_for_position(cursor_position, cx)
+                                .map(|(buffer, _)| buffer)
+                        };
+                        if cursor_buffer.is_some_and(|buffer| {
+                            project
+                                .read(cx)
+                                .document_highlight_registration_change_applies_to_buffer(
+                                    registration_change,
+                                    &buffer,
+                                    *server_id,
+                                    cx,
+                                )
+                        }) {
+                            editor.refresh_document_highlights(cx);
+                        }
                     }
                     project::Event::RefreshFoldingRanges { .. } => {
                         editor.refresh_folding_ranges(None, window, cx);

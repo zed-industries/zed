@@ -2812,7 +2812,7 @@ fn observe_refresh_events(
                         label("document_colors", server_id)
                     }
                     Event::RefreshDocumentLinks { server_id } => label("document_links", server_id),
-                    Event::RefreshDocumentHighlights { server_id } => {
+                    Event::RefreshDocumentHighlights { server_id, .. } => {
                         format!("document_highlights({server_id})")
                     }
                     Event::RefreshFoldingRanges { server_id } => label("folding_ranges", server_id),

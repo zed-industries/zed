@@ -4443,9 +4443,15 @@ enum ChunkFetch {
     Running(CacheInlayHintsTask),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct DocumentHighlightRegistrationChange {
+    registrations: Vec<dynamic_registration::DynamicTextDocumentRegistration>,
+    all_buffers: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct SyncedServerCapabilitiesChanges {
-    pub(crate) document_highlights_changed: bool,
+    pub(crate) document_highlights: Option<DocumentHighlightRegistrationChange>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -5848,11 +5854,21 @@ impl LspStore {
             .text_document_registrations
             .as_ref()
             .and_then(|registrations| registrations.get("textDocument/documentHighlight"));
+        let document_highlight_provider_changed =
+            previous_document_highlight_provider != current_document_highlight_provider;
+        let changed_document_highlight_registrations = changed_dynamic_text_document_registrations(
+            previous_document_highlight_registrations,
+            current_document_highlight_registrations,
+        );
+        let document_highlights = (document_highlight_provider_changed
+            || !changed_document_highlight_registrations.is_empty())
+        .then(|| DocumentHighlightRegistrationChange {
+            all_buffers: document_highlight_provider_changed
+                && changed_document_highlight_registrations.is_empty(),
+            registrations: changed_document_highlight_registrations,
+        });
         let changes = SyncedServerCapabilitiesChanges {
-            document_highlights_changed: previous_document_highlight_provider
-                != current_document_highlight_provider
-                || previous_document_highlight_registrations
-                    != current_document_highlight_registrations,
+            document_highlights,
         };
 
         self.lsp_server_capabilities
@@ -5878,6 +5894,25 @@ impl LspStore {
         }
 
         changes
+    }
+
+    pub(crate) fn document_highlight_registration_change_applies_to_buffer(
+        &self,
+        change: &DocumentHighlightRegistrationChange,
+        buffer: &Entity<Buffer>,
+        server_id: LanguageServerId,
+        cx: &App,
+    ) -> bool {
+        let language = buffer.read(cx).language().map(|language| language.name());
+        let Some(context) = self.remote_document_selector_context(server_id, language.as_ref())
+        else {
+            return false;
+        };
+
+        change.all_buffers
+            || change.registrations.iter().any(|registration| {
+                document_selector_matches(registration.document_selector.as_ref(), &context)
+            })
     }
 
     fn remote_document_selector_context(
@@ -14708,6 +14743,37 @@ impl LspStore {
         }
         lsp_data
     }
+}
+
+fn changed_dynamic_text_document_registrations(
+    previous: Option<
+        &collections::IndexMap<String, dynamic_registration::DynamicTextDocumentRegistration>,
+    >,
+    current: Option<
+        &collections::IndexMap<String, dynamic_registration::DynamicTextDocumentRegistration>,
+    >,
+) -> Vec<dynamic_registration::DynamicTextDocumentRegistration> {
+    let mut changed_registrations = Vec::new();
+    if let Some(previous) = previous {
+        for (registration_id, previous_registration) in previous {
+            match current.and_then(|current| current.get(registration_id)) {
+                Some(current_registration) if current_registration == previous_registration => {}
+                Some(current_registration) => {
+                    changed_registrations.push(previous_registration.clone());
+                    changed_registrations.push(current_registration.clone());
+                }
+                None => changed_registrations.push(previous_registration.clone()),
+            }
+        }
+    }
+    if let Some(current) = current {
+        for (registration_id, current_registration) in current {
+            if previous.is_none_or(|previous| !previous.contains_key(registration_id)) {
+                changed_registrations.push(current_registration.clone());
+            }
+        }
+    }
+    changed_registrations
 }
 
 fn document_selector_context_for_buffer(

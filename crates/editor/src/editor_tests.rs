@@ -35384,7 +35384,7 @@ async fn test_dynamic_document_highlight_registration_refreshes_editor(cx: &mut 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings(cx, |settings| {
-                settings.editor.lsp_highlight_debounce = Some(DelayMs(0));
+                settings.editor.lsp_highlight_debounce = Some(DelayMs(75));
             });
         });
     });
@@ -35464,6 +35464,47 @@ async fn test_dynamic_document_highlight_registration_refreshes_editor(cx: &mut 
             .is_some_and(|(_, ranges)| !ranges.is_empty())
     }));
 
+    assert_eq!(
+        cx.update_editor(|editor, _, cx| editor.refresh_document_highlights(cx)),
+        None,
+    );
+    for registration_index in 0..3 {
+        cx.executor().advance_clock(Duration::from_millis(20));
+        cx.lsp
+            .request::<lsp::request::RegisterCapability>(
+                lsp::RegistrationParams {
+                    registrations: vec![lsp::Registration {
+                        id: format!("python-document-highlight-{registration_index}"),
+                        method: method.to_string(),
+                        register_options: Some(json!({
+                            "documentSelector": [{ "language": "python", "scheme": "file" }],
+                        })),
+                    }],
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .unwrap();
+        cx.run_until_parked();
+    }
+    cx.executor().advance_clock(Duration::from_millis(20));
+    cx.run_until_parked();
+
+    let document_highlight_request = document_highlight_requests.next().fuse();
+    let timeout = cx
+        .background_executor
+        .timer(Duration::from_millis(10))
+        .fuse();
+    futures::pin_mut!(document_highlight_request, timeout);
+    futures::select! {
+        request = document_highlight_request => {
+            request.expect("irrelevant registration changes should not restart the document highlight debounce");
+        }
+        _ = timeout => panic!("irrelevant registration changes restarted the document highlight debounce"),
+    }
+    cx.run_until_parked();
+
     cx.lsp
         .request::<lsp::request::UnregisterCapability>(
             lsp::UnregistrationParams {
@@ -35477,6 +35518,7 @@ async fn test_dynamic_document_highlight_registration_refreshes_editor(cx: &mut 
         .await
         .into_response()
         .unwrap();
+    cx.executor().advance_clock(Duration::from_millis(75));
     cx.run_until_parked();
 
     assert!(cx.editor(|editor, _, _| {
