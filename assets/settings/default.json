@@ -1927,6 +1927,10 @@
     "line_endings_button": false,
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
+    // Whether to show an indicator with a countdown while timed multi-stroke
+    // input is pending. Hovering the indicator pauses the timeout. Its binding
+    // preview popover is disabled when "which_key.enabled" is true.
+    "pending_keystrokes_indicator": true,
   },
   // Settings specific to the terminal
   "terminal": {
@@ -2749,6 +2753,8 @@
   // Which-key popup settings
   "which_key": {
     // Whether to show the which-key popup when holding down key combinations.
+    // When enabled, the pending keystrokes indicator remains visible, but its
+    // binding preview popover is disabled.
     "enabled": false,
     // Delay in milliseconds before showing the which-key popup.
     "delay_ms": 1000,
