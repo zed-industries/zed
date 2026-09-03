@@ -736,6 +736,7 @@ fn db_status_to_proto(
         staged_diff_stat_deleted: None,
         unstaged_diff_stat_added: None,
         unstaged_diff_stat_deleted: None,
+        old_repo_path: None,
     })
 }
 

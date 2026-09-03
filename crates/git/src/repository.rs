@@ -1927,9 +1927,9 @@ impl GitRepository for RealGitRepository {
                 let recreated: Vec<(RepoPath, Oid)> = status
                     .entries
                     .iter()
-                    .filter(|(_, status)| {
+                    .filter(|entry| {
                         matches!(
-                            *status,
+                            entry.status,
                             FileStatus::Untracked
                                 | FileStatus::Tracked(TrackedStatus {
                                     index_status: StatusCode::Deleted,
@@ -1937,8 +1937,10 @@ impl GitRepository for RealGitRepository {
                                 })
                         )
                     })
-                    .filter_map(|(path, _)| match tree_diff.entries.get(path) {
-                        Some(TreeDiffStatus::Deleted { old }) => Some((path.clone(), *old)),
+                    .filter_map(|entry| match tree_diff.entries.get(&entry.repo_path) {
+                        Some(TreeDiffStatus::Deleted { old }) => {
+                            Some((entry.repo_path.clone(), *old))
+                        }
                         _ => None,
                     })
                     .collect();
@@ -2458,8 +2460,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git_binary = git_binary?;
-                let mut args: Vec<String> =
-                    vec!["diff".into(), "--numstat".into(), "--no-renames".into()];
+                let mut args: Vec<String> = vec!["diff".into(), "--numstat".into(), "-z".into()];
                 match diff {
                     DiffStatType::HeadToIndex => args.extend(["--cached".into(), "HEAD".into()]),
                     DiffStatType::HeadToWorktree => args.push("HEAD".into()),
@@ -3657,7 +3658,6 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("status"),
         OsString::from("--porcelain=v1"),
         OsString::from("--untracked-files=all"),
-        OsString::from("--no-renames"),
         OsString::from("-z"),
         OsString::from("--"),
     ];

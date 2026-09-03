@@ -499,10 +499,14 @@ impl GitRepository for FakeGitRepository {
                         worktree_status: StatusCode::Unmodified,
                     })
                 {
-                    entries.push((path.clone(), status));
+                    entries.push(git::status::GitStatusEntry {
+                        repo_path: path.clone(),
+                        old_repo_path: None,
+                        status,
+                    });
                 }
             }
-            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            entries.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
             anyhow::Ok(GitStatus {
                 entries: entries.into(),
             })

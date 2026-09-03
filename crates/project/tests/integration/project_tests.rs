@@ -13480,6 +13480,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
             [
                 StatusEntry {
                     repo_path: repo_path("a.txt"),
+                    old_repo_path: None,
                     status: StatusCode::Modified.worktree(),
                     diff_stat: Some(DiffStat {
                         added: 1,
@@ -13493,6 +13494,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
+                    old_repo_path: None,
                     status: FileStatus::Untracked,
                     diff_stat: None,
                     staged_diff_stat: None,
@@ -13500,6 +13502,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
+                    old_repo_path: None,
                     status: StatusCode::Deleted.worktree(),
                     diff_stat: Some(DiffStat {
                         added: 0,
@@ -13530,6 +13533,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
             [
                 StatusEntry {
                     repo_path: repo_path("a.txt"),
+                    old_repo_path: None,
                     status: StatusCode::Modified.worktree(),
                     diff_stat: Some(DiffStat {
                         added: 1,
@@ -13543,6 +13547,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
+                    old_repo_path: None,
                     status: FileStatus::Untracked,
                     diff_stat: None,
                     staged_diff_stat: None,
@@ -13550,6 +13555,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 },
                 StatusEntry {
                     repo_path: repo_path("c.txt"),
+                    old_repo_path: None,
                     status: StatusCode::Modified.worktree(),
                     diff_stat: Some(DiffStat {
                         added: 1,
@@ -13563,6 +13569,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
+                    old_repo_path: None,
                     status: StatusCode::Deleted.worktree(),
                     diff_stat: Some(DiffStat {
                         added: 0,
@@ -13605,6 +13612,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
             entries,
             [StatusEntry {
                 repo_path: repo_path("a.txt"),
+                old_repo_path: None,
                 status: StatusCode::Deleted.worktree(),
                 diff_stat: Some(DiffStat {
                     added: 0,
@@ -13617,6 +13625,83 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 }),
             }]
         );
+    });
+}
+
+#[gpui::test]
+async fn test_renamed_file_status_and_diff(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let old_contents = "one\ntwo\nthree\n";
+    let new_contents = "one\nTWO\nthree\n";
+    let root = TempTree::new(json!({
+        "project": {
+            "old.txt": old_contents,
+        },
+    }));
+    let work_dir = root.path().join("project");
+    let repo = git_init(&work_dir);
+    git_add("old.txt", &repo);
+    git_commit("Initial commit", &repo);
+    git_move("old.txt", "new.txt", &repo);
+    std::fs::write(work_dir.join("new.txt"), new_contents).unwrap();
+
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [root.path()],
+        cx,
+    )
+    .await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+    repository.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository.cached_status().collect::<Vec<_>>(),
+            [StatusEntry {
+                repo_path: repo_path("new.txt"),
+                old_repo_path: Some(repo_path("old.txt")),
+                status: FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Renamed,
+                    worktree_status: StatusCode::Modified,
+                }),
+                diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 1,
+                }),
+                staged_diff_stat: Some(DiffStat {
+                    added: 0,
+                    deleted: 0,
+                }),
+                unstaged_diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 1,
+                }),
+            }]
+        );
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(work_dir.join("new.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let diff = project
+        .update(cx, |project, cx| project.open_uncommitted_diff(buffer, cx))
+        .await
+        .unwrap();
+
+    diff.read_with(cx, |diff, cx| {
+        assert_eq!(diff.base_text_string(cx).as_deref(), Some(old_contents));
     });
 }
 
@@ -13661,6 +13746,7 @@ async fn test_git_repository_status_removes_directory_descendants(cx: &mut gpui:
             repository.cached_status().collect::<Vec<_>>(),
             [StatusEntry {
                 repo_path: repo_path("ci2/Dockerfile.namespace"),
+                old_repo_path: None,
                 status: FileStatus::Untracked,
                 diff_stat: None,
                 staged_diff_stat: None,
@@ -13705,6 +13791,7 @@ async fn test_git_repository_status_removes_directory_descendants(cx: &mut gpui:
             repository.cached_status().collect::<Vec<_>>(),
             [StatusEntry {
                 repo_path: repo_path("ci3/Dockerfile.namespace"),
+                old_repo_path: None,
                 status: FileStatus::Untracked,
                 diff_stat: None,
                 staged_diff_stat: None,
@@ -13865,6 +13952,7 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
             entries,
             [StatusEntry {
                 repo_path: repo_path("a.txt"),
+                old_repo_path: None,
                 status: TrackedStatus {
                     index_status: StatusCode::Deleted,
                     worktree_status: StatusCode::Added
@@ -14073,6 +14161,7 @@ async fn test_repository_pending_ops_staging(
             git_statuses,
             [StatusEntry {
                 repo_path: repo_path("a.txt"),
+                old_repo_path: None,
                 status: TrackedStatus {
                     index_status: StatusCode::Added,
                     worktree_status: StatusCode::Unmodified
@@ -14188,6 +14277,7 @@ async fn test_repository_pending_ops_long_running_staging(
             git_statuses,
             [StatusEntry {
                 repo_path: repo_path("a.txt"),
+                old_repo_path: None,
                 status: TrackedStatus {
                     index_status: StatusCode::Added,
                     worktree_status: StatusCode::Unmodified
@@ -14325,6 +14415,7 @@ async fn test_repository_pending_ops_stage_all(
             [
                 StatusEntry {
                     repo_path: repo_path("a.txt"),
+                    old_repo_path: None,
                     status: FileStatus::Untracked,
                     diff_stat: None,
                     staged_diff_stat: None,
@@ -14332,6 +14423,7 @@ async fn test_repository_pending_ops_stage_all(
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
+                    old_repo_path: None,
                     status: FileStatus::Untracked,
                     diff_stat: None,
                     staged_diff_stat: None,
@@ -16450,6 +16542,22 @@ fn git_add<P: AsRef<Path>>(path: P, work_dir: &Path) {
     assert!(
         output.status.success(),
         "git add failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_move<P: AsRef<Path>>(old_path: P, new_path: P, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["mv"])
+        .arg(old_path.as_ref())
+        .arg(new_path.as_ref())
+        .output()
+        .expect("Failed to run git mv");
+    assert!(
+        output.status.success(),
+        "git mv failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

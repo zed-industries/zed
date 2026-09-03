@@ -483,6 +483,7 @@ fn build_statuses(
                 repo_path.clone(),
                 StatusEntry {
                     repo_path: repo_path.clone(),
+                    old_repo_path: None,
                     status: diff_status_to_file_status(status),
                     diff_stat: None,
                     staged_diff_stat: None,

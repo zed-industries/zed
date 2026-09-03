@@ -166,6 +166,7 @@ impl FileStatus {
         self.is_modified()
             || self.is_created()
             || self.is_deleted()
+            || self.is_renamed()
             || self.is_untracked()
             || self.is_conflicted()
     }
@@ -197,6 +198,14 @@ impl FileStatus {
         };
         tracked.index_status == StatusCode::Deleted && tracked.worktree_status != StatusCode::Added
             || tracked.worktree_status == StatusCode::Deleted
+    }
+
+    pub fn is_renamed(self) -> bool {
+        let FileStatus::Tracked(tracked) = self else {
+            return false;
+        };
+        tracked.index_status == StatusCode::Renamed
+            || tracked.worktree_status == StatusCode::Renamed
     }
 
     pub fn is_untracked(self) -> bool {
@@ -238,10 +247,12 @@ impl StatusCode {
 
     fn to_summary(self) -> TrackedSummary {
         match self {
-            StatusCode::Modified | StatusCode::TypeChanged => TrackedSummary {
-                modified: 1,
-                ..TrackedSummary::UNCHANGED
-            },
+            StatusCode::Modified | StatusCode::TypeChanged | StatusCode::Renamed => {
+                TrackedSummary {
+                    modified: 1,
+                    ..TrackedSummary::UNCHANGED
+                }
+            }
             StatusCode::Added => TrackedSummary {
                 added: 1,
                 ..TrackedSummary::UNCHANGED
@@ -250,9 +261,7 @@ impl StatusCode {
                 deleted: 1,
                 ..TrackedSummary::UNCHANGED
             },
-            StatusCode::Renamed | StatusCode::Copied | StatusCode::Unmodified => {
-                TrackedSummary::UNCHANGED
-            }
+            StatusCode::Copied | StatusCode::Unmodified => TrackedSummary::UNCHANGED,
         }
     }
 
@@ -429,47 +438,71 @@ impl std::ops::Sub for GitSummary {
 
 #[derive(Clone, Debug)]
 pub struct GitStatus {
-    pub entries: Arc<[(RepoPath, FileStatus)]>,
+    pub entries: Arc<[GitStatusEntry]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitStatusEntry {
+    pub repo_path: RepoPath,
+    pub old_repo_path: Option<RepoPath>,
+    pub status: FileStatus,
 }
 
 impl FromStr for GitStatus {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let mut entries = s
-            .split('\0')
-            .filter_map(|entry| {
-                let sep = entry.get(2..3)?;
-                if sep != " " {
-                    return None;
-                };
-                let path = &entry[3..];
-                // The git status output includes untracked directories as well as untracked files.
-                // We do our own processing to compute the "summary" status of each directory,
-                // so just skip any directories in the output, since they'll otherwise interfere
-                // with our handling of nested repositories.
-                if path.ends_with('/') {
-                    return None;
-                }
-                let status = entry.as_bytes()[0..2].try_into().unwrap();
-                let status = FileStatus::from_bytes(status).log_err()?;
-                // git-status outputs `/`-delimited repo paths, even on Windows.
-                let path = RepoPath::from_rel_path(RelPath::from_unix_str(path).log_err()?);
-                Some((path, status))
-            })
-            .collect::<Vec<_>>();
-        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+        let mut fields = s.split('\0');
+        let mut entries = Vec::new();
+        while let Some(entry) = fields.next() {
+            let Some(status_bytes) = entry.as_bytes().get(0..2) else {
+                continue;
+            };
+            let Ok(status_bytes) = status_bytes.try_into() else {
+                continue;
+            };
+            if entry.get(2..3) != Some(" ") {
+                continue;
+            }
+            let Some(status) = FileStatus::from_bytes(status_bytes).log_err() else {
+                continue;
+            };
+            let old_path = status
+                .is_renamed()
+                .then(|| fields.next())
+                .flatten()
+                .and_then(|path| RelPath::from_unix_str(path).log_err())
+                .map(RepoPath::from_rel_path);
+            let path = &entry[3..];
+            // The git status output includes untracked directories as well as untracked files.
+            // We do our own processing to compute the "summary" status of each directory,
+            // so just skip any directories in the output, since they'll otherwise interfere
+            // with our handling of nested repositories.
+            if path.ends_with('/') {
+                continue;
+            }
+            // git-status outputs `/`-delimited repo paths, even on Windows.
+            let Some(path) = RelPath::from_unix_str(path).log_err() else {
+                continue;
+            };
+            entries.push(GitStatusEntry {
+                repo_path: RepoPath::from_rel_path(path),
+                old_repo_path: old_path,
+                status,
+            });
+        }
+        entries.sort_unstable_by(|a, b| a.repo_path.cmp(&b.repo_path));
         // When a file exists in HEAD, is deleted in the index, and exists again in the working copy,
         // git produces two lines for it, one reading `D ` (deleted in index, unmodified in working copy)
         // and the other reading `??` (untracked). Merge these two into the equivalent of `DA`.
-        entries.dedup_by(|(a, a_status), (b, b_status)| {
+        entries.dedup_by(|a, b| {
             const INDEX_DELETED: FileStatus = FileStatus::index(StatusCode::Deleted);
-            if a.ne(&b) {
+            if a.repo_path != b.repo_path {
                 return false;
             }
-            match (*a_status, *b_status) {
+            match (a.status, b.status) {
                 (INDEX_DELETED, FileStatus::Untracked) | (FileStatus::Untracked, INDEX_DELETED) => {
-                    *b_status = TrackedStatus {
+                    b.status = TrackedStatus {
                         index_status: StatusCode::Deleted,
                         worktree_status: StatusCode::Added,
                     }
@@ -478,7 +511,9 @@ impl FromStr for GitStatus {
                 (x, y) if x == y => {}
                 _ => {
                     log::warn!(
-                        "Unexpected duplicated status entries: {a_status:?} and {b_status:?}"
+                        "Unexpected duplicated status entries: {:?} and {:?}",
+                        a.status,
+                        b.status
                     );
                 }
             }
@@ -585,27 +620,55 @@ pub struct GitDiffStat {
 /// ```
 pub fn parse_numstat(output: &str) -> GitDiffStat {
     let mut entries = Vec::new();
-    for line in output.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
+    if output.contains('\0') {
+        let mut fields = output.split('\0');
+        while let Some(field) = fields.next() {
+            if field.is_empty() {
+                continue;
+            }
+            let mut parts = field.splitn(3, '\t');
+            let (Some(added), Some(deleted), Some(path)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            let path = if path.is_empty() {
+                let _old_path = fields.next();
+                fields.next()
+            } else {
+                Some(path)
+            };
+            let (Ok(added), Ok(deleted), Some(path)) =
+                (added.parse::<u32>(), deleted.parse::<u32>(), path)
+            else {
+                continue;
+            };
+            let Ok(path) = RepoPath::new(path) else {
+                continue;
+            };
+            entries.push((path, DiffStat { added, deleted }));
         }
-        let mut parts = line.splitn(3, '\t');
-        let (Some(added_str), Some(deleted_str), Some(path_str)) =
-            (parts.next(), parts.next(), parts.next())
-        else {
-            continue;
-        };
-        let Ok(added) = added_str.parse::<u32>() else {
-            continue;
-        };
-        let Ok(deleted) = deleted_str.parse::<u32>() else {
-            continue;
-        };
-        let Ok(path) = RepoPath::new(path_str) else {
-            continue;
-        };
-        entries.push((path, DiffStat { added, deleted }));
+    } else {
+        for line in output.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let mut parts = line.splitn(3, '\t');
+            let (Some(added), Some(deleted), Some(path)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            let (Ok(added), Ok(deleted), Ok(path)) = (
+                added.parse::<u32>(),
+                deleted.parse::<u32>(),
+                RepoPath::new(path),
+            ) else {
+                continue;
+            };
+            entries.push((path, DiffStat { added, deleted }));
+        }
     }
     entries.sort_by(|(a, _), (b, _)| a.cmp(b));
     entries.dedup_by(|(a, _), (b, _)| a == b);
@@ -717,13 +780,43 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_numstat_rename() {
+        let input = "1\t2\t\0src/old.rs\0src/new.rs\0";
+        let result = parse_numstat(input);
+
+        assert_eq!(
+            lookup(&result.entries, "src/new.rs"),
+            Some(&DiffStat {
+                added: 1,
+                deleted: 2
+            })
+        );
+        assert!(lookup(&result.entries, "src/old.rs").is_none());
+    }
+
+    #[test]
     fn test_duplicate_untracked_entries() {
         // Regression test for ZED-2XA: git can produce duplicate untracked entries
         // for the same path. This should deduplicate them instead of panicking.
         let input = "?? file.txt\0?? file.txt";
         let status: GitStatus = input.parse().unwrap();
         assert_eq!(status.entries.len(), 1);
-        assert_eq!(status.entries[0].1, FileStatus::Untracked);
+        assert_eq!(status.entries[0].status, FileStatus::Untracked);
+    }
+
+    #[test]
+    fn test_renamed_entry() {
+        let input = "R  src/new.rs\0src/old.rs\0";
+        let status: GitStatus = input.parse().unwrap();
+
+        assert_eq!(
+            status.entries.as_ref(),
+            &[super::GitStatusEntry {
+                repo_path: RepoPath::new("src/new.rs").unwrap(),
+                old_repo_path: Some(RepoPath::new("src/old.rs").unwrap()),
+                status: FileStatus::index(super::StatusCode::Renamed),
+            }]
+        );
     }
 
     #[test]

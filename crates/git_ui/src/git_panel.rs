@@ -951,6 +951,7 @@ struct TreeNode {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct GitStatusEntry {
     pub(crate) repo_path: RepoPath,
+    pub(crate) old_repo_path: Option<RepoPath>,
     pub(crate) status: FileStatus,
     pub(crate) staging: StageStatus,
     pub(crate) diff_stat: Option<DiffStat>,
@@ -958,6 +959,13 @@ pub struct GitStatusEntry {
 
 impl GitStatusEntry {
     fn display_name(&self, path_style: PathStyle) -> String {
+        if let Some(old_repo_path) = self.old_repo_path.as_ref() {
+            return format!(
+                "{} → {}",
+                old_repo_path.display(path_style),
+                self.repo_path.display(path_style)
+            );
+        }
         self.repo_path
             .file_name()
             .map(|name| name.to_owned())
@@ -965,6 +973,9 @@ impl GitStatusEntry {
     }
 
     fn parent_dir(&self, path_style: PathStyle) -> Option<String> {
+        if self.old_repo_path.is_some() {
+            return None;
+        }
         self.repo_path
             .parent()
             .map(|parent| parent.display(path_style).to_string())
@@ -2860,7 +2871,13 @@ impl GitPanel {
                         let task = active_repository.update(cx, |repo, cx| {
                             let repo_paths = entries
                                 .iter()
-                                .map(|entry| entry.repo_path.clone())
+                                .flat_map(|entry| {
+                                    entry
+                                        .old_repo_path
+                                        .iter()
+                                        .cloned()
+                                        .chain([entry.repo_path.clone()])
+                                })
                                 .unique()
                                 .collect();
                             if stage {
@@ -4945,6 +4962,7 @@ impl GitPanel {
 
             let entry = GitStatusEntry {
                 repo_path: status_entry.repo_path.clone(),
+                old_repo_path: status_entry.old_repo_path.clone(),
                 status: status_entry.status,
                 staging,
                 diff_stat: status_entry.diff_stat,
@@ -5001,6 +5019,7 @@ impl GitPanel {
                     repo.status_for_path(&ops.repo_path)
                         .map(|status| GitStatusEntry {
                             repo_path: ops.repo_path.clone(),
+                            old_repo_path: status.old_repo_path,
                             status: status.status,
                             staging: StageStatus::Staged,
                             diff_stat: status.diff_stat,
@@ -7796,7 +7815,7 @@ impl GitPanel {
         };
 
         let has_conflict = status.is_conflicted();
-        let is_modified = status.is_modified();
+        let is_modified = status.is_modified() || status.is_renamed();
         let is_deleted = status.is_deleted();
         let is_created = status.is_created();
 
@@ -9281,9 +9300,33 @@ mod tests {
     }
 
     #[test]
+    fn test_renamed_entry_display_name() {
+        let path_style = PathStyle::local();
+        let old_repo_path = repo_path("old/name.rs");
+        let entry = GitStatusEntry {
+            repo_path: repo_path("new/name.rs"),
+            old_repo_path: Some(old_repo_path.clone()),
+            status: StatusCode::Renamed.index(),
+            staging: StageStatus::Staged,
+            diff_stat: None,
+        };
+
+        assert_eq!(
+            entry.display_name(path_style),
+            format!(
+                "{} → {}",
+                old_repo_path.display(path_style),
+                entry.repo_path.display(path_style)
+            )
+        );
+        assert_eq!(entry.parent_dir(path_style), None);
+    }
+
+    #[test]
     fn test_tree_view_directory_expansion_is_scoped_to_section() {
         let entry = |path, status| GitStatusEntry {
             repo_path: repo_path(path),
+            old_repo_path: None,
             status,
             staging: StageStatus::Unstaged,
             diff_stat: None,
@@ -10044,6 +10087,7 @@ mod tests {
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/gpui/gpui.rs"),
+                    old_repo_path: None,
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                     diff_stat: Some(DiffStat {
@@ -10053,6 +10097,7 @@ mod tests {
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/util/util.rs"),
+                    old_repo_path: None,
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                     diff_stat: Some(DiffStat {
@@ -10077,6 +10122,7 @@ mod tests {
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/gpui/gpui.rs"),
+                    old_repo_path: None,
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                     diff_stat: Some(DiffStat {
@@ -10086,6 +10132,7 @@ mod tests {
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/util/util.rs"),
+                    old_repo_path: None,
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                     diff_stat: Some(DiffStat {
@@ -13071,6 +13118,7 @@ mod tests {
     fn test_directory_discard_tracked_changes() {
         let entry = |path, status: FileStatus| GitStatusEntry {
             repo_path: repo_path(path),
+            old_repo_path: None,
             staging: status.staging(),
             status,
             diff_stat: None,

@@ -423,6 +423,7 @@ pub struct GitStoreCheckpoint {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusEntry {
     pub repo_path: RepoPath,
+    pub old_repo_path: Option<RepoPath>,
     pub status: FileStatus,
     pub diff_stat: Option<DiffStat>,
     pub staged_diff_stat: Option<DiffStat>,
@@ -430,6 +431,20 @@ pub struct StatusEntry {
 }
 
 impl StatusEntry {
+    fn head_repo_path(&self) -> &RepoPath {
+        self.old_repo_path.as_ref().unwrap_or(&self.repo_path)
+    }
+
+    fn index_repo_path(&self) -> &RepoPath {
+        match self.status {
+            FileStatus::Tracked(TrackedStatus {
+                worktree_status: StatusCode::Renamed,
+                ..
+            }) => self.old_repo_path.as_ref().unwrap_or(&self.repo_path),
+            _ => &self.repo_path,
+        }
+    }
+
     fn to_proto(&self) -> proto::StatusEntry {
         let simple_status = match self.status {
             FileStatus::Ignored | FileStatus::Untracked => proto::GitStatus::Added as i32,
@@ -446,6 +461,10 @@ impl StatusEntry {
 
         proto::StatusEntry {
             repo_path: self.repo_path.as_unix_str().to_owned(),
+            old_repo_path: self
+                .old_repo_path
+                .as_ref()
+                .map(|path| path.as_unix_str().to_owned()),
             simple_status,
             status: Some(status_to_proto(self.status)),
             diff_stat_added: self.diff_stat.map(|ds| ds.added),
@@ -463,6 +482,12 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
 
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
         let repo_path = RepoPath::from_proto(&value.repo_path).context("invalid repo path")?;
+        let old_repo_path = value
+            .old_repo_path
+            .as_deref()
+            .map(RepoPath::from_proto)
+            .transpose()
+            .context("invalid old repo path")?;
         let status = status_from_proto(value.simple_status, value.status)?;
         let diff_stat = match (value.diff_stat_added, value.diff_stat_deleted) {
             (Some(added), Some(deleted)) => Some(DiffStat { added, deleted }),
@@ -482,11 +507,23 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
         };
         Ok(Self {
             repo_path,
+            old_repo_path,
             status,
             diff_stat,
             staged_diff_stat,
             unstaged_diff_stat,
         })
+    }
+}
+
+fn combine_diff_stats(current: Option<DiffStat>, old: Option<DiffStat>) -> Option<DiffStat> {
+    match (current, old) {
+        (Some(current), Some(old)) => Some(DiffStat {
+            added: current.added.saturating_add(old.added),
+            deleted: current.deleted.saturating_add(old.deleted),
+        }),
+        (Some(diff_stat), None) | (None, Some(diff_stat)) => Some(diff_stat),
+        (None, None) => None,
     }
 }
 
@@ -1204,6 +1241,12 @@ impl GitStore {
         else {
             return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
         };
+        let index_repo_path = repo
+            .read(cx)
+            .snapshot
+            .status_for_path(&repo_path)
+            .map(|entry| entry.index_repo_path().clone())
+            .unwrap_or(repo_path);
 
         let is_symlink = Self::buffer_is_symlink(&buffer, cx);
         let task = self
@@ -1214,7 +1257,7 @@ impl GitStore {
                     Task::ready(Ok(None))
                 } else {
                     repo.update(cx, |repo, cx| {
-                        repo.load_staged_text(buffer_id, repo_path, cx)
+                        repo.load_staged_text(buffer_id, index_repo_path, cx)
                     })
                 };
                 cx.spawn(async move |this, cx| {
@@ -1263,13 +1306,22 @@ impl GitStore {
         else {
             return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
         };
+        let status_entry = repo.read(cx).snapshot.status_for_path(&repo_path);
+        let head_repo_path = status_entry
+            .as_ref()
+            .map(|entry| entry.head_repo_path().clone())
+            .unwrap_or_else(|| repo_path.clone());
+        let index_repo_path = status_entry
+            .as_ref()
+            .map(|entry| entry.index_repo_path().clone())
+            .unwrap_or(repo_path);
 
         let task = self
             .loading_diffs
             .entry((buffer_id, DiffKind::Staged))
             .or_insert_with(|| {
                 let changes = repo.update(cx, |repo, cx| {
-                    repo.load_committed_text(buffer_id, repo_path, cx)
+                    repo.load_committed_text(buffer_id, head_repo_path, index_repo_path, cx)
                 });
 
                 cx.spawn(async move |this, cx| {
@@ -1711,6 +1763,15 @@ impl GitStore {
         else {
             return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
         };
+        let status_entry = repo.read(cx).snapshot.status_for_path(&repo_path);
+        let head_repo_path = status_entry
+            .as_ref()
+            .map(|entry| entry.head_repo_path().clone())
+            .unwrap_or_else(|| repo_path.clone());
+        let index_repo_path = status_entry
+            .as_ref()
+            .map(|entry| entry.index_repo_path().clone())
+            .unwrap_or(repo_path);
 
         let is_symlink = Self::buffer_is_symlink(&buffer, cx);
         let task = self
@@ -1721,7 +1782,7 @@ impl GitStore {
                     Task::ready(Ok(DiffBasesChange::SetBoth(None)))
                 } else {
                     repo.update(cx, |repo, cx| {
-                        repo.load_committed_text(buffer_id, repo_path, cx)
+                        repo.load_committed_text(buffer_id, head_repo_path, index_repo_path, cx)
                     })
                 };
 
@@ -2906,6 +2967,15 @@ impl GitStore {
                     let buffer = buffer.clone();
                     let diff_state = diff_state.clone();
                     let is_symlink = Self::buffer_is_symlink(&buffer, cx);
+                    let status_entry = repo.read(cx).snapshot.status_for_path(&repo_path);
+                    let head_repo_path = status_entry
+                        .as_ref()
+                        .map(|entry| entry.head_repo_path().clone())
+                        .unwrap_or_else(|| repo_path.clone());
+                    let index_repo_path = status_entry
+                        .as_ref()
+                        .map(|entry| entry.index_repo_path().clone())
+                        .unwrap_or(repo_path);
 
                     cx.spawn(async move |_git_store, cx| {
                         async {
@@ -2913,7 +2983,12 @@ impl GitStore {
                                 DiffBasesChange::SetBoth(None)
                             } else {
                                 repo.update(cx, |repo, cx| {
-                                    repo.load_committed_text(buffer_id, repo_path, cx)
+                                    repo.load_committed_text(
+                                        buffer_id,
+                                        head_repo_path,
+                                        index_repo_path,
+                                        cx,
+                                    )
                                 })
                                 .await?
                             };
@@ -10005,15 +10080,16 @@ impl Repository {
     fn load_committed_text(
         &mut self,
         buffer_id: BufferId,
-        repo_path: RepoPath,
+        head_repo_path: RepoPath,
+        index_repo_path: RepoPath,
         cx: &App,
     ) -> Task<Result<DiffBasesChange>> {
         let rx = self.send_job("load_committed_text", None, move |state, _| async move {
             match state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     let revisions = vec![
-                        format!("HEAD:{}", repo_path.as_unix_str()),
-                        format!(":{}", repo_path.as_unix_str()),
+                        format!("HEAD:{}", head_repo_path.as_unix_str()),
+                        format!(":{}", index_repo_path.as_unix_str()),
                     ];
                     let mut loaded_revisions = backend.load_revisions(revisions).await?.into_iter();
                     let committed_text = loaded_revisions
@@ -10240,7 +10316,7 @@ impl Repository {
                         let current_status_paths = statuses
                             .entries
                             .iter()
-                            .map(|(repo_path, _)| repo_path.clone())
+                            .map(|entry| entry.repo_path.clone())
                             .collect::<BTreeSet<_>>();
 
                         for path in &changed_paths {
@@ -10262,16 +10338,27 @@ impl Repository {
 
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
 
-                        for (repo_path, status) in &*statuses.entries {
-                            let current_diff_stat = diff_stats.get(repo_path).copied();
-                            let current_staged_diff_stat =
-                                staged_diff_stats.get(repo_path).copied();
-                            let current_unstaged_diff_stat =
-                                unstaged_diff_stats.get(repo_path).copied();
+                        for status_entry in &*statuses.entries {
+                            let repo_path = &status_entry.repo_path;
+                            let old_repo_path = status_entry.old_repo_path.as_ref();
+                            let current_diff_stat = combine_diff_stats(
+                                diff_stats.get(repo_path).copied(),
+                                old_repo_path.and_then(|path| diff_stats.get(path).copied()),
+                            );
+                            let current_staged_diff_stat = combine_diff_stats(
+                                staged_diff_stats.get(repo_path).copied(),
+                                old_repo_path.and_then(|path| staged_diff_stats.get(path).copied()),
+                            );
+                            let current_unstaged_diff_stat = combine_diff_stats(
+                                unstaged_diff_stats.get(repo_path).copied(),
+                                old_repo_path
+                                    .and_then(|path| unstaged_diff_stats.get(path).copied()),
+                            );
 
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
                                 && cursor.item().is_some_and(|entry| {
-                                    entry.status == *status
+                                    entry.old_repo_path == status_entry.old_repo_path
+                                        && entry.status == status_entry.status
                                         && entry.diff_stat == current_diff_stat
                                         && entry.staged_diff_stat == current_staged_diff_stat
                                         && entry.unstaged_diff_stat == current_unstaged_diff_stat
@@ -10282,7 +10369,8 @@ impl Repository {
 
                             changed_path_statuses.push(Edit::Insert(StatusEntry {
                                 repo_path: repo_path.clone(),
-                                status: *status,
+                                old_repo_path: status_entry.old_repo_path.clone(),
+                                status: status_entry.status,
                                 diff_stat: current_diff_stat,
                                 staged_diff_stat: current_staged_diff_stat,
                                 unstaged_diff_stat: current_unstaged_diff_stat,
@@ -12134,16 +12222,27 @@ async fn compute_snapshot(
         .collect();
     let mut conflicted_paths = Vec::new();
     let statuses_by_path = SumTree::from_iter(
-        statuses.entries.iter().map(|(repo_path, status)| {
-            if status.is_conflicted() {
-                conflicted_paths.push(repo_path.clone());
+        statuses.entries.iter().map(|status_entry| {
+            if status_entry.status.is_conflicted() {
+                conflicted_paths.push(status_entry.repo_path.clone());
             }
+            let old_repo_path = status_entry.old_repo_path.as_ref();
             StatusEntry {
-                repo_path: repo_path.clone(),
-                status: *status,
-                diff_stat: diff_stat_map.get(repo_path).copied(),
-                staged_diff_stat: staged_diff_stat_map.get(repo_path).copied(),
-                unstaged_diff_stat: unstaged_diff_stat_map.get(repo_path).copied(),
+                repo_path: status_entry.repo_path.clone(),
+                old_repo_path: status_entry.old_repo_path.clone(),
+                status: status_entry.status,
+                diff_stat: combine_diff_stats(
+                    diff_stat_map.get(&status_entry.repo_path).copied(),
+                    old_repo_path.and_then(|path| diff_stat_map.get(path).copied()),
+                ),
+                staged_diff_stat: combine_diff_stats(
+                    staged_diff_stat_map.get(&status_entry.repo_path).copied(),
+                    old_repo_path.and_then(|path| staged_diff_stat_map.get(path).copied()),
+                ),
+                unstaged_diff_stat: combine_diff_stats(
+                    unstaged_diff_stat_map.get(&status_entry.repo_path).copied(),
+                    old_repo_path.and_then(|path| unstaged_diff_stat_map.get(path).copied()),
+                ),
             }
         }),
         (),
