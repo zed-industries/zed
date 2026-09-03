@@ -30,7 +30,7 @@ fn build_grouped_entries(store: &ReplStore, worktree_id: WorktreeId) -> Vec<Kern
     let mut wsl_kernels = Vec::new();
     let mut remote_kernels = Vec::new();
 
-    for spec in store.kernel_specifications_for_worktree(worktree_id) {
+    for spec in store.kernel_specifications_for_worktree(Some(worktree_id)) {
         let is_recommended = store.is_recommended_kernel(worktree_id, spec);
         let is_selected = selected_kernel.map_or(false, |s| s == spec);
 
@@ -458,7 +458,7 @@ where
         let store = store.read(cx);
 
         let all_entries = build_grouped_entries(store, self.worktree_id);
-        let selected_kernelspec = store.active_kernelspec(self.worktree_id, None, cx);
+        let selected_kernelspec = store.active_kernelspec(Some(self.worktree_id), None, cx);
         let selected_index = all_entries
             .iter()
             .position(|entry| {

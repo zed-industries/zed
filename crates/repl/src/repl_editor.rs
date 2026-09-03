@@ -226,9 +226,7 @@ pub fn run(
         return Ok(());
     };
 
-    let Some(project_path) = buffer.read(cx).project_path(cx) else {
-        return Ok(());
-    };
+    let worktree_id = resolve_worktree_id(editor.read(cx), cx);
 
     let (runnable_ranges, next_cell_point) =
         runnable_ranges(&buffer.read(cx).snapshot(), selected_range, cx);
@@ -240,7 +238,7 @@ pub fn run(
 
         let kernel_specification = store
             .read(cx)
-            .active_kernelspec(project_path.worktree_id, Some(language.clone()), cx)
+            .active_kernelspec(worktree_id, Some(language.clone()), cx)
             .with_context(|| format!("No kernel found for language: {}", language.name()))?;
 
         let fs = store.read(cx).fs().clone();
@@ -311,17 +309,28 @@ pub enum SessionSupport {
     Unsupported,
 }
 
-pub fn worktree_id_for_editor(editor: WeakEntity<Editor>, cx: &mut App) -> Option<WorktreeId> {
-    editor.upgrade().and_then(|editor| {
+pub fn resolve_worktree_id(editor: &Editor, cx: &App) -> Option<WorktreeId> {
+    let from_buffer = editor
+        .buffer()
+        .read(cx)
+        .as_singleton()
+        .and_then(|buffer| buffer.read(cx).project_path(cx))
+        .map(|path| path.worktree_id);
+
+    from_buffer.or_else(|| {
         editor
+            .project()?
             .read(cx)
-            .buffer()
-            .read(cx)
-            .as_singleton()?
-            .read(cx)
-            .project_path(cx)
-            .map(|path| path.worktree_id)
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).id())
     })
+}
+
+pub fn worktree_id_for_editor(editor: WeakEntity<Editor>, cx: &mut App) -> Option<WorktreeId> {
+    editor
+        .upgrade()
+        .and_then(|editor| resolve_worktree_id(editor.read(cx), cx))
 }
 
 pub fn session(editor: WeakEntity<Editor>, cx: &mut App) -> SessionSupport {
@@ -337,10 +346,6 @@ pub fn session(editor: WeakEntity<Editor>, cx: &mut App) -> SessionSupport {
     };
 
     let worktree_id = worktree_id_for_editor(editor, cx);
-
-    let Some(worktree_id) = worktree_id else {
-        return SessionSupport::Unsupported;
-    };
 
     let kernelspec = store
         .read(cx)

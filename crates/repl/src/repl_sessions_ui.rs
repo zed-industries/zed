@@ -27,13 +27,25 @@ fn refresh_python_kernelspecs_for_buffer(
         return;
     };
 
-    let Some(project_path) = buffer.project_path(cx) else {
+    let worktree_id = buffer
+        .project_path(cx)
+        .map(|path| path.worktree_id)
+        .or_else(|| {
+            project
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).id())
+        });
+
+    let Some(worktree_id) = worktree_id else {
         return;
     };
+
     let store = ReplStore::global(cx);
     store.update(cx, |store, cx| {
         store
-            .refresh_python_kernelspecs(project_path.worktree_id, project, cx)
+            .refresh_python_kernelspecs(worktree_id, project, cx)
             .detach_and_log_err(cx);
     });
 }
