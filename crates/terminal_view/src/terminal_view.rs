@@ -2393,6 +2393,10 @@ mod tests {
                     Some(vec![expected_reference.to_string()])
                 );
             }
+            let absolute_reference =
+                format!("{}:10-42", Path::new("/project").join("main.rs").display());
+            let expected_absolute_reference = shlex::try_quote(&absolute_reference)
+                .expect("selection reference should be shell-quotable");
             assert_eq!(
                 format_clipboard_selection_for_terminal_agent(
                     &clipboard,
@@ -2401,10 +2405,7 @@ mod tests {
                     Some(Path::new("/other")),
                     cx,
                 ),
-                Some(format!(
-                    "{}:10-42 ",
-                    Path::new("/project").join("main.rs").display()
-                ))
+                Some(format!("{expected_absolute_reference} "))
             );
             assert_eq!(
                 format_clipboard_selection_for_terminal_agent(
@@ -2557,9 +2558,13 @@ mod tests {
             terminal_view.update(cx, |terminal_view, cx| {
                 terminal_view.paste(&Paste, window, cx);
             });
+            let absolute_reference =
+                format!("{}:10-42", Path::new("/project").join("main.rs").display());
+            let expected_absolute_reference = shlex::try_quote(&absolute_reference)
+                .expect("selection reference should be shell-quotable");
             assert_eq!(
                 terminal.update(cx, |terminal, _| terminal.take_input_log()),
-                vec![b"/project/main.rs:10-42 ".to_vec()]
+                vec![format!("{expected_absolute_reference} ").into_bytes()]
             );
 
             terminal.update(cx, |terminal, _| {

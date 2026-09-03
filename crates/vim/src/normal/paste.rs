@@ -396,6 +396,7 @@ mod test {
     use indoc::indoc;
     use language::{LanguageName, language_settings::LanguageSettingsContent};
     use settings::{SettingsStore, UseSystemClipboard};
+    use util::path;
 
     #[gpui::test]
     async fn test_paste(cx: &mut gpui::TestAppContext) {
@@ -567,7 +568,7 @@ mod test {
         });
         assert_eq!(
             source_locations,
-            Some(vec![(Some("/root/dir/file.rs".into()), Some(1..=1))])
+            Some(vec![(Some(path!("/root/dir/file.rs").into()), Some(1..=1))])
         );
         cx.simulate_keystrokes("d d p");
         cx.assert_state(
