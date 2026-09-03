@@ -1057,7 +1057,6 @@ async fn test_debugger_tool_ask_mode_gating(cx: &mut TestAppContext) {
         model, thread, fs, ..
     } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
-    cx.update(|cx| cx.update_flags(false, vec!["debugger-tool".to_string()]));
 
     // Enable the debugger tool in an "ask" profile and a write-capable profile.
     fs.insert_file(
@@ -6937,95 +6936,6 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
             "subagent tool should not be present at max depth"
         );
     });
-}
-
-#[gpui::test]
-async fn test_debugger_tool_gated_by_feature_flag(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    cx.update(|cx| {
-        cx.update_flags(false, vec![]);
-        assert!(
-            !tool_feature_flag_enabled(DebuggerTool::NAME, cx),
-            "expected debugger tool feature flag to be off"
-        );
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
-    let environment = Rc::new(cx.update(|cx| {
-        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
-    }));
-
-    let thread = cx.new(|cx| {
-        let mut thread = Thread::new(
-            project,
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            Some(model.clone() as Arc<dyn LanguageModel>),
-            cx,
-        );
-        thread.add_default_tools(environment, cx);
-        thread
-    });
-
-    thread.read_with(cx, |thread, _| {
-        assert!(
-            thread.has_registered_tool(DebuggerTool::NAME),
-            "expected debugger tool to be registered regardless of feature flag"
-        );
-    });
-
-    thread
-        .update(cx, |thread, cx| {
-            thread.send(ClientUserMessageId::new(), ["hello"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    let completion = model.pending_completions().pop().unwrap();
-    let tool_names = tool_names_for_completion(&completion);
-    assert!(
-        !tool_names
-            .iter()
-            .any(|tool_name| tool_name == DebuggerTool::NAME),
-        "expected debugger tool to be hidden without debugger-tool flag, \
-         but completion tools were: {tool_names:?}"
-    );
-    model.end_last_completion_stream();
-    cx.run_until_parked();
-
-    cx.update(|cx| {
-        cx.update_flags(false, vec!["debugger-tool".to_string()]);
-        assert!(
-            tool_feature_flag_enabled(DebuggerTool::NAME, cx),
-            "expected debugger tool feature flag to be on"
-        );
-    });
-
-    thread
-        .update(cx, |thread, cx| {
-            thread.send(ClientUserMessageId::new(), ["hello again"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    let completion = model.pending_completions().pop().unwrap();
-    let tool_names = tool_names_for_completion(&completion);
-    assert!(
-        tool_names
-            .iter()
-            .any(|tool_name| tool_name == DebuggerTool::NAME),
-        "expected debugger tool to be exposed when debugger-tool flag is on, \
-         but completion tools were: {tool_names:?}"
-    );
 }
 
 #[gpui::test]
