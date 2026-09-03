@@ -902,7 +902,7 @@ impl Model {
             Self::KimiK3 => Some(vec![ReasoningEffort::Max]),
 
             // MiniMax models
-            Self::MiniMaxM3 => Some(vec![ReasoningEffort::None]),
+            Self::MiniMaxM3 => Some(vec![ReasoningEffort::None, ReasoningEffort::Max]),
 
             // Xiaomi MiMo models
             Self::MimoV2_5Pro | Self::MimoV2_5 => Some(vec![
