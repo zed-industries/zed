@@ -213,7 +213,7 @@ impl AgentTool for CopyPathTool {
                         fs.as_ref(),
                         &source_path,
                         &destination_path,
-                        fs::CopyOptions::default(),
+                        fs::RecursiveCopyOptions::default(),
                     ).fuse() => {
                         result.map_err(|e| format!("Copying {} to {}: {e}", input.source_path, input.destination_path))?;
                     }

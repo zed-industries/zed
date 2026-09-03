@@ -562,7 +562,7 @@ impl WorktreeStore {
                         fs.as_ref(),
                         &old_abs_path,
                         &new_abs_path,
-                        Default::default(),
+                        fs::RecursiveCopyOptions::default(),
                     )
                     .await
                 });
