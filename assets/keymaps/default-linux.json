@@ -1403,6 +1403,12 @@
     },
   },
   {
+    "context": "KeymapEditor > BufferSearchBar",
+    "bindings": {
+      "alt-ctrl-f": "keymap_editor::ToggleKeystrokeSearch",
+    },
+  },
+  {
     "context": "KeystrokeInput",
     "use_key_equivalents": true,
     "bindings": {
