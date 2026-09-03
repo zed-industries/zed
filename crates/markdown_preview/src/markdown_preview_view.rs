@@ -3665,15 +3665,6 @@ mod tests {
         assert_eq!(folder, Some(PathBuf::from("/remote/project/docs")));
     }
 
-    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
-        cx.update(|cx| {
-            let state = AppState::test(cx);
-            editor::init(cx);
-            crate::init(cx);
-            state
-        })
-    }
-
     #[gpui::test]
     async fn test_select_all_with_trailing_newlines_when_container_focused(
         cx: &mut TestAppContext,
@@ -3694,6 +3685,15 @@ mod tests {
         preview.read_with(cx, |preview, cx| {
             assert_eq!(preview.markdown.read(cx).selected_source(), None);
         });
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            editor::init(cx);
+            crate::init(cx);
+            state
+        })
     }
 
     fn register_markdown_language(project: &Entity<Project>, cx: &mut TestAppContext) {
