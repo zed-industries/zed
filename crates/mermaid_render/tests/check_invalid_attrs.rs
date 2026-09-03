@@ -174,6 +174,7 @@ fn check_svg_issues(name: &str, svg: &str) -> Vec<String> {
     }
 
     // Parse with quick-xml to find ANY empty attribute values on visual elements
+    use quick_xml::XmlVersion;
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_str(svg);
     loop {
@@ -183,7 +184,9 @@ fn check_svg_issues(name: &str, svg: &str) -> Vec<String> {
                 let tag = String::from_utf8_lossy(e.name().local_name().as_ref()).to_string();
                 for attr in e.attributes().flatten() {
                     let key = String::from_utf8_lossy(attr.key.local_name().as_ref()).to_string();
-                    let val = attr.unescape_value().unwrap_or_default();
+                    let val = attr
+                        .normalized_value(XmlVersion::Implicit1_0)
+                        .unwrap_or_default();
                     let visual_attr = matches!(
                         key.as_str(),
                         "fill"
@@ -283,6 +286,7 @@ fn class_diagram_label_text_uses_accent_classes() {
 
     let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
 
+    use quick_xml::XmlVersion;
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_str(&svg);
     let mut accent_classes: Vec<String> = Vec::new();
@@ -291,7 +295,10 @@ fn class_diagram_label_text_uses_accent_classes() {
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) if e.name().as_ref() == b"text" => {
                 if let Ok(Some(class_attr)) = e.try_get_attribute("class") {
-                    let class = class_attr.unescape_value().unwrap_or_default().to_string();
+                    let class = class_attr
+                        .normalized_value(XmlVersion::Implicit1_0)
+                        .unwrap_or_default()
+                        .to_string();
                     for token in class.split_whitespace() {
                         if token.starts_with("zed-accent-") {
                             accent_classes.push(token.to_string());
@@ -315,6 +322,7 @@ fn sequence_diagram_tspan_uses_accent_classes() {
     let source = "sequenceDiagram\n    participant Database";
     let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
 
+    use quick_xml::XmlVersion;
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_str(&svg);
     let mut accent_classes: Vec<String> = Vec::new();
@@ -323,7 +331,10 @@ fn sequence_diagram_tspan_uses_accent_classes() {
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) if e.name().as_ref() == b"tspan" => {
                 if let Ok(Some(class_attr)) = e.try_get_attribute("class") {
-                    let class = class_attr.unescape_value().unwrap_or_default().to_string();
+                    let class = class_attr
+                        .normalized_value(XmlVersion::Implicit1_0)
+                        .unwrap_or_default()
+                        .to_string();
                     for token in class.split_whitespace() {
                         if token.starts_with("zed-accent-") {
                             accent_classes.push(token.to_string());

@@ -502,6 +502,16 @@ When enabled, this setting will automatically close tabs for files that have bee
 
 > Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
+## Close Panel on Toggle
+
+- Description: Whether invoking a panel's `ToggleFocus` action while the panel is already focused closes the panel, instead of just moving focus back to the editor. This only applies to a panel's focus-toggle action, not to its regular visibility-toggle action.
+- Setting: `close_panel_on_toggle`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Code Lens
 
 - Description: Whether and how to display code lenses from language servers. Code lenses show contextual information such as reference counts, implementations, and other metadata provided by the language server.
@@ -2004,6 +2014,41 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
+## Focus Follows Mouse
+
+- Description: Whether the focused panel follows the mouse location.
+- Setting: `focus_follows_mouse`
+- Default:
+
+```json [settings]
+{
+  "focus_follows_mouse": {
+    "enabled": false,
+    "debounce_ms": 250
+  }
+}
+```
+
+### Enabled
+
+- Description: Whether hovering over a dock or pane moves focus to it.
+- Setting: `enabled`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+### Debounce
+
+- Description: How long the mouse must hover over a panel before it is focused, in milliseconds.
+- Setting: `debounce_ms`
+- Default: `250`
+
+**Options**
+
+Non-negative `integer` values
+
 ## Format On Save {#format-on-save}
 
 - Description: Whether or not to perform a buffer format before saving.
@@ -3130,6 +3175,16 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 
 - `enabled`: Whether to enable automatic JSX tag closing
 
+## Language Detection
+
+- Description: Whether to automatically detect the language of an untitled buffer from its contents. Languages explicitly selected from the language selector are not changed.
+- Setting: `language_detection`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Languages
 
 - Description: Configuration for specific languages.
@@ -3418,6 +3473,30 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 }
 ```
 
+## On New Window
+
+- Description: What to show when opening a new window.
+- Setting: `on_new_window`
+- Default: `"launchpad"`
+
+**Options**
+
+1. Show an empty untitled buffer:
+
+```json [settings]
+{
+  "on_new_window": "empty_tab"
+}
+```
+
+2. Show the launchpad with recent projects:
+
+```json [settings]
+{
+  "on_new_window": "launchpad"
+}
+```
+
 ## Instrumentation
 
 - Description: Configuration for developer-oriented instrumentation tools (profilers, tracers, etc.) that can be toggled at runtime.
@@ -3569,6 +3648,14 @@ Examples:
 **Options**
 
 `boolean` values
+
+## Call Hierarchy
+
+### Modal Max Width
+
+- Description: Max-width of the call hierarchy modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
+- Setting: `modal_max_width`
+- Default: `medium`
 
 ## File Finder
 
@@ -3894,7 +3981,8 @@ Non-negative `integer` values
     "case_sensitive": false,
     "include_ignored": false,
     "regex": false,
-    "center_on_match": false
+    "center_on_match": false,
+    "search_on_type": true
   }
 }
 ```
@@ -3936,6 +4024,12 @@ Non-negative `integer` values
 - Description: Whether to center the cursor on each search match when navigating.
 - Setting: `center_on_match`
 - Default: `false`
+
+### Search On Type
+
+- Description: Start searching as you type in project search, without pressing Enter.
+- Setting: `search_on_type`
+- Default: `true`
 
 ## Search Wrap
 
@@ -5245,7 +5339,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "dock": "right",
     "entry_spacing": "comfortable",
     "file_icons": true,
-    "folder_icons": true,
+    "folder_indicator": "icon",
     "git_status": true,
     "indent_size": 20,
     "auto_reveal_entries": true,
@@ -5782,7 +5876,7 @@ You can define these in user or project settings; project settings are merged on
     "default_width": 300,
     "dock": "left",
     "file_icons": true,
-    "folder_icons": true,
+    "folder_indicator": "icon",
     "git_status": true,
     "indent_size": 20,
     "auto_reveal_entries": true,
@@ -5792,7 +5886,8 @@ You can define these in user or project settings; project settings are merged on
     },
     "scrollbar": {
       "show": null
-    }
+    },
+    "multi_buffer_hide_symbols": false
   }
 }
 ```

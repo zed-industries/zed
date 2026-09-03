@@ -1,14 +1,15 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::{Stream, StreamExt};
+use http_client::StatusCode;
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
     LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role,
-    StopReason, TokenUsage,
-    util::{fix_streamed_json, is_context_window_exceeded_message, parse_tool_arguments},
+    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent,
+    ProviderErrorCategory, Role, StopReason, TokenUsage, provider_name_for_id,
+    util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -24,8 +25,8 @@ use crate::responses::{
     provider_compaction_items, provider_compaction_state_from_items,
 };
 use crate::{
-    FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort,
-    ResponseStreamEvent, ServiceTier, ToolCall, ToolCallContent,
+    FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort, ServiceTier,
+    ToolCall, ToolCallContent,
 };
 
 const RESPONSE_MESSAGE_PHASE_COMMENTARY: &str = "commentary";
@@ -728,279 +729,6 @@ fn add_message_content_part(
     }
 }
 
-/// Accumulates structured reasoning metadata from compatible providers.
-///
-/// Array entries are matched by `index` and then `id`. Fragmented `text`,
-/// `summary`, and `data` fields are concatenated while other non-null fields
-/// replace their previous values.
-///
-/// # Examples
-///
-/// ```
-/// use open_ai::completion::ReasoningDetailsAccumulator;
-/// use serde_json::json;
-///
-/// let mut accumulator = ReasoningDetailsAccumulator::default();
-/// accumulator.push(json!([{"index": 0, "text": "first "}]));
-/// let details = accumulator
-///     .push(json!([{"index": 0, "text": "second"}]))
-///     .expect("non-empty reasoning details");
-///
-/// assert_eq!(details[0]["text"], "first second");
-/// ```
-#[derive(Debug, Default)]
-pub struct ReasoningDetailsAccumulator {
-    accumulated: Option<serde_json::Value>,
-}
-
-impl ReasoningDetailsAccumulator {
-    /// Merges `chunk` and returns the updated metadata snapshot.
-    ///
-    /// `null` and empty arrays do not replace previously accumulated metadata
-    /// and return `None`.
-    pub fn push(&mut self, chunk: serde_json::Value) -> Option<serde_json::Value> {
-        match chunk {
-            serde_json::Value::Null => None,
-            serde_json::Value::Array(chunks) if chunks.is_empty() => None,
-            serde_json::Value::Array(chunks) => {
-                let mut details = match self.accumulated.take() {
-                    Some(serde_json::Value::Array(details)) => details,
-                    _ => Vec::new(),
-                };
-                for chunk in chunks {
-                    merge_reasoning_detail(&mut details, chunk);
-                }
-                let accumulated = serde_json::Value::Array(details);
-                self.accumulated = Some(accumulated.clone());
-                Some(accumulated)
-            }
-            chunk => {
-                self.accumulated = Some(chunk.clone());
-                Some(chunk)
-            }
-        }
-    }
-}
-
-pub struct OpenAiEventMapper {
-    tool_calls_by_index: HashMap<usize, RawToolCall>,
-    reasoning_details: ReasoningDetailsAccumulator,
-}
-
-impl OpenAiEventMapper {
-    pub fn new() -> Self {
-        Self {
-            tool_calls_by_index: HashMap::default(),
-            reasoning_details: ReasoningDetailsAccumulator::default(),
-        }
-    }
-
-    pub fn map_stream(
-        mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
-    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
-    {
-        events.flat_map(move |event| {
-            futures::stream::iter(match event {
-                Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
-            })
-        })
-    }
-
-    pub fn map_event(
-        &mut self,
-        event: ResponseStreamEvent,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let mut events = Vec::new();
-        if let Some(usage) = event.usage
-            && let Some(prompt_tokens) = usage.prompt_tokens
-            && let Some(completion_tokens) = usage.completion_tokens
-        {
-            let cache_creation_input_tokens = usage
-                .prompt_tokens_details
-                .as_ref()
-                .map_or(0, |details| details.cache_write_tokens);
-            let cache_read_input_tokens = usage
-                .prompt_tokens_details
-                .as_ref()
-                .map_or(0, |details| details.cached_tokens);
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: prompt_tokens
-                    .saturating_sub(cache_creation_input_tokens)
-                    .saturating_sub(cache_read_input_tokens),
-                output_tokens: completion_tokens,
-                cache_creation_input_tokens,
-                cache_read_input_tokens,
-            })));
-        }
-
-        let Some(choice) = event.choices.first() else {
-            return events;
-        };
-
-        if let Some(delta) = choice.delta.as_ref() {
-            if let Some(reasoning_details) = delta.reasoning_details.clone()
-                && let Some(reasoning_details) = self.reasoning_details.push(reasoning_details)
-            {
-                events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(
-                    reasoning_details,
-                )));
-            }
-            if let Some(reasoning) = delta.reasoning.clone() {
-                push_thinking_event(reasoning, &mut events);
-            }
-            if let Some(reasoning_content) = delta.reasoning_content.clone() {
-                push_thinking_event(reasoning_content, &mut events);
-            }
-            if let Some(content) = delta.content.clone() {
-                if !content.is_empty() {
-                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
-                }
-            }
-
-            if let Some(tool_calls) = delta.tool_calls.as_ref() {
-                for tool_call in tool_calls {
-                    let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
-
-                    if let Some(tool_id) = tool_call.id.clone()
-                        && !tool_id.is_empty()
-                    {
-                        entry.id = tool_id;
-                    }
-
-                    if let Some(function) = tool_call.function.as_ref() {
-                        if let Some(name) = function.name.clone()
-                            && !name.is_empty()
-                        {
-                            entry.name = name;
-                        }
-
-                        if let Some(arguments) = function.arguments.clone() {
-                            entry.arguments.push_str(&arguments);
-                        }
-
-                        if let Some(thought_signature) = function.thought_signature.clone() {
-                            entry.thought_signature = Some(thought_signature);
-                        }
-                    }
-
-                    if !entry.id.is_empty() && !entry.name.is_empty() {
-                        if let Ok(input) = serde_json::from_str::<serde_json::Value>(
-                            &fix_streamed_json(&entry.arguments),
-                        ) {
-                            events.push(Ok(LanguageModelCompletionEvent::ToolUse(
-                                LanguageModelToolUse {
-                                    id: entry.id.clone().into(),
-                                    name: entry.name.as_str().into(),
-                                    is_input_complete: false,
-                                    input: LanguageModelToolUseInput::Json(input),
-                                    raw_input: entry.arguments.clone(),
-                                    thought_signature: entry.thought_signature.clone(),
-                                },
-                            )));
-                        }
-                    }
-                }
-            }
-        }
-
-        match choice.finish_reason.as_deref() {
-            Some("stop") => {
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            Some("tool_calls") => {
-                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match parse_tool_arguments(&tool_call.arguments) {
-                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
-                                id: tool_call.id.clone().into(),
-                                name: tool_call.name.as_str().into(),
-                                is_input_complete: true,
-                                input: LanguageModelToolUseInput::Json(input),
-                                raw_input: tool_call.arguments.clone(),
-                                thought_signature: tool_call.thought_signature.clone(),
-                            },
-                        )),
-                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                            id: tool_call.id.into(),
-                            tool_name: tool_call.name.into(),
-                            raw_input: tool_call.arguments.clone().into(),
-                            json_parse_error: error.to_string(),
-                        }),
-                    }
-                }));
-
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
-            }
-            Some(stop_reason) => {
-                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            None => {}
-        }
-
-        events
-    }
-}
-
-fn push_thinking_event(
-    text: String,
-    events: &mut Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-) {
-    if !text.is_empty() {
-        events.push(Ok(LanguageModelCompletionEvent::Thinking {
-            text,
-            signature: None,
-        }));
-    }
-}
-
-fn merge_reasoning_detail(details: &mut Vec<serde_json::Value>, chunk: serde_json::Value) {
-    let index = chunk.get("index").and_then(serde_json::Value::as_u64);
-    let target_index = index
-        .and_then(|index| {
-            details.iter().position(|detail| {
-                detail.get("index").and_then(serde_json::Value::as_u64) == Some(index)
-            })
-        })
-        .or_else(|| {
-            let id = chunk.get("id").and_then(serde_json::Value::as_str)?;
-            details
-                .iter()
-                .position(|detail| detail.get("id").and_then(serde_json::Value::as_str) == Some(id))
-        });
-    let Some(target_index) = target_index else {
-        details.push(chunk);
-        return;
-    };
-    let (Some(target), Some(chunk)) = (details[target_index].as_object_mut(), chunk.as_object())
-    else {
-        return;
-    };
-    for (key, value) in chunk {
-        if matches!(key.as_str(), "text" | "summary" | "data")
-            && let Some(fragment) = value.as_str()
-            && let Some(existing) = target.get(key).and_then(serde_json::Value::as_str)
-        {
-            target.insert(
-                key.clone(),
-                serde_json::Value::String(format!("{existing}{fragment}")),
-            );
-        } else if !value.is_null() {
-            target.insert(key.clone(), value.clone());
-        }
-    }
-}
-
-#[derive(Default)]
-struct RawToolCall {
-    id: String,
-    name: String,
-    arguments: String,
-    thought_signature: Option<String>,
-}
-
 pub struct OpenAiResponseEventMapper {
     /// The backend whose infrastructure produced this stream; stamped on any
     /// compaction state it emits so replay is limited to the same backend.
@@ -1273,17 +1001,31 @@ impl OpenAiResponseEventMapper {
                 events
             }
             ResponsesStreamEvent::Failed { response } => match response.error.as_ref() {
-                Some(error) => vec![Err(completion_error_from_response_error(error))],
-                None => vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    response_failure_message(&response)
-                )))],
+                Some(error) => vec![Err(completion_error_from_response_error(
+                    error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))],
+                None => vec![Err(LanguageModelCompletionError::from_provider_response(
+                    provider_name_for_id(&self.compaction_state_owner),
+                    None,
+                    Some("response.failed".to_string()),
+                    response_failure_message(&response),
+                    None,
+                    ProviderErrorCategory::Other,
+                ))],
             },
             ResponsesStreamEvent::Error { error } => {
-                vec![Err(completion_error_from_response_error(&error))]
+                vec![Err(completion_error_from_response_error(
+                    &error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))]
             }
             ResponsesStreamEvent::GenericError { error } => {
                 let error = error.into_response_error();
-                vec![Err(completion_error_from_response_error(&error))]
+                vec![Err(completion_error_from_response_error(
+                    &error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))]
             }
             ResponsesStreamEvent::ReasoningSummaryPartAdded {
                 item_id,
@@ -1610,12 +1352,57 @@ fn response_failure_message(response: &ResponsesSummary) -> String {
         .unwrap_or_else(|| "response.failed".to_string())
 }
 
-fn completion_error_from_response_error(error: &ResponseError) -> LanguageModelCompletionError {
-    let message = response_error_message(error);
-    if is_context_window_exceeded_message(&message) {
-        LanguageModelCompletionError::PromptTooLarge { tokens: None }
-    } else {
-        LanguageModelCompletionError::Other(anyhow!(message))
+fn completion_error_from_response_error(
+    error: &ResponseError,
+    provider: language_model_core::LanguageModelProviderName,
+) -> LanguageModelCompletionError {
+    let category = response_error_category(error.code.as_deref(), None, &error.message);
+    LanguageModelCompletionError::from_provider_response(
+        provider,
+        None,
+        error.code.clone(),
+        error.message.clone(),
+        None,
+        category,
+    )
+}
+
+pub(crate) fn response_error_category(
+    code: Option<&str>,
+    status: Option<StatusCode>,
+    message: &str,
+) -> ProviderErrorCategory {
+    match code {
+        Some("context_length_exceeded" | "request_too_large") => {
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        }
+        Some("invalid_encrypted_content") => ProviderErrorCategory::InvalidEncryptedContent,
+        Some("invalid_request_error") => ProviderErrorCategory::InvalidRequest,
+        Some("authentication_error") => ProviderErrorCategory::Authentication,
+        Some(
+            "billing_error"
+            | "payment_required_error"
+            | "credit_balance_exhausted"
+            | "insufficient_quota"
+            | "organization_spend_limit_exceeded"
+            | "project_spend_limit_exceeded"
+            | "organization_usage_limit_exceeded",
+        ) => ProviderErrorCategory::PaymentRequired,
+        Some("permission_error") => ProviderErrorCategory::Permission,
+        Some("cyber_policy" | "invalid_prompt") => ProviderErrorCategory::ContentPolicy,
+        Some("not_found_error") => ProviderErrorCategory::EndpointNotFound,
+        Some("conflict_error") => ProviderErrorCategory::Conflict,
+        Some("rate_limit_error" | "rate_limit_exceeded") => ProviderErrorCategory::RateLimit,
+        Some("timeout_error" | "request_timed_out") => ProviderErrorCategory::Timeout,
+        Some("api_error" | "internal_server_error" | "server_error") => {
+            ProviderErrorCategory::InternalServer
+        }
+        Some("overloaded_error" | "server_is_overloaded" | "slow_down") => {
+            ProviderErrorCategory::Overloaded
+        }
+        Some(_) | None => status
+            .map(|status| ProviderErrorCategory::from_http_status(status, message))
+            .unwrap_or(ProviderErrorCategory::Other),
     }
 }
 
@@ -1705,16 +1492,13 @@ mod tests {
         LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
         LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelRequestToolInput,
         LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-        LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID, SharedString,
-        Speed,
+        LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID,
+        OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, SharedString, Speed,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
     use super::*;
-    use crate::{
-        ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamEvent, ToolCallChunk,
-    };
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
@@ -1726,17 +1510,6 @@ mod tests {
                 .map(Result::unwrap)
                 .collect()
         })
-    }
-
-    fn map_completion_events(
-        events: Vec<ResponseStreamEvent>,
-    ) -> Vec<LanguageModelCompletionEvent> {
-        let mut mapper = OpenAiEventMapper::new();
-        let mut all_events = Vec::new();
-        for event in events {
-            all_events.extend(mapper.map_event(event));
-        }
-        all_events.into_iter().filter_map(|e| e.ok()).collect()
     }
 
     fn response_item_message(id: &str) -> ResponseOutputItem {
@@ -3075,7 +2848,7 @@ mod tests {
     }
 
     #[test]
-    fn responses_stream_failed_uses_response_error_message() {
+    fn responses_stream_failed_preserves_provider_rejection() {
         let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
             response: ResponseSummary {
@@ -3091,10 +2864,19 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "server_error: The model failed to generate a response."
-        );
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "server_error"
+                && message == "The model failed to generate a response."
+        ));
     }
 
     #[test]
@@ -3113,11 +2895,23 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(error.to_string(), "ERR_SOMETHING: Something went wrong");
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "ERR_SOMETHING"
+                && message == "Something went wrong"
+        ));
     }
 
     #[test]
-    fn responses_stream_deserializes_nested_error_event() {
+    fn responses_stream_preserves_nested_cyber_policy_rejection() {
         // In practice the Responses API often nests error fields under an
         // `error` object even though the public spec documents them at the top
         // level. Make sure we don't lose the message and code in that case.
@@ -3125,8 +2919,8 @@ mod tests {
             "type": "error",
             "error": {
                 "type": "invalid_request_error",
-                "code": "invalid_prompt",
-                "message": "Your prompt was flagged.",
+                "code": "cyber_policy",
+                "message": "This content was flagged as potentially violating our terms of use.",
                 "param": "input"
             },
             "sequence_number": 2
@@ -3138,10 +2932,57 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                category: ProviderErrorCategory::ContentPolicy,
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "cyber_policy"
+                && message == "This content was flagged as potentially violating our terms of use."
+        ));
+    }
+
+    #[test]
+    fn responses_stream_maps_billing_codes_to_payment_required() {
+        for code in [
+            "billing_error",
+            "payment_required_error",
+            "credit_balance_exhausted",
+            "insufficient_quota",
+            "organization_spend_limit_exceeded",
+            "project_spend_limit_exceeded",
+            "organization_usage_limit_exceeded",
+        ] {
+            assert_eq!(
+                response_error_category(Some(code), None, ""),
+                ProviderErrorCategory::PaymentRequired,
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn responses_stream_maps_invalid_prompt_to_content_policy() {
         assert_eq!(
-            error.to_string(),
-            "invalid_prompt: Your prompt was flagged."
+            response_error_category(Some("invalid_prompt"), None, ""),
+            ProviderErrorCategory::ContentPolicy
         );
+    }
+
+    #[test]
+    fn responses_stream_maps_overload_codes_to_overloaded() {
+        for code in ["overloaded_error", "server_is_overloaded", "slow_down"] {
+            assert_eq!(
+                response_error_category(Some(code), None, ""),
+                ProviderErrorCategory::Overloaded,
+                "{code}"
+            );
+        }
     }
 
     #[test]
@@ -3165,7 +3006,10 @@ mod tests {
         let error = mapped.into_iter().next().unwrap().unwrap_err();
         assert!(matches!(
             error,
-            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                ..
+            }
         ));
     }
 
@@ -3188,7 +3032,10 @@ mod tests {
         let error = mapped.into_iter().next().unwrap().unwrap_err();
         assert!(matches!(
             error,
-            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                ..
+            }
         ));
     }
 
@@ -3208,7 +3055,19 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(error.to_string(), "invalid_request_error: Invalid request.");
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "invalid_request_error"
+                && message == "Invalid request."
+        ));
     }
 
     #[test]
@@ -4173,274 +4032,6 @@ mod tests {
                 {"role": "tool", "content": "result", "tool_call_id": "call-1"}
             ])
         );
-    }
-
-    #[test]
-    fn stream_maps_reasoning() {
-        let events = map_completion_events(vec![ResponseStreamEvent {
-            choices: vec![ChoiceDelta {
-                index: 0,
-                delta: Some(ResponseMessageDelta {
-                    role: None,
-                    content: None,
-                    reasoning: Some("thinking".into()),
-                    tool_calls: None,
-                    reasoning_content: None,
-                    reasoning_details: None,
-                }),
-                finish_reason: None,
-            }],
-            usage: None,
-        }]);
-
-        assert_eq!(
-            events,
-            vec![LanguageModelCompletionEvent::Thinking {
-                text: "thinking".into(),
-                signature: None,
-            }]
-        );
-    }
-
-    #[test]
-    fn stream_merges_reasoning_details_and_maps_compatible_usage_and_signatures() {
-        let response_events = serde_json::from_value(json!([
-            {
-                "choices": [{
-                    "index": 0,
-                    "delta": {
-                        "reasoning_details": [{
-                            "id": "reasoning-1",
-                            "index": 0,
-                            "type": "reasoning.text",
-                            "text": "first "
-                        }],
-                        "tool_calls": [{
-                            "index": 0,
-                            "id": "call-1",
-                            "function": {
-                                "name": "search",
-                                "arguments": "{",
-                                "thought_signature": "signature"
-                            }
-                        }]
-                    },
-                    "finish_reason": null
-                }],
-                "usage": null
-            },
-            {
-                "choices": [{
-                    "index": 0,
-                    "delta": {
-                        "reasoning_details": [{
-                            "id": "reasoning-1",
-                            "index": 0,
-                            "text": "second"
-                        }],
-                        "tool_calls": [{
-                            "index": 0,
-                            "function": {
-                                "arguments": "}"
-                            }
-                        }]
-                    },
-                    "finish_reason": "tool_calls"
-                }],
-                "usage": null
-            },
-            {
-                "choices": [],
-                "usage": {
-                    "prompt_tokens": 10000,
-                    "completion_tokens": 500,
-                    "total_tokens": 10500,
-                    "prompt_tokens_details": {
-                        "cached_tokens": 6000,
-                        "cache_write_tokens": 1000
-                    }
-                }
-            }
-        ]))
-        .expect("valid compatible Chat Completions events");
-        let events = map_completion_events(response_events);
-
-        assert!(events.iter().any(|event| {
-            matches!(
-                event,
-                LanguageModelCompletionEvent::ReasoningDetails(details)
-                    if details[0]["text"] == "first second"
-            )
-        }));
-        assert!(events.iter().any(|event| {
-            matches!(
-                event,
-                LanguageModelCompletionEvent::ToolUse(tool_use)
-                    if tool_use.is_input_complete
-                        && tool_use.thought_signature.as_deref() == Some("signature")
-            )
-        }));
-        assert!(events.iter().any(|event| {
-            matches!(
-                event,
-                LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                    input_tokens: 3_000,
-                    output_tokens: 500,
-                    cache_creation_input_tokens: 1_000,
-                    cache_read_input_tokens: 6_000,
-                })
-            )
-        }));
-    }
-
-    #[test]
-    fn reasoning_details_accumulator_replaces_an_incompatible_previous_shape() {
-        let mut accumulator = ReasoningDetailsAccumulator::default();
-        assert_eq!(
-            accumulator.push(json!({"summary": "provider-defined"})),
-            Some(json!({"summary": "provider-defined"}))
-        );
-        assert_eq!(
-            accumulator.push(json!([{"index": 0, "text": "reasoning"}])),
-            Some(json!([{"index": 0, "text": "reasoning"}]))
-        );
-    }
-
-    #[test]
-    fn stream_maps_preserves_tool_id_and_name_across_empty_deltas() {
-        // DashScope sends id="" and name="" in subsequent tool_calls delta
-        // chunks after the first chunk. OpenAiEventMapper must not overwrite
-        // the accumulated id and name with these empty strings.
-
-        let events = vec![
-            // First chunk: id and name are present
-            ResponseStreamEvent {
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: Some(ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
-                            id: Some("call_dashscope_test".into()),
-                            function: Some(FunctionChunk {
-                                name: Some("list_directory".into()),
-                                arguments: Some("".into()),
-                                thought_signature: None,
-                            }),
-                        }]),
-                        reasoning_content: None,
-                        reasoning_details: None,
-                    }),
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            // Subsequent chunks: DashScope sends id="" and name=""
-            ResponseStreamEvent {
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: Some(ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
-                            id: Some("".into()),
-                            function: Some(FunctionChunk {
-                                name: Some("".into()),
-                                arguments: Some("{\"path\": \"".into()),
-                                thought_signature: None,
-                            }),
-                        }]),
-                        reasoning_content: None,
-                        reasoning_details: None,
-                    }),
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            ResponseStreamEvent {
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: Some(ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
-                            id: Some("".into()),
-                            function: Some(FunctionChunk {
-                                name: Some("".into()),
-                                arguments: Some("blog-scraper\"}".into()),
-                                thought_signature: None,
-                            }),
-                        }]),
-                        reasoning_content: None,
-                        reasoning_details: None,
-                    }),
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            // Final chunk: finish_reason = "tool_calls"
-            ResponseStreamEvent {
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: None,
-                    finish_reason: Some("tool_calls".into()),
-                }],
-                usage: None,
-            },
-        ];
-
-        let mapped = map_completion_events(events);
-
-        // Events emitted:
-        //   1. Partial ToolUse from chunk 1 (fix_json("") → "{}", parseable)
-        //   2. Partial ToolUse from chunk 3 (arguments fully assembled)
-        //   3. Complete ToolUse from finish_reason="tool_calls" drain
-        //   4. Stop(ToolUse)
-        assert_eq!(mapped.len(), 4);
-
-        // Verify the complete ToolUse event (from finish_reason drain)
-        // has the correct id, name, and accumulated arguments.
-        let complete_tool_use = mapped.iter().find_map(|event| {
-            if let LanguageModelCompletionEvent::ToolUse(tool_use) = event {
-                if tool_use.is_input_complete {
-                    return Some(tool_use);
-                }
-            }
-            None
-        });
-        assert!(
-            complete_tool_use.is_some(),
-            "expected a completed ToolUse event"
-        );
-        let tool_use = complete_tool_use.unwrap();
-        assert_eq!(
-            tool_use.id.to_string(),
-            "call_dashscope_test",
-            "id must survive empty-string overwrites"
-        );
-        assert_eq!(
-            tool_use.name.as_ref(),
-            "list_directory",
-            "name must survive empty-string overwrites"
-        );
-        assert_eq!(
-            tool_use.raw_input, "{\"path\": \"blog-scraper\"}",
-            "arguments should accumulate across chunks"
-        );
-
-        // Verify the Stop event
-        assert!(mapped.iter().any(|event| {
-            matches!(
-                event,
-                LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
-            )
-        }));
     }
 
     #[test]

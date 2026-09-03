@@ -1,28 +1,26 @@
 use anyhow::Result;
-use collections::HashMap;
+
 use credentials_provider::CredentialsProvider;
-use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
+use language_model::chat_completion::ChatCompletionEventMapper;
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    MessageContent, ProviderSettingsView, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolResultContent, MessageContent, ProviderSettingsView,
+    RateLimiter, Role, env_var,
 };
-use open_ai::completion::ReasoningDetailsAccumulator;
 use open_router::{
-    Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ResponseStreamEvent, list_models,
+    Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ReasoningEffort,
+    ResponseStreamEvent, list_models,
 };
 use settings::{OpenRouterAvailableModel as AvailableModel, Settings, SettingsStore};
 use sha2::{Digest as _, Sha256};
-use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
-
-use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
@@ -222,13 +220,27 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         let mut settings_models = Vec::new();
 
         for model in &Self::settings(cx).available_models {
+            let mode = model.mode.unwrap_or_default();
+            let (supported_efforts, default_effort) =
+                if matches!(mode, OpenRouterModelMode::Adaptive) {
+                    (
+                        model.reasoning_effort.into_iter().collect(),
+                        model.reasoning_effort,
+                    )
+                } else {
+                    (Vec::new(), None)
+                };
             settings_models.push(open_router::Model {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
                 max_tokens: model.max_tokens,
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
-                mode: model.mode.unwrap_or_default(),
+                mode,
+                supported_efforts,
+                default_effort,
+                supports_max_tokens: false,
+                mandatory_reasoning: false,
                 provider: model.provider.clone(),
             });
         }
@@ -351,16 +363,37 @@ impl LanguageModel for OpenRouterLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        matches!(self.model.mode, OpenRouterModelMode::Thinking { .. })
+        matches!(
+            self.model.mode,
+            OpenRouterModelMode::Thinking { .. } | OpenRouterModelMode::Adaptive
+        )
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        let model_id = self.model.id().trim().to_lowercase();
-        if model_id.contains("gemini") || model_id.contains("grok") {
-            LanguageModelToolSchemaFormat::JsonSchemaSubset
+    fn supports_disabling_thinking(&self) -> bool {
+        !self.model.mandatory_reasoning
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        let efforts: &[ReasoningEffort] = if !self.model.supported_efforts.is_empty() {
+            &self.model.supported_efforts
+        } else if self.model.supports_max_tokens {
+            &ReasoningEffort::OPENAI_COMPATIBLE_SELECTABLE
         } else {
-            LanguageModelToolSchemaFormat::JsonSchema
-        }
+            return Vec::new();
+        };
+        let default_effort = self.model.default_effort.or_else(|| {
+            self.model
+                .supports_max_tokens
+                .then_some(ReasoningEffort::Medium)
+        });
+        efforts
+            .iter()
+            .map(|&effort| LanguageModelEffortLevel {
+                name: effort.label().into(),
+                value: effort.value().into(),
+                is_default: Some(effort) == default_effort,
+            })
+            .collect()
     }
 
     fn telemetry_id(&self) -> String {
@@ -407,9 +440,14 @@ impl LanguageModel for OpenRouterLanguageModel {
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
         let request = self.stream_completion(openrouter_request, cx);
+        let executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
-            Ok(OpenRouterEventMapper::new().map_stream(response))
+            let events = ChatCompletionEventMapper::new().map_stream(response);
+            Ok(language_model::stream_in_background(
+                events.boxed(),
+                executor,
+            ))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -570,23 +608,40 @@ pub fn into_open_router(
         stop: request.stop,
         temperature: request.temperature.unwrap_or(0.4),
         max_tokens: max_output_tokens,
-        parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
-            Some(false)
-        } else {
-            None
-        },
+        parallel_tool_calls: (!request.tools.is_empty() && !model.supports_parallel_tool_calls())
+            .then_some(false),
         usage: open_router::RequestUsage { include: true },
-        reasoning: if request.thinking_allowed
-            && let OpenRouterModelMode::Thinking { budget_tokens } = model.mode
-        {
-            Some(open_router::Reasoning {
-                effort: None,
-                max_tokens: budget_tokens,
-                exclude: Some(false),
-                enabled: Some(true),
-            })
-        } else {
-            None
+        reasoning: match model.mode {
+            OpenRouterModelMode::Adaptive if request.thinking_allowed => {
+                Some(open_router::Reasoning {
+                    enabled: Some(true),
+                    effort: request
+                        .thinking_effort
+                        .as_deref()
+                        .and_then(|e| e.parse::<ReasoningEffort>().ok()),
+                    max_tokens: None,
+                    exclude: None,
+                })
+            }
+            OpenRouterModelMode::Thinking { budget_tokens } if request.thinking_allowed => {
+                Some(open_router::Reasoning {
+                    enabled: Some(true),
+                    effort: None,
+                    max_tokens: budget_tokens,
+                    exclude: None,
+                })
+            }
+            OpenRouterModelMode::Adaptive | OpenRouterModelMode::Thinking { .. }
+                if !model.mandatory_reasoning =>
+            {
+                Some(open_router::Reasoning {
+                    enabled: Some(false),
+                    effort: None,
+                    max_tokens: None,
+                    exclude: None,
+                })
+            }
+            _ => None,
         },
         tools: request
             .tools
@@ -716,372 +771,9 @@ fn add_message_content_part(
     }
 }
 
-pub struct OpenRouterEventMapper {
-    tool_calls_by_index: HashMap<usize, RawToolCall>,
-    reasoning_details: ReasoningDetailsAccumulator,
-}
-
-impl OpenRouterEventMapper {
-    pub fn new() -> Self {
-        Self {
-            tool_calls_by_index: HashMap::default(),
-            reasoning_details: ReasoningDetailsAccumulator::default(),
-        }
-    }
-
-    pub fn map_stream(
-        mut self,
-        events: Pin<
-            Box<
-                dyn Send + Stream<Item = Result<ResponseStreamEvent, open_router::OpenRouterError>>,
-            >,
-        >,
-    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
-    {
-        events.flat_map(move |event| {
-            futures::stream::iter(match event {
-                Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(error.into())],
-            })
-        })
-    }
-
-    pub fn map_event(
-        &mut self,
-        event: ResponseStreamEvent,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let mut events = Vec::new();
-
-        if let Some(usage) = event.usage {
-            let cache_creation_input_tokens = usage
-                .prompt_tokens_details
-                .as_ref()
-                .map_or(0, |details| details.cache_write_tokens);
-            let cache_read_input_tokens = usage
-                .prompt_tokens_details
-                .as_ref()
-                .map_or(0, |details| details.cached_tokens);
-            let input_tokens = usage.prompt_tokens.saturating_sub(
-                cache_creation_input_tokens.saturating_add(cache_read_input_tokens),
-            );
-
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens,
-                output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens,
-                cache_read_input_tokens,
-            })));
-        }
-
-        let Some(choice) = event.choices.first() else {
-            return events;
-        };
-
-        if let Some(details) = choice.delta.reasoning_details.clone()
-            && let Some(details) = self.reasoning_details.push(details)
-        {
-            events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(details)));
-        }
-
-        if let Some(reasoning) = choice.delta.reasoning.clone() {
-            events.push(Ok(LanguageModelCompletionEvent::Thinking {
-                text: reasoning,
-                signature: None,
-            }));
-        }
-
-        if let Some(content) = choice.delta.content.clone() {
-            // OpenRouter send empty content string with the reasoning content
-            // This is a workaround for the OpenRouter API bug
-            if !content.is_empty() {
-                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
-            }
-        }
-
-        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
-            for tool_call in tool_calls {
-                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
-
-                if let Some(tool_id) = tool_call.id.clone() {
-                    entry.id = tool_id;
-                }
-
-                if let Some(function) = tool_call.function.as_ref() {
-                    if let Some(name) = function.name.clone() {
-                        entry.name = name;
-                    }
-
-                    if let Some(arguments) = function.arguments.clone() {
-                        entry.arguments.push_str(&arguments);
-                    }
-
-                    if let Some(signature) = function.thought_signature.clone() {
-                        entry.thought_signature = Some(signature);
-                    }
-                }
-
-                if !entry.id.is_empty() && !entry.name.is_empty() {
-                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
-                        &fix_streamed_json(&entry.arguments),
-                    ) {
-                        events.push(Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
-                                id: entry.id.clone().into(),
-                                name: entry.name.as_str().into(),
-                                is_input_complete: false,
-                                input: language_model::LanguageModelToolUseInput::Json(input),
-                                raw_input: entry.arguments.clone(),
-                                thought_signature: entry.thought_signature.clone(),
-                            },
-                        )));
-                    }
-                }
-            }
-        }
-
-        match choice.finish_reason.as_deref() {
-            Some("stop") => {
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            Some("tool_calls") => {
-                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match parse_tool_arguments(&tool_call.arguments) {
-                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
-                                id: tool_call.id.clone().into(),
-                                name: tool_call.name.as_str().into(),
-                                is_input_complete: true,
-                                input: language_model::LanguageModelToolUseInput::Json(input),
-                                raw_input: tool_call.arguments.clone(),
-                                thought_signature: tool_call.thought_signature.clone(),
-                            },
-                        )),
-                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                            id: tool_call.id.clone().into(),
-                            tool_name: tool_call.name.as_str().into(),
-                            raw_input: tool_call.arguments.clone().into(),
-                            json_parse_error: error.to_string(),
-                        }),
-                    }
-                }));
-
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
-            }
-            Some(stop_reason) => {
-                log::error!("Unexpected OpenRouter stop_reason: {stop_reason:?}",);
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            None => {}
-        }
-
-        events
-    }
-}
-
-#[derive(Default)]
-struct RawToolCall {
-    id: String,
-    name: String,
-    arguments: String,
-    thought_signature: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use open_router::{ChoiceDelta, FunctionChunk, ResponseMessageDelta, ToolCallChunk};
-
-    #[gpui::test]
-    async fn test_reasoning_details_preservation_with_tool_calls() {
-        // This test verifies that reasoning_details are properly captured and preserved
-        // when a model uses tool calling with reasoning/thinking tokens.
-        //
-        // The key regression this prevents:
-        // - OpenRouter sends multiple reasoning_details updates during streaming
-        // - First with actual content (encrypted reasoning data)
-        // - Then with empty array on completion
-        // - We must NOT overwrite the real data with the empty array
-
-        let mut mapper = OpenRouterEventMapper::new();
-
-        // Simulate the streaming events as they come from OpenRouter/Gemini
-        let events = vec![
-            // Event 1: Initial reasoning details with text
-            ResponseStreamEvent {
-                id: Some("response_123".into()),
-                created: 1234567890,
-                model: "google/gemini-3.1-pro-preview".into(),
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: None,
-                        reasoning_details: Some(serde_json::json!([
-                            {
-                                "type": "reasoning.text",
-                                "text": "Let me analyze this request...",
-                                "format": "google-gemini-v1",
-                                "index": 0
-                            }
-                        ])),
-                    },
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            // Event 2: More reasoning details
-            ResponseStreamEvent {
-                id: Some("response_123".into()),
-                created: 1234567890,
-                model: "google/gemini-3.1-pro-preview".into(),
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: None,
-                        reasoning_details: Some(serde_json::json!([
-                            {
-                                "type": "reasoning.encrypted",
-                                "data": "EtgDCtUDAdHtim9OF5jm4aeZSBAtl/randomized123",
-                                "format": "google-gemini-v1",
-                                "index": 0,
-                                "id": "tool_call_abc123"
-                            }
-                        ])),
-                    },
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            // Event 3: Tool call starts
-            ResponseStreamEvent {
-                id: Some("response_123".into()),
-                created: 1234567890,
-                model: "google/gemini-3.1-pro-preview".into(),
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
-                            id: Some("tool_call_abc123".into()),
-                            function: Some(FunctionChunk {
-                                name: Some("list_directory".into()),
-                                arguments: Some("{\"path\":\"test\"}".into()),
-                                thought_signature: Some("sha256:test_signature_xyz789".into()),
-                            }),
-                        }]),
-                        reasoning_details: None,
-                    },
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            // Event 4: Empty reasoning_details on tool_calls finish
-            // This is the critical event - we must not overwrite with this empty array!
-            ResponseStreamEvent {
-                id: Some("response_123".into()),
-                created: 1234567890,
-                model: "google/gemini-3.1-pro-preview".into(),
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: None,
-                        reasoning_details: Some(serde_json::json!([])),
-                    },
-                    finish_reason: Some("tool_calls".into()),
-                }],
-                usage: None,
-            },
-        ];
-
-        // Process all events
-        let mut collected_events = Vec::new();
-        for event in events {
-            let mapped = mapper.map_event(event);
-            collected_events.extend(mapped);
-        }
-
-        // Verify we got the expected events
-        let mut has_tool_use = false;
-        let mut reasoning_details_events = Vec::new();
-        let mut thought_signature_value = None;
-
-        for event_result in collected_events {
-            match event_result {
-                Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
-                    has_tool_use = true;
-                    assert_eq!(tool_use.id.to_string(), "tool_call_abc123");
-                    assert_eq!(tool_use.name.as_ref(), "list_directory");
-                    thought_signature_value = tool_use.thought_signature.clone();
-                }
-                Ok(LanguageModelCompletionEvent::ReasoningDetails(details)) => {
-                    reasoning_details_events.push(details);
-                }
-                _ => {}
-            }
-        }
-
-        assert!(has_tool_use, "Should have emitted ToolUse event");
-        assert_eq!(reasoning_details_events.len(), 2);
-        let final_details = reasoning_details_events
-            .last()
-            .and_then(serde_json::Value::as_array)
-            .and_then(|details| details.first())
-            .expect("accumulated reasoning details");
-        assert_eq!(final_details["text"], "Let me analyze this request...");
-        assert_eq!(
-            final_details["data"],
-            "EtgDCtUDAdHtim9OF5jm4aeZSBAtl/randomized123"
-        );
-        assert_eq!(
-            thought_signature_value.as_deref(),
-            Some("sha256:test_signature_xyz789")
-        );
-    }
-
-    #[gpui::test]
-    async fn test_usage_only_chunk_with_empty_choices_does_not_error() {
-        let mut mapper = OpenRouterEventMapper::new();
-
-        let events = mapper.map_event(ResponseStreamEvent {
-            id: Some("response_123".into()),
-            created: 1234567890,
-            model: "google/gemini-3-flash-preview".into(),
-            choices: Vec::new(),
-            usage: Some(open_router::Usage {
-                prompt_tokens: 12,
-                completion_tokens: 7,
-                total_tokens: 19,
-                prompt_tokens_details: Some(open_router::PromptTokensDetails {
-                    cached_tokens: 5,
-                    cache_write_tokens: 3,
-                }),
-            }),
-        });
-
-        assert_eq!(events.len(), 1);
-        match events.into_iter().next() {
-            Some(Ok(LanguageModelCompletionEvent::UsageUpdate(usage))) => {
-                assert_eq!(usage.input_tokens, 4);
-                assert_eq!(usage.output_tokens, 7);
-                assert_eq!(usage.cache_creation_input_tokens, 3);
-                assert_eq!(usage.cache_read_input_tokens, 5);
-                assert_eq!(usage.total_tokens(), 19);
-            }
-            other => panic!("Expected usage update event, got: {other:?}"),
-        }
-    }
 
     #[gpui::test]
     async fn test_session_id_is_stable_without_exposing_thread_id() {
@@ -1092,6 +784,9 @@ mod tests {
             Some(true),
             Some(false),
             None,
+            None,
+            None,
+            false,
             None,
         );
         let thread_id = "internal-thread-id";
@@ -1128,6 +823,9 @@ mod tests {
             Some(true),
             Some(false),
             None,
+            None,
+            None,
+            false,
             None,
         );
 
@@ -1280,6 +978,9 @@ mod tests {
             Some(false),
             None,
             None,
+            None,
+            false,
+            None,
         );
 
         let request = LanguageModelRequest {
@@ -1343,6 +1044,9 @@ mod tests {
             Some(false),
             None,
             None,
+            None,
+            false,
+            None,
         );
 
         let request = LanguageModelRequest {
@@ -1394,5 +1098,84 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[gpui::test]
+    async fn test_into_open_router_sends_requested_effort() {
+        let model = open_router::Model::new(
+            "z-ai/glm-5.2",
+            Some("GLM 5.2"),
+            Some(1_048_576),
+            Some(true),
+            Some(false),
+            Some(OpenRouterModelMode::Adaptive),
+            Some(vec![
+                open_router::ReasoningEffort::XHigh,
+                open_router::ReasoningEffort::High,
+            ]),
+            Some(open_router::ReasoningEffort::High),
+            false,
+            None,
+        );
+        let request = LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            thinking_allowed: true,
+            thinking_effort: Some("xhigh".to_string()),
+            ..Default::default()
+        };
+
+        let result = into_open_router(request, &model, None).unwrap();
+        let reasoning = result.reasoning.expect("reasoning should be set");
+        assert_eq!(reasoning.effort, Some(open_router::ReasoningEffort::XHigh));
+        assert_eq!(
+            reasoning.max_tokens, None,
+            "max_tokens should not be sent when effort is used"
+        );
+        assert_eq!(reasoning.exclude, None);
+        assert_eq!(reasoning.enabled, Some(true));
+    }
+
+    #[gpui::test]
+    async fn test_into_open_router_disables_reasoning_when_thinking_not_allowed() {
+        let model = open_router::Model::new(
+            "z-ai/glm-5.2",
+            Some("GLM 5.2"),
+            Some(1_048_576),
+            Some(true),
+            Some(false),
+            Some(OpenRouterModelMode::Adaptive),
+            Some(vec![
+                open_router::ReasoningEffort::XHigh,
+                open_router::ReasoningEffort::High,
+            ]),
+            Some(open_router::ReasoningEffort::High),
+            false,
+            None,
+        );
+        let request = LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            thinking_allowed: false,
+            thinking_effort: Some("high".to_string()),
+            ..Default::default()
+        };
+
+        let result = into_open_router(request, &model, None).unwrap();
+        let reasoning = result.reasoning.expect("reasoning should be set");
+        assert_eq!(reasoning.enabled, Some(false));
+        assert_eq!(
+            reasoning.effort, None,
+            "effort should not be sent when reasoning is disabled"
+        );
+        assert_eq!(reasoning.max_tokens, None);
     }
 }

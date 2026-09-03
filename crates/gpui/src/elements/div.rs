@@ -30,7 +30,6 @@ use collections::HashMap;
 use gpui_util::ResultExt;
 use refineable::Refineable;
 use smallvec::SmallVec;
-use stacksafe::{StackSafe, stacksafe};
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -44,6 +43,11 @@ use std::{
 };
 
 use super::ImageCacheProvider;
+
+#[cfg(feature = "stacker")]
+type StackSafe<T> = stacksafe::StackSafe<T>;
+#[cfg(not(feature = "stacker"))]
+type StackSafe<T> = T;
 
 const DRAG_THRESHOLD: f64 = 2.;
 const DEFAULT_TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
@@ -1777,8 +1781,11 @@ impl InteractiveElement for Div {
 
 impl ParentElement for Div {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        #[cfg(feature = "stacker")]
         self.children
-            .extend(elements.into_iter().map(StackSafe::new))
+            .extend(elements.into_iter().map(StackSafe::new));
+        #[cfg(not(feature = "stacker"))]
+        self.children.extend(elements);
     }
 }
 
@@ -1816,7 +1823,7 @@ impl Element for Div {
         }
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -1852,7 +1859,7 @@ impl Element for Div {
         (layout_id, DivFrameState { child_layout_ids })
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -1947,7 +1954,7 @@ impl Element for Div {
         )
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -2339,7 +2346,14 @@ impl Interactivity {
             }
 
             let rem_size = window.rem_size();
-            let padding = style.padding.to_pixels(bounds.size.into(), rem_size);
+            // Taffy lays the box out with the padding snapped to the device pixel
+            // grid (`to_taffy`); recomputed unsnapped, e.g. py_1 at a fractional
+            // rem size, it exceeds `bounds` and leaves the box scrollable by the
+            // sub-pixel difference.
+            let padding = style
+                .padding
+                .to_pixels(bounds.size.into(), rem_size)
+                .map(|edge| window.pixel_snap(*edge));
             let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
             // The floating point values produced by Taffy and ours often vary
             // slightly after ~5 decimal places. This can lead to cases where after
@@ -3302,13 +3316,14 @@ impl Interactivity {
             if let Some(group_hover) = self.group_hover_style.as_ref() {
                 let is_group_hovered =
                     if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
-                        group_hitbox_id.is_hovered(window)
+                        !window.last_input_was_touch() && group_hitbox_id.is_hovered(window)
                     } else if let Some(element_state) = element_state.as_ref() {
-                        element_state
-                            .hover_state
-                            .as_ref()
-                            .map(|state| state.borrow().group)
-                            .unwrap_or(false)
+                        !window.last_input_was_touch()
+                            && element_state
+                                .hover_state
+                                .as_ref()
+                                .map(|state| state.borrow().group)
+                                .unwrap_or(false)
                     } else {
                         false
                     };
@@ -3320,13 +3335,14 @@ impl Interactivity {
 
             if let Some(hover_style) = self.hover_style.as_ref() {
                 let is_hovered = if let Some(hitbox) = hitbox {
-                    hitbox.is_hovered(window)
+                    !window.last_input_was_touch() && hitbox.is_hovered(window)
                 } else if let Some(element_state) = element_state.as_ref() {
-                    element_state
-                        .hover_state
-                        .as_ref()
-                        .map(|state| state.borrow().element)
-                        .unwrap_or(false)
+                    !window.last_input_was_touch()
+                        && element_state
+                            .hover_state
+                            .as_ref()
+                            .map(|state| state.borrow().element)
+                            .unwrap_or(false)
                 } else {
                     false
                 };
@@ -5154,6 +5170,48 @@ mod tests {
             .unwrap();
 
         assert_eq!(focused, Some(item_b.id));
+    }
+
+    #[gpui::test]
+    fn test_fractional_padding_does_not_make_a_fitting_container_scrollable(
+        cx: &mut TestAppContext,
+    ) {
+        struct PaddedContainer {
+            scroll_handle: ScrollHandle,
+        }
+
+        impl Render for PaddedContainer {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
+                // 4.25px of padding snaps to 4px in layout, so a 42px child
+                // fits the 50px box exactly.
+                div().size_full().child(
+                    div()
+                        .id("container")
+                        .h(px(50.))
+                        .w(px(100.))
+                        .py(px(4.25))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle)
+                        .child(div().w_full().h(px(42.))),
+                )
+            }
+        }
+
+        let scroll_handle = ScrollHandle::new();
+        let window: AnyWindowHandle = cx
+            .add_window({
+                let scroll_handle = scroll_handle.clone();
+                move |_, _| PaddedContainer { scroll_handle }
+            })
+            .into();
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+
+        assert_eq!(scroll_handle.max_offset().y, px(0.));
     }
 
     struct ContentSizedGrid;
