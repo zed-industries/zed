@@ -375,6 +375,20 @@ impl DevContainerManifest {
         }
     }
 
+    /// Resolves the user declared by a `USER` instruction in the config's Dockerfile,
+    /// if the config builds from one and any stage in the built chain declares one.
+    ///
+    /// `get_base_image_from_config` only resolves the Dockerfile's `FROM` image, so on
+    /// its own it reports the base image's user and misses a `USER` the Dockerfile sets.
+    async fn get_dockerfile_user_from_config(&self) -> Result<Option<String>, DevContainerError> {
+        let DevContainerBuildType::Dockerfile(build) = self.dev_container().build_type() else {
+            return Ok(None);
+        };
+
+        let dockerfile_contents = self.expanded_dockerfile_content().await?;
+        Ok(user_from_dockerfile(&dockerfile_contents, &build.target))
+    }
+
     async fn copy_local_feature(
         &self,
         feature_ref: &str,
@@ -439,7 +453,16 @@ impl DevContainerManifest {
             ConfigStatus::VariableParsed(dev_container) => dev_container,
         };
         let root_image_tag = self.get_base_image_from_config().await?;
-        let root_image = self.docker_client.inspect(&root_image_tag).await?;
+        let mut root_image = self.docker_client.inspect(&root_image_tag).await?;
+
+        // `root_image` is the Dockerfile's `FROM` image, so its `User` predates any
+        // `USER` the Dockerfile itself sets. Without this the declared user is lost:
+        // every consumer below falls back to the base image's user, and the extended
+        // Dockerfile's trailing `USER $_DEV_CONTAINERS_IMAGE_USER` then resets the
+        // built image to it (usually root).
+        if let Some(dockerfile_user) = self.get_dockerfile_user_from_config().await? {
+            root_image.config.image_user = Some(dockerfile_user);
+        }
 
         let temp_base = std::env::temp_dir().join("devcontainer-zed");
         let timestamp = std::time::SystemTime::now()
@@ -3202,6 +3225,73 @@ fn dockerfile_inject_alias(
     }
 }
 
+/// Parses a `USER` instruction into its user (optionally `user:group`).
+/// Returns `None` for non-`USER` lines.
+fn parse_user_line(line: &str) -> Option<&str> {
+    let mut tokens = line.split_whitespace();
+    if !tokens.next()?.eq_ignore_ascii_case("USER") {
+        return None;
+    }
+    tokens.next()
+}
+
+/// Resolves the user a Dockerfile's target stage ends up running as, by taking the
+/// last `USER` instruction in that stage and walking back through parent stages when
+/// the stage declares none.
+///
+/// Returns `None` when no stage in the chain sets a `USER`, in which case the user is
+/// whatever the concrete base image declares and must be read from the image itself.
+fn user_from_dockerfile(dockerfile_contents: &str, target: &Option<String>) -> Option<String> {
+    let stages: Vec<(usize, ParsedFromLine)> = dockerfile_contents
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| parse_from_line(line).map(|parsed| (index, parsed)))
+        .collect();
+
+    let mut index = match target {
+        Some(target) => stages.iter().rposition(|(_, stage)| {
+            stage
+                .alias
+                .is_some_and(|alias| alias.eq_ignore_ascii_case(target))
+        })?,
+        None => stages.len().checked_sub(1)?,
+    };
+
+    let lines: Vec<&str> = dockerfile_contents.lines().collect();
+
+    // Docker only resolves stage names to stages defined earlier in the file, so
+    // resolving strictly backwards is correct and cannot cycle.
+    loop {
+        let (from_line, stage) = stages.get(index)?;
+        let stage_end = stages
+            .get(index + 1)
+            .map_or(lines.len(), |(next_from_line, _)| *next_from_line);
+        // Track `\` continuations so a shell body such as `RUN foo \` / `USER bar`
+        // is not mistaken for a `USER` instruction.
+        let mut continued = false;
+        let mut stage_user = None;
+        for line in lines.get(from_line + 1..stage_end)? {
+            if !continued {
+                if let Some(user) = parse_user_line(line) {
+                    stage_user = Some(user);
+                }
+            }
+            continued = line.trim_end().ends_with('\\');
+        }
+
+        if let Some(stage_user) = stage_user {
+            return Some(stage_user.to_string());
+        }
+
+        // The stage sets no user of its own, so it inherits from its parent stage.
+        index = stages.get(..index)?.iter().rposition(|(_, previous)| {
+            previous
+                .alias
+                .is_some_and(|alias| alias.eq_ignore_ascii_case(stage.image))
+        })?;
+    }
+}
+
 fn image_from_dockerfile(dockerfile_contents: String, target: &Option<String>) -> Option<String> {
     let stages: Vec<ParsedFromLine> = dockerfile_contents
         .lines()
@@ -3499,6 +3589,7 @@ mod test {
             DockerInspect, dockerfile_inject_alias, escape_compose_interpolation,
             extract_feature_id, find_primary_service, get_remote_user_from_config,
             image_from_dockerfile, is_local_feature_ref, resolve_compose_dockerfile,
+            user_from_dockerfile,
         },
         docker::{
             DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -4666,7 +4757,7 @@ RUN mkdir -p /tmp/dev-container-features
 COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ /tmp/dev-container-features
 
 RUN \
-echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'root' || grep -E '^root|^[^:]*:[^:]*:root:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
+echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'node' || grep -E '^node|^[^:]*:[^:]*:node:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
 echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'node' || grep -E '^node|^[^:]*:[^:]*:node:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
 
 
@@ -6388,7 +6479,7 @@ RUN mkdir -p /tmp/dev-container-features
 COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ /tmp/dev-container-features
 
 RUN \
-echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'root' || grep -E '^root|^[^:]*:[^:]*:root:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
+echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'node' || grep -E '^node|^[^:]*:[^:]*:node:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
 echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'node' || grep -E '^node|^[^:]*:[^:]*:node:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
 
 
@@ -7008,6 +7099,110 @@ FROM ${IMAGE} AS production
         assert_eq!(
             image_from_dockerfile(dockerfile, &Some("final".to_string())),
             Some("scratch".to_string())
+        );
+    }
+
+    #[test]
+    fn test_user_from_dockerfile_reads_declared_user() {
+        let dockerfile = indoc! {"
+            FROM debian:trixie-slim
+
+            RUN useradd -ms /bin/bash esp
+            USER esp
+            WORKDIR /home/esp
+        "};
+        assert_eq!(
+            user_from_dockerfile(dockerfile, &None),
+            Some("esp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_user_from_dockerfile_without_user_defers_to_base_image() {
+        let dockerfile = "FROM docker.io/espressif/idf-rust:esp32s3_latest\n";
+        assert_eq!(user_from_dockerfile(dockerfile, &None), None);
+    }
+
+    #[test]
+    fn test_user_from_dockerfile_takes_last_user_in_stage() {
+        let dockerfile = "FROM ubuntu:24.04\nUSER esp\nRUN whoami\nUSER root\nRUN apt-get update\n";
+        assert_eq!(
+            user_from_dockerfile(dockerfile, &None),
+            Some("root".to_string())
+        );
+    }
+
+    #[test]
+    fn test_user_from_dockerfile_ignores_earlier_stages() {
+        // `USER esp` belongs to `builder`, which the final stage does not build from.
+        let dockerfile =
+            "FROM ubuntu:24.04 AS builder\nUSER esp\nFROM debian:trixie-slim\nRUN true";
+        assert_eq!(user_from_dockerfile(dockerfile, &None), None);
+    }
+
+    #[test]
+    fn test_user_from_dockerfile_inherits_from_parent_stage() {
+        let dockerfile = "FROM ubuntu:24.04 AS base\nUSER esp\nFROM base AS development\nRUN true";
+        assert_eq!(
+            user_from_dockerfile(dockerfile, &Some("development".to_string())),
+            Some("esp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_user_from_dockerfile_child_stage_overrides_parent() {
+        let dockerfile = "FROM ubuntu:24.04 AS base\nUSER esp\nFROM base AS development\nUSER root";
+        assert_eq!(
+            user_from_dockerfile(dockerfile, &Some("development".to_string())),
+            Some("root".to_string())
+        );
+    }
+
+    #[test]
+    fn test_user_from_dockerfile_respects_target_stage() {
+        let dockerfile = "FROM ubuntu:24.04 AS development\nUSER esp\nFROM ubuntu:24.04 AS production\nUSER nobody";
+        assert_eq!(
+            user_from_dockerfile(dockerfile, &Some("development".to_string())),
+            Some("esp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_user_from_dockerfile_preserves_group() {
+        let dockerfile = "FROM ubuntu:24.04\nUSER esp:dialout\n";
+        assert_eq!(
+            user_from_dockerfile(dockerfile, &None),
+            Some("esp:dialout".to_string())
+        );
+    }
+
+    #[test]
+    fn test_user_from_dockerfile_case_insensitive_instruction() {
+        let dockerfile = "FROM ubuntu:24.04\nuser esp\n";
+        assert_eq!(
+            user_from_dockerfile(dockerfile, &None),
+            Some("esp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_user_from_dockerfile_ignores_commented_user() {
+        let dockerfile = "FROM ubuntu:24.04\n# USER esp\n";
+        assert_eq!(user_from_dockerfile(dockerfile, &None), None);
+    }
+
+    #[test]
+    fn test_user_from_dockerfile_ignores_user_inside_continued_instruction() {
+        let dockerfile = "FROM ubuntu:24.04\nRUN echo one \\\n USER esp\n";
+        assert_eq!(user_from_dockerfile(dockerfile, &None), None);
+    }
+
+    #[test]
+    fn test_user_from_dockerfile_missing_target() {
+        let dockerfile = "FROM ubuntu:24.04 AS base\nUSER esp\n";
+        assert_eq!(
+            user_from_dockerfile(dockerfile, &Some("nonexistent".to_string())),
+            None
         );
     }
 
