@@ -1026,41 +1026,6 @@ mod tests {
         assert_generated_session_id(&value);
     }
 
-    #[test]
-    fn test_inject_header_client_adds_session_header() -> Result<()> {
-        let captured_header = Arc::new(Mutex::new(None));
-        let inner = FakeHttpClient::create({
-            let captured_header = captured_header.clone();
-            move |request| {
-                let captured_header = captured_header.clone();
-                async move {
-                    *captured_header.lock() =
-                        request.headers().get(OPENCODE_SESSION_HEADER_NAME).cloned();
-                    Ok(Response::builder().status(200).body(AsyncBody::default())?)
-                }
-            }
-        });
-        let client: Arc<dyn HttpClient> = Arc::new(InjectHeaderClient {
-            inner,
-            name: http::HeaderName::from_static(OPENCODE_SESSION_HEADER_NAME),
-            value: opencode_session_header_value(Some("thread-123")),
-        });
-        let request = http::Request::builder()
-            .uri("https://opencode.ai/zen/v1/messages")
-            .body(AsyncBody::default())?;
-
-        futures::executor::block_on(client.send(request))?;
-
-        assert_eq!(
-            captured_header
-                .lock()
-                .as_ref()
-                .map(http::HeaderValue::as_bytes),
-            Some(b"thread-123".as_slice())
-        );
-        Ok(())
-    }
-
     #[gpui::test]
     async fn test_stream_completion_sends_session_header_without_thread_id(
         cx: &mut gpui::TestAppContext,
