@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display, path::Path, sync::Arc};
 
-use crate::{command_json::CommandRunner, devcontainer_api::DevContainerError};
+use crate::{DevContainerHost, command_json::CommandRunner, devcontainer_api::DevContainerError};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json_lenient::Value;
 use util::command::Command;
@@ -369,15 +369,52 @@ impl LifecycleScript {
             .collect()
     }
 
+    /// Rebuilds each script as a command that runs on `host`.
+    ///
+    /// A script's program and arguments are handed to the host unquoted: for a
+    /// remote host the transport quotes them, and a script written as a plain
+    /// string has already been wrapped in `/bin/sh -c` by [`Self::from_str`],
+    /// so it arrives as a single argument either way.
+    fn scripts_for_host(
+        &self,
+        host: &DevContainerHost,
+        working_directory: &Path,
+    ) -> Result<Vec<(String, Command)>, DevContainerError> {
+        self.scripts
+            .iter()
+            .filter_map(|(name, script)| {
+                let Some(program) = &script.command else {
+                    log::warn!(
+                        "Lifecycle script command {name}, value {script:?} has no program to run. Skipping"
+                    );
+                    return None;
+                };
+                Some(
+                    host.command(
+                        program,
+                        &script.args,
+                        &HashMap::default(),
+                        Some(working_directory),
+                    )
+                    .map(|command| (name.clone(), command)),
+                )
+            })
+            .collect()
+    }
+
+    /// Runs the scripts on `host`, in `working_directory` as that host sees it.
+    ///
+    /// The dev container spec places these on "the host machine", which is the
+    /// machine whose engine builds the container — so for a remote dev
+    /// container they run on the remote, not on the machine running Zed.
     pub async fn run(
         &self,
+        host: &DevContainerHost,
         command_runnder: &Arc<dyn CommandRunner>,
         working_directory: &Path,
     ) -> Result<(), DevContainerError> {
-        for (command_name, mut command) in self.script_commands() {
+        for (command_name, mut command) in self.scripts_for_host(host, working_directory)? {
             log::debug!("Running script {command_name}");
-
-            command.current_dir(working_directory);
 
             let output = command_runnder
                 .run_command(&mut command)

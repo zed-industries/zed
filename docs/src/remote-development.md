@@ -270,6 +270,10 @@ Supported options:
 
 Note that we deliberately disallow some options (for example `-t` or `-T`) that Zed will set for you.
 
+## Dev containers on the remote server
+
+If a project on the remote server contains a `.devcontainer/devcontainer.json`, you can reopen it inside a container built by that server's container engine. Open the project over SSH first, then open it in a container as you would locally; Zed routes the container engine over the SSH connection you already have. See [Dev Containers](./dev-containers.md#dev-containers-on-a-remote-host).
+
 ## Known Limitations
 
 - You can't open files from the remote Terminal by typing the `zed` command.
@@ -283,6 +287,8 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
   remote connection is active.
 - [Configuring Zed](./configuring-zed.md): Manage shared and project settings,
   including `.zed/settings.json`.
+- [Dev Containers](./dev-containers.md): Run a project inside a container, either
+  locally or on the remote server.
 - [Agent Panel](./ai/agent-panel.md): Use AI workflows in remote projects.
 - [Remote Development on zed.dev](https://zed.dev/remote-development): Product
   overview and release updates.

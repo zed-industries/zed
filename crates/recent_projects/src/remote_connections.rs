@@ -11,7 +11,7 @@ use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
 
 use project::trusted_worktrees;
 use remote::{
-    DockerConnectionOptions, Interactive, RemoteConnection, RemoteConnectionOptions,
+    DockerConnectionOptions, DockerHost, Interactive, RemoteConnection, RemoteConnectionOptions,
     SshConnectionOptions,
 };
 pub use settings::SshConnection;
@@ -80,7 +80,10 @@ impl RemoteSettings {
 pub enum Connection {
     Ssh(SshConnection),
     Wsl(WslConnection),
-    DevContainer(DevContainerConnection),
+    /// The machine running the container's engine is carried alongside the
+    /// container, because it is not recorded in the settings entry and a
+    /// connection that does not name it reaches the wrong daemon.
+    DevContainer(DevContainerConnection, DockerHost),
 }
 
 impl From<Connection> for RemoteConnectionOptions {
@@ -88,7 +91,7 @@ impl From<Connection> for RemoteConnectionOptions {
         match val {
             Connection::Ssh(conn) => RemoteConnectionOptions::Ssh(conn.into()),
             Connection::Wsl(conn) => RemoteConnectionOptions::Wsl(conn.into()),
-            Connection::DevContainer(conn) => {
+            Connection::DevContainer(conn, host) => {
                 RemoteConnectionOptions::Docker(DockerConnectionOptions {
                     name: conn.name,
                     remote_user: conn.remote_user,
@@ -96,6 +99,7 @@ impl From<Connection> for RemoteConnectionOptions {
                     upload_binary_over_docker_exec: false,
                     use_podman: conn.use_podman,
                     remote_env: conn.remote_env,
+                    host,
                 })
             }
         }
@@ -486,14 +490,10 @@ async fn path_exists(connection: &Arc<dyn RemoteConnection>, path: &Path) -> boo
     ) else {
         return false;
     };
-    let Ok(mut child) = util::command::new_command(command.program)
-        .args(command.args)
-        .envs(command.env)
-        .spawn()
-    else {
-        return false;
-    };
-    child.status().await.is_ok_and(|status| status.success())
+    command
+        .output()
+        .await
+        .is_ok_and(|output| output.status.success())
 }
 
 #[cfg(test)]
@@ -509,6 +509,34 @@ mod tests {
     use serde_json::json;
     use util::path;
     use workspace::find_existing_workspace;
+
+    /// The container was built by the host's engine, so the options handed to
+    /// the pool have to name that host. Defaulting the field here is what
+    /// makes a remote dev container connect to this machine's daemon and find
+    /// no such container.
+    #[test]
+    fn a_dev_container_connection_keeps_the_host_it_was_built_on() {
+        let container = settings::DevContainerConnection {
+            name: "zed-dev".to_string(),
+            remote_user: "root".to_string(),
+            container_id: "abc123".to_string(),
+            use_podman: false,
+            extension_ids: Vec::new(),
+            remote_env: Default::default(),
+        };
+        let host = DockerHost::Ssh(SshConnectionOptions {
+            host: "example.com".into(),
+            ..Default::default()
+        });
+
+        let options: RemoteConnectionOptions =
+            Connection::DevContainer(container, host.clone()).into();
+
+        let RemoteConnectionOptions::Docker(options) = options else {
+            panic!("a dev container is a docker connection");
+        };
+        assert_eq!(options.host, host);
+    }
 
     #[gpui::test]
     async fn test_open_remote_project_with_mock_connection(
@@ -587,6 +615,99 @@ mod tests {
                     let project = workspace.project().read(cx);
                     assert!(project.is_remote(), "Project should be a remote project");
                 });
+            })
+            .unwrap();
+    }
+
+    /// A project opened over a remote server can be reopened in a dev
+    /// container: the action is no longer refused, and the container is
+    /// provisioned on the project's host rather than on this machine.
+    #[gpui::test]
+    async fn test_open_dev_container_action_on_remote_project(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let executor = cx.executor();
+
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    // Two configurations, so the modal asks which to use
+                    // instead of immediately provisioning a container, which
+                    // would need a real container engine.
+                    ".devcontainer": {
+                        "rust": { "devcontainer.json": "{}" },
+                        "python": { "devcontainer.json": "{}" },
+                    },
+                    "src": { "main.rs": "fn main() {}" },
+                }),
+            )
+            .await;
+
+        server_cx.update(HeadlessProject::init);
+        let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
+        let _headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs.clone(),
+                    http_client: Arc::new(BlockedHttpClient),
+                    node_runtime: NodeRuntime::unavailable(),
+                    languages,
+                    extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+
+        drop(connect_guard);
+
+        let mut async_cx = cx.to_async();
+        open_remote_project(
+            opts,
+            vec![PathBuf::from(path!("/project"))],
+            app_state,
+            workspace::OpenOptions::default(),
+            &mut async_cx,
+        )
+        .await
+        .expect("open_remote_project should succeed");
+        executor.run_until_parked();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        cx.dispatch_action(*multi_workspace, zed_actions::OpenDevContainer);
+        executor.run_until_parked();
+
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                assert!(
+                    workspace
+                        .active_modal::<crate::RemoteServerProjects>(cx)
+                        .is_some(),
+                    "the dev container modal should open for a remote project"
+                );
+
+                let context = dev_container::DevContainerContext::from_workspace(workspace, cx)
+                    .expect("a remote project directory is a valid dev container context");
+                assert!(
+                    matches!(context.host, dev_container::DevContainerHost::Remote(_)),
+                    "the container must be built on the machine holding the project"
+                );
             })
             .unwrap();
     }

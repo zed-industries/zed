@@ -5,7 +5,7 @@ use crate::{
     protocol::MessageId,
     proxy::ProxyLaunchError,
     transport::{
-        docker::{DockerConnectionOptions, DockerExecConnection},
+        docker::{DockerConnectionOptions, DockerExecConnection, DockerHost},
         ssh::SshRemoteConnection,
         wsl::{WslConnectionOptions, WslRemoteConnection},
     },
@@ -121,6 +121,24 @@ pub struct CommandTemplate {
     pub program: String,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+}
+
+impl CommandTemplate {
+    /// Runs the command on the local machine and waits for it to exit,
+    /// capturing its output.
+    ///
+    /// The command is local only in the sense that the process is spawned
+    /// here; a template built by [`RemoteConnection::build_command`] wraps
+    /// whatever transport reaches the remote, so the program itself runs
+    /// there.
+    pub async fn output(&self) -> Result<std::process::Output> {
+        util::command::new_command(&self.program)
+            .args(&self.args)
+            .envs(&self.env)
+            .output()
+            .await
+            .with_context(|| format!("running command `{}`", self.program))
+    }
 }
 
 /// Whether a command should be run with TTY allocation for interactive use.
@@ -1228,6 +1246,33 @@ struct ConnectionPool {
 impl Global for ConnectionPool {}
 
 impl ConnectionPool {
+    /// Rebuilds the connection to the machine running the docker daemon, so
+    /// that a dev container can be reconnected from its persisted options
+    /// alone. The host goes through the pool as well, so an already-open
+    /// connection to it is reused rather than authenticated a second time.
+    ///
+    /// `DockerHost` is not recursive, so this can nest at most one level deep.
+    async fn connect_docker_host(
+        host: &DockerHost,
+        delegate: Arc<dyn RemoteClientDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Result<Option<Arc<dyn RemoteConnection>>> {
+        let Some(host_options) = host.connection_options() else {
+            return Ok(None);
+        };
+
+        let connection = cx
+            .update(|cx| {
+                cx.update_default_global(|pool: &mut Self, cx| {
+                    pool.connect(host_options, delegate, cx)
+                })
+            })
+            .await
+            .map_err(|error| anyhow!("connecting to the dev container's host: {error}"))?;
+
+        Ok(Some(connection))
+    }
+
     fn connect(
         &mut self,
         opts: RemoteConnectionOptions,
@@ -1280,9 +1325,15 @@ impl ConnectionPool {
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
                         RemoteConnectionOptions::Docker(opts) => {
-                            DockerExecConnection::new(opts, delegate, cx)
-                                .await
-                                .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                            match Self::connect_docker_host(&opts.host, delegate.clone(), cx).await
+                            {
+                                Ok(host) => DockerExecConnection::new(opts, host, delegate, cx)
+                                    .await
+                                    .map(|connection| {
+                                        Arc::new(connection) as Arc<dyn RemoteConnection>
+                                    }),
+                                Err(error) => Err(error),
+                            }
                         }
                         #[cfg(any(test, feature = "test-support"))]
                         RemoteConnectionOptions::Mock(opts) => match cx.update(|cx| {
@@ -1344,10 +1395,14 @@ impl RemoteConnectionOptions {
                 .unwrap_or_else(|| opts.host.to_string()),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
             RemoteConnectionOptions::Docker(opts) => {
-                if opts.use_podman {
+                let name = if opts.use_podman {
                     format!("[podman] {}", opts.name)
                 } else {
                     opts.name.clone()
+                };
+                match opts.host.connection_options() {
+                    Some(host) => format!("{name} on {}", host.display_name()),
+                    None => name,
                 }
             }
             #[cfg(any(test, feature = "test-support"))]
@@ -1356,18 +1411,21 @@ impl RemoteConnectionOptions {
     }
 
     /// A stable identifier for the kind of remote connection, suitable for
-    /// telemetry (e.g. `"ssh"`, `"wsl"`, `"docker"`, `"podman"`).
+    /// telemetry (e.g. `"ssh"`, `"wsl"`, `"docker"`, `"podman"`). Containers
+    /// whose daemon lives on another machine are reported separately, so a
+    /// dashboard can tell the two-hop case apart.
     pub fn connection_type(&self) -> &'static str {
         match self {
             RemoteConnectionOptions::Ssh(_) => "ssh",
             RemoteConnectionOptions::Wsl(_) => "wsl",
-            RemoteConnectionOptions::Docker(opts) => {
-                if opts.use_podman {
-                    "podman"
-                } else {
-                    "docker"
-                }
-            }
+            RemoteConnectionOptions::Docker(opts) => match (opts.use_podman, &opts.host) {
+                (false, DockerHost::Ssh(_)) => "docker-ssh",
+                (true, DockerHost::Ssh(_)) => "podman-ssh",
+                (false, DockerHost::Wsl(_)) => "docker-wsl",
+                (true, DockerHost::Wsl(_)) => "podman-wsl",
+                (false, _) => "docker",
+                (true, _) => "podman",
+            },
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(_) => "mock",
         }
@@ -1379,6 +1437,143 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use rpc::{ErrorCodeExt, proto::ErrorCode};
+
+    #[test]
+    fn a_containers_host_shows_up_in_its_name_and_telemetry() {
+        let container = |use_podman: bool, host: DockerHost| {
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                name: "zed-dev".to_string(),
+                container_id: "container-123".to_string(),
+                remote_user: "anth".to_string(),
+                upload_binary_over_docker_exec: false,
+                use_podman,
+                remote_env: Default::default(),
+                host,
+            })
+        };
+        let ssh_host = |nickname: Option<&str>| {
+            DockerHost::Ssh(SshConnectionOptions {
+                host: "example.com".into(),
+                nickname: nickname.map(str::to_string),
+                ..Default::default()
+            })
+        };
+
+        assert_eq!(
+            container(false, DockerHost::Local).display_name(),
+            "zed-dev"
+        );
+        assert_eq!(
+            container(false, ssh_host(None)).display_name(),
+            "zed-dev on example.com"
+        );
+        assert_eq!(
+            container(true, ssh_host(Some("work"))).display_name(),
+            "[podman] zed-dev on work"
+        );
+
+        assert_eq!(
+            container(false, DockerHost::Local).connection_type(),
+            "docker"
+        );
+        assert_eq!(
+            container(true, DockerHost::Local).connection_type(),
+            "podman"
+        );
+        assert_eq!(
+            container(false, ssh_host(None)).connection_type(),
+            "docker-ssh"
+        );
+        assert_eq!(
+            container(true, ssh_host(None)).connection_type(),
+            "podman-ssh"
+        );
+    }
+
+    #[gpui::test]
+    async fn docker_host_is_pooled_and_rebuilt_after_it_dies(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        use crate::transport::mock::{MockConnection, MockDelegate};
+
+        let delegate = Arc::new(MockDelegate) as Arc<dyn RemoteClientDelegate>;
+        let mut async_cx = cx.to_async();
+
+        assert!(
+            ConnectionPool::connect_docker_host(
+                &DockerHost::Local,
+                delegate.clone(),
+                &mut async_cx
+            )
+            .await
+            .expect("a local host should not need a connection")
+            .is_none()
+        );
+
+        let (host_options, _server_client, connect_guard) = MockConnection::new(cx, server_cx);
+        connect_guard.send(()).ok();
+        let host = DockerHost::Mock(host_options.clone());
+
+        let connection =
+            ConnectionPool::connect_docker_host(&host, delegate.clone(), &mut async_cx)
+                .await
+                .expect("connecting to the host should succeed")
+                .expect("a non-local host should produce a connection");
+
+        // The mock is registered once, so a second connection can only come
+        // from the pool.
+        let pooled = ConnectionPool::connect_docker_host(&host, delegate.clone(), &mut async_cx)
+            .await
+            .expect("the pooled host connection should be reused")
+            .expect("a non-local host should produce a connection");
+        assert!(Arc::ptr_eq(&connection, &pooled));
+
+        let dead = Arc::downgrade(&connection);
+        drop(connection);
+        drop(pooled);
+        assert!(
+            dead.upgrade().is_none(),
+            "the test should be the only owner of the host connection"
+        );
+
+        let (_server_client, connect_guard) =
+            MockConnection::new_with_opts(host_options, cx, server_cx);
+        connect_guard.send(()).ok();
+
+        let reconnected = ConnectionPool::connect_docker_host(&host, delegate, &mut async_cx)
+            .await
+            .expect("the host should be rebuilt from its options")
+            .expect("a non-local host should produce a connection");
+        assert!(dead.upgrade().is_none());
+        drop(reconnected);
+    }
+
+    /// Callers branch on the exit status and read stdout, so both have to
+    /// survive the round trip through `CommandTemplate::output`.
+    ///
+    /// Deliberately not a `gpui::test`: spawning a real process parks the
+    /// thread, which the test scheduler forbids.
+    #[cfg(unix)]
+    #[test]
+    fn test_command_template_captures_output_and_status() {
+        let template = CommandTemplate {
+            program: "sh".into(),
+            args: vec!["-c".into(), "printf captured; exit 3".into()],
+            env: HashMap::default(),
+        };
+        let output = smol::block_on(template.output()).unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "captured");
+        assert_eq!(output.status.code(), Some(3));
+
+        let with_env = CommandTemplate {
+            program: "sh".into(),
+            args: vec!["-c".into(), "printf %s \"$ZED_TEST_VAR\"".into()],
+            env: HashMap::from_iter([("ZED_TEST_VAR".to_string(), "set".to_string())]),
+        };
+        let output = smol::block_on(with_env.output()).unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "set");
+    }
 
     #[test]
     fn test_ssh_display_name_prefers_nickname() {
