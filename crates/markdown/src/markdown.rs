@@ -484,7 +484,7 @@ pub struct Markdown {
     autoscroll_request: Option<usize>,
     pending_heading_scroll: Option<SharedString>,
     pending_autoscroll: Option<usize>,
-    has_pending_select_all: bool,
+    is_select_all_pending: bool,
     active_root_block: Option<usize>,
     parsed_markdown: ParsedMarkdown,
     images_by_source_offset: HashMap<usize, Arc<Image>>,
@@ -569,7 +569,7 @@ actions!(
         /// Copies the selected text to the clipboard.
         Copy,
         /// Copies the selected text as markdown to the clipboard.
-        CopyAsMarkdown,
+        CopyAsMarkdown
     ]
 );
 
@@ -686,7 +686,7 @@ impl Markdown {
             pending_heading_scroll: None,
             pending_autoscroll: None,
             active_root_block: None,
-            has_pending_select_all: false,
+            is_select_all_pending: false,
             should_reparse: false,
             images_by_source_offset: Default::default(),
             parsed_markdown: ParsedMarkdown::default(),
@@ -1167,7 +1167,7 @@ impl Markdown {
     }
 
     pub fn select_all(&mut self, cx: &mut Context<Self>) {
-        self.has_pending_select_all = true;
+        self.is_select_all_pending = true;
         cx.notify();
     }
 
@@ -3233,10 +3233,10 @@ impl Element for MarkdownElement {
         rendered_markdown.element.prepaint(window, cx);
         self.autoscroll(&rendered_markdown.text, window, cx);
         self.markdown.update(cx, |markdown, _| {
-            if markdown.has_pending_select_all {
+            if markdown.is_select_all_pending {
                 markdown.selection.mode = SelectMode::All;
                 markdown.selection.set_head(0, &rendered_markdown.text);
-                markdown.has_pending_select_all = false;
+                markdown.is_select_all_pending = false;
             }
         });
         hitbox
