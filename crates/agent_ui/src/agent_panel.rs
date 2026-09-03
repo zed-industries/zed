@@ -206,6 +206,7 @@ struct LastCreatedEntryKind {
 struct SourcePanelInitialization {
     agent: Agent,
     initial_content: Option<AgentInitialContent>,
+    last_created_entry_kind: AgentPanelEntryKind,
 }
 
 /// Reads the most recently used agent across all workspaces. Used as a fallback
@@ -5294,6 +5295,7 @@ impl AgentPanel {
         Some(SourcePanelInitialization {
             agent: source_panel.restorable_agent_selection(cx),
             initial_content: source_panel.active_initial_content(cx),
+            last_created_entry_kind: source_panel.last_created_entry_kind,
         })
     }
 
@@ -5318,8 +5320,15 @@ impl AgentPanel {
         let mut initialized = false;
         if self.selected_agent != initialization.agent {
             self.selected_agent = initialization.agent.clone();
-            self.serialize(cx);
             initialized = true;
+        }
+        if self.last_created_entry_kind != initialization.last_created_entry_kind {
+            self.last_created_entry_kind = initialization.last_created_entry_kind;
+            initialized = true;
+        }
+
+        if initialized {
+            self.serialize(cx);
         }
 
         if let Some(initial_content) = initialization.initial_content {
@@ -5338,6 +5347,17 @@ impl AgentPanel {
             self.draft_thread = Some(thread.conversation_view.clone());
             self.observe_draft_editor(&thread.conversation_view, cx);
             self.set_base_view(thread.into(), false, window, cx);
+            true
+        } else if self.should_create_terminal_for_new_entry(cx) {
+            if let Some(draft) = self.draft_thread.take() {
+                let draft_id = draft.read(cx).thread_id;
+                ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                    store.delete(draft_id, cx);
+                });
+                self._draft_editor_observation = None;
+            }
+            let terminal_id = TerminalId::new();
+            self.create_initial_terminal(terminal_id, AgentThreadSource::AgentPanel, window, cx);
             true
         } else {
             if initialized
@@ -13728,6 +13748,86 @@ mod tests {
             assert!(
                 panel.active_conversation_view().is_none(),
                 "agent-only initialization should not create a draft thread"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_initialize_from_source_inherits_terminal_entry_kind(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project_a", json!({ "file.txt": "" }))
+            .await;
+        fs.insert_tree("/project_b", json!({ "file.txt": "" }))
+            .await;
+        let project_a = Project::test(fs.clone(), [Path::new("/project_a")], cx).await;
+        let project_b = Project::test(fs.clone(), [Path::new("/project_b")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+
+        let workspace_a = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let workspace_b = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project_b.clone(), window, cx)
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        panel_a.update(cx, |panel, _cx| {
+            panel.selected_agent = Agent::Stub;
+            panel.last_created_entry_kind = AgentPanelEntryKind::Terminal;
+        });
+
+        let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        let initialized = panel_b.update_in(cx, |panel, window, cx| {
+            panel.initialize_from_source_workspace_if_needed(workspace_a.downgrade(), window, cx)
+        });
+        assert!(
+            initialized,
+            "fresh destination panel should inherit source settings"
+        );
+
+        panel_b.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                panel.selected_agent,
+                Agent::Stub,
+                "destination panel should inherit the source panel's selected agent"
+            );
+            assert_eq!(
+                panel.last_created_entry_kind,
+                AgentPanelEntryKind::Terminal,
+                "destination panel should inherit terminal entry kind"
+            );
+            assert!(
+                panel.active_terminal_id().is_some(),
+                "terminal-entry-kind initialization should create a terminal"
+            );
+            assert!(
+                panel.active_conversation_view().is_none(),
+                "terminal-entry-kind initialization should not open an agent draft"
             );
         });
     }
