@@ -188,11 +188,14 @@
   //
   // Default: true
   "restore_on_file_reopen": true,
+  // Whether to reveal an already open file in an existing pane instead of opening it in the active pane.
+  "reveal_if_open": false,
   // Whether to automatically close files that have been deleted on disk.
   "close_on_file_delete": false,
-  // Whether toggling a panel (e.g. with its keyboard shortcut) also closes
-  // the panel when it is already focused, instead of just moving focus back
-  // to the editor.
+  // Whether invoking a panel's ToggleFocus action while the panel is already
+  // focused closes the panel, instead of just moving focus back to the
+  // editor. This only applies to a panel's focus-toggle action, not to its
+  // regular visibility-toggle action.
   "close_panel_on_toggle": false,
   // Relative size of the drop target in the editor that will open dropped file as a split pane (0-0.5)
   // E.g. 0.25 == If you drop onto the top/bottom quarter of the pane a new vertical split will be used
@@ -207,6 +210,13 @@
   //  3. Never close the window
   //         "when_closing_with_no_tabs": "keep_window_open",
   "when_closing_with_no_tabs": "platform_default",
+  // What to show when opening a new window.
+  // May take 2 values:
+  //  1. Show an empty untitled buffer
+  //         "on_new_window": "empty_tab"
+  //  2. Show the launchpad with recent projects
+  //         "on_new_window": "launchpad"
+  "on_new_window": "launchpad",
   // What to do when the last window is closed.
   // May take 2 values:
   //  1. Use the current platform's convention
@@ -381,6 +391,9 @@
   "minimum_split_diff_width": 100,
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
+  // Whether to automatically detect the language of an untitled buffer from its contents.
+  // Languages explicitly selected from the language selector are not changed.
+  "language_detection": true,
   // Whether to show the signature help after completion or a bracket pair inserted.
   // If `auto_signature_help` is enabled, this setting will be treated as enabled also.
   "show_signature_help_after_edits": false,
@@ -550,6 +563,14 @@
   },
   // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
   "use_system_window_tabs": false,
+  // Which fullscreen mode the `zed::ToggleFullScreen` action enters (macOS only).
+  //
+  // 1. Use macOS's native fullscreen, which moves the window into its own Mission Control space.
+  //     "native"
+  // 2. Resize the window to cover the entire screen, including the menu bar and,
+  //    on notched displays, the area around the notch.
+  //     "simple"
+  "fullscreen_mode": "native",
   // Titlebar related settings
   "title_bar": {
     // Whether to show git status indicators on the branch icon in the titlebar.
@@ -695,6 +716,9 @@
     "folds": true,
     // Minimum number of characters to reserve space for in the gutter.
     "min_line_number_digits": 4,
+    // The width of the git diff hunk indicators in the gutter.
+    // Use "default" to scale with font size, or {"custom": <pixels>} for a fixed width.
+    "git_gutter_width": "default",
   },
   "indent_guides": {
     // Whether to show indent guides in the editor.
@@ -756,6 +780,8 @@
     "regex": false,
     // Whether to center the cursor on each search match when navigating.
     "center_on_match": false,
+    // Start searching as you type in project search, without pressing Enter.
+    "search_on_type": true,
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -817,8 +843,15 @@
     "entry_spacing": "comfortable",
     // Whether to show file icons in the project panel.
     "file_icons": true,
-    // Whether to show folder icons or chevrons for directories in the project panel.
-    "folder_icons": true,
+    // What to show for directories in the project panel.
+    //
+    // 1. A folder icon:
+    //   "icon"
+    // 2. A disclosure chevron:
+    //   "chevron"
+    // 3. A disclosure chevron followed by a folder icon:
+    //   "both"
+    "folder_indicator": "icon",
     // Whether to show the git status in the project panel.
     "git_status": true,
     // Amount of indentation for nested items.
@@ -932,8 +965,15 @@
     "dock": "right",
     // Whether to show file icons in the outline panel.
     "file_icons": true,
-    // Whether to show folder icons or chevrons for directories in the outline panel.
-    "folder_icons": true,
+    // What to show for directories in the outline panel.
+    //
+    // 1. A folder icon:
+    //   "icon"
+    // 2. A disclosure chevron:
+    //   "chevron"
+    // 3. A disclosure chevron followed by a folder icon:
+    //   "both"
+    "folder_indicator": "icon",
     // Whether to show the git status in the outline panel.
     "git_status": true,
     // Amount of indentation for nested items.
@@ -976,6 +1016,11 @@
     // Default depth to expand outline items in the current file.
     // Set to 0 to collapse all items that have children, 1 or higher to collapse items at that depth or deeper.
     "expand_outlines_with_depth": 100,
+    // Whether to hide symbols, excerpts and search matches in the outline panel
+    // when a multi-buffer view (e.g. a diff or search results) is active,
+    // showing only files and directories.
+    // Does not affect single-file views.
+    "multi_buffer_hide_symbols": false,
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
@@ -1001,10 +1046,17 @@
     //
     // Default: false
     "file_icons": false,
-    // Whether to show folder icons or chevrons for directories in the git panel.
+    // What to show for directories in the git panel.
     //
-    // Default: true
-    "folder_icons": true,
+    // 1. A folder icon:
+    //   "icon"
+    // 2. A disclosure chevron:
+    //   "chevron"
+    // 3. A disclosure chevron followed by a folder icon:
+    //   "both"
+    //
+    // Default: icon
+    "folder_indicator": "icon",
     // What branch name to use if `init.defaultBranch` is not set
     //
     // Default: main
@@ -1188,6 +1240,7 @@
           "delete_path": true,
           "diagnostics": true,
           "apply_code_action": true,
+          "ask_user": false,
           "edit_file": true,
           "write_file": true,
           "fetch": true,
@@ -1214,6 +1267,7 @@
         "tools": {
           "create_thread": true,
           "diagnostics": true,
+          "ask_user": false,
           "fetch": true,
           "list_agents_and_models": true,
           "list_directory": true,
@@ -1413,6 +1467,13 @@
     // Whether to keep tabs in preview mode when code navigation is used to navigate away from them.
     // If `enable_preview_file_from_code_navigation` or `enable_preview_multibuffer_from_code_navigation` is also true, the new tab may replace the existing one.
     "enable_keep_preview_on_code_navigation": false,
+  },
+  // Settings related to the call hierarchy picker.
+  "call_hierarchy": {
+    // Determines how much space the call hierarchy picker can take up in relation to the available window width.
+    //
+    // Default: medium
+    "modal_max_width": "medium",
   },
   // Settings related to the file finder.
   "file_finder": {
@@ -1643,6 +1704,14 @@
   // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
   "file_scan_inclusions": [".env*"],
+  // Maximum directory depth to eagerly index outside of git repositories;
+  // contents of directories at this depth or deeper are indexed on demand.
+  // Repositories rooted shallower than this depth are always indexed fully.
+  // In projects that are not rooted at a git repository, repositories directly
+  // inside a root folder activate their git features immediately; deeper ones
+  // activate on first use.
+  // `0` means no limit and activates all git repositories immediately.
+  "file_scan_depth": 5,
   // When to scan content of linked directories.
   // May take 2 values:
   //  1. Only scan symlinked directories when they've been expanded in the workspace:
@@ -1786,31 +1855,44 @@
     // "copilot": {
     //   "enterprise_uri": "",
     //   "proxy": "",
-    //   "proxy_no_verify": false
-    //   "enable_next_edit_suggestions": true
+    //   "proxy_no_verify": false,
+    //   "enable_next_edit_suggestions": true,
+    //   // The debounce delay in milliseconds before automatically requesting a prediction.
+    //   // Set to 0 to request predictions immediately.
+    //   "prediction_debounce": 75
     // },
     "copilot": {
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null,
       "enable_next_edit_suggestions": true,
+      "prediction_debounce": 75,
     },
     "codestral": {
       "api_url": "https://codestral.mistral.ai",
       "model": "codestral-latest",
       "max_tokens": 150,
+      "prediction_debounce": 150,
     },
     "ollama": {
       "api_url": "http://localhost:11434",
       "model": "qwen2.5-coder:7b-base",
       "prompt_format": "infer",
       "max_output_tokens": 64,
+      "prediction_debounce": 0,
     },
     "open_ai_compatible_api": {
       "api_url": "",
       "model": "",
       "prompt_format": "infer",
       "max_output_tokens": 64,
+      "prediction_debounce": 0,
+    },
+    "zed": {
+      "prediction_debounce": 0,
+    },
+    "mercury": {
+      "prediction_debounce": 0,
     },
     // Controls whether Zed may collect training data when using Zed's Edit Predictions.
     // Data is only captured when the project is detected as open source.
@@ -1865,6 +1947,10 @@
     "shell": "system",
     // Where to dock terminals panel. Can be `left`, `right`, `bottom`.
     "dock": "bottom",
+    // Whether the terminal panel should open on startup.
+    //
+    // Default: false
+    "starts_open": false,
     // Whether the terminal panel should use flexible (proportional) sizing.
     //
     // Default: true
@@ -2431,7 +2517,7 @@
       },
     },
     "SystemVerilog": {
-      "language_servers": ["!slang", "..."],
+      "language_servers": ["slang", "!verible", "!veridian", "!svls", "..."],
       "use_on_type_format": false,
     },
     "Vue.js": {

@@ -75,6 +75,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("typst", &["typ"]),
     ("vue", &["vue"]),
     ("wgsl", &["wgsl"]),
+    ("windows-batch", &["bat", "cmd"]),
     ("wit", &["wit"]),
     ("xml", &["xml"]),
     ("zig", &["zig"]),

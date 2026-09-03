@@ -18,11 +18,10 @@ anyhow.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
-ctor.workspace = true
 foreign-types.workspace = true
 metal.workspace = true
 core-video.workspace = true
 objc.workspace = true
 
 [build-dependencies]
-bindgen = "0.71"
+bindgen = "0.72"

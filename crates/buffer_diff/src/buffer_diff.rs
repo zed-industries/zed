@@ -25,23 +25,63 @@ pub struct BufferDiff {
     diff_snapshot: Option<BufferDiffSnapshot>,
     secondary_diff: Option<Entity<BufferDiff>>,
     buffer_snapshot: text::BufferSnapshot,
-    base_kind: DiffBaseKind,
+    operations: Option<Arc<dyn DiffOperations>>,
 }
 
-/// Where this diff's base text came from. Only diffs whose base is HEAD
-/// support staging and restoring hunks; a diff against any other base (e.g.
-/// the merge base with another branch) would rewrite committed work.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DiffBaseKind {
-    /// The buffer's committed (HEAD) content.
-    Head,
-    /// The buffer's index (staged) content.
-    Index,
-    /// An arbitrary blob, such as the merge base with another branch.
-    Oid,
-    /// Arbitrary caller-provided text, such as an agent's original text,
-    /// the clipboard, or another file.
-    Custom,
+pub trait DiffOperations {
+    fn supports_staging(&self) -> bool;
+    fn supports_unstaging(&self) -> bool;
+    fn supports_restore(&self) -> bool;
+    fn stage(
+        &self,
+        _diff: Entity<BufferDiff>,
+        _buffer: Option<Entity<language::Buffer>>,
+        _buffer_ranges: Vec<Range<Anchor>>,
+        _cx: &mut App,
+    ) {
+    }
+    fn unstage(
+        &self,
+        _diff: Entity<BufferDiff>,
+        _buffer: Option<Entity<language::Buffer>>,
+        _buffer_ranges: Vec<Range<Anchor>>,
+        _cx: &mut App,
+    ) {
+    }
+}
+
+pub struct RestoreDiffOperations;
+
+impl DiffOperations for RestoreDiffOperations {
+    fn supports_staging(&self) -> bool {
+        false
+    }
+
+    fn supports_unstaging(&self) -> bool {
+        false
+    }
+
+    fn supports_restore(&self) -> bool {
+        true
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+struct TestDiffOperations;
+
+#[cfg(any(test, feature = "test-support"))]
+impl DiffOperations for TestDiffOperations {
+    fn supports_staging(&self) -> bool {
+        true
+    }
+
+    fn supports_unstaging(&self) -> bool {
+        true
+    }
+
+    fn supports_restore(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Clone)]
@@ -1570,7 +1610,6 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
-        base_kind: DiffBaseKind,
         cx: &mut App,
     ) -> Self {
         let base_text = cx.new(|cx| {
@@ -1589,14 +1628,13 @@ impl BufferDiff {
             diff_snapshot: None,
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
-            base_kind,
+            operations: None,
         }
     }
 
     pub fn new_with_base_text_buffer(
         buffer: &text::BufferSnapshot,
         base_text_buffer: Entity<language::Buffer>,
-        base_kind: DiffBaseKind,
         _cx: &mut App,
     ) -> Self {
         BufferDiff {
@@ -1605,7 +1643,7 @@ impl BufferDiff {
             diff_snapshot: None,
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
-            base_kind,
+            operations: None,
         }
     }
 
@@ -1613,7 +1651,6 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
-        base_kind: DiffBaseKind,
         cx: &mut Context<Self>,
     ) -> Self {
         let base_text = buffer.text();
@@ -1644,7 +1681,7 @@ impl BufferDiff {
             diff_snapshot: Some(diff_snapshot),
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
-            base_kind,
+            operations: None,
         }
     }
 
@@ -1654,7 +1691,8 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut this = BufferDiff::new(buffer, None, None, DiffBaseKind::Head, cx);
+        let mut this = BufferDiff::new(buffer, None, None, cx);
+        this.set_operations(Arc::new(TestDiffOperations));
         let mut base_text = base_text.to_owned();
         text::LineEnding::normalize(&mut base_text);
         let base_text_buffer = cx.new(|cx| {
@@ -1678,14 +1716,12 @@ impl BufferDiff {
         self.secondary_diff = Some(diff);
     }
 
-    pub fn base_kind(&self) -> DiffBaseKind {
-        self.base_kind
+    pub fn set_operations(&mut self, operations: Arc<dyn DiffOperations>) {
+        self.operations = Some(operations);
     }
 
-    /// Whether hunks in this diff can be staged or restored: true only when
-    /// the diff's base is HEAD.
-    pub fn is_stageable(&self) -> bool {
-        self.base_kind == DiffBaseKind::Head
+    pub fn operations(&self) -> Option<Arc<dyn DiffOperations>> {
+        self.operations.clone()
     }
 
     pub fn secondary_diff(&self) -> Option<Entity<BufferDiff>> {
@@ -2482,8 +2518,7 @@ mod tests {
             ],
         );
 
-        diff = cx
-            .update(|cx| BufferDiff::new(&buffer, None, None, DiffBaseKind::Head, cx).snapshot(cx));
+        diff = cx.update(|cx| BufferDiff::new(&buffer, None, None, cx).snapshot(cx));
         assert_hunks::<&str, _>(
             diff.hunks_intersecting_range(
                 Anchor::min_max_range_for_buffer(buffer.remote_id()),
@@ -3188,8 +3223,7 @@ mod tests {
 
         let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text_1);
 
-        let empty_diff = cx
-            .update(|cx| BufferDiff::new(&buffer, None, None, DiffBaseKind::Head, cx).snapshot(cx));
+        let empty_diff = cx.update(|cx| BufferDiff::new(&buffer, None, None, cx).snapshot(cx));
         let diff_1 = BufferDiffSnapshot::new_sync(&buffer, base_text.clone(), cx);
         let DiffChanged {
             changed_range,
@@ -4347,8 +4381,7 @@ mod tests {
         );
         let buffer_snapshot = buffer.snapshot();
 
-        let diff =
-            cx.new(|cx| BufferDiff::new(&buffer_snapshot, None, None, DiffBaseKind::Head, cx));
+        let diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, None, None, cx));
         diff.update(cx, |diff, cx| {
             diff.set_base_text(Some(Arc::from(base_text_crlf)), buffer_snapshot.clone(), cx)
         })

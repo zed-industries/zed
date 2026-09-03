@@ -67,6 +67,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub restore_on_file_reopen: Option<bool>,
+    /// Whether to reveal an already open file in an existing pane instead of opening it in the active pane.
+    ///
+    /// Default: false
+    pub reveal_if_open: Option<bool>,
     /// The size of the workspace split drop targets on the outer edges.
     /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.
     ///
@@ -105,6 +109,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: none
     pub max_tabs: Option<NonZeroUsize>,
+    /// What to show when opening a new window.
+    /// Values: empty_tab, launchpad
+    /// Default: launchpad
+    pub on_new_window: Option<OnNewWindow>,
     /// What to do when the last window is closed
     ///
     /// Default: auto (nothing on macOS, "app quit" otherwise)
@@ -121,15 +129,20 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub use_system_window_tabs: Option<bool>,
+    /// Which fullscreen mode the `zed::ToggleFullScreen` action enters (macOS only).
+    ///
+    /// Default: native
+    pub fullscreen_mode: Option<FullscreenMode>,
     /// Whether to show padding for zoomed panels.
     /// When enabled, zoomed bottom panels will have some top padding,
     /// while zoomed left/right panels will have padding to the right/left (respectively).
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
-    /// Whether toggling a panel (e.g. with its keyboard shortcut) also closes
-    /// the panel when it is already focused, instead of just moving focus back
-    /// to the editor.
+    /// Whether invoking a panel's `ToggleFocus` action while the panel is
+    /// already focused closes the panel, instead of just moving focus back
+    /// to the editor. This only applies to a panel's focus-toggle action, not
+    /// to its regular visibility-toggle action.
     ///
     /// Default: false
     pub close_panel_on_toggle: Option<bool>,
@@ -300,8 +313,7 @@ pub struct ActivePaneModifiers {
     /// The border is drawn inset.
     ///
     /// Default: `0.0`
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub border_size: Option<f32>,
+    pub border_size: Option<crate::PixelSetting>,
     /// Opacity of inactive panels.
     /// When set to 1.0, the inactive panes have the same opacity as the active one.
     /// If set to 0, the inactive panes content will not be visible at all.
@@ -336,6 +348,30 @@ pub enum BottomDockLayout {
     LeftAligned,
     /// Extends under the right dock while snapping to the left dock
     RightAligned,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FullscreenMode {
+    /// Use macOS's native fullscreen, which moves the window into its own
+    /// Mission Control space.
+    #[default]
+    Native,
+    /// Resize the window to cover the entire screen, including the menu bar and,
+    /// on notched displays, the area around the notch.
+    Simple,
 }
 
 /// Configures what draws Zed's window decorations on Linux.
@@ -660,6 +696,29 @@ pub struct CenteredLayoutSettings {
     JsonSchema,
     MergeFrom,
     PartialEq,
+    Eq,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OnNewWindow {
+    /// Show an empty untitled buffer when opening a new window
+    EmptyTab,
+    /// Show the launchpad with recent projects when opening a new window
+    #[default]
+    Launchpad,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
     Debug,
     strum::VariantArray,
     strum::VariantNames,
@@ -738,8 +797,7 @@ pub struct ProjectPanelSettingsContent {
     /// Customize default width (in pixels) taken by project panel
     ///
     /// Default: 240
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
+    pub default_width: Option<crate::PixelSetting>,
     /// The position of project panel
     ///
     /// Default: right (Agentic layout), left (Classic layout)
@@ -752,10 +810,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub file_icons: Option<bool>,
-    /// Whether to show folder icons or chevrons for directories in the project panel.
+    /// What to show for directories in the project panel.
     ///
-    /// Default: true
-    pub folder_icons: Option<bool>,
+    /// Default: icon
+    pub folder_indicator: Option<FolderIndicator>,
     /// Whether to show the git status in the project panel.
     ///
     /// Default: true
@@ -763,8 +821,7 @@ pub struct ProjectPanelSettingsContent {
     /// Amount of indentation (in pixels) for nested items.
     ///
     /// Default: 20
-    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
-    pub indent_size: Option<f32>,
+    pub indent_size: Option<crate::PixelSetting>,
     /// Whether to reveal it in the project panel automatically,
     /// when a corresponding project entry becomes active.
     /// Gitignored entries are never auto revealed.
@@ -851,6 +908,41 @@ pub enum ProjectPanelEntrySpacing {
     Comfortable,
     /// The standard spacing of entries.
     Standard,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FolderIndicator {
+    /// Show a folder icon.
+    #[default]
+    Icon,
+    /// Show a disclosure chevron.
+    Chevron,
+    /// Show a disclosure chevron followed by a folder icon.
+    Both,
+}
+
+impl FolderIndicator {
+    pub fn shows_chevron(self) -> bool {
+        matches!(self, Self::Chevron | Self::Both)
+    }
+
+    pub fn shows_icon(self) -> bool {
+        matches!(self, Self::Icon | Self::Both)
+    }
 }
 
 #[derive(
