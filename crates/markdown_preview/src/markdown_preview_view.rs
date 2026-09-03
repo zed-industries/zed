@@ -774,7 +774,7 @@ impl MarkdownPreviewView {
     ) {
         self.markdown.update(cx, |markdown, cx| {
             markdown.focus_handle(cx).focus(window, cx);
-            window.dispatch_action(Box::new(markdown::SelectAll), cx);
+            markdown.select_all(cx)
         });
     }
 
@@ -2114,6 +2114,8 @@ mod tests {
     use serde_json::json;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+    use std::sync::atomic;
+    use std::sync::atomic::AtomicUsize;
     use std::time::Duration;
     use util::path;
     use util::paths::PathStyle;
@@ -3687,6 +3689,58 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_select_all_notification_count_when_content_focused(cx: &mut TestAppContext) {
+        let (multi_workspace, _editor) = open_markdown_file(cx, "test.md", "Hello").await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                let handle = preview.read(cx).markdown.read(cx).focus_handle(cx);
+                window.focus(&handle, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let notification_count = Arc::new(AtomicUsize::new(0));
+
+        let markdown = preview.read_with(cx, |preview, _| preview.markdown.clone());
+        let _subscription = cx.update({
+            let notify_count = notification_count.clone();
+            move |cx| {
+                cx.observe(&markdown, move |_, _| {
+                    notify_count.fetch_add(1, atomic::Ordering::SeqCst);
+                })
+            }
+        });
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                assert!(
+                    preview
+                        .read(cx)
+                        .markdown
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window),
+                    "content should already be focused"
+                );
+                window.dispatch_action(Box::new(editor::actions::SelectAll), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        preview.read_with(cx, |preview, cx| {
+            assert_eq!(preview.markdown.read(cx).selected_source(), Some("Hello"));
+        });
+
+        assert_eq!(
+            notification_count.load(atomic::Ordering::SeqCst),
+            1,
+            "highlight should repaint when content was already focused"
+        );
+    }
+
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
@@ -3709,47 +3763,6 @@ mod tests {
             },
             None,
         )));
-    }
-
-    async fn wait_for_preview_serialization(cx: &mut TestAppContext) {
-        cx.run_until_parked();
-        cx.executor().advance_clock(Duration::from_millis(250));
-        cx.run_until_parked();
-    }
-
-    fn saved_preview_path(
-        cx: &mut TestAppContext,
-        item_id: ItemId,
-        workspace_id: WorkspaceId,
-    ) -> PathBuf {
-        cx.update(|cx| {
-            super::persistence::MarkdownPreviewDb::global(cx)
-                .get_preview(item_id, workspace_id)
-                .unwrap()
-                .unwrap()
-                .0
-        })
-    }
-
-    fn preview_source_path(
-        cx: &mut TestAppContext,
-        preview: &Entity<MarkdownPreviewView>,
-    ) -> Arc<RelPath> {
-        let editor = preview.read_with(cx, |preview, _| {
-            preview.active_editor.as_ref().unwrap().editor.clone()
-        });
-        editor_source_path(cx, &editor)
-    }
-
-    fn editor_source_path(cx: &mut TestAppContext, editor: &Entity<Editor>) -> Arc<RelPath> {
-        editor.read_with(cx, |editor, cx| {
-            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
-            buffer.read(cx).file().unwrap().path().clone()
-        })
-    }
-
-    fn markdown_fixture_directory(tree: &TempTree) -> PathBuf {
-        tree.path().join("docs")
     }
 
     async fn open_preview_and_dispatch_select_all_with_container_focus(
@@ -3802,6 +3815,47 @@ mod tests {
             .unwrap();
 
         preview
+    }
+
+    async fn wait_for_preview_serialization(cx: &mut TestAppContext) {
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(250));
+        cx.run_until_parked();
+    }
+
+    fn saved_preview_path(
+        cx: &mut TestAppContext,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+    ) -> PathBuf {
+        cx.update(|cx| {
+            super::persistence::MarkdownPreviewDb::global(cx)
+                .get_preview(item_id, workspace_id)
+                .unwrap()
+                .unwrap()
+                .0
+        })
+    }
+
+    fn preview_source_path(
+        cx: &mut TestAppContext,
+        preview: &Entity<MarkdownPreviewView>,
+    ) -> Arc<RelPath> {
+        let editor = preview.read_with(cx, |preview, _| {
+            preview.active_editor.as_ref().unwrap().editor.clone()
+        });
+        editor_source_path(cx, &editor)
+    }
+
+    fn editor_source_path(cx: &mut TestAppContext, editor: &Entity<Editor>) -> Arc<RelPath> {
+        editor.read_with(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            buffer.read(cx).file().unwrap().path().clone()
+        })
+    }
+
+    fn markdown_fixture_directory(tree: &TempTree) -> PathBuf {
+        tree.path().join("docs")
     }
 
     #[track_caller]

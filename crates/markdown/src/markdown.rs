@@ -484,6 +484,7 @@ pub struct Markdown {
     autoscroll_request: Option<usize>,
     pending_heading_scroll: Option<SharedString>,
     pending_autoscroll: Option<usize>,
+    pending_select_all: bool,
     active_root_block: Option<usize>,
     parsed_markdown: ParsedMarkdown,
     images_by_source_offset: HashMap<usize, Arc<Image>>,
@@ -569,8 +570,6 @@ actions!(
         Copy,
         /// Copies the selected text as markdown to the clipboard.
         CopyAsMarkdown,
-        /// Selects everything in the markdown preview
-        SelectAll
     ]
 );
 
@@ -687,6 +686,7 @@ impl Markdown {
             pending_heading_scroll: None,
             pending_autoscroll: None,
             active_root_block: None,
+            pending_select_all: false,
             should_reparse: false,
             images_by_source_offset: Default::default(),
             parsed_markdown: ParsedMarkdown::default(),
@@ -1166,9 +1166,8 @@ impl Markdown {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
-    fn select_all(&mut self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
-        self.selection.mode = SelectMode::All;
-        self.selection.set_head(0, text);
+    pub fn select_all(&mut self, cx: &mut Context<Self>) {
+        self.pending_select_all = true;
         cx.notify();
     }
 
@@ -3233,6 +3232,13 @@ impl Element for MarkdownElement {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         rendered_markdown.element.prepaint(window, cx);
         self.autoscroll(&rendered_markdown.text, window, cx);
+        self.markdown.update(cx, |markdown, _| {
+            if markdown.pending_select_all {
+                markdown.selection.mode = SelectMode::All;
+                markdown.selection.set_head(0, &rendered_markdown.text);
+                markdown.pending_select_all = false;
+            }
+        });
         hitbox
     }
 
@@ -3264,16 +3270,6 @@ impl Element for MarkdownElement {
             move |_, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
                     entity.update(cx, move |this, cx| this.copy_as_markdown(window, cx))
-                }
-            }
-        });
-        window.on_action(std::any::TypeId::of::<crate::SelectAll>(), {
-            let entity = self.markdown.clone();
-            let text = rendered_markdown.text.clone();
-            move |_, phase, window, cx| {
-                let text = text.clone();
-                if phase == DispatchPhase::Bubble {
-                    entity.update(cx, move |this, cx| this.select_all(&text, window, cx))
                 }
             }
         });
