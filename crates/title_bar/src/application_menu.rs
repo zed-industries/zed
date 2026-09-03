@@ -52,20 +52,29 @@ pub struct ApplicationMenu {
 impl ApplicationMenu {
     pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
         let menus = cx.get_menus().unwrap_or_default();
-        // Re-render when settings change so toggling "accessible mode" expands or
-        // collapses the menu bar (see `all_menus_shown`).
-        let settings_subscription = cx.observe_global::<SettingsStore>(|_, cx| cx.notify());
+
+        let entries = Self::build_entries(menus);
+        let settings_subscription = cx.observe_global::<SettingsStore>(|application_menu, cx| {
+            let menus = cx.get_menus().unwrap_or_default();
+            application_menu.entries = Self::build_entries(menus);
+            cx.notify();
+        });
+
         Self {
-            entries: menus
-                .into_iter()
-                .map(|menu| MenuEntry {
-                    menu,
-                    handle: PopoverMenuHandle::default(),
-                })
-                .collect(),
+            entries,
             pending_menu_open: None,
             _settings_subscription: settings_subscription,
         }
+    }
+
+    fn build_entries(menus: Vec<OwnedMenu>) -> SmallVec<[MenuEntry; 8]> {
+        menus
+            .into_iter()
+            .map(|menu| MenuEntry {
+                menu,
+                handle: PopoverMenuHandle::default(),
+            })
+            .collect()
     }
 
     fn sanitize_menu_items(items: Vec<OwnedMenuItem>) -> Vec<OwnedMenuItem> {
@@ -341,5 +350,83 @@ impl Render for ApplicationMenu {
                         .map(|entry| self.render_standard_menu(entry)),
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Action, OwnedMenu, OwnedMenuItem, TestAppContext};
+    use project::DisableAiSettings;
+    use settings::{Settings, SettingsStore};
+
+    use crate::application_menu::{ApplicationMenu, MenuEntry, OpenApplicationMenu};
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            DisableAiSettings::register(cx);
+        });
+    }
+
+    fn owned_menu(name: &str, item_name: &str) -> OwnedMenu {
+        OwnedMenu {
+            name: name.into(),
+            disabled: false,
+            items: vec![OwnedMenuItem::Action {
+                name: item_name.to_string(),
+                action: OpenApplicationMenu(String::new()).boxed_clone(),
+                os_action: None,
+                checked: false,
+                disabled: false,
+            }],
+        }
+    }
+
+    fn has_item(entries: &[MenuEntry], menu_name: &str, item_name: &str) -> bool {
+        entries.iter().any(|entry| {
+            entry.menu.name == menu_name
+                && entry.menu.items.iter().any(
+                    |item| matches!(item, OwnedMenuItem::Action { name, .. } if name == item_name),
+                )
+        })
+    }
+
+    #[test]
+    fn test_build_entries_reflects_current_menu_data() {
+        let with_agent_panel =
+            ApplicationMenu::build_entries(vec![owned_menu("View", "Agent Panel")]);
+        assert!(has_item(&with_agent_panel, "View", "Agent Panel"));
+
+        let without_agent_panel =
+            ApplicationMenu::build_entries(vec![owned_menu("View", "Diagnostics")]);
+        assert!(!has_item(&without_agent_panel, "View", "Agent Panel"));
+    }
+
+    #[gpui::test]
+    fn test_entries_refresh_on_settings_change_without_recreating_entity(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (app_menu, cx) = cx.add_window_view(|window, cx| ApplicationMenu::new(window, cx));
+
+        app_menu.update(cx, |app_menu, _cx| {
+            app_menu.entries =
+                ApplicationMenu::build_entries(vec![owned_menu("View", "Agent Panel")]);
+        });
+        assert!(app_menu.read_with(cx, |app_menu, _| has_item(
+            &app_menu.entries,
+            "View",
+            "Agent Panel"
+        )));
+
+        cx.update(|_, cx| {
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: true }, cx);
+        });
+
+        assert!(!app_menu.read_with(cx, |app_menu, _| has_item(
+            &app_menu.entries,
+            "View",
+            "Agent Panel"
+        )));
     }
 }

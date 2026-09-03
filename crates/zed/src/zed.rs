@@ -2160,6 +2160,7 @@ pub fn handle_keymap_file_changes(
         let new_vim_enabled = VimModeSetting::get_global(cx).0;
         let new_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
         let new_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+        reload_menus(cx);
 
         if new_base_keymap != old_base_keymap
             || new_vim_enabled != old_vim_enabled
@@ -2331,6 +2332,11 @@ fn show_markdown_app_notification<F>(
     })
 }
 
+fn reload_menus(cx: &mut App) {
+    let menus = app_menus(cx);
+    cx.set_menus(menus);
+}
+
 fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     cx.clear_key_bindings();
     load_default_keymap(cx);
@@ -2340,8 +2346,6 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     }
     cx.bind_keys(filter_disabled_ai_bindings(user_key_bindings, cx));
 
-    let menus = app_menus(cx);
-    cx.set_menus(menus);
     // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
     #[cfg(not(target_os = "windows"))]
     cx.set_dock_menu(vec![gpui::MenuItem::action(
