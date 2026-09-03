@@ -4672,7 +4672,7 @@ struct CoreSymbol {
     pub container_name: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SymbolLocation {
     InProject(ProjectPath),
     OutsideProject {
@@ -9295,6 +9295,11 @@ impl LspStore {
                     )
                     .await;
                 }
+
+                let mut seen = std::collections::HashSet::new();
+                symbols.retain(|symbol| {
+                    seen.insert((symbol.name.clone(), symbol.path.clone(), symbol.range.start))
+                });
 
                 Ok(symbols)
             })
