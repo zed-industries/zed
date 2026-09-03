@@ -97,13 +97,19 @@ impl FeatureManifest {
     pub(crate) fn generate_dockerfile_feature_layer(
         &self,
         use_buildkit: bool,
+        use_podman: bool,
         dest: &str,
     ) -> String {
         let id = &self.consecutive_id;
         if use_buildkit {
+            // relabel=private tells Podman/Buildah to relabel the bind-mounted content
+            // with the container's SELinux type, preventing access denials under SELinux
+            // enforcement. Docker BuildKit does not support this option and does not need
+            // it since Docker does not enforce SELinux during builds.
+            let relabel = if use_podman { ",relabel=private" } else { "" };
             format!(
                 r#"
-RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./{id},target=/tmp/build-features-src/{id} \
+RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./{id},target=/tmp/build-features-src/{id}{relabel} \
 cp -ar /tmp/build-features-src/{id} {dest} \
 && chmod -R 0755 {dest}/{id} \
 && cd {dest}/{id} \
