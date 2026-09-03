@@ -510,6 +510,7 @@ impl ThreadsDatabase {
         }
 
         let title = thread.title.to_string();
+        let thread_updated_at = thread.updated_at;
         let updated_at = thread.updated_at.to_rfc3339();
         let parent_id = thread
             .subagent_context
@@ -531,6 +532,41 @@ impl ThreadsDatabase {
         })?;
 
         let connection = connection.lock();
+
+        // Freshness guard. A sidebar reopen can fork a second `Thread` for
+        // the same SessionId from a point-in-time DB snapshot; that stale
+        // duplicate is a fully-armed writer (models
+        // sweep, close, quit flush) and would clobber the newer persisted
+        // row with creation-time state. Skip the write when the stored row
+        // is STRICTLY newer than the state being saved; equal timestamps
+        // still write (the same live thread re-saving is legitimate).
+        {
+            let mut select_updated_at = connection.select_bound::<Arc<str>, String>(indoc! {"
+                SELECT updated_at FROM threads WHERE id = ? LIMIT 1
+            "})?;
+            if let Some(stored_updated_at) = select_updated_at(id.0.clone())?.into_iter().next() {
+                match chrono::DateTime::parse_from_rfc3339(&stored_updated_at) {
+                    Ok(stored) if stored.with_timezone(&Utc) > thread_updated_at => {
+                        log::warn!(
+                            "skipping stale thread save for session {}: stored updated_at {} is newer than in-memory updated_at {}",
+                            id.0,
+                            stored_updated_at,
+                            updated_at,
+                        );
+                        return Ok(());
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        // An unparseable stored timestamp must not block
+                        // saves; fall through to the write.
+                        log::warn!(
+                            "could not parse stored updated_at {stored_updated_at:?} for session {}: {error}",
+                            id.0,
+                        );
+                    }
+                }
+            }
+        }
 
         let compressed = zstd::encode_all(json_data.as_bytes(), COMPRESSION_LEVEL)?;
         let data_type = DataType::Zstd;
@@ -895,6 +931,135 @@ mod tests {
             entries[0].created_at.is_some(),
             "created_at should be populated"
         );
+    }
+
+    // Helper for the freshness-guard tests below.
+    fn user_message(text: &str) -> Arc<DbMessage> {
+        Arc::new(DbMessage::User(UserMessage {
+            id: ClientUserMessageId::new(),
+            content: vec![UserMessageContent::Text(text.to_string())].into(),
+        }))
+    }
+
+    // A sidebar reopen forks a stale duplicate `Thread`
+    // for the same SessionId from a point-in-time DB snapshot; when that
+    // duplicate later saves (models-updated sweep, close, quit flush) it must
+    // not clobber a strictly newer persisted row.
+    #[gpui::test]
+    async fn test_stale_save_does_not_clobber_newer_row(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let id = session_id("thread-a");
+
+        let mut complete = make_thread(
+            "Completed Thread",
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+        );
+        complete.messages = vec![
+            user_message("first"),
+            user_message("second"),
+            user_message("third"),
+        ];
+
+        // A stale duplicate: creation-time snapshot with fewer messages, an
+        // empty title, and an older updated_at.
+        let mut stale = make_thread("", Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap());
+        stale.messages = vec![user_message("first")];
+
+        database
+            .save_thread(id.clone(), complete, PathList::default())
+            .await
+            .unwrap();
+        database
+            .save_thread(id.clone(), stale, PathList::default())
+            .await
+            .unwrap();
+
+        let restored = database
+            .load_thread(id.clone())
+            .await
+            .unwrap()
+            .expect("row should exist");
+        assert_eq!(
+            restored.messages.len(),
+            3,
+            "stale duplicate save must not clobber the newer row"
+        );
+        assert_eq!(restored.title.as_ref(), "Completed Thread");
+        assert_eq!(
+            restored.updated_at,
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap()
+        );
+
+        let entries = database.list_threads().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title.as_ref(), "Completed Thread");
+        assert_eq!(
+            entries[0].updated_at,
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap()
+        );
+    }
+
+    // Companion to the freshness guard: saves with an
+    // equal updated_at (the same live thread re-saving, e.g. a draft prompt
+    // capture) and saves with a strictly newer updated_at must still write.
+    #[gpui::test]
+    async fn test_equal_and_newer_saves_still_overwrite(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let id = session_id("thread-a");
+        let t1 = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap();
+
+        let mut first = make_thread("First", t1);
+        first.messages = vec![user_message("one")];
+        database
+            .save_thread(id.clone(), first, PathList::default())
+            .await
+            .unwrap();
+
+        // Equal timestamp, different content: must overwrite.
+        let mut equal = make_thread("First (updated)", t1);
+        equal.messages = vec![user_message("one"), user_message("two")];
+        database
+            .save_thread(id.clone(), equal, PathList::default())
+            .await
+            .unwrap();
+
+        let restored = database
+            .load_thread(id.clone())
+            .await
+            .unwrap()
+            .expect("row should exist");
+        assert_eq!(
+            restored.messages.len(),
+            2,
+            "equal-timestamp save must still overwrite"
+        );
+        assert_eq!(restored.title.as_ref(), "First (updated)");
+
+        // Strictly newer timestamp: must overwrite.
+        let mut newer = make_thread("Newer", t2);
+        newer.messages = vec![
+            user_message("one"),
+            user_message("two"),
+            user_message("three"),
+        ];
+        database
+            .save_thread(id.clone(), newer, PathList::default())
+            .await
+            .unwrap();
+
+        let restored = database
+            .load_thread(id.clone())
+            .await
+            .unwrap()
+            .expect("row should exist");
+        assert_eq!(
+            restored.messages.len(),
+            3,
+            "newer save must still overwrite"
+        );
+        assert_eq!(restored.title.as_ref(), "Newer");
+        assert_eq!(restored.updated_at, t2);
     }
 
     #[test]
