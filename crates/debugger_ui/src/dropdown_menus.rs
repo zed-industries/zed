@@ -200,7 +200,7 @@ impl DebugPanel {
                             let leaf = session_entry.leaf.clone();
                             move |window, cx| {
                                 weak.update(cx, |panel, cx| {
-                                    panel.activate_session(leaf.clone(), window, cx);
+                                    panel.activate_session(leaf.clone(), window, true, cx);
                                 })
                                 .ok();
                             }
