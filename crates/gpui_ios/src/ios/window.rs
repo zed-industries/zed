@@ -609,6 +609,7 @@ pub(crate) struct IosWindow {
     scroll_view_delegate: *mut AnyObject,
     scroll_view_last_offset: Cell<Point<Pixels>>,
     scroll_view_event_started: Cell<bool>,
+    scroll_view_gesture_start_position: Cell<Option<Point<Pixels>>>,
     /// The Metal-backed UIView
     view: *mut AnyObject,
     /// The hidden text input view for keyboard input
@@ -708,6 +709,9 @@ impl IosWindow {
             let _: () = msg_send![scroll_view, setDelaysContentTouches: false];
             let _: () = msg_send![scroll_view, setContentInsetAdjustmentBehavior: 2_isize];
             let _: () = msg_send![scroll_view, setKeyboardDismissMode: 2_isize];
+            // This scroll view only converts relative motion into GPUI input; a status-bar
+            // jump would emit a meaningless delta toward the proxy's distant content boundary.
+            let _: () = msg_send![scroll_view, setScrollsToTop: false];
             let pan_gesture: *mut AnyObject = msg_send![scroll_view, panGestureRecognizer];
             let _: () = msg_send![pan_gesture, setCancelsTouchesInView: false];
 
@@ -787,6 +791,7 @@ impl IosWindow {
                     px(SCROLL_PROXY_INITIAL_OFFSET as f32),
                 )),
                 scroll_view_event_started: Cell::new(false),
+                scroll_view_gesture_start_position: Cell::new(None),
                 view,
                 text_input_view,
                 edit_menu_interaction,
@@ -952,6 +957,8 @@ impl IosWindow {
         self.scroll_view_last_offset
             .set(Self::native_scroll_offset(scroll_view));
         self.scroll_view_event_started.set(false);
+        self.scroll_view_gesture_start_position
+            .set(Some(self.native_scroll_gesture_start_position(scroll_view)));
     }
 
     fn handle_native_scroll(&self, scroll_view: *mut AnyObject) {
@@ -970,7 +977,10 @@ impl IosWindow {
         };
         if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
             callback(PlatformInput::ScrollWheel(ScrollWheelEvent {
-                position: self.mouse_position.get(),
+                position: self
+                    .scroll_view_gesture_start_position
+                    .get()
+                    .unwrap_or_else(|| self.mouse_position.get()),
                 delta: ScrollDelta::Pixels(delta),
                 modifiers: self.modifiers.get(),
                 touch_phase,
@@ -981,13 +991,17 @@ impl IosWindow {
     fn handle_native_scroll_end(&self, scroll_view: *mut AnyObject) {
         self.scroll_view_last_offset
             .set(Self::native_scroll_offset(scroll_view));
+        let position = self
+            .scroll_view_gesture_start_position
+            .take()
+            .unwrap_or_else(|| self.mouse_position.get());
         if !self.scroll_view_event_started.replace(false) {
             return;
         }
 
         if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
             callback(PlatformInput::ScrollWheel(ScrollWheelEvent {
-                position: self.mouse_position.get(),
+                position,
                 delta: ScrollDelta::Pixels(Point::default()),
                 modifiers: self.modifiers.get(),
                 touch_phase: TouchPhase::Ended,
@@ -998,6 +1012,20 @@ impl IosWindow {
     fn native_scroll_offset(scroll_view: *mut AnyObject) -> Point<Pixels> {
         let offset: ObjcCGPoint = unsafe { msg_send![scroll_view, contentOffset] };
         Point::new(px(offset.x as f32), px(offset.y as f32))
+    }
+
+    /// Derives the origin from UIKit because scroll delegate callbacks and raw touch callbacks
+    /// have no ordering guarantee, while GPUI must hit-test the full pan against one stable target.
+    fn native_scroll_gesture_start_position(&self, scroll_view: *mut AnyObject) -> Point<Pixels> {
+        unsafe {
+            let pan_gesture: *mut AnyObject = msg_send![scroll_view, panGestureRecognizer];
+            let location: ObjcCGPoint = msg_send![pan_gesture, locationInView: self.view];
+            let translation: ObjcCGPoint = msg_send![pan_gesture, translationInView: self.view];
+            Point::new(
+                px((location.x - translation.x) as f32),
+                px((location.y - translation.y) as f32),
+            )
+        }
     }
 
     fn position_metal_view(&self, offset: Point<Pixels>) {
