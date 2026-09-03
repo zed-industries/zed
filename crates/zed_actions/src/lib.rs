@@ -733,13 +733,13 @@ pub enum RevealTarget {
 #[action(namespace = task)]
 #[serde(untagged)]
 pub enum Spawn {
-    /// Spawns a task by the name given.
+    /// Spawns the nearest applicable task with the given name.
     ByName {
         task_name: String,
         #[serde(default)]
         reveal_target: Option<RevealTarget>,
     },
-    /// Spawns a task by the tag given.
+    /// Spawns all applicable tasks with the given tag.
     ByTag {
         task_tag: String,
         #[serde(default)]
