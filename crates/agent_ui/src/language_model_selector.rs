@@ -19,7 +19,7 @@ use zed_actions::agent::OpenSettings;
 
 use crate::ui::{ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
 
-type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
+type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, bool, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
 type OnToggleFavorite = Arc<dyn Fn(Arc<dyn LanguageModel>, bool, &mut App) + 'static>;
 
@@ -27,7 +27,7 @@ pub type LanguageModelSelector = Picker<LanguageModelPickerDelegate>;
 
 pub fn language_model_selector(
     get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
-    on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
+    on_model_changed: impl Fn(Arc<dyn LanguageModel>, bool, &mut App) + 'static,
     on_toggle_favorite: impl Fn(Arc<dyn LanguageModel>, bool, &mut App) + 'static,
     popover_styles: bool,
     focus_handle: FocusHandle,
@@ -484,7 +484,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             self.filtered_entries.get(self.selected_index)
         {
             let model = model_info.model.clone();
-            (self.on_model_changed)(model.clone(), cx);
+            let save_to_settings = !window.modifiers().shift;
+            (self.on_model_changed)(model.clone(), save_to_settings, cx);
 
             let current_index = self.selected_index;
             self.set_selected_index(current_index, window, cx);

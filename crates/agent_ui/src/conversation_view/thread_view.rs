@@ -11986,7 +11986,7 @@ impl ThreadView {
         else {
             return;
         };
-        let select = selector.select_model(model_id, cx);
+        let select = selector.select_model(model_id, false, cx);
         cx.spawn(async move |this, cx| {
             select.await?;
             this.update(cx, |this, cx| this.retry_generation(cx))?;
