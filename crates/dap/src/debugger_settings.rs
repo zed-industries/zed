@@ -17,7 +17,7 @@ pub struct DebuggerSettings {
     pub button: bool,
     /// Time in milliseconds until timeout error when connecting to a TCP debug adapter
     ///
-    /// Default: 2000ms
+    /// Default: 15000ms
     pub timeout: u64,
     /// Whether to log messages between active debug adapters and Zed
     ///

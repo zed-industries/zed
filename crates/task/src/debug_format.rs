@@ -23,7 +23,7 @@ pub struct TcpArgumentsTemplate {
     pub host: Option<IpAddr>,
     /// The max amount of time in milliseconds to connect to a tcp DAP before returning an error
     ///
-    /// Default: 2000ms
+    /// Default: 15000ms
     pub timeout: Option<u64>,
 }
 
@@ -394,7 +394,7 @@ impl DebugTaskFile {
                             },
                             "timeout": {
                                 "type": "integer",
-                                "description": "The max amount of time in milliseconds to connect to a tcp DAP before returning an error (default: 2000ms)"
+                                "description": "The max amount of time in milliseconds to connect to a tcp DAP before returning an error (default: 15000ms)"
                             }
                         }
                     }

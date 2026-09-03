@@ -2897,7 +2897,7 @@
   "debugger": {
     "stepping_granularity": "line",
     "save_breakpoints": true,
-    "timeout": 2000,
+    "timeout": 15000,
     "dock": "bottom",
     "log_dap_communications": true,
     "format_dap_log_messages": true,
