@@ -25,6 +25,8 @@ const MAX_SNAPSHOT_VARIABLE_VALUE_LENGTH: usize = 16 * 1024;
 const MAX_SNAPSHOT_OUTPUT_EVENTS: usize = 1_000;
 const MAX_SNAPSHOT_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_SNAPSHOT_SOURCE_CONTEXT_LINES: usize = 200;
+const SESSION_BOOT_POLL_INTERVAL_MS: u64 = 250;
+const SESSION_BOOT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Interact with Zed's debugger. Read-only operations such as `snapshot`,
 /// `list_sessions`, `list_breakpoints`, and `list_adapters` are available in
@@ -42,8 +44,11 @@ const MAX_SNAPSHOT_SOURCE_CONTEXT_LINES: usize = 200;
 ///   explicit `session_id` and `thread_id` when possible.
 /// - `continue`, `step`, `pause`, and `run_to_line` wait for the debugger to
 ///   stop, exit, or time out, then return a fresh snapshot.
-/// - `start_session` runs code through Zed's debugger UI; use an existing debug
-///   scenario shape with adapter, label, and adapter-specific config.
+/// - `start_session` runs code through Zed's debugger UI; pass the launch
+///   config fields at the scenario top level (`{"adapter", "label",
+///   "request", "program", "cwd", ...}`). A nested `"config"` object is
+///   also accepted. Program output is routed to the debug console so that
+///   snapshots include it.
 /// - Do not use this tool for expression evaluation; evaluation is intentionally
 ///   not available.
 /// </guidelines>
@@ -503,7 +508,9 @@ impl DebuggerTool {
                         .context("scenario is required for debugger start_session")?,
                     worktree_id: input.worktree_id,
                 };
+                normalize_scenario_config(&mut start_session_input.scenario);
                 ensure_stop_on_entry(&mut start_session_input.scenario);
+                ensure_console_output(&mut start_session_input.scenario);
                 authorize_debugger_operation(
                     &event_stream,
                     format!(
@@ -537,6 +544,8 @@ impl DebuggerTool {
                     worktree_id: start_session_input.worktree_id.map(WorktreeId::from_proto),
                 };
                 let info = self.environment.start_debug_session(request, cx).await?;
+                let api = cx.update(|cx| self.api(cx));
+                await_session_boot(api, info.session_id, cx).await?;
                 Ok(success(
                     operation,
                     "started debug session",
@@ -884,6 +893,79 @@ fn ensure_stop_on_entry(scenario: &mut DebugScenario) {
         .is_some_and(|request| request == "attach");
     if !is_attach && !config.contains_key("stopOnEntry") {
         config.insert("stopOnEntry".to_string(), Value::Bool(true));
+    }
+}
+
+/// The tool documents launch-config fields spread at the scenario top level
+/// (`scenario.config` is serde(flatten)), but models sometimes nest them under
+/// a `"config"` key, which arrives as `{"config": {...}}` inside the flattened
+/// config and is rejected by the debugger panel. Unwrap the nested form so both
+/// shapes start the same way.
+fn normalize_scenario_config(scenario: &mut DebugScenario) {
+    if scenario.config.get("config").is_some_and(Value::is_object)
+        && scenario.config.get("request").is_none()
+    {
+        scenario.config = scenario.config.get("config").cloned().unwrap_or_default();
+    }
+}
+
+/// Route the debuggee's stdio to the debug console (DAP output events) rather
+/// than an integrated terminal, so agent snapshots can include program output.
+/// Only overrides adapters whose launch configs default stdio to a terminal;
+/// an explicit `console`/`terminal`/`stdio` in the config is left untouched.
+fn ensure_console_output(scenario: &mut DebugScenario) {
+    let console_value = match scenario.adapter.as_ref() {
+        "Debugpy" => "internalConsole",
+        "CodeLLDB" => "console",
+        _ => return,
+    };
+    let Value::Object(config) = &mut scenario.config else {
+        return;
+    };
+    if !config.contains_key("console")
+        && !config.contains_key("terminal")
+        && !config.contains_key("stdio")
+    {
+        config.insert("console".to_string(), Value::String(console_value.into()));
+    }
+}
+
+/// `start_debug_session` registers the session synchronously, but adapter boot
+/// and scenario validation finish asynchronously — a rejected config or a
+/// failed launch removes the session moments later. Wait until the session is
+/// actually alive so callers don't get an id for a session that never booted.
+async fn await_session_boot(
+    api: AgentDebuggerApi,
+    session_id: u64,
+    cx: &mut gpui::AsyncApp,
+) -> Result<()> {
+    let deadline = std::time::Instant::now() + SESSION_BOOT_TIMEOUT;
+    loop {
+        let sessions = cx.update(|cx| api.list_sessions(cx));
+        let session = sessions
+            .iter()
+            .find(|session| session.session_id.to_proto() == session_id);
+        let child_booted = sessions
+            .iter()
+            .any(|session| session.parent_session_id.map(|id| id.to_proto()) == Some(session_id));
+
+        match session {
+            Some(session) if session.status != AgentDebuggerSessionStatus::Booting => return Ok(()),
+            Some(_) => {}
+            None if child_booted => return Ok(()),
+            None => anyhow::bail!(
+                "debug session {session_id} failed to start and was removed (the adapter rejected the config or failed to launch — see Zed.log for the adapter error)"
+            ),
+        }
+
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!(
+                "debug session {session_id} was still booting after {SESSION_BOOT_TIMEOUT:?}"
+            );
+        }
+        cx.background_executor()
+            .timer(Duration::from_millis(SESSION_BOOT_POLL_INTERVAL_MS))
+            .await;
     }
 }
 
