@@ -859,7 +859,7 @@ impl Session {
         cx.new::<Self>(|cx| {
             cx.subscribe(&breakpoint_store, |this, store, event, cx| match event {
                 BreakpointStoreEvent::BreakpointsUpdated(path, reason) => {
-                    if let Some(local) = (!this.ignore_breakpoints)
+                    if let Some(local) = (!this.ignore_breakpoints && !this.is_terminated())
                         .then(|| this.as_running_mut())
                         .flatten()
                     {
@@ -869,7 +869,7 @@ impl Session {
                     };
                 }
                 BreakpointStoreEvent::BreakpointsCleared(paths) => {
-                    if let Some(local) = (!this.ignore_breakpoints)
+                    if let Some(local) = (!this.ignore_breakpoints && !this.is_terminated())
                         .then(|| this.as_running_mut())
                         .flatten()
                     {
@@ -1597,6 +1597,10 @@ impl Session {
             }
             Events::Exited(_event) => {
                 self.clear_active_debug_line(cx);
+                // The debuggee is gone; end the session so it doesn't linger
+                // in session lists as a stale "stopped" entry (some adapters
+                // never follow up with a `terminated` event).
+                self.shutdown(cx).detach();
             }
             Events::Terminated(_) => {
                 self.shutdown(cx).detach();

@@ -740,7 +740,9 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(session) = self.sessions.remove(&session_id) else {
-            return Task::ready(Err(anyhow!("Could not find session: {:?}", session_id)));
+            // Shutdown is idempotent: a `terminated`/`exited` event and an
+            // explicit stop can race and both attempt to remove the session.
+            return Task::ready(Ok(()));
         };
 
         let shutdown_children = session

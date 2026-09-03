@@ -43,6 +43,12 @@ pub enum AgentDebuggerSessionStatus {
     Terminated,
 }
 
+impl AgentDebuggerSessionStatus {
+    pub fn is_booting(&self) -> bool {
+        matches!(self, Self::Booting)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AgentSourceBreakpoint {
     pub path: PathBuf,
@@ -340,9 +346,14 @@ impl AgentDebuggerApi {
         cx.spawn(async move |cx| {
             let session = session_by_id(&dap_store, session_id, cx)?;
             wait_for_session_ready(&session, timeout, cx).await?;
-            if session.read_with(cx, |session, _| session.thread_status(thread_id))
+            // A stale `Stopped` status is not proof the debuggee is halted —
+            // Delve reports a synthetic "Current" thread as stopped while the
+            // program keeps running. Only treat the session as already paused
+            // when a stack trace actually succeeds.
+            let already_stopped = session.read_with(cx, |session, _| session.thread_status(thread_id))
                 == ThreadStatus::Stopped
-            {
+                && wait_for_stack_trace(&session, Some(thread_id), cx).await;
+            if already_stopped {
                 return Ok(AgentDebuggerControlResult {
                     status: AgentDebuggerWaitStatus::Stopped,
                     stopped_thread_id: Some(thread_id),
@@ -353,7 +364,26 @@ impl AgentDebuggerApi {
             session
                 .update(cx, |session, cx| session.agent_pause_thread(thread_id, cx))
                 .await?;
-            wait_for_stop_or_timeout(stop_wait, timeout, cx).await
+            let result = wait_for_stop_or_timeout(stop_wait, timeout, cx).await?;
+            if result.status == AgentDebuggerWaitStatus::Stopped
+                && !wait_for_stack_trace(&session, result.stopped_thread_id, cx).await
+            {
+                // Some adapters acknowledge pause without halting (Delve);
+                // retry once before reporting the broken halt.
+                let stop_wait = subscribe_to_stop(session.clone(), cx)?;
+                session
+                    .update(cx, |session, cx| session.agent_pause_thread(thread_id, cx))
+                    .await?;
+                let retried = wait_for_stop_or_timeout(stop_wait, timeout, cx).await?;
+                if retried.status == AgentDebuggerWaitStatus::Stopped
+                    && !wait_for_stack_trace(&session, retried.stopped_thread_id, cx).await
+                {
+                    anyhow::bail!(
+                        "Pause was acknowledged but the debuggee did not halt: stack traces still fail while the debuggee is running (adapter quirk)"
+                    );
+                }
+            }
+            Ok(result)
         })
     }
 
@@ -551,6 +581,25 @@ async fn snapshot_session(
         });
     }
 
+    // The adapter connects asynchronously after the session is registered;
+    // fetching threads while the session is still booting races the
+    // connection and fails with "no adapter running". Wait for the session
+    // to become ready first, and report a clear note instead of failing if
+    // the adapter never finishes booting.
+    if session.read_with(cx, |session, _| session.is_building()) {
+        if let Err(error) = wait_for_session_ready(&session, SNAPSHOT_BOOT_WAIT_TIMEOUT, cx).await {
+            notes.push(format!(
+                "Session is still starting; threads were not requested ({error})"
+            ));
+            return Ok(AgentDebuggerSnapshot {
+                session: session_summary,
+                threads: Vec::new(),
+                output,
+                notes,
+            });
+        }
+    }
+
     let dap_threads = session
         .update(cx, |session, _| session.agent_fetch_threads())
         .await?;
@@ -695,6 +744,37 @@ async fn wait_for_session_ready(
     }
 }
 
+/// How long a snapshot waits for a booting session to become ready before
+/// giving up with a note (matches the adapter TCP connect timeout).
+const SNAPSHOT_BOOT_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Polls a short window for a successful stack trace, which is the only
+/// reliable signal that the debuggee is actually halted.
+async fn wait_for_stack_trace(
+    session: &Entity<Session>,
+    thread_id: Option<ThreadId>,
+    cx: &mut AsyncApp,
+) -> bool {
+    let Some(thread_id) = thread_id else {
+        return false;
+    };
+    for _ in 0..10 {
+        if session
+            .update(cx, |session, _| {
+                session.agent_fetch_stack_frames(thread_id, 1)
+            })
+            .await
+            .is_ok()
+        {
+            return true;
+        }
+        cx.background_executor()
+            .timer(Duration::from_millis(100))
+            .await;
+    }
+    false
+}
+
 /// Waits for a session that is still booting to finish, and reports whether the
 /// given thread ended up stopped — which happens when a breakpoint is hit
 /// during launch. In that case the caller should return the current stop instead
@@ -772,6 +852,13 @@ async fn stack_frame_snapshot(
     };
 
     for scope in dap_scopes {
+        // The agent doesn't need raw register dumps, and some adapters (GDB)
+        // report hundreds of register variables regardless of the limits.
+        if scope.name == "Registers" {
+            notes.push("Registers scope omitted from the snapshot".to_string());
+            continue;
+        }
+
         let mut variables_unavailable = false;
         let variables = if scope.variables_reference == 0 || limits.max_variables_per_scope == 0 {
             if scope.variables_reference != 0 && limits.max_variables_per_scope == 0 {
@@ -826,6 +913,9 @@ async fn stack_frame_snapshot(
 
         let variables = variables
             .into_iter()
+            // Delve exposes an uninitialized `~rN` return slot before the
+            // return executes; it's adapter noise, not program state.
+            .filter(|variable| !variable.name.starts_with("~r"))
             .map(|variable| variable_snapshot(variable, limits.max_variable_value_length))
             .collect::<Vec<_>>();
         if variables.iter().any(|variable| variable.value_truncated) {
