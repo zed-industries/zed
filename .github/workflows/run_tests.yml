@@ -172,6 +172,12 @@ jobs:
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
         config: ./typos.toml
+    - name: steps::install_cargo_sort
+      uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
+      with:
+        tool: cargo-sort@2.1.4
+    - name: run_tests::run_cargo_sort
+      run: cargo sort --check --workspace .
     - name: run_tests::fetch_ts_query_ls
       run: gh release download v3.15.1 --repo ribru17/ts_query_ls --pattern ts_query_ls-x86_64-unknown-linux-gnu.tar.gz --dir "$GITHUB_WORKSPACE"
       env:
@@ -700,7 +706,7 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
-    - name: run_tests::check_dependencies::install_cargo_shear
+    - name: steps::install_cargo_shear
       uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
       with:
         tool: cargo-shear@1.13.4

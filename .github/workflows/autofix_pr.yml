@@ -51,7 +51,7 @@ jobs:
       uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
       with:
         version: '9'
-    - name: autofix_pr::run_autofix::install_cargo_shear
+    - name: steps::install_cargo_shear
       if: inputs.run_clippy == true || inputs.run_clippy == 'true'
       uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
       with:

@@ -61,10 +61,6 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
     }
 
-    fn install_cargo_shear() -> Step<Use> {
-        steps::taiki_install_action("cargo-shear@1.13.4")
-    }
-
     fn run_cargo_fmt() -> Step<Run> {
         named::bash("cargo fmt --all")
     }
@@ -116,7 +112,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_pnpm())
-            .add_step(install_cargo_shear().if_condition(clippy_enabled(run_clippy)))
+            .add_step(steps::install_cargo_shear().if_condition(clippy_enabled(run_clippy)))
             .add_step(run_cargo_fix().if_condition(clippy_enabled(run_clippy)))
             .add_step(run_cargo_shear_fix().if_condition(clippy_enabled(run_clippy)))
             .add_step(run_clippy_fix().if_condition(clippy_enabled(run_clippy)))
