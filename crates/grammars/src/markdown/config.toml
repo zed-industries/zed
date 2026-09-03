@@ -27,6 +27,7 @@ ordered_list = [{ pattern = "(\\d+)\\. ", format = "{1}. " }]
 task_list = { prefixes = ["- [ ] ", "- [x] ", "- [X] "], continuation = "- [ ] " }
 
 auto_indent_on_paste = false
+auto_indent_on_move = false
 auto_indent_using_last_non_empty_line = false
 tab_size = 2
 decrease_indent_patterns = [

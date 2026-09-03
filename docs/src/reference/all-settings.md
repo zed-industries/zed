@@ -152,6 +152,16 @@ Non-negative `float` values
 
 `boolean` values
 
+## Auto Indent On Move
+
+- Description: Whether indentation of move line up or down keybind should be adjusted based on the context.
+- Setting: `auto_indent_on_move`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Auto Install extensions
 
 - Description: Define extensions to install automatically or never install.
