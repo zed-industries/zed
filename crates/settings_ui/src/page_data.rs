@@ -173,6 +173,20 @@ fn general_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "On New Window",
+                description: "What to show when opening a new window.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("on_new_window"),
+                    pick: |settings_content| settings_content.workspace.on_new_window.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.on_new_window = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "On Last Window Closed",
                 description: "What to do when the last window is closed.",
                 field: Box::new(SettingField {
@@ -5042,7 +5056,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn pane_modifiers_section() -> [SettingsPageItem; 4] {
+    fn pane_modifiers_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Pane Modifiers"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5104,6 +5118,22 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| settings_content.workspace.zoomed_padding.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.workspace.zoomed_padding = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Close Panel on Toggle",
+                description: "Whether invoking a panel's ToggleFocus action while it's already focused closes the panel, instead of just moving focus back to the editor.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("close_panel_on_toggle"),
+                    pick: |settings_content| {
+                        settings_content.workspace.close_panel_on_toggle.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.close_panel_on_toggle = value;
                     },
                 }),
                 metadata: None,
