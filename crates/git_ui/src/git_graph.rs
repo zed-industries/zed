@@ -1,6 +1,9 @@
 pub use crate::commit_context_menu::{CopyCommitSha, CopyCommitTag, OpenCommitView};
 use crate::{
-    commit_context_menu::{CommitContextMenuData, CommitContextMenuSource, commit_context_menu},
+    commit_context_menu::{
+        CUSTOM_GIT_COMMANDS_DOCS_SLUG, CommitContextMenuData, CommitContextMenuSource,
+        commit_context_menu, git_context_menu_tasks, git_task_context,
+    },
     commit_tooltip::CommitAvatar,
     commit_view::CommitView,
     git_status_icon,
@@ -18,7 +21,7 @@ use gpui::{
     Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
     DismissEvent, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable,
     Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollHandle, ScrollStrategy,
-    ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
+    ScrollWheelEvent, SharedString, Subscription, Task, TextRun, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
     px, uniform_list,
 };
@@ -27,7 +30,7 @@ use markdown::{Markdown, MarkdownElement};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use picker::{Picker, PickerDelegate};
 use project::{
-    ProjectPath,
+    ProjectPath, TaskSourceKind,
     git_store::{
         CommitDataState, CommitDiff, CommitFile, GitGraphEvent, GitStore, GitStoreEvent,
         GraphDataResponse, Repository, RepositoryEvent, RepositoryId,
@@ -41,6 +44,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
+use task::ResolvedTask;
 use zed_actions::{
     buffer_search,
     search::{SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive},
@@ -49,8 +53,8 @@ use zed_actions::{
 use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
-    Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, DiffStat, Divider,
-    HeaderResizeInfo, HighlightedLabel, IndentGuideColors, ListItem, ListItemSpacing,
+    Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry, DiffStat,
+    Divider, HeaderResizeInfo, HighlightedLabel, IndentGuideColors, ListItem, ListItemSpacing,
     RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
     TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar, bind_redistributable_columns,
     prelude::*, redistribute_hidden_fractions, redistribute_hidden_widths,
@@ -62,11 +66,14 @@ use workspace::{
     item::{Item, ItemEvent, TabTooltipContent},
 };
 
-const COMMIT_CIRCLE_RADIUS: Pixels = px(3.5);
+const COMMIT_CIRCLE_RADIUS: Pixels = px(4.5);
 const COMMIT_CIRCLE_STROKE_WIDTH: Pixels = px(1.5);
-const LANE_WIDTH: Pixels = px(16.0);
+const COMMIT_CIRCLE_HALO_WIDTH: Pixels = px(2.0);
+const LANE_WIDTH: Pixels = px(18.0);
 const LEFT_PADDING: Pixels = px(12.0);
-const LINE_WIDTH: Pixels = px(1.5);
+const LINE_WIDTH: Pixels = px(2.0);
+const REF_LABEL_GUTTER_MIN_WIDTH: Pixels = px(240.0);
+const REF_LABEL_GUTTER_MAX_WIDTH: Pixels = px(280.0);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
 const COMMIT_TAG_LIST_WIDTH_IN_REMS: Rems = rems(10.);
@@ -880,6 +887,10 @@ struct GraphData {
     commits: Vec<Rc<CommitEntry>>,
     max_commit_count: AllCommitCount,
     max_lanes: usize,
+    /// Tracks the longest ref label we've seen (by character count) so we don't
+    /// have to re-scan on every commit. The actual pixel width is computed
+    /// lazily in `ref_label_gutter_width`.
+    widest_ref_label: Option<(SharedString, usize)>,
     lines: Vec<Rc<CommitLine>>,
     active_commit_lines: HashMap<CommitLineKey, usize>,
     active_commit_lines_by_parent: HashMap<Oid, SmallVec<[usize; 1]>>,
@@ -896,6 +907,7 @@ impl GraphData {
             commits: Vec::default(),
             max_commit_count: AllCommitCount::NotLoaded,
             max_lanes: 0,
+            widest_ref_label: None,
             lines: Vec::default(),
             active_commit_lines: HashMap::default(),
             active_commit_lines_by_parent: HashMap::default(),
@@ -913,6 +925,7 @@ impl GraphData {
         self.next_color = BranchColor(0);
         self.max_commit_count = AllCommitCount::NotLoaded;
         self.max_lanes = 0;
+        self.widest_ref_label = None;
     }
 
     fn first_empty_lane_idx(&mut self) -> ActiveLaneIdx {
@@ -1035,6 +1048,17 @@ impl GraphData {
                 });
 
             self.max_lanes = self.max_lanes.max(self.lane_states.len());
+
+            for ref_name in commit.ref_names.iter() {
+                let char_count = ref_name.chars().count();
+                let is_wider = self
+                    .widest_ref_label
+                    .as_ref()
+                    .is_none_or(|(_, widest_count)| char_count > *widest_count);
+                if is_wider {
+                    self.widest_ref_label = Some((ref_name.clone(), char_count));
+                }
+            }
 
             self.commits.push(Rc::new(CommitEntry {
                 data: commit.clone(),
@@ -1242,9 +1266,13 @@ fn to_row_center(
     bounds.origin.y + to_row as f32 * row_height + row_height / 2.0 - scroll_offset
 }
 
-fn draw_commit_circle(center_x: Pixels, center_y: Pixels, color: Hsla, window: &mut Window) {
-    let radius = COMMIT_CIRCLE_RADIUS;
-
+fn fill_circle(
+    center_x: Pixels,
+    center_y: Pixels,
+    radius: Pixels,
+    color: Hsla,
+    window: &mut Window,
+) {
     let mut builder = PathBuilder::fill();
 
     // Start at the rightmost point of the circle
@@ -1272,6 +1300,72 @@ fn draw_commit_circle(center_x: Pixels, center_y: Pixels, color: Hsla, window: &
     }
 }
 
+/// Paints a horizontal dashed line between two x positions at a given y, used
+/// to connect a branch/tag ref label in the gutter to its commit node.
+fn paint_dashed_connector(
+    from_x: Pixels,
+    to_x: Pixels,
+    y: Pixels,
+    color: Hsla,
+    window: &mut Window,
+) {
+    const DASH: f32 = 4.0;
+    const GAP: f32 = 3.0;
+    const THICKNESS: f32 = 1.0;
+
+    let (start, end) = if from_x <= to_x {
+        (from_x, to_x)
+    } else {
+        (to_x, from_x)
+    };
+
+    let mut x = start;
+    while x < end {
+        let segment_end = (x + px(DASH)).min(end);
+        let dash_bounds = Bounds::new(
+            point(x, y - px(THICKNESS / 2.0)),
+            gpui::Size {
+                width: segment_end - x,
+                height: px(THICKNESS),
+            },
+        );
+        window.paint_quad(gpui::fill(dash_bounds, color));
+        x = segment_end + px(GAP);
+    }
+}
+
+/// Draws a commit node: a background-colored "halo" ring that masks any
+/// connector lines passing through the lane, an outer ring in the branch
+/// color, and a lighter center so the node reads as a clear, distinct point.
+fn draw_commit_circle(
+    center_x: Pixels,
+    center_y: Pixels,
+    color: Hsla,
+    background: Hsla,
+    window: &mut Window,
+) {
+    // Halo: clears space around the node so crossing lines don't touch it.
+    fill_circle(
+        center_x,
+        center_y,
+        COMMIT_CIRCLE_RADIUS + COMMIT_CIRCLE_HALO_WIDTH,
+        background,
+        window,
+    );
+
+    // Outer ring in the branch color.
+    fill_circle(center_x, center_y, COMMIT_CIRCLE_RADIUS, color, window);
+
+    // Inner fill makes the node read as a ring rather than a solid dot.
+    fill_circle(
+        center_x,
+        center_y,
+        (COMMIT_CIRCLE_RADIUS - COMMIT_CIRCLE_STROKE_WIDTH).max(px(0.)),
+        background,
+        window,
+    );
+}
+
 fn compute_diff_stats(diff: &CommitDiff) -> (usize, usize) {
     diff.files.iter().fold((0, 0), |(added, removed), file| {
         let old_text = file.old_text.as_deref().unwrap_or("");
@@ -1293,6 +1387,62 @@ struct GitGraphContextMenu {
     position: Point<Pixels>,
     target_entry_index: Option<usize>,
     _subscription: Subscription,
+}
+
+#[derive(Clone)]
+struct RefMenuEntry {
+    ref_name: Option<SharedString>,
+    git_tasks: Vec<(TaskSourceKind, ResolvedTask)>,
+}
+
+impl RefMenuEntry {
+    fn add_entries(
+        self,
+        mut menu: ContextMenu,
+        git_graph: &Entity<GitGraph>,
+        window: &mut Window,
+    ) -> ContextMenu {
+        if let Some(ref_name) = self.ref_name {
+            menu = menu.entry("Copy Ref Name", None, move |_window, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(ref_name.to_string()));
+            });
+        }
+
+        menu = menu.separator().header("Custom Commands");
+
+        if self.git_tasks.is_empty() {
+            return menu.item(
+                ContextMenuEntry::new("Learn More")
+                    .icon(IconName::ArrowUpRight)
+                    .icon_color(Color::Muted)
+                    .icon_position(IconPosition::End)
+                    .handler(|_window, cx| {
+                        cx.open_url(&release_channel::docs_url(
+                            CUSTOM_GIT_COMMANDS_DOCS_SLUG,
+                            cx,
+                        ));
+                    }),
+            );
+        }
+
+        for (task_source_kind, resolved_task) in self.git_tasks {
+            let label = resolved_task.display_label().to_string();
+            menu = menu.entry(
+                label,
+                None,
+                window.handler_for(git_graph, move |this, window, cx| {
+                    this.schedule_git_task(
+                        task_source_kind.clone(),
+                        resolved_task.clone(),
+                        window,
+                        cx,
+                    );
+                }),
+            );
+        }
+
+        menu
+    }
 }
 
 struct DetailPanelCommitMessage {
@@ -1376,6 +1526,38 @@ impl GitGraph {
         (LANE_WIDTH * self.graph_data.max_lanes.max(6) as f32) + LEFT_PADDING * 2.0
     }
 
+    fn ref_label_gutter_width(&self, window: &Window, cx: &App) -> Pixels {
+        let Some((widest_label, _)) = self.graph_data.widest_ref_label.as_ref() else {
+            return px(0.);
+        };
+
+        let text_style = window.text_style();
+        let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
+        let label_width = window
+            .text_system()
+            .layout_line(
+                widest_label,
+                font_size,
+                &[TextRun {
+                    len: widest_label.len(),
+                    font: text_style.font(),
+                    color: text_style.color,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }],
+                None,
+            )
+            .width;
+
+        label_width
+            .clamp(REF_LABEL_GUTTER_MIN_WIDTH, REF_LABEL_GUTTER_MAX_WIDTH)
+            .min(self.graph_viewport_width(window, cx) / 2.)
+    }
+
+    /// Returns the column fractions in display order:
+    /// `[graph, description, date, author, commit]`.
+    /// For path history there is no graph column, so its fraction is 0.
     fn preview_column_fractions(&self, window: &Window, cx: &App) -> [f32; 5] {
         let raw = self
             .column_widths
@@ -1418,12 +1600,7 @@ impl GitGraph {
                 DefiniteLength::Fraction(commit / table_total),
             ]
         } else {
-            vec![
-                DefiniteLength::Fraction(0.25),
-                DefiniteLength::Fraction(0.25),
-                DefiniteLength::Fraction(0.25),
-                DefiniteLength::Fraction(0.25),
-            ]
+            vec![DefiniteLength::Fraction(0.25); 4]
         };
 
         ColumnWidthConfig::explicit(widths)
@@ -1485,17 +1662,12 @@ impl GitGraph {
                 RedistributableColumnsState::new(
                     4,
                     vec![
-                        DefiniteLength::Fraction(0.72),
+                        DefiniteLength::Fraction(0.64),
+                        DefiniteLength::Fraction(0.14),
                         DefiniteLength::Fraction(0.12),
-                        DefiniteLength::Fraction(0.1),
-                        DefiniteLength::Fraction(0.06),
+                        DefiniteLength::Fraction(0.10),
                     ],
-                    vec![
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                    ],
+                    vec![TableResizeBehavior::Resizable; 4],
                 )
             })
         } else {
@@ -1503,19 +1675,13 @@ impl GitGraph {
                 RedistributableColumnsState::new(
                     5,
                     vec![
-                        DefiniteLength::Fraction(0.14),
-                        DefiniteLength::Fraction(0.6192),
-                        DefiniteLength::Fraction(0.1032),
-                        DefiniteLength::Fraction(0.086),
-                        DefiniteLength::Fraction(0.0516),
+                        DefiniteLength::Fraction(0.30),
+                        DefiniteLength::Fraction(0.37),
+                        DefiniteLength::Fraction(0.13),
+                        DefiniteLength::Fraction(0.11),
+                        DefiniteLength::Fraction(0.09),
                     ],
-                    vec![
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                    ],
+                    vec![TableResizeBehavior::Resizable; 5],
                 )
             })
         };
@@ -1713,64 +1879,124 @@ impl GitGraph {
         Some(SharedString::from(name.to_string()))
     }
 
-    fn render_chip(
-        &self,
-        name: &SharedString,
-        accent_color: gpui::Hsla,
-        is_head: bool,
-    ) -> impl IntoElement {
-        Chip::new(name.clone())
-            .label_size(LabelSize::Small)
-            .truncate()
-            .tooltip({
-                let name = name.clone();
-                move |_, cx| Tooltip::simple(name.clone(), cx)
-            })
-            .map(|chip| {
-                if is_head {
-                    chip.icon(IconName::Check)
-                        .bg_color(accent_color.opacity(0.25))
-                        .border_color(accent_color.opacity(0.5))
-                } else {
-                    chip.bg_color(accent_color.opacity(0.08))
-                        .border_color(accent_color.opacity(0.25))
-                }
-            })
-    }
-
-    /// Renders a ref chip for the commit at `commit_idx`. Chips that name a ref
-    /// (branch, remote ref, or tag) get a right-click handler that opens a
-    /// ref-specific context menu, so that custom commands can be resolved
-    /// against the clicked ref.
+    /// Renders a ref chip for the commit at `commit_idx`. Chips get a
+    /// right-click handler that opens a ref-specific context menu, so that
+    /// custom commands can be resolved against the clicked ref.
     fn render_ref_chip(
         &self,
-        name: &SharedString,
+        name: SharedString,
         accent_color: gpui::Hsla,
         is_head: bool,
         commit_idx: usize,
+        background: gpui::Hsla,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let chip = self.render_chip(name, accent_color, is_head);
-        let Some(ref_name) = Self::ref_name_from_decoration(name) else {
-            return chip.into_any_element();
-        };
+        let tooltip_text = name.clone();
+        let chip_id = SharedString::from(format!("git-graph-ref-chip-{commit_idx}-{name}"));
+
         div()
+            .id(chip_id)
             .min_w_0()
-            .child(chip)
+            .overflow_hidden()
+            .child(
+                Chip::new(name.clone())
+                    .label_size(LabelSize::Small)
+                    .truncate()
+                    .map(|chip| {
+                        if is_head {
+                            chip.icon(IconName::Check)
+                                .bg_color(background.blend(accent_color.opacity(0.25)))
+                                .border_color(accent_color.opacity(0.5))
+                        } else {
+                            chip.icon(IconName::GitBranch)
+                                .icon_color(Color::Custom(accent_color))
+                                .bg_color(background.blend(accent_color.opacity(0.08)))
+                                .border_color(accent_color.opacity(0.25))
+                        }
+                    }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener({
+                    move |this, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+
+                        this.deploy_ref_context_menu(
+                            event.position,
+                            commit_idx,
+                            name.clone(),
+                            window,
+                            cx,
+                        );
+                    }
+                }),
+            )
+            .tooltip(move |_window, cx| Tooltip::simple(tooltip_text.clone(), cx))
+            .into_any_element()
+    }
+
+    fn render_ref_count_chip(
+        &self,
+        hidden_refs: Vec<SharedString>,
+        accent_color: gpui::Hsla,
+        commit_idx: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let hidden_refs_text = hidden_refs
+            .iter()
+            .map(|ref_name| format!("- {ref_name}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let chip_id = SharedString::from(format!("git-graph-ref-count-chip-{commit_idx}"));
+
+        div()
+            .id(chip_id)
+            .flex_none()
+            .cursor_pointer()
+            .child(
+                Chip::new(format!("+{}", hidden_refs.len()))
+                    .label_size(LabelSize::Small)
+                    .label_color(Color::Muted)
+                    .border_color(accent_color.opacity(0.25)),
+            )
+            .tooltip(move |_window, cx| Tooltip::simple(hidden_refs_text.clone(), cx))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    this.deploy_entry_context_menu(
+                    cx.stop_propagation();
+
+                    this.deploy_hidden_refs_context_menu(
                         event.position,
                         commit_idx,
-                        Some(ref_name.clone()),
+                        hidden_refs.clone(),
                         window,
                         cx,
                     );
-                    cx.stop_propagation();
                 }),
             )
             .into_any_element()
+    }
+
+    /// A horizontal dashed line that grows to fill the space between a ref badge
+    /// and the right edge of the gutter, visually connecting the badge to its
+    /// commit node (the canvas paints the rest of the connector up to the node).
+    fn render_dashed_connector(color: Hsla) -> AnyElement {
+        gpui::canvas(
+            move |_bounds, _window, _cx| {},
+            move |bounds: Bounds<Pixels>, _: (), window: &mut Window, _cx: &mut App| {
+                let y = bounds.origin.y + bounds.size.height / 2.0;
+                paint_dashed_connector(
+                    bounds.origin.x,
+                    bounds.origin.x + bounds.size.width,
+                    y,
+                    color,
+                    window,
+                );
+            },
+        )
+        .flex_1()
+        .h_full()
+        .into_any_element()
     }
 
     fn render_table_rows(
@@ -1781,15 +2007,18 @@ impl GitGraph {
     ) -> Vec<Vec<AnyElement>> {
         let repository = self.get_repository(cx);
 
-        let head_branch_name: Option<SharedString> = repository.as_ref().and_then(|repo| {
-            repo.read(cx)
-                .snapshot()
-                .branch
-                .as_ref()
-                .map(|branch| SharedString::from(branch.name().to_string()))
-        });
-
         let row_height = Self::row_height(window, cx);
+
+        let remote = repository.as_ref().and_then(|repository| {
+            let remote_url = repository.read(cx).default_remote_url()?;
+            let provider_registry = GitHostingProviderRegistry::default_global(cx);
+            let (provider, parsed) = parse_git_remote_url(provider_registry, &remote_url)?;
+            Some(GitRemote {
+                host: provider,
+                owner: parsed.owner.into(),
+                repo: parsed.repo.into(),
+            })
+        });
 
         // We fetch data outside the visible viewport to avoid loading entries when
         // users scroll through the git graph
@@ -1811,12 +2040,9 @@ impl GitGraph {
                 let Some((commit, repository)) =
                     self.graph_data.commits.get(idx).zip(repository.as_ref())
                 else {
-                    return vec![
-                        div().h(row_height).into_any_element(),
-                        div().h(row_height).into_any_element(),
-                        div().h(row_height).into_any_element(),
-                        div().h(row_height).into_any_element(),
-                    ];
+                    return (0..4)
+                        .map(|_| div().h(row_height).into_any_element())
+                        .collect();
                 };
 
                 let data = repository.update(cx, |repository, cx| {
@@ -1828,23 +2054,20 @@ impl GitGraph {
                 let short_sha = commit.data.sha.display_short();
                 let mut formatted_time = String::new();
                 let subject: SharedString;
-                let author_name: SharedString;
+                let author_name: Option<SharedString>;
+                let author_email: Option<SharedString>;
 
                 if let CommitDataState::Loaded(ref data) = data {
                     subject = data.subject.clone();
-                    author_name = data.author_name.clone();
+                    author_name = (!data.author_name.is_empty()).then(|| data.author_name.clone());
+                    author_email =
+                        (!data.author_email.is_empty()).then(|| data.author_email.clone());
                     formatted_time = format_timestamp(data.commit_timestamp);
                 } else {
                     subject = "Loading…".into();
-                    author_name = "".into();
+                    author_name = None;
+                    author_email = None;
                 }
-
-                let accent_colors = cx.theme().accents();
-                let accent_color = accent_colors
-                    .0
-                    .get(commit.color_idx)
-                    .copied()
-                    .unwrap_or_else(|| accent_colors.0.first().copied().unwrap_or_default());
 
                 let is_selected = self.selected_entry_idx == Some(idx);
                 let is_matched = self.search_state.matches.contains(&commit.data.sha);
@@ -1897,30 +2120,26 @@ impl GitGraph {
                     div()
                         .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
                         .overflow_hidden()
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .overflow_hidden()
-                                .children((!commit.data.ref_names.is_empty()).then(|| {
-                                    h_flex().gap_1().children(commit.data.ref_names.iter().map(
-                                        |name| {
-                                            let is_head =
-                                                Self::is_head_ref(name.as_ref(), &head_branch_name);
-                                            self.render_ref_chip(
-                                                name,
-                                                accent_color,
-                                                is_head,
-                                                idx,
-                                                cx,
-                                            )
-                                        },
-                                    ))
-                                }))
-                                .child(subject_label),
-                        )
+                        .child(h_flex().gap_2().overflow_hidden().child(subject_label))
                         .into_any_element(),
                     column_label(formatted_time.into()),
-                    column_label(author_name),
+                    {
+                        let avatar_sha: SharedString = commit.data.sha.to_string().into();
+                        let avatar = CommitAvatar::new(&avatar_sha, author_email, remote.as_ref())
+                            .size(px(16.))
+                            .render(window, cx);
+                        h_flex()
+                            .id(ElementId::NamedInteger("commit-author".into(), idx as u64))
+                            .h(row_height)
+                            .items_center()
+                            .gap_1p5()
+                            .overflow_hidden()
+                            .child(avatar)
+                            .when_some(author_name, |this, author_name| {
+                                this.child(column_label(author_name))
+                            })
+                            .into_any_element()
+                    },
                     column_label(short_sha.into()),
                 ]
             })
@@ -2412,6 +2631,102 @@ impl GitGraph {
         self.copy_commit_tag(selected_entry_index, window, cx);
     }
 
+    fn schedule_git_task(
+        &mut self,
+        task_source_kind: TaskSourceKind,
+        resolved_task: ResolvedTask,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.schedule_resolved_task(
+                    task_source_kind,
+                    resolved_task,
+                    false,
+                    window,
+                    cx,
+                );
+            })
+            .ok();
+    }
+
+    fn deploy_ref_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        index: usize,
+        name: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(commit) = self.graph_data.commits.get(index) else {
+            return;
+        };
+
+        let ref_entry = self.ref_menu_entry(commit.data.sha, &name, cx);
+        let git_graph = cx.entity();
+        let context_menu = ContextMenu::build(window, cx, move |menu, window, _| {
+            menu.header(format!("Ref {name}"))
+                .map(|menu| ref_entry.add_entries(menu, &git_graph, window))
+        });
+
+        self.set_context_menu(context_menu, position, Some(index), window, cx);
+    }
+
+    /// Builds a context menu listing the refs that aren't shown inline in the
+    /// gutter. Each ref is a submenu exposing that ref's actions, so users can
+    /// still act on refs hidden behind the "+N" badge.
+    fn deploy_hidden_refs_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        index: usize,
+        hidden_refs: Vec<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(commit) = self.graph_data.commits.get(index) else {
+            return;
+        };
+
+        let ref_entries = hidden_refs
+            .into_iter()
+            .map(|name| (self.ref_menu_entry(commit.data.sha, &name, cx), name))
+            .collect::<Vec<_>>();
+
+        let git_graph = cx.entity();
+        let context_menu = ContextMenu::build(window, cx, move |mut menu, _window, _| {
+            menu = menu.header("Refs");
+            for (ref_entry, name) in ref_entries {
+                let git_graph = git_graph.clone();
+                menu = menu.submenu(name, move |submenu, window, _cx| {
+                    ref_entry.clone().add_entries(submenu, &git_graph, window)
+                });
+            }
+            menu
+        });
+
+        self.set_context_menu(context_menu, position, Some(index), window, cx);
+    }
+
+    /// Resolves the data needed to populate a single ref's context-menu entries
+    /// (its short name and any custom git command tasks). Kept separate so the
+    /// same entries can be rendered both as a standalone menu and as a submenu.
+    fn ref_menu_entry(&self, sha: Oid, name: &SharedString, cx: &App) -> RefMenuEntry {
+        let ref_name = Self::ref_name_from_decoration(name);
+        let repository = self
+            .get_repository(cx)
+            .map(|repository| repository.downgrade());
+        let git_tasks = git_context_menu_tasks(
+            git_task_context(&repository, sha, ref_name.as_deref(), cx),
+            &self.workspace,
+            cx,
+        );
+        RefMenuEntry {
+            ref_name,
+            git_tasks,
+        }
+    }
+
     fn deploy_entry_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -2875,7 +3190,14 @@ impl GitGraph {
                         h_flex().gap_1().flex_wrap().justify_center().children(
                             ref_names.iter().map(|name| {
                                 let is_head = Self::is_head_ref(name.as_ref(), &head_branch_name);
-                                self.render_ref_chip(name, accent_color, is_head, selected_idx, cx)
+                                self.render_ref_chip(
+                                    name.clone(),
+                                    accent_color,
+                                    is_head,
+                                    selected_idx,
+                                    cx.theme().colors().editor_background,
+                                    cx,
+                                )
                             }),
                         )
                     }))
@@ -3194,12 +3516,12 @@ impl GitGraph {
         let first_visible_row = (scroll_offset_y / row_height).floor() as usize;
         let vertical_scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
 
-        let graph_viewport_width = self.graph_viewport_width(window, cx);
-        let graph_width = if self.graph_canvas_content_width() > graph_viewport_width {
-            self.graph_canvas_content_width()
-        } else {
-            graph_viewport_width
-        };
+        // The graph column is split into a fixed-width ref-label gutter and the
+        // canvas; the canvas only occupies the space to the right of the gutter.
+        let canvas_viewport_width = (self.graph_viewport_width(window, cx)
+            - self.ref_label_gutter_width(window, cx))
+        .max(px(0.));
+        let graph_width = self.graph_canvas_content_width().max(canvas_viewport_width);
         let last_visible_row = first_visible_row + visible_row_count + 1;
 
         let viewport_range = first_visible_row.min(loaded_commit_count.saturating_sub(1))
@@ -3233,13 +3555,15 @@ impl GitGraph {
                 graph_canvas_bounds.set(Some(bounds));
 
                 window.paint_layer(bounds, |window| {
-                    let accent_colors = cx.theme().accents();
+                    let theme = cx.theme();
+                    let accent_colors = theme.accents();
+                    let background = theme.colors().editor_background;
 
-                    let hover_bg = cx.theme().colors().element_hover.opacity(0.6);
+                    let hover_bg = theme.colors().element_hover.opacity(0.6);
                     let selected_bg = if is_focused {
-                        cx.theme().colors().element_selected
+                        theme.colors().element_selected
                     } else {
-                        cx.theme().colors().element_hover
+                        theme.colors().element_hover
                     };
 
                     for visible_row_idx in 0..rows.len() {
@@ -3252,7 +3576,6 @@ impl GitGraph {
                         if is_hovered || is_selected || is_context_menu_target {
                             let row_y = bounds.origin.y + visible_row_idx as f32 * row_height
                                 - vertical_scroll_offset;
-
                             let row_bounds = Bounds::new(
                                 point(bounds.origin.x, row_y),
                                 gpui::Size {
@@ -3268,17 +3591,6 @@ impl GitGraph {
                             };
                             window.paint_quad(gpui::fill(row_bounds, bg_color));
                         }
-                    }
-
-                    for (row_idx, row) in rows.into_iter().enumerate() {
-                        let row_color = accent_colors.color_for_index(row.color_idx as u32);
-                        let row_y_center =
-                            bounds.origin.y + row_idx as f32 * row_height + row_height / 2.0
-                                - vertical_scroll_offset;
-
-                        let commit_x = lane_center_x(bounds, row.lane as f32);
-
-                        draw_commit_circle(commit_x, row_y_center, row_color, window);
                     }
 
                     for line in commit_lines {
@@ -3444,11 +3756,217 @@ impl GitGraph {
                             }
                         }
                     }
+
+                    // Commit nodes are painted last so they sit on top of the
+                    // connector lines, keeping each commit a clear, distinct point.
+                    for (row_idx, row) in rows.into_iter().enumerate() {
+                        let absolute_row_idx = first_visible_row + row_idx;
+                        let row_color = accent_colors.color_for_index(row.color_idx as u32);
+                        let row_y_center =
+                            bounds.origin.y + row_idx as f32 * row_height + row_height / 2.0
+                                - vertical_scroll_offset;
+
+                        let commit_x = lane_center_x(bounds, row.lane as f32);
+
+                        if !row.data.ref_names.is_empty() {
+                            paint_dashed_connector(
+                                bounds.origin.x,
+                                commit_x - COMMIT_CIRCLE_RADIUS,
+                                row_y_center,
+                                row_color.opacity(0.5),
+                                window,
+                            );
+                        }
+
+                        // Match the node halo to the row's effective background so
+                        // the ring blends seamlessly on hovered/selected rows.
+                        let node_background = if selected_entry_idx == Some(absolute_row_idx)
+                            || context_menu_target_index == Some(absolute_row_idx)
+                        {
+                            background.blend(selected_bg)
+                        } else if hovered_entry_idx == Some(absolute_row_idx) {
+                            background.blend(hover_bg)
+                        } else {
+                            background
+                        };
+
+                        draw_commit_circle(
+                            commit_x,
+                            row_y_center,
+                            row_color,
+                            node_background,
+                            window,
+                        );
+                    }
                 })
             },
         )
         .w(graph_width)
         .h_full()
+    }
+
+    /// Renders the branch/tag ref labels as an overlay anchored to the left of
+    /// the graph column, positioned at the row of the commit each ref points to
+    /// (i.e. just before that commit's node). This mirrors the scroll math used
+    /// by `render_graph_canvas` so the labels stay in sync as the graph scrolls.
+    fn render_graph_ref_labels(
+        &self,
+        window: &Window,
+        cx: &mut Context<GitGraph>,
+    ) -> impl IntoElement {
+        let row_height = Self::row_height(window, cx);
+        let gutter_width = self.ref_label_gutter_width(window, cx);
+        let visible_row_count = self.visible_row_count(window, cx);
+        let table_state = self.table_interaction_state.read(cx);
+        let viewport_height = table_state
+            .scroll_handle
+            .0
+            .borrow()
+            .last_item_size
+            .map(|size| size.item.height)
+            .unwrap_or(window.viewport_size().height);
+        let loaded_commit_count = self.graph_data.commits.len();
+
+        let content_height = row_height * loaded_commit_count;
+        let max_scroll = (content_height - viewport_height).max(px(0.));
+        let scroll_offset_y = (-table_state.scroll_offset().y).clamp(px(0.), max_scroll);
+
+        let first_visible_row = (scroll_offset_y / row_height).floor() as usize;
+        let vertical_scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
+        let last_visible_row = first_visible_row + visible_row_count + 1;
+        let viewport_range = first_visible_row.min(loaded_commit_count.saturating_sub(1))
+            ..last_visible_row.min(loaded_commit_count);
+
+        let head_branch_name: Option<SharedString> = self.get_repository(cx).and_then(|repo| {
+            repo.read(cx)
+                .snapshot()
+                .branch
+                .as_ref()
+                .map(|branch| SharedString::from(branch.name().to_string()))
+        });
+
+        let theme = cx.theme();
+        let accent_colors = theme.accents().clone();
+        let background = theme.colors().editor_background;
+
+        // Hover/selected highlight colors, matching `render_graph_canvas` so the
+        // band painted behind the labels in the gutter lines up with the rest of
+        // the row.
+        let hovered_entry_idx = self.hovered_entry_idx;
+        let selected_entry_idx = self.selected_entry_idx;
+        let context_menu_entry_idx = self
+            .context_menu
+            .as_ref()
+            .and_then(|menu| menu.target_entry_index);
+        let is_focused = self.focus_handle.is_focused(window);
+        let hover_bg = theme.colors().element_hover.opacity(0.6);
+        let selected_bg = if is_focused {
+            theme.colors().element_selected
+        } else {
+            theme.colors().element_hover
+        };
+
+        // Background highlight bands for hovered/selected rows, painted first so
+        // the labels render on top of them.
+        let mut elements = Vec::with_capacity(viewport_range.len());
+        for absolute_idx in viewport_range.clone() {
+            let is_selected = selected_entry_idx == Some(absolute_idx)
+                || context_menu_entry_idx == Some(absolute_idx);
+            let is_hovered = hovered_entry_idx == Some(absolute_idx);
+            if !is_selected && !is_hovered {
+                continue;
+            }
+
+            let visible_row_idx = absolute_idx - first_visible_row;
+            let top = visible_row_idx as f32 * row_height - vertical_scroll_offset;
+            let bg_color = if is_selected { selected_bg } else { hover_bg };
+
+            elements.push(
+                div()
+                    .absolute()
+                    .top(top)
+                    .left_0()
+                    .w(gutter_width)
+                    .h(row_height)
+                    .bg(bg_color)
+                    .into_any_element(),
+            );
+        }
+
+        for absolute_idx in viewport_range {
+            let Some(commit) = self.graph_data.commits.get(absolute_idx) else {
+                continue;
+            };
+            if commit.data.ref_names.is_empty() {
+                continue;
+            }
+
+            let visible_row_idx = absolute_idx - first_visible_row;
+            let top = visible_row_idx as f32 * row_height - vertical_scroll_offset;
+            let accent_color = accent_colors.color_for_index(commit.color_idx as u32);
+            let ref_names = commit.data.ref_names.clone();
+
+            // When a commit carries multiple refs we only render a single badge
+            // (preferring the checked-out branch, falling back to the first ref)
+            // plus a "+N" counter, so the gutter stays legible instead of
+            // cramming several truncated chips together.
+            let (primary_name, is_head) = match ref_names
+                .iter()
+                .find(|name| Self::is_head_ref(name.as_ref(), &head_branch_name))
+            {
+                Some(head_ref) => (head_ref.clone(), true),
+                None => match ref_names.first() {
+                    Some(first) => (first.clone(), false),
+                    None => continue,
+                },
+            };
+
+            let primary_chip = self.render_ref_chip(
+                primary_name.clone(),
+                accent_color,
+                is_head,
+                absolute_idx,
+                background,
+                cx,
+            );
+
+            let hidden_refs = ref_names
+                .iter()
+                .filter(|name| *name != &primary_name)
+                .cloned()
+                .collect::<Vec<_>>();
+            let count_chip = (!hidden_refs.is_empty())
+                .then(|| self.render_ref_count_chip(hidden_refs, accent_color, absolute_idx, cx));
+
+            elements.push(
+                div()
+                    .absolute()
+                    .top(top)
+                    .left_0()
+                    .w(gutter_width)
+                    .h(row_height)
+                    .child(
+                        h_flex()
+                            .h_full()
+                            .w_full()
+                            .min_w_0()
+                            .items_center()
+                            .justify_start()
+                            .gap_1()
+                            .pl_1p5()
+                            .child(primary_chip)
+                            .children(count_chip)
+                            .child(Self::render_dashed_connector(accent_color.opacity(0.5))),
+                    )
+                    .into_any_element(),
+            );
+        }
+
+        div()
+            .absolute()
+            .inset_0()
+            .overflow_hidden()
+            .children(elements)
     }
 
     fn row_at_position(
@@ -3787,6 +4305,7 @@ impl Render for GitGraph {
 
             let table_collapsed = table_fraction <= f32::EPSILON;
             let graph_content_width = self.graph_canvas_content_width();
+            let gutter_width = self.ref_label_gutter_width(window, cx);
 
             h_flex()
                 .size_full()
@@ -3871,25 +4390,11 @@ impl Render for GitGraph {
                                 .id("graph-canvas")
                                 .size_full()
                                 .overflow_hidden()
-                                .cursor_pointer()
                                 .child(
                                     div()
                                         .size_full()
                                         .child(self.render_graph_canvas(window, cx)),
-                                )
-                                .on_scroll_wheel(cx.listener(Self::handle_graph_scroll))
-                                .on_mouse_move(cx.listener(Self::handle_graph_mouse_move))
-                                .on_click(cx.listener(Self::handle_graph_click))
-                                .on_mouse_down(
-                                    MouseButton::Right,
-                                    cx.listener(Self::handle_graph_secondary_mouse_down),
-                                )
-                                .on_hover(cx.listener(|this, &is_hovered: &bool, _, cx| {
-                                    if !is_hovered && this.hovered_entry_idx.is_some() {
-                                        this.hovered_entry_idx = None;
-                                        cx.notify();
-                                    }
-                                }));
+                                );
 
                             let commits_table = Table::new(4)
                                 .interactable(&self.table_interaction_state)
@@ -3985,7 +4490,8 @@ impl Render for GitGraph {
                                             .size_full()
                                             .when(!is_path_history && graph_visible, |this| {
                                                 this.child(
-                                                    div()
+                                                    h_flex()
+                                                        .id("graph-column")
                                                         .map(|this| {
                                                             if table_collapsed {
                                                                 this.w(graph_content_width)
@@ -3998,7 +4504,59 @@ impl Render for GitGraph {
                                                         .h_full()
                                                         .min_w_0()
                                                         .overflow_hidden()
-                                                        .child(graph_canvas),
+                                                        .cursor_pointer()
+                                                        .on_scroll_wheel(
+                                                            cx.listener(Self::handle_graph_scroll),
+                                                        )
+                                                        .on_mouse_move(cx.listener(
+                                                            Self::handle_graph_mouse_move,
+                                                        ))
+                                                        .on_click(
+                                                            cx.listener(Self::handle_graph_click),
+                                                        )
+                                                        .on_mouse_down(
+                                                            MouseButton::Right,
+                                                            cx.listener(
+                                                                Self::handle_graph_secondary_mouse_down,
+                                                            ),
+                                                        )
+                                                        .on_hover(cx.listener(
+                                                            |this, &is_hovered: &bool, _, cx| {
+                                                                if !is_hovered
+                                                                    && this
+                                                                        .hovered_entry_idx
+                                                                        .is_some()
+                                                                {
+                                                                    this.hovered_entry_idx = None;
+                                                                    cx.notify();
+                                                                }
+                                                            },
+                                                        ))
+                                                        .when(
+                                                            gutter_width > px(0.),
+                                                            |this| {
+                                                                this.child(
+                                                                    div()
+                                                                        .relative()
+                                                                        .h_full()
+                                                                        .w(gutter_width)
+                                                                        .flex_shrink_0()
+                                                                        .overflow_hidden()
+                                                                        .child(
+                                                                            self.render_graph_ref_labels(window, cx),
+                                                                        ),
+                                                                )
+                                                            },
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .relative()
+                                                                .flex_1()
+                                                                .h_full()
+                                                                .min_w_0()
+                                                                .overflow_hidden()
+                                                                .child(graph_canvas),
+                                                        ),
                                                 )
                                             })
                                             .child(
