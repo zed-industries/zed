@@ -19,7 +19,7 @@ use db::{
     sqlez::{connection::Connection, domain::Domain},
     sqlez_macros::sql,
 };
-use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
+use gpui::{Axis, BackgroundExecutor, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
     ProjectGroupKey,
     bookmark_store::SerializedBookmark,
@@ -2058,22 +2058,23 @@ impl WorkspaceDb {
     // out because they are restored separately by `last_session_workspace_locations`.
     pub async fn recent_project_workspaces_ungrouped(
         &self,
-        fs: &dyn Fs,
+        fs: Arc<dyn Fs>,
+        executor: BackgroundExecutor,
     ) -> Result<Vec<RecentWorkspace>> {
         let remote_connections = self.remote_connections()?;
-        let mut result = Vec::new();
+        let mut tasks = Vec::new();
         for (id, paths, identity_paths_hint, remote_connection_id, _session_id, timestamp) in
             self.recent_workspaces()?
         {
             if let Some(remote_connection_id) = remote_connection_id {
                 if let Some(connection_options) = remote_connections.get(&remote_connection_id) {
-                    result.push(RecentWorkspace {
+                    tasks.push(Task::ready(Some(RecentWorkspace {
                         workspace_id: id,
                         location: SerializedWorkspaceLocation::Remote(connection_options.clone()),
                         paths: paths.clone(),
                         identity_paths: identity_paths_hint.unwrap_or(paths),
                         timestamp,
-                    });
+                    })));
                 }
                 continue;
             }
@@ -2082,30 +2083,45 @@ impl WorkspaceDb {
                 continue;
             }
 
-            if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
-                let identity_paths = resolve_local_workspace_identity(fs, &paths)
-                    .await
-                    .or(identity_paths_hint)
-                    .unwrap_or_else(|| paths.clone());
-                result.push(RecentWorkspace {
-                    workspace_id: id,
-                    location: SerializedWorkspaceLocation::Local,
-                    paths,
-                    identity_paths,
-                    timestamp,
-                });
-            }
+            tasks.push(executor.spawn({
+                let fs = fs.clone();
+                async move {
+                    if !Self::all_paths_exist_with_a_directory(paths.paths(), fs.as_ref()).await {
+                        return None;
+                    }
+                    let identity_paths = resolve_local_workspace_identity(fs.as_ref(), &paths)
+                        .await
+                        .or(identity_paths_hint)
+                        .unwrap_or_else(|| paths.clone());
+                    Some(RecentWorkspace {
+                        workspace_id: id,
+                        location: SerializedWorkspaceLocation::Local,
+                        paths,
+                        identity_paths,
+                        timestamp,
+                    })
+                }
+            }));
         }
 
-        Ok(result)
+        Ok(futures::future::join_all(tasks)
+            .await
+            .into_iter()
+            .flatten()
+            .collect())
     }
 
     // Returns the recent project workspaces suitable for recent-project UIs.
     // Entries are deduplicated by git worktree identity, but preserve the original
     // serialized paths for reopening.
-    pub async fn recent_project_workspaces(&self, fs: &dyn Fs) -> Result<Vec<RecentWorkspace>> {
+    pub async fn recent_project_workspaces(
+        &self,
+        fs: Arc<dyn Fs>,
+        executor: BackgroundExecutor,
+    ) -> Result<Vec<RecentWorkspace>> {
         Ok(dedupe_recent_workspaces(
-            self.recent_project_workspaces_ungrouped(fs).await?,
+            self.recent_project_workspaces_ungrouped(fs, executor)
+                .await?,
         ))
     }
 
@@ -2209,8 +2225,16 @@ impl WorkspaceDb {
         Ok(())
     }
 
-    pub async fn last_workspace(&self, fs: &dyn Fs) -> Result<Option<RecentWorkspace>> {
-        Ok(self.recent_project_workspaces(fs).await?.into_iter().next())
+    pub async fn last_workspace(
+        &self,
+        fs: Arc<dyn Fs>,
+        cx: BackgroundExecutor,
+    ) -> Result<Option<RecentWorkspace>> {
+        Ok(self
+            .recent_project_workspaces(fs, cx)
+            .await?
+            .into_iter()
+            .next())
     }
 
     // Returns the locations of the workspaces that were still opened when the last
@@ -3917,7 +3941,7 @@ mod tests {
         assert_eq!(sessions[0].workspace_id, WorkspaceId(1));
         assert!(sessions[0].paths.is_empty());
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
         assert!(
             recents
                 .iter()
@@ -5699,7 +5723,7 @@ mod tests {
             .await
             .unwrap();
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
 
         assert_eq!(recents.len(), 1);
         assert_eq!(recents[0].workspace_id, WorkspaceId(2));
@@ -5726,7 +5750,7 @@ mod tests {
         })
         .await;
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
 
         assert_eq!(recents.len(), 1);
         assert_eq!(
@@ -5778,7 +5802,7 @@ mod tests {
         ))
         .await;
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
 
         assert_eq!(recents.len(), 1);
         assert_eq!(
@@ -5807,7 +5831,7 @@ mod tests {
             .await
             .unwrap();
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
 
         assert_eq!(recents.len(), 2);
         assert_eq!(recents[0].workspace_id, WorkspaceId(2));
@@ -5872,13 +5896,13 @@ mod tests {
             .await
             .unwrap();
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
         assert_eq!(recents.len(), 1);
 
         let deleted = db.delete_recent_workspace_group(&recents[0]).await.unwrap();
         assert_eq!(deleted, vec![WorkspaceId(2), WorkspaceId(1)]);
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
         assert!(recents.is_empty());
     }
 

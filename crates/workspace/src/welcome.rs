@@ -263,7 +263,7 @@ impl WelcomePage {
             cx.spawn_in(window, async move |this: WeakEntity<Self>, cx| {
                 let Some(fs) = fs else { return };
                 let workspaces = db
-                    .recent_project_workspaces(fs.as_ref())
+                    .recent_project_workspaces(fs, cx.background_executor().clone())
                     .await
                     .log_err()
                     .unwrap_or_default();

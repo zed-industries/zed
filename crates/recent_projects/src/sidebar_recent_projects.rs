@@ -69,8 +69,11 @@ impl SidebarRecentProjects {
             let db = WorkspaceDb::global(cx);
             cx.spawn_in(window, async move |this, cx| {
                 let Some(fs) = fs else { return };
-                let workspaces = db
-                    .recent_project_workspaces(fs.as_ref())
+                let executor = cx.background_executor().clone();
+                let workspaces = cx
+                    .background_spawn(
+                        async move { db.recent_project_workspaces(fs, executor).await },
+                    )
                     .await
                     .log_err()
                     .unwrap_or_default();
