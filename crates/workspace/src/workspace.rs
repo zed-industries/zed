@@ -3574,6 +3574,10 @@ impl Workspace {
         })
     }
 
+    fn has_dirty_saveable_items(&self, cx: &App) -> bool {
+        self.items(cx).any(|item| item.can_autosave(cx))
+    }
+
     fn save_all(&mut self, action: &SaveAll, window: &mut Window, cx: &mut Context<Self>) {
         self.save_all_internal(
             action.save_intent.unwrap_or(SaveIntent::SaveAll),
@@ -7799,7 +7803,9 @@ impl Workspace {
             .on_action(cx.listener(Self::close_inactive_items_and_panes))
             .on_action(cx.listener(Self::close_all_items_and_panes))
             .on_action(cx.listener(Self::close_item_in_all_panes))
-            .on_action(cx.listener(Self::save_all))
+            .when(self.has_dirty_saveable_items(cx), |div| {
+                div.on_action(cx.listener(Self::save_all))
+            })
             .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
             .on_action(cx.listener(Self::follow_next_collaborator))
