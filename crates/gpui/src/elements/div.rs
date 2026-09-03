@@ -650,7 +650,7 @@ impl Interactivity {
     /// passed to the callback is true when the hover starts and false when it ends.
     /// Transitions caused by layout changes under a stationary mouse also invoke the callback.
     ///
-    /// By default, keyboard input suppresses hover until the mouse moves again. Set
+    /// By default, keyboard input suppresses hover until the next mouse move, mouse down, or touch. Set
     /// [`HoverListenerMode::InputModalityIndependent`] with [`Self::hover_listener_mode`] to
     /// continue hit-testing hover after keyboard input.
     /// The imperative API equivalent to [`StatefulInteractiveElement::on_hover`].
@@ -1608,7 +1608,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// passed to the callback is true when the hover starts and false when it ends.
     /// Transitions caused by layout changes under a stationary mouse also invoke the callback.
     ///
-    /// By default, keyboard input suppresses hover until the mouse moves again. Set
+    /// By default, keyboard input suppresses hover until the next mouse move, mouse down, or touch. Set
     /// [`HoverListenerMode::InputModalityIndependent`] with [`Self::hover_listener_mode`] to
     /// continue hit-testing hover after keyboard input.
     /// The fluent API equivalent to [`Interactivity::on_hover`].
