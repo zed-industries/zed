@@ -436,6 +436,24 @@ struct ZedAiConfiguration {
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
+    use super::*;
+
+    pub fn young_account_configuration() -> AnyElement {
+        ZedAiConfiguration {
+            is_connected: true,
+            plan: Some(Plan::ZedBusiness),
+            is_zed_model_provider_enabled: true,
+            eligible_for_trial: false,
+            account_too_young: true,
+            compact: true,
+            sign_in_callback: Arc::new(|_, _| {}),
+        }
+        .into_any_element()
+    }
+}
+
 fn zed_ai_description(
     is_connected: bool,
     plan: Option<Plan>,
@@ -538,7 +556,10 @@ impl RenderOnce for ZedAiConfiguration {
 
         v_flex()
             .gap_2()
-            .when(!self.compact, |this| this.w_full())
+            .debug_selector(|| "zed-ai-configuration".into())
+            .when(!self.compact || self.account_too_young, |this| {
+                this.w_full()
+            })
             .map(|this| {
                 if self.account_too_young {
                     this.child(YoungAccountBanner).child(
