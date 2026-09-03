@@ -940,6 +940,7 @@ pub struct DapAdapterDelegate {
     fs: Arc<dyn Fs>,
     console: mpsc::UnboundedSender<String>,
     worktree: worktree::Snapshot,
+    worktree_root_dir: Arc<Path>,
     node_runtime: NodeRuntime,
     http_client: Arc<dyn HttpClient>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
@@ -958,10 +959,22 @@ impl DapAdapterDelegate {
         load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
         is_headless: bool,
     ) -> Self {
+        // A single-file worktree's `abs_path` points at the file itself, so
+        // using it directly as a process working directory makes `CreateProcess`
+        // fail with `ERROR_DIRECTORY`. Spawn adapters from the parent directory
+        // instead, matching `ProjectEnvironment::worktree_environment`.
+        let worktree_root_dir = worktree.root_dir().unwrap_or_else(|| {
+            worktree
+                .abs_path()
+                .parent()
+                .map(Arc::from)
+                .unwrap_or_else(|| worktree.abs_path().clone())
+        });
         Self {
             fs,
             console: status,
             worktree,
+            worktree_root_dir,
             http_client,
             node_runtime,
             toolchain_store,
@@ -978,7 +991,7 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     }
 
     fn worktree_root_path(&self) -> &Path {
-        self.worktree.abs_path()
+        &self.worktree_root_dir
     }
     fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
