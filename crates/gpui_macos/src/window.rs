@@ -12,9 +12,10 @@ use cocoa::{
     appkit::{
         NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags, NSEventType,
         NSFilenamesPboardType, NSPasteboard, NSRequestUserAttentionType, NSScreen, NSView,
-        NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial, NSVisualEffectState,
-        NSVisualEffectView, NSWindow, NSWindowCollectionBehavior, NSWindowOcclusionState,
-        NSWindowOrderingMode, NSWindowStyleMask, NSWindowTitleVisibility,
+        NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectBlendingMode,
+        NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
+        NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -3433,7 +3434,15 @@ extern "C" fn blurred_view_init_with_frame(this: &Object, _: Sel, frame: NSRect)
         let view = msg_send![super(this, class!(NSVisualEffectView)), initWithFrame: frame];
         // Use a colorless semantic material. The default value `AppearanceBased`, though not
         // manually set, is deprecated.
-        NSVisualEffectView::setMaterial_(view, NSVisualEffectMaterial::Selection);
+        //
+        // `UnderWindowBackground` rather than `Selection`: on macOS 26+, `Selection` no longer
+        // vends the `CABackdropLayer` that `remove_layer_background` walks, so the view renders
+        // with no blur at all. `UnderWindowBackground` still vends one, and is the material
+        // AppKit documents for the area behind a window's own background.
+        NSVisualEffectView::setMaterial_(view, NSVisualEffectMaterial::UnderWindowBackground);
+        // Behind-window blending is what samples the desktop rather than the window's own
+        // content. It is already the default, but this view exists only for that mode.
+        NSVisualEffectView::setBlendingMode_(view, NSVisualEffectBlendingMode::BehindWindow);
         NSVisualEffectView::setState_(view, NSVisualEffectState::Active);
         view
     }
