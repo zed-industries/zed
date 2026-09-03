@@ -183,10 +183,12 @@ def recompute_signals(pr, project, project_item):
     total_changes = pr.get("additions", 0) + pr.get("deletions", 0)
     author_login = (pr.get("user") or {}).get("login")
 
+    issue_type, upvotes = github_pr_issue_signals(pr["node_id"], author_login)
+
     set_field_optional(project, project_item, "Size", compute_size_bucket(total_changes))
     set_field_optional(project, project_item, "Contributor", compute_contributor(pr_labels))
-    set_field_optional(project, project_item, "Issue Linked", github_pr_issue_type(pr["node_id"]))
-    set_number_field_optional(project, project_item, "Upvotes", github_pr_upvotes(pr["node_id"], author_login))
+    set_field_optional(project, project_item, "Issue Linked", issue_type)
+    set_number_field_optional(project, project_item, "Upvotes", upvotes)
 
 
 def refresh_signals_if_on_board(pr, project_number):
@@ -417,29 +419,87 @@ def github_list_project_items(project_id):
         cursor = page["pageInfo"]["endCursor"]
 
 
-def github_pr_upvotes(pr_node_id, author_login):
-    """Return the count of unique positive reactors on the PR.
+POSITIVE_REACTIONS = (
+    ("thumbsUp", "THUMBS_UP"),
+    ("heart", "HEART"),
+    ("hooray", "HOORAY"),
+    ("rocket", "ROCKET"),
+)
 
-    Counts users (not bots) who left at least one of THUMBS_UP, HEART,
-    HOORAY, or ROCKET on the PR itself. Each user is counted once even if
-    they reacted with multiple positive emojis. The PR author is excluded
-    so self-reactions don't inflate the count.
 
-    Caps at 100 reactors per emoji — above that the exact count stops
-    mattering for ranking purposes.
+def github_reaction_page(subject_node_id, content, cursor):
+    data = github_graphql(
+        """
+        query($subjectId: ID!, $content: ReactionContent!, $cursor: String!) {
+          node(id: $subjectId) {
+            ... on Reactable {
+              reactions(first: 100, content: $content, after: $cursor) {
+                nodes { user { login } }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+          }
+        }
+        """,
+        {"subjectId": subject_node_id, "content": content, "cursor": cursor},
+    )
+    return data["node"]["reactions"]
+
+
+def add_positive_reactors(subject, author_login, reactors):
+    for connection_name, content in POSITIVE_REACTIONS:
+        reactions = subject[connection_name]
+        while True:
+            for reaction in reactions["nodes"]:
+                user = reaction.get("user")
+                login = user.get("login") if user else None
+                if login and login != author_login:
+                    reactors.add(login)
+
+            page_info = reactions["pageInfo"]
+            if not page_info["hasNextPage"]:
+                break
+            reactions = github_reaction_page(
+                subject["id"], content, page_info["endCursor"]
+            )
+
+
+def github_pr_issue_signals(pr_node_id, author_login):
+    """Return linked issue type and deduplicated upvotes for a PR.
+
+    Includes reactions on closing issues and excludes the PR author.
     """
     data = github_graphql(
         """
+        fragment PositiveReactions on Reactable {
+          id
+          thumbsUp: reactions(first: 100, content: THUMBS_UP) {
+            nodes { user { login } }
+            pageInfo { hasNextPage endCursor }
+          }
+          heart: reactions(first: 100, content: HEART) {
+            nodes { user { login } }
+            pageInfo { hasNextPage endCursor }
+          }
+          hooray: reactions(first: 100, content: HOORAY) {
+            nodes { user { login } }
+            pageInfo { hasNextPage endCursor }
+          }
+          rocket: reactions(first: 100, content: ROCKET) {
+            nodes { user { login } }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+
         query($prId: ID!) {
           node(id: $prId) {
             ... on PullRequest {
-              reactionGroups {
-                content
-                reactors(first: 100) {
-                  nodes {
-                    __typename
-                    ... on User { login }
-                  }
+              ...PositiveReactions
+              closingIssuesReferences(first: 20) {
+                totalCount
+                nodes {
+                  issueType { name }
+                  ...PositiveReactions
                 }
               }
             }
@@ -448,63 +508,31 @@ def github_pr_upvotes(pr_node_id, author_login):
         """,
         {"prId": pr_node_id},
     )
-    positive_contents = {"THUMBS_UP", "HEART", "HOORAY", "ROCKET"}
+    pr = data["node"]
+    refs = pr["closingIssuesReferences"]
+
     reactors = set()
-    for group in data["node"]["reactionGroups"] or []:
-        if group["content"] not in positive_contents:
-            continue
-        for node in group["reactors"]["nodes"]:
-            if node.get("__typename") != "User":
-                continue
-            login = node.get("login")
-            if login and login != author_login:
-                reactors.add(login)
-    return len(reactors)
+    add_positive_reactors(pr, author_login, reactors)
+    for issue in refs["nodes"]:
+        add_positive_reactors(issue, author_login, reactors)
 
-
-def github_pr_issue_type(pr_node_id):
-    """Return the Issue Linked field value for a PR.
-
-    Reads `closingIssuesReferences` (authoritative source for what GitHub
-    will close on merge, covers both `Closes #N` keywords and Development
-    sidebar links) and maps the linked issues' types to one of: 'Crash',
-    'Bug', 'Feature', 'Docs', or 'No issue'.
-
-    When a PR closes multiple issues with different types, returns the
-    most urgent one by the priority Crash > Bug > Feature > Docs.
-    """
-    data = github_graphql(
-        """
-        query($prId: ID!) {
-          node(id: $prId) {
-            ... on PullRequest {
-              closingIssuesReferences(first: 20) {
-                totalCount
-                nodes { issueType { name } }
-              }
-            }
-          }
-        }
-        """,
-        {"prId": pr_node_id},
-    )
-    refs = data["node"]["closingIssuesReferences"]
     if refs["totalCount"] == 0:
-        return "No issue"
+        return "No issue", len(reactors)
+
     type_names = {
-        n["issueType"]["name"] for n in refs["nodes"] if n.get("issueType")
+        issue["issueType"]["name"]
+        for issue in refs["nodes"]
+        if issue.get("issueType")
     }
     for priority in ("Crash", "Bug", "Feature", "Docs"):
         if priority in type_names:
-            return priority
-    # Org-wide guardrails should ensure every issue has a recognized type,
-    # so reaching this branch means something slipped through. Log it and
-    # fall back so the PR doesn't carry stale data.
+            return priority, len(reactors)
+
     print(
         f"Warning: PR has {refs['totalCount']} linked issue(s) but none with "
         f"a recognized type (saw: {type_names or 'no type set'})"
     )
-    return "No issue"
+    return "No issue", len(reactors)
 
 
 def github_find_project_item(project_id, content_node_id):
