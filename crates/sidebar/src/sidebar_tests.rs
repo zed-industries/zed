@@ -1143,6 +1143,7 @@ async fn test_neighboring_activatable_entry_stays_within_project(cx: &mut TestAp
         key: ProjectGroupKey::new(None, PathList::new(&[std::path::PathBuf::from(path)])),
         label: path.into(),
         highlight_positions: Vec::new(),
+        remote_location: None,
         has_running_threads: false,
         waiting_thread_count: 0,
         has_notifications: false,
@@ -1236,6 +1237,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 key: ProjectGroupKey::new(None, expanded_path.clone()),
                 label: "expanded-project".into(),
                 highlight_positions: Vec::new(),
+                remote_location: None,
                 has_running_threads: false,
                 waiting_thread_count: 0,
                 has_notifications: false,
@@ -1383,6 +1385,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 key: ProjectGroupKey::new(None, collapsed_path.clone()),
                 label: "collapsed-project".into(),
                 highlight_positions: Vec::new(),
+                remote_location: None,
                 has_running_threads: false,
                 waiting_thread_count: 0,
                 has_notifications: false,
@@ -4208,6 +4211,130 @@ fn type_in_search(sidebar: &Entity<Sidebar>, query: &str, cx: &mut gpui::VisualT
         });
     });
     cx.run_until_parked();
+}
+
+#[test]
+fn test_remote_project_location() {
+    let remote = RemoteConnectionOptions::Mock(remote::MockConnectionOptions { id: 99 });
+    let location = RemoteProjectLocation::new(&remote, "mock-99".into(), vec![0, 1, 2, 3]);
+    assert_eq!(remote.connection_type_display_name(), "Mock");
+    assert_eq!(location.label.as_ref(), "mock-99");
+    assert_eq!(location.highlight_positions, vec![0, 1, 2, 3]);
+    assert_eq!(location.icon, IconName::Server);
+    assert_eq!(location.tooltip.as_ref(), "Remote Project · Mock · mock-99");
+
+    let ssh = RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+        nickname: Some("build-server".to_string()),
+        ..Default::default()
+    });
+    let ssh_location = RemoteProjectLocation::new(&ssh, ssh.display_name().into(), Vec::new());
+    assert_eq!(ssh.connection_type_display_name(), "SSH");
+    assert_eq!(ssh_location.icon, IconName::Server);
+    assert_eq!(
+        ssh_location.tooltip.as_ref(),
+        "Remote Project · SSH · build-server"
+    );
+
+    let wsl = RemoteConnectionOptions::Wsl(remote::WslConnectionOptions {
+        distro_name: "Ubuntu".to_string(),
+        user: None,
+    });
+    assert_eq!(wsl.connection_type_display_name(), "WSL");
+    assert_eq!(
+        RemoteProjectLocation::new(&wsl, wsl.display_name().into(), Vec::new()).icon,
+        IconName::Linux
+    );
+
+    let podman = RemoteConnectionOptions::Docker(remote::DockerConnectionOptions {
+        name: "backend".to_string(),
+        use_podman: true,
+        ..Default::default()
+    });
+    assert_eq!(podman.connection_type_display_name(), "Podman");
+    assert_eq!(
+        RemoteProjectLocation::new(&podman, podman.display_name().into(), Vec::new()).icon,
+        IconName::Box
+    );
+}
+
+#[gpui::test]
+async fn test_search_matches_remote_project_location(cx: &mut TestAppContext) {
+    use workspace::ProjectGroup;
+
+    let project = init_test_project("/same-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let paths = PathList::new(&[PathBuf::from("/same-project")]);
+    let remote = RemoteConnectionOptions::Mock(remote::MockConnectionOptions { id: 99 });
+    multi_workspace.update(cx, |multi_workspace, _cx| {
+        multi_workspace.test_add_project_group(ProjectGroup {
+            key: ProjectGroupKey::new(Some(remote.clone()), paths.clone()),
+            workspaces: Vec::new(),
+            expanded: true,
+        });
+    });
+    seed_thread_metadata(
+        ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(acp::SessionId::new(Arc::from("remote-thread"))),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Remote thread".into()),
+            title_override: None,
+            updated_at: Utc::now(),
+            created_at: Some(Utc::now()),
+            interacted_at: None,
+            worktree_paths: WorktreePaths::from_folder_paths(&paths),
+            remote_connection: Some(remote.clone()),
+            archived: false,
+        },
+        cx,
+    );
+
+    type_in_search(&sidebar, "mock-99", cx);
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        let project_headers = sidebar
+            .contents
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ListEntry::ProjectHeader {
+                    key,
+                    remote_location,
+                    ..
+                } => Some((key, remote_location)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            project_headers.len(),
+            1,
+            "the local group with the same path must not match a remote host query"
+        );
+        let (key, remote_location) = project_headers[0];
+        let Some(remote_location) = remote_location else {
+            panic!("expected the remote project header to match the server name");
+        };
+        assert!(same_remote_connection_identity(
+            key.host().as_ref(),
+            Some(&remote)
+        ));
+        assert_eq!(remote_location.label.as_ref(), "mock-99");
+        assert!(!remote_location.highlight_positions.is_empty());
+        assert!(matches!(
+            &sidebar.contents.entries[1],
+            ListEntry::Thread(thread) if thread.metadata.display_title().as_ref() == "Remote thread"
+        ));
+    });
+
+    type_in_search(&sidebar, "local", cx);
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        Vec::<String>::new(),
+        "the display-only concept of a local project must not participate in search"
+    );
 }
 
 #[gpui::test]

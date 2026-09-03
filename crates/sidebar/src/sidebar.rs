@@ -106,6 +106,8 @@ gpui::actions!(
 const DEFAULT_WIDTH: Pixels = px(300.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
+const MIN_PROJECT_LOCATION_WIDTH: Pixels = px(48.0);
+const MAX_PROJECT_LOCATION_WIDTH: Pixels = px(120.0);
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum SerializedSidebarView {
@@ -396,6 +398,7 @@ enum ListEntry {
         key: ProjectGroupKey,
         label: SharedString,
         highlight_positions: Vec<usize>,
+        remote_location: Option<RemoteProjectLocation>,
         has_running_threads: bool,
         waiting_thread_count: usize,
         has_notifications: bool,
@@ -424,6 +427,40 @@ impl RenameTarget {
                 terminal.metadata.editable_title(),
             )),
             ListEntry::ProjectHeader { .. } => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct RemoteProjectLocation {
+    label: SharedString,
+    highlight_positions: Vec<usize>,
+    icon: IconName,
+    tooltip: SharedString,
+}
+
+impl RemoteProjectLocation {
+    fn new(
+        host: &RemoteConnectionOptions,
+        label: SharedString,
+        highlight_positions: Vec<usize>,
+    ) -> Self {
+        let icon = match host {
+            RemoteConnectionOptions::Wsl(_) => IconName::Linux,
+            RemoteConnectionOptions::Docker(_) => IconName::Box,
+            _ => IconName::Server,
+        };
+        let tooltip = format!(
+            "Remote Project · {} · {}",
+            host.connection_type_display_name(),
+            label
+        )
+        .into();
+        Self {
+            label,
+            highlight_positions,
+            icon,
+            tooltip,
         }
     }
 }
@@ -1585,6 +1622,9 @@ impl Sidebar {
             let mut has_running_threads = false;
             let mut waiting_thread_count: usize = 0;
             let group_host = group_key.host();
+            let remote_location_label = group_host
+                .as_ref()
+                .map(|host| SharedString::from(host.display_name()));
 
             if should_load_threads {
                 let thread_store = ThreadMetadataStore::global(cx);
@@ -1844,7 +1884,12 @@ impl Sidebar {
             if !query.is_empty() {
                 let workspace_highlight_positions =
                     fuzzy_match_positions(&query, &label).unwrap_or_default();
-                let workspace_matched = !workspace_highlight_positions.is_empty();
+                let location_highlight_positions = remote_location_label
+                    .as_ref()
+                    .and_then(|label| fuzzy_match_positions(&query, label))
+                    .unwrap_or_default();
+                let workspace_matched = !workspace_highlight_positions.is_empty()
+                    || !location_highlight_positions.is_empty();
 
                 let mut matched_threads: Vec<Arc<ThreadEntry>> = Vec::new();
                 for mut thread in threads {
@@ -1915,6 +1960,11 @@ impl Sidebar {
                     key: group_key.clone(),
                     label,
                     highlight_positions: workspace_highlight_positions,
+                    remote_location: group_host.as_ref().zip(remote_location_label).map(
+                        |(host, label)| {
+                            RemoteProjectLocation::new(host, label, location_highlight_positions)
+                        },
+                    ),
                     has_running_threads,
                     waiting_thread_count,
                     has_notifications: has_thread_notifications || has_terminal_notifications,
@@ -1961,6 +2011,10 @@ impl Sidebar {
                     key: group_key.clone(),
                     label,
                     highlight_positions: Vec::new(),
+                    remote_location: group_host
+                        .as_ref()
+                        .zip(remote_location_label)
+                        .map(|(host, label)| RemoteProjectLocation::new(host, label, Vec::new())),
                     has_running_threads,
                     waiting_thread_count,
                     has_notifications: has_thread_notifications || has_terminal_notifications,
@@ -2216,6 +2270,7 @@ impl Sidebar {
                 key,
                 label,
                 highlight_positions,
+                remote_location,
                 has_running_threads,
                 waiting_thread_count,
                 has_notifications,
@@ -2233,6 +2288,7 @@ impl Sidebar {
                     key,
                     label,
                     highlight_positions,
+                    remote_location.as_ref(),
                     *has_running_threads,
                     *waiting_thread_count,
                     *has_notifications,
@@ -2261,30 +2317,6 @@ impl Sidebar {
         }
     }
 
-    fn render_remote_project_icon(
-        &self,
-        ix: usize,
-        host: Option<&RemoteConnectionOptions>,
-    ) -> Option<AnyElement> {
-        let remote_icon_per_type = match host? {
-            RemoteConnectionOptions::Wsl(_) => IconName::Linux,
-            RemoteConnectionOptions::Docker(_) => IconName::Box,
-            _ => IconName::Server,
-        };
-
-        Some(
-            div()
-                .id(format!("remote-project-icon-{}", ix))
-                .child(
-                    Icon::new(remote_icon_per_type)
-                        .size(IconSize::XSmall)
-                        .color(Color::Muted),
-                )
-                .tooltip(Tooltip::text("Remote Project"))
-                .into_any_element(),
-        )
-    }
-
     fn render_project_header(
         &self,
         ix: usize,
@@ -2292,6 +2324,7 @@ impl Sidebar {
         key: &ProjectGroupKey,
         label: &SharedString,
         highlight_positions: &[usize],
+        remote_location: Option<&RemoteProjectLocation>,
         has_running_threads: bool,
         waiting_thread_count: usize,
         has_notifications: bool,
@@ -2300,8 +2333,6 @@ impl Sidebar {
         has_threads: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let host = key.host();
-
         let has_filter = self.has_filter_query(cx);
 
         let id_prefix = if is_sticky { "sticky-" } else { "" };
@@ -2318,20 +2349,24 @@ impl Sidebar {
         let key_for_toggle = key.clone();
         let key_for_focus = key.clone();
 
-        // The fade gradient renders as a visible patch on transparent windows,
-        // so truncate the label instead.
         let opaque_window =
             cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
+
+        // The fade gradient renders as a visible patch on transparent windows, so
+        // truncate the label instead. Truncate as well when a remote location
+        // follows the name—without `min_w_0` the label refuses to shrink and pushes
+        // the location out of the header.
+        let truncate_label = !opaque_window || remote_location.is_some();
 
         let label = if highlight_positions.is_empty() {
             Label::new(label.clone())
                 .when(!is_active, |this| this.color(Color::Muted))
-                .when(!opaque_window, |this| this.truncate())
+                .when(truncate_label, |this| this.truncate())
                 .into_any_element()
         } else {
             HighlightedLabel::new(label.clone(), highlight_positions.to_vec())
                 .when(!is_active, |this| this.color(Color::Muted))
-                .when(!opaque_window, |this| this.truncate())
+                .when(truncate_label, |this| this.truncate())
                 .into_any_element()
         };
 
@@ -2384,10 +2419,39 @@ impl Sidebar {
                     .w_full()
                     .gap_1()
                     .child(label)
-                    .when_some(
-                        self.render_remote_project_icon(ix, host.as_ref()),
-                        |this, icon| this.child(icon),
-                    )
+                    .when_some(remote_location, |this, location| {
+                        let location_label = if location.highlight_positions.is_empty() {
+                            Label::new(location.label.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .truncate()
+                                .into_any_element()
+                        } else {
+                            HighlightedLabel::new(
+                                location.label.clone(),
+                                location.highlight_positions.clone(),
+                            )
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .truncate()
+                            .into_any_element()
+                        };
+                        this.child(
+                            h_flex()
+                                .id(format!("{id_prefix}project-location-{ix}"))
+                                .min_w(MIN_PROJECT_LOCATION_WIDTH)
+                                .max_w(MAX_PROJECT_LOCATION_WIDTH)
+                                .flex_initial()
+                                .gap_0p5()
+                                .child(
+                                    Icon::new(location.icon)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .child(location_label)
+                                .tooltip(Tooltip::text(location.tooltip.clone())),
+                        )
+                    })
                     .when(is_collapsed, |this| {
                         this.when(has_running_threads, |this| {
                             this.child(
@@ -3193,6 +3257,7 @@ impl Sidebar {
             key,
             label,
             highlight_positions,
+            remote_location,
             has_running_threads,
             waiting_thread_count,
             has_notifications,
@@ -3212,6 +3277,7 @@ impl Sidebar {
             key,
             &label,
             &highlight_positions,
+            remote_location.as_ref(),
             *has_running_threads,
             *waiting_thread_count,
             *has_notifications,
