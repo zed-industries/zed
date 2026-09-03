@@ -4530,7 +4530,7 @@ impl Thread {
             // provider's requested delay when it gave one, and fall back to
             // exponential backoff when it didn't.
             ProviderRejection { retry_after, .. } => {
-                if error.retry_delay(1).is_none() {
+                if !error.is_transient() {
                     return None;
                 }
                 Some(match retry_after {
@@ -8430,6 +8430,21 @@ mod tests {
             None,
         );
         assert!(Thread::retry_strategy_for(&error).is_none());
+    }
+
+    #[test]
+    fn test_retry_strategy_retries_open_ai_not_found() {
+        let error = LanguageModelCompletionError::from_http_status(
+            language_model::OPEN_AI_PROVIDER_NAME,
+            http_client::StatusCode::NOT_FOUND,
+            "Not found".to_string(),
+            None,
+        );
+
+        assert_eq!(
+            Thread::retry_strategy_for(&error),
+            Some(RetryStrategy::ExponentialBackoff)
+        );
     }
 
     #[test]
