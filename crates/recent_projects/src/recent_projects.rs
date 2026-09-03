@@ -151,7 +151,7 @@ pub async fn get_recent_projects(
     let entries: Vec<RecentProjectEntry> = filtered
         .into_iter()
         .map(|workspace| {
-            let paths: Vec<PathBuf> = workspace.paths.paths().to_vec();
+            let paths: Vec<PathBuf> = workspace.paths.ordered_paths().cloned().collect();
             let ordered_paths: Vec<&PathBuf> = workspace.identity_paths.ordered_paths().collect();
 
             let name = ordered_paths
@@ -814,7 +814,7 @@ impl RecentProjects {
             {
                 if let Some(workspace) = picker.delegate.workspaces.get(hit.candidate_id) {
                     if matches!(workspace.location, SerializedWorkspaceLocation::Local) {
-                        let paths_to_add = workspace.paths.paths().to_vec();
+                        let paths_to_add = workspace.paths.ordered_paths().cloned().collect();
                         picker
                             .delegate
                             .add_paths_to_project(paths_to_add, window, cx);
@@ -1474,7 +1474,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let raw_paths = &workspace.paths;
                 let identity_paths = &workspace.identity_paths;
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
-                let paths_to_add = raw_paths.paths().to_vec();
+                let paths_to_add: Vec<PathBuf> = raw_paths.ordered_paths().cloned().collect();
                 let ordered_paths: Vec<_> = identity_paths
                     .ordered_paths()
                     .map(|p| p.compact().to_string_lossy().to_string())
@@ -2151,7 +2151,8 @@ impl RecentProjectsDelegate {
             }
             match candidate_workspace_location {
                 SerializedWorkspaceLocation::Local => {
-                    let paths = candidate_workspace_paths.paths().to_vec();
+                    let paths: Vec<PathBuf> =
+                        candidate_workspace_paths.ordered_paths().cloned().collect();
                     if replace_current_window {
                         if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
                             cx.defer(move |cx| {
@@ -2197,7 +2198,7 @@ impl RecentProjectsDelegate {
                         RemoteSettings::get_global(cx)
                             .fill_connection_options_from_settings(connection);
                     };
-                    let paths = candidate_workspace_paths.paths().to_vec();
+                    let paths = candidate_workspace_paths.ordered_paths().cloned().collect();
                     cx.spawn_in(window, async move |_, cx| {
                         open_remote_project(connection.clone(), paths, app_state, open_options, cx)
                             .await
