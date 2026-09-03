@@ -55,6 +55,7 @@ remote_connection.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha1.workspace = true
 sha2.workspace = true
 settings.workspace = true
 smallvec.workspace = true

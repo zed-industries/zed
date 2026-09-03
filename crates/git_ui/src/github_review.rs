@@ -4,29 +4,48 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
     time::Duration,
 };
 use util::ResultExt as _;
 
+use crate::review_provider::{ReviewProviderKind, ReviewRepositoryChoice};
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct GitHubRepo {
+pub(crate) struct ReviewRepository {
     pub id: u64,
     pub full_name: String,
+    #[serde(default)]
+    pub provider: ReviewProviderKind,
+    #[serde(default = "default_github_host")]
+    pub host: String,
+    #[serde(default)]
+    pub web_url: Option<String>,
 }
 
-impl GitHubRepo {
+fn default_github_host() -> String {
+    "github.com".into()
+}
+
+impl ReviewRepository {
     pub fn validate(&self) -> Result<()> {
         ensure!(
             self.id != 0,
-            "GitHub returned an invalid repository identity"
+            "The review provider returned an invalid repository identity"
         );
-        validate_repository_name(&self.full_name)
+        match self.provider {
+            ReviewProviderKind::GitHub => validate_repository_name(&self.full_name),
+            ReviewProviderKind::GitLab => validate_gitlab_repository_name(&self.full_name),
+        }
     }
     pub fn endpoint(&self, suffix: &str) -> String {
         format!("repos/{}/{}", self.full_name, suffix)
+    }
+
+    pub fn provider_name(&self) -> &'static str {
+        self.provider.name()
     }
 }
 
@@ -45,6 +64,23 @@ pub(crate) fn validate_repository_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_gitlab_repository_name(name: &str) -> Result<()> {
+    let parts: Vec<_> = name.split('/').collect();
+    ensure!(
+        parts.len() >= 2
+            && parts.iter().all(|part| !part.is_empty()
+                && *part != "."
+                && *part != ".."
+                && part
+                    .bytes()
+                    .all(|character| character.is_ascii_alphanumeric()
+                        || b"-_.".contains(&character))),
+        "Invalid GitLab project path"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
 pub(crate) fn repository_from_remote(remote: &str) -> Option<String> {
     let remote: git::RemoteUrl = remote.parse().ok()?;
     if remote.host_str()? != "github.com" {
@@ -58,33 +94,68 @@ pub(crate) fn repository_from_remote(remote: &str) -> Option<String> {
     Some(name.to_string())
 }
 
+pub(crate) fn repository_choice_from_remote(remote: &str) -> Option<ReviewRepositoryChoice> {
+    let parsed: git::RemoteUrl = remote.parse().ok()?;
+    let host = parsed.host_str()?.to_string();
+    let full_name = parsed
+        .path()
+        .trim_start_matches('/')
+        .trim_end_matches(".git")
+        .to_string();
+    if full_name.is_empty()
+        || full_name.split('/').any(|part| {
+            part.is_empty()
+                || matches!(part, "." | "..")
+                || !part.bytes().all(|character| {
+                    character.is_ascii_alphanumeric() || b"-_./".contains(&character)
+                })
+        })
+    {
+        return None;
+    }
+    Some(ReviewRepositoryChoice {
+        provider: if host.eq_ignore_ascii_case("github.com") {
+            ReviewProviderKind::GitHub
+        } else {
+            ReviewProviderKind::GitLab
+        },
+        host,
+        full_name,
+        remote_url: remote.to_string(),
+    })
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct GitHubUser {
+pub(crate) struct ReviewUser {
     pub login: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct PullRequestRef {
+pub(crate) struct ReviewRequestRef {
     #[serde(rename = "ref")]
     pub branch: String,
     pub sha: String,
-    pub repo: Option<GitHubRepo>,
+    pub repo: Option<ReviewRepository>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct PullRequest {
+pub(crate) struct ReviewRequest {
     pub number: u64,
     pub title: String,
     pub body: Option<String>,
-    pub user: GitHubUser,
+    pub user: ReviewUser,
     pub state: String,
     pub merged_at: Option<String>,
-    pub head: PullRequestRef,
-    pub base: PullRequestRef,
+    pub head: ReviewRequestRef,
+    pub base: ReviewRequestRef,
+    #[serde(default)]
+    pub start_sha: Option<String>,
+    #[serde(default)]
+    pub web_url: Option<String>,
 }
 
-impl PullRequest {
-    pub fn validate(&self, repo: &GitHubRepo) -> Result<()> {
+impl ReviewRequest {
+    pub fn validate(&self, repo: &ReviewRepository) -> Result<()> {
         repo.validate()?;
         ensure!(
             self.number > 0
@@ -93,14 +164,25 @@ impl PullRequest {
                     .repo
                     .as_ref()
                     .is_some_and(|base| base.id == repo.id),
-            "PR belongs to a different repository"
+            "Review belongs to a different repository"
         );
         validate_sha(&self.head.sha)?;
         validate_sha(&self.base.sha)?;
         Ok(())
     }
-    pub fn url(&self, repo: &GitHubRepo) -> String {
-        format!("https://github.com/{}/pull/{}", repo.full_name, self.number)
+    pub fn url(&self, repo: &ReviewRepository) -> String {
+        self.web_url.clone().unwrap_or_else(|| match repo.provider {
+            ReviewProviderKind::GitHub => {
+                format!(
+                    "https://{}/{}/pull/{}",
+                    repo.host, repo.full_name, self.number
+                )
+            }
+            ReviewProviderKind::GitLab => format!(
+                "https://{}/{}/-/merge_requests/{}",
+                repo.host, repo.full_name, self.number
+            ),
+        })
     }
 }
 
@@ -113,12 +195,12 @@ pub(crate) fn validate_sha(sha: &str) -> Result<()> {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub(crate) struct PullRequestSummary {
+pub(crate) struct ReviewRequestSummaryData {
     pub number: u64,
     pub title: String,
 }
-impl From<PullRequest> for PullRequestSummary {
-    fn from(pr: PullRequest) -> Self {
+impl From<ReviewRequest> for ReviewRequestSummaryData {
+    fn from(pr: ReviewRequest) -> Self {
         Self {
             number: pr.number,
             title: pr.title,
@@ -127,10 +209,10 @@ impl From<PullRequest> for PullRequestSummary {
 }
 
 #[derive(Deserialize)]
-struct PullRequestSearch {
+struct ReviewRequestSearch {
     total_count: u32,
     incomplete_results: bool,
-    items: Vec<PullRequestSummary>,
+    items: Vec<ReviewRequestSummaryData>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,10 +257,14 @@ pub(crate) struct RemoteComment {
     pub thread: Option<Arc<ReviewThread>>,
     pub id: u64,
     pub body: Option<String>,
-    pub user: GitHubUser,
+    pub user: ReviewUser,
     pub created_at: Option<String>,
     pub submitted_at: Option<String>,
     pub path: Option<String>,
+    #[serde(default)]
+    pub old_path: Option<String>,
+    #[serde(default)]
+    pub new_path: Option<String>,
     pub line: Option<u32>,
     pub original_line: Option<u32>,
     pub start_line: Option<u32>,
@@ -239,14 +325,16 @@ pub(crate) enum ApiMethod {
     Get,
     Post,
     Patch,
+    Put,
     Delete,
 }
 impl ApiMethod {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Get => "GET",
             Self::Post => "POST",
             Self::Patch => "PATCH",
+            Self::Put => "PUT",
             Self::Delete => "DELETE",
         }
     }
@@ -265,16 +353,16 @@ pub(crate) trait GitHubTransport: Send + Sync {
 }
 
 #[derive(Debug)]
-pub(crate) struct GitHubFailure {
+pub(crate) struct ReviewProviderFailure {
     pub message: String,
     pub outcome_unknown: bool,
 }
-impl std::fmt::Display for GitHubFailure {
+impl std::fmt::Display for ReviewProviderFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.message.fmt(f)
     }
 }
-impl std::error::Error for GitHubFailure {}
+impl std::error::Error for ReviewProviderFailure {}
 
 pub(crate) struct GhCli {
     executor: gpui::BackgroundExecutor,
@@ -292,14 +380,14 @@ impl GitHubTransport for GhCli {
                 .env("GH_PROMPT_DISABLED", "1").env("GH_DEBUG", "").kill_on_drop(true)
                 .stdin(if has_body { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
             if has_body { command.args(["--input", "-"]); }
-            let mut child = command.spawn().map_err(|_| GitHubFailure { message: "GitHub CLI could not start. Install gh and run gh auth login.".into(), outcome_unknown: false })?;
+            let mut child = command.spawn().map_err(|_| ReviewProviderFailure { message: "GitHub CLI could not start. Install gh and run gh auth login.".into(), outcome_unknown: false })?;
             let operation = async move {
                 if let Some(body) = request.body {
                     let mut stdin = child.stdin.take().context("GitHub CLI input is unavailable")?;
-                    stdin.write_all(&serde_json::to_vec(&body)?).await.map_err(|_| GitHubFailure { message: "GitHub request was interrupted. Refresh before retrying.".into(), outcome_unknown: writing })?;
+                    stdin.write_all(&serde_json::to_vec(&body)?).await.map_err(|_| ReviewProviderFailure { message: "GitHub request was interrupted. Refresh before retrying.".into(), outcome_unknown: writing })?;
                     drop(stdin);
                 }
-                let output = child.output().await.map_err(|_| GitHubFailure { message: "GitHub request was interrupted. Refresh before retrying.".into(), outcome_unknown: writing })?;
+                let output = child.output().await.map_err(|_| ReviewProviderFailure { message: "GitHub request was interrupted. Refresh before retrying.".into(), outcome_unknown: writing })?;
                 if !output.status.success() {
                     let error = String::from_utf8_lossy(&output.stderr);
                     let (message, known) = if error.contains("HTTP 401") || error.contains("gh auth login") {
@@ -311,14 +399,14 @@ impl GitHubTransport for GhCli {
                     } else if error.contains("HTTP 422") {
                         ("GitHub rejected this comment target. Refresh the PR and check the selected lines.", true)
                     } else { ("GitHub request failed. Refresh to check its outcome before retrying.", false) };
-                    return Err(GitHubFailure { message: message.into(), outcome_unknown: writing && !known }.into());
+                    return Err(ReviewProviderFailure { message: message.into(), outcome_unknown: writing && !known }.into());
                 }
                 if request.method == ApiMethod::Delete && output.stdout.is_empty() { return Ok(Value::Null); }
-                serde_json::from_slice(&output.stdout).map_err(|_| GitHubFailure { message: "GitHub returned an unreadable response. Refresh before retrying a post.".into(), outcome_unknown: writing }.into())
+                serde_json::from_slice(&output.stdout).map_err(|_| ReviewProviderFailure { message: "GitHub returned an unreadable response. Refresh before retrying a post.".into(), outcome_unknown: writing }.into())
             }.boxed();
             match futures::future::select(operation, executor.timer(Duration::from_secs(45)).boxed()).await {
                 futures::future::Either::Left((result, _)) => result,
-                futures::future::Either::Right(_) => Err(GitHubFailure { message: "GitHub request timed out. Refresh to check whether a comment was posted.".into(), outcome_unknown: writing }.into()),
+                futures::future::Either::Right(_) => Err(ReviewProviderFailure { message: "GitHub request timed out. Refresh to check whether a comment was posted.".into(), outcome_unknown: writing }.into()),
             }
         }.boxed()
     }
@@ -332,6 +420,160 @@ impl GitHubClient {
     pub fn new(executor: gpui::BackgroundExecutor) -> Self {
         Self {
             transport: Arc::new(GhCli { executor }),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) enum ReviewClient {
+    GitHub(GitHubClient),
+    GitLab(crate::gitlab_review::GitLabClient),
+}
+
+impl ReviewClient {
+    pub(crate) fn for_choice(
+        choice: ReviewRepositoryChoice,
+        root: PathBuf,
+        executor: gpui::BackgroundExecutor,
+    ) -> Self {
+        match choice.provider {
+            ReviewProviderKind::GitHub => Self::GitHub(GitHubClient::new(executor)),
+            ReviewProviderKind::GitLab => Self::GitLab(crate::gitlab_review::GitLabClient::new(
+                choice, root, executor,
+            )),
+        }
+    }
+
+    pub(crate) async fn repository(
+        &self,
+        choice: &ReviewRepositoryChoice,
+    ) -> Result<ReviewRepository> {
+        match self {
+            Self::GitHub(client) => {
+                let mut repository = client.repository(&choice.full_name).await?;
+                repository.provider = ReviewProviderKind::GitHub;
+                repository.host = choice.host.clone();
+                repository.web_url = Some(format!("https://{}/{}", choice.host, choice.full_name));
+                Ok(repository)
+            }
+            Self::GitLab(client) => client.repository().await,
+        }
+    }
+
+    pub(crate) async fn viewer(&self) -> Result<ReviewUser> {
+        match self {
+            Self::GitHub(client) => client.viewer().await,
+            Self::GitLab(client) => client.viewer().await,
+        }
+    }
+
+    pub(crate) async fn review_threads(
+        &self,
+        repo: &ReviewRepository,
+        number: u64,
+    ) -> Result<Vec<ReviewThread>> {
+        match self {
+            Self::GitHub(client) => client.review_threads(repo, number).await,
+            Self::GitLab(client) => client.review_threads(number).await,
+        }
+    }
+
+    pub(crate) async fn update_comment(
+        &self,
+        repo: &ReviewRepository,
+        number: u64,
+        kind: CommentKind,
+        id: u64,
+        original: &str,
+        body: &str,
+    ) -> Result<RemoteComment> {
+        match self {
+            Self::GitHub(client) => client.update_comment(repo, kind, id, original, body).await,
+            Self::GitLab(client) => client.update_comment(number, id, original, body).await,
+        }
+    }
+
+    pub(crate) async fn discussion_action(
+        &self,
+        repo: &ReviewRepository,
+        number: u64,
+        action: &DiscussionAction,
+    ) -> Result<()> {
+        match self {
+            Self::GitHub(client) => client.discussion_action(repo, number, action).await,
+            Self::GitLab(client) => client.discussion_action(number, action).await,
+        }
+    }
+
+    pub(crate) async fn request_summaries(
+        &self,
+        repo: &ReviewRepository,
+        state: &str,
+        page: u32,
+        query: Option<&str>,
+    ) -> Result<(Vec<ReviewRequestSummaryData>, bool)> {
+        match self {
+            Self::GitHub(client) => {
+                if let Some(query) = query.filter(|query| !query.trim().is_empty()) {
+                    client.search_pull_requests(repo, query, state, page).await
+                } else {
+                    let values = client.pull_requests(repo, state, page).await?;
+                    let next = values.len() == 100;
+                    Ok((values.into_iter().map(Into::into).collect(), next))
+                }
+            }
+            Self::GitLab(client) => {
+                let values = client.merge_request_summaries(state, page, query).await?;
+                let next = values.len() == 100;
+                Ok((values, next))
+            }
+        }
+    }
+
+    pub(crate) async fn review_request(
+        &self,
+        repo: &ReviewRepository,
+        number: u64,
+    ) -> Result<ReviewRequest> {
+        match self {
+            Self::GitHub(client) => client.pull_request(repo, number).await,
+            Self::GitLab(client) => client.merge_request(repo, number).await,
+        }
+    }
+
+    pub(crate) async fn discussion(
+        &self,
+        repo: &ReviewRepository,
+        number: u64,
+    ) -> Result<Vec<DiscussionComment>> {
+        match self {
+            Self::GitHub(client) => client.discussion(repo, number).await,
+            Self::GitLab(client) => client.discussion(number).await,
+        }
+    }
+
+    pub(crate) async fn validate_published_target(
+        &self,
+        repo: &ReviewRepository,
+        pr: &ReviewRequest,
+        target: &CommentTarget,
+    ) -> Result<()> {
+        match self {
+            Self::GitHub(client) => client.validate_published_target(repo, pr, target).await,
+            Self::GitLab(client) => client.validate_target(repo, pr, target).await,
+        }
+    }
+
+    pub(crate) async fn post(
+        &self,
+        repo: &ReviewRepository,
+        pr: &ReviewRequest,
+        target: &CommentTarget,
+        body: &str,
+    ) -> Result<RemoteComment> {
+        match self {
+            Self::GitHub(client) => client.post(repo, pr, target, body).await,
+            Self::GitLab(client) => client.post(repo, pr, target, body).await,
         }
     }
 }
@@ -351,7 +593,7 @@ impl GitHubClient {
             .get("errors")
             .is_some_and(|errors| errors.as_array().is_none_or(|errors| !errors.is_empty()))
         {
-            return Err(GitHubFailure {
+            return Err(ReviewProviderFailure {
                 message:
                     "GitHub could not complete the thread request. Refresh and check permissions."
                         .into(),
@@ -364,7 +606,7 @@ impl GitHubClient {
             .filter(|data| !data.is_null())
             .cloned()
             .ok_or_else(|| {
-                GitHubFailure {
+                ReviewProviderFailure {
                     message: "GitHub returned incomplete thread data".into(),
                     outcome_unknown: writing,
                 }
@@ -372,13 +614,13 @@ impl GitHubClient {
             })
     }
 
-    pub async fn viewer(&self) -> Result<GitHubUser> {
+    pub async fn viewer(&self) -> Result<ReviewUser> {
         self.get("user".into()).await
     }
 
     pub async fn review_threads(
         &self,
-        repo: &GitHubRepo,
+        repo: &ReviewRepository,
         number: u64,
     ) -> Result<Vec<ReviewThread>> {
         repo.validate()?;
@@ -446,7 +688,7 @@ impl GitHubClient {
 
     pub async fn update_comment(
         &self,
-        repo: &GitHubRepo,
+        repo: &ReviewRepository,
         kind: CommentKind,
         id: u64,
         original: &str,
@@ -474,7 +716,7 @@ impl GitHubClient {
             })
             .await?;
         serde_json::from_value(value).map_err(|_| {
-            GitHubFailure {
+            ReviewProviderFailure {
                 message: "The edit may have succeeded; refresh before retrying".into(),
                 outcome_unknown: true,
             }
@@ -484,7 +726,7 @@ impl GitHubClient {
 
     pub async fn discussion_action(
         &self,
-        repo: &GitHubRepo,
+        repo: &ReviewRepository,
         number: u64,
         action: &DiscussionAction,
     ) -> Result<()> {
@@ -546,7 +788,7 @@ impl GitHubClient {
                 if data[operation]["thread"]["id"].as_str() != Some(thread_id)
                     || data[operation]["thread"]["isResolved"].as_bool() != Some(*resolved)
                 {
-                    return Err(GitHubFailure {
+                    return Err(ReviewProviderFailure {
                         message: "GitHub did not confirm the thread state; refresh before retrying"
                             .into(),
                         outcome_unknown: true,
@@ -558,9 +800,9 @@ impl GitHubClient {
         Ok(())
     }
 
-    pub async fn repository(&self, full_name: &str) -> Result<GitHubRepo> {
+    pub async fn repository(&self, full_name: &str) -> Result<ReviewRepository> {
         validate_repository_name(full_name)?;
-        let repo: GitHubRepo = self.get(format!("repos/{full_name}")).await?;
+        let repo: ReviewRepository = self.get(format!("repos/{full_name}")).await?;
         repo.validate()?;
         Ok(repo)
     }
@@ -579,10 +821,10 @@ impl GitHubClient {
     }
     pub async fn pull_requests(
         &self,
-        repo: &GitHubRepo,
+        repo: &ReviewRepository,
         state: &str,
         page: u32,
-    ) -> Result<Vec<PullRequest>> {
+    ) -> Result<Vec<ReviewRequest>> {
         repo.validate()?;
         ensure!(
             matches!(state, "open" | "closed" | "all") && page > 0,
@@ -596,11 +838,11 @@ impl GitHubClient {
 
     pub async fn search_pull_requests(
         &self,
-        repo: &GitHubRepo,
+        repo: &ReviewRepository,
         title: &str,
         state: &str,
         page: u32,
-    ) -> Result<(Vec<PullRequestSummary>, bool)> {
+    ) -> Result<(Vec<ReviewRequestSummaryData>, bool)> {
         repo.validate()?;
         ensure!(
             matches!(state, "open" | "closed" | "all") && (1..=10).contains(&page),
@@ -622,7 +864,7 @@ impl GitHubClient {
             .append_pair("per_page", "100")
             .append_pair("page", &page.to_string())
             .finish();
-        let result: PullRequestSearch = self.get(format!("search/issues?{parameters}")).await?;
+        let result: ReviewRequestSearch = self.get(format!("search/issues?{parameters}")).await?;
         ensure!(
             !result.incomplete_results,
             "GitHub returned an incomplete search. Narrow the title and try again."
@@ -631,8 +873,12 @@ impl GitHubClient {
         Ok((result.items, next))
     }
 
-    pub async fn pull_request(&self, repo: &GitHubRepo, number: u64) -> Result<PullRequest> {
-        let pr: PullRequest = self.get(repo.endpoint(&format!("pulls/{number}"))).await?;
+    pub async fn pull_request(
+        &self,
+        repo: &ReviewRepository,
+        number: u64,
+    ) -> Result<ReviewRequest> {
+        let pr: ReviewRequest = self.get(repo.endpoint(&format!("pulls/{number}"))).await?;
         pr.validate(repo)?;
         ensure!(
             pr.number == number,
@@ -657,7 +903,7 @@ impl GitHubClient {
     }
     pub async fn discussion(
         &self,
-        repo: &GitHubRepo,
+        repo: &ReviewRepository,
         number: u64,
     ) -> Result<Vec<DiscussionComment>> {
         repo.validate()?;
@@ -695,8 +941,8 @@ impl GitHubClient {
     }
     pub async fn validate_published_target(
         &self,
-        repo: &GitHubRepo,
-        pr: &PullRequest,
+        repo: &ReviewRepository,
+        pr: &ReviewRequest,
         target: &CommentTarget,
     ) -> Result<()> {
         let CommentTarget::Inline {
@@ -750,8 +996,8 @@ impl GitHubClient {
 
     pub async fn post(
         &self,
-        repo: &GitHubRepo,
-        pr: &PullRequest,
+        repo: &ReviewRepository,
+        pr: &ReviewRequest,
         target: &CommentTarget,
         body: &str,
     ) -> Result<RemoteComment> {
@@ -801,7 +1047,7 @@ impl GitHubClient {
                 (format!("pulls/{}/comments", pr.number), body)
             }
         };
-        serde_json::from_value(self.transport.request(ApiRequest { endpoint: repo.endpoint(&suffix), method: ApiMethod::Post, writing: true, body: Some(body) }).await?).map_err(|_| GitHubFailure { message: "GitHub posted the comment but returned an unreadable response; refresh before retrying".into(), outcome_unknown: true }.into())
+        serde_json::from_value(self.transport.request(ApiRequest { endpoint: repo.endpoint(&suffix), method: ApiMethod::Post, writing: true, body: Some(body) }).await?).map_err(|_| ReviewProviderFailure { message: "GitHub posted the comment but returned an unreadable response; refresh before retrying".into(), outcome_unknown: true }.into())
     }
 }
 
@@ -835,7 +1081,7 @@ fn next_cursor(connection: &Value) -> Result<Option<String>> {
     }
 }
 
-fn comment_endpoint(repo: &GitHubRepo, kind: CommentKind, id: u64) -> Result<String> {
+fn comment_endpoint(repo: &ReviewRepository, kind: CommentKind, id: u64) -> Result<String> {
     repo.validate()?;
     ensure!(id > 0, "Invalid comment");
     Ok(repo.endpoint(&match kind {
@@ -845,7 +1091,7 @@ fn comment_endpoint(repo: &GitHubRepo, kind: CommentKind, id: u64) -> Result<Str
     }))
 }
 
-pub(crate) fn pr_number(query: &str, repo: &GitHubRepo) -> Result<u64> {
+pub(crate) fn pr_number(query: &str, repo: &ReviewRepository) -> Result<u64> {
     let query = query.trim();
     let number = if let Some(url) = query.strip_prefix("https://github.com/") {
         let prefix = format!("{}/pull/", repo.full_name);
@@ -868,8 +1114,8 @@ pub(crate) fn pr_number(query: &str, repo: &GitHubRepo) -> Result<u64> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Checkout {
-    pub repository: GitHubRepo,
-    pub pull_request: PullRequest,
+    pub repository: ReviewRepository,
+    pub pull_request: ReviewRequest,
     pub branch: String,
     pub base_ref: String,
     #[serde(default)]
@@ -878,15 +1124,29 @@ pub(crate) struct Checkout {
 
 impl Checkout {
     pub fn review_key(&self, worktree: &Path) -> Result<String> {
-        Ok(format!(
-            "github_review_v1:{}",
-            crate::review_state::digest(&[&serde_json::to_vec(&(
-                worktree,
-                self.repository.id,
-                self.pull_request.number,
-                &self.pull_request.base.branch
-            ))?])
-        ))
+        if self.repository.provider == ReviewProviderKind::GitHub {
+            Ok(format!(
+                "github_review_v1:{}",
+                crate::review_state::digest(&[&serde_json::to_vec(&(
+                    worktree,
+                    self.repository.id,
+                    self.pull_request.number,
+                    &self.pull_request.base.branch
+                ))?])
+            ))
+        } else {
+            Ok(format!(
+                "provider_review_v1:{}",
+                crate::review_state::digest(&[&serde_json::to_vec(&(
+                    worktree,
+                    "gitlab",
+                    &self.repository.host,
+                    self.repository.id,
+                    self.pull_request.number,
+                    &self.pull_request.base.branch
+                ))?])
+            ))
+        }
     }
 }
 
@@ -970,7 +1230,7 @@ pub(crate) async fn check_clean_checkout(
         )
         .await?
         .is_empty(),
-        "Commit or move local changes, including untracked files, before opening or updating a PR. Nothing was stashed or discarded."
+        "Commit or move local changes, including untracked files, before opening or updating a review. Nothing was stashed or discarded."
     );
     for marker in [
         "MERGE_HEAD",
@@ -984,7 +1244,7 @@ pub(crate) async fn check_clean_checkout(
     ] {
         let path = git_text(executor, root, &["rev-parse", "--git-path", marker]).await?;
         match smol::fs::metadata(root.join(path)).await {
-            Ok(_) => bail!("Finish the active Git operation before changing the PR checkout"),
+            Ok(_) => bail!("Finish the active Git operation before changing the review checkout"),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
@@ -1002,15 +1262,19 @@ struct LocalReviewBranch {
 }
 
 fn checkout_identity(
-    repo: &GitHubRepo,
-    pr: &PullRequest,
+    repo: &ReviewRepository,
+    pr: &ReviewRequest,
 ) -> crate::review_provider::ReviewCheckoutIdentity {
     let source_repository = pr.head.repo.as_ref().unwrap_or(repo);
     crate::review_provider::ReviewCheckoutIdentity {
-        provider: "github".into(),
+        provider: match repo.provider {
+            ReviewProviderKind::GitHub => "github",
+            ReviewProviderKind::GitLab => "gitlab",
+        }
+        .into(),
         repository_id: repo.id.to_string(),
         review_number: pr.number,
-        source_host: "github.com".into(),
+        source_host: repo.host.clone(),
         source_repository: source_repository.full_name.clone(),
         source_available: pr.head.repo.is_some(),
         source_branch: pr.head.branch.clone(),
@@ -1091,7 +1355,7 @@ async fn remote_repositories(
         .collect();
     for remote in remotes {
         let repository = match git_text(executor, root, &["remote", "get-url", &remote]).await {
-            Ok(url) => repository_from_remote(&url),
+            Ok(url) => repository_choice_from_remote(&url).map(|choice| choice.full_name),
             Err(error) => {
                 log::warn!("could not inspect review checkout remote {remote}: {error:#}");
                 None
@@ -1163,23 +1427,45 @@ async fn write_checkout_association(
     Ok(())
 }
 
-pub(crate) async fn checkout_pull_request(
+pub(crate) async fn checkout_review_request(
     executor: &gpui::BackgroundExecutor,
     root: std::path::PathBuf,
-    repo: GitHubRepo,
-    pr: PullRequest,
+    repo: ReviewRepository,
+    pr: ReviewRequest,
     previous: Option<Checkout>,
     ready: impl FnMut() -> Result<()>,
 ) -> Result<Checkout> {
-    let url = format!("https://github.com/{}.git", repo.full_name);
+    let url = if repo.provider == ReviewProviderKind::GitLab {
+        review_remote_url(executor, &root, &repo)
+            .await
+            .unwrap_or_else(|| format!("https://{}/{}.git", repo.host, repo.full_name))
+    } else {
+        format!("https://{}/{}.git", repo.host, repo.full_name)
+    };
     checkout_from_remote(executor, root, repo, pr, previous, url, ready).await
+}
+
+async fn review_remote_url(
+    executor: &gpui::BackgroundExecutor,
+    root: &Path,
+    repo: &ReviewRepository,
+) -> Option<String> {
+    let remotes = git_text(executor, root, &["remote", "-v"]).await.ok()?;
+    remotes.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let _name = fields.next()?;
+        let url = fields.next()?;
+        let choice = repository_choice_from_remote(url)?;
+        (choice.host.eq_ignore_ascii_case(&repo.host) && choice.full_name == repo.full_name)
+            .then(|| url.to_string())
+    })
 }
 
 async fn checkout_from_remote(
     executor: &gpui::BackgroundExecutor,
     root: std::path::PathBuf,
-    repo: GitHubRepo,
-    pr: PullRequest,
+    repo: ReviewRepository,
+    pr: ReviewRequest,
     previous: Option<Checkout>,
     url: String,
     mut ready: impl FnMut() -> Result<()>,
@@ -1205,30 +1491,63 @@ async fn checkout_from_remote(
         ],
     )
     .await?;
-    let prefix = format!("refs/zed/reviews/{}/{}", repo.id, pr.number);
+    let prefix = if repo.provider == ReviewProviderKind::GitHub {
+        format!("refs/zed/reviews/{}/{}", repo.id, pr.number)
+    } else {
+        format!(
+            "refs/zed/reviews/gitlab-{}/{}/{}",
+            crate::review_state::digest(&[repo.host.as_bytes()]),
+            repo.id,
+            pr.number
+        )
+    };
     let head_ref = format!("{prefix}/head-{}", pr.head.sha);
     let base_ref = format!("{prefix}/base-{}", pr.base.sha);
-    git_output(
-        executor,
-        &root,
-        &[
-            "-c",
-            "credential.helper=",
-            "-c",
-            "credential.https://github.com.helper=!gh auth git-credential",
-            "fetch",
-            "--no-tags",
-            "--no-write-fetch-head",
-            &url,
-            &format!("refs/pull/{}/head:{head_ref}", pr.number),
-            &format!("refs/heads/{}:{base_ref}", pr.base.branch),
-        ],
-    )
-    .await?;
+    let head_source = match repo.provider {
+        ReviewProviderKind::GitHub => format!("refs/pull/{}/head", pr.number),
+        ReviewProviderKind::GitLab => format!("refs/merge-requests/{}/head", pr.number),
+    };
+    let fetched_base_ref = format!("{prefix}/target-{}", pr.base.sha);
+    let mut fetch_arguments = Vec::new();
+    if repo.provider == ReviewProviderKind::GitHub {
+        fetch_arguments.extend([
+            "-c".to_string(),
+            "credential.helper=".to_string(),
+            "-c".to_string(),
+            format!(
+                "credential.https://{}.helper=!gh auth git-credential",
+                repo.host
+            ),
+        ]);
+    }
+    fetch_arguments.extend([
+        "fetch".into(),
+        "--no-tags".into(),
+        "--no-write-fetch-head".into(),
+        url,
+        format!("{head_source}:{head_ref}"),
+        format!("refs/heads/{}:{fetched_base_ref}", pr.base.branch),
+    ]);
+    let fetch_arguments = fetch_arguments
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    git_output(executor, &root, &fetch_arguments).await?;
+    ensure!(
+        git_text(
+            executor,
+            &root,
+            &["cat-file", "-e", &format!("{}^{{commit}}", pr.base.sha)]
+        )
+        .await
+        .is_ok(),
+        "The review base revision is no longer available from the target repository"
+    );
+    git_output(executor, &root, &["update-ref", &base_ref, &pr.base.sha]).await?;
     ensure!(
         git_text(executor, &root, &["rev-parse", &head_ref]).await? == pr.head.sha
             && git_text(executor, &root, &["rev-parse", &base_ref]).await? == pr.base.sha,
-        "The PR changed during fetch. Refresh its metadata before opening it."
+        "The review changed during fetch. Refresh its metadata before opening it."
     );
     let current = git_text(
         executor,
@@ -1339,7 +1658,9 @@ async fn checkout_from_remote(
         }
         let previous_managed = previous_matches
             && previous.as_ref().is_some_and(|checkout| {
-                checkout.branch == branch.name && branch.name.starts_with("review/pr-")
+                checkout.branch == branch.name
+                    && (branch.name.starts_with("review/pr-")
+                        || branch.name.starts_with("review/mr-"))
             });
         let managed = branch
             .association
@@ -1412,7 +1733,15 @@ async fn checkout_from_remote(
     } else {
         let existing: HashSet<_> = branches.iter().map(|branch| branch.name.as_str()).collect();
         let preferred = identity.source_branch.clone();
-        let base = format!("review/pr-{}-{}", pr.number, identity.source_branch);
+        let request_prefix = if repo.provider == ReviewProviderKind::GitLab {
+            "mr"
+        } else {
+            "pr"
+        };
+        let base = format!(
+            "review/{request_prefix}-{}-{}",
+            pr.number, identity.source_branch
+        );
         let mut branch = if !identity.source_available {
             warnings.push(
                 "The review source repository is unavailable; using a managed review branch."
@@ -1464,7 +1793,7 @@ pub(crate) struct CommentDraft {
 pub(crate) async fn validate_inline(
     executor: &gpui::BackgroundExecutor,
     root: &Path,
-    pr: &PullRequest,
+    pr: &ReviewRequest,
     target: &CommentTarget,
     effective: Option<&str>,
     effective_base: Option<&str>,
@@ -1482,7 +1811,7 @@ pub(crate) async fn validate_inline(
     };
     ensure!(
         head_sha == &pr.head.sha && base_sha == &pr.base.sha,
-        "The PR revision changed. Keep this draft and select a new target."
+        "The review revision changed. Keep this draft and select a new target."
     );
     ensure!(
         *start_line > 0 && start_line <= line,
@@ -1496,13 +1825,13 @@ pub(crate) async fn validate_inline(
     );
     ensure!(
         git_text(executor, root, &["rev-parse", "HEAD"]).await? == pr.head.sha,
-        "The checkout no longer matches this PR revision"
+        "The checkout no longer matches this review revision"
     );
     let merge_base = git_text(executor, root, &["merge-base", &pr.base.sha, &pr.head.sha]).await?;
     let published_base = git_blob(executor, root, &merge_base, path).await?;
     ensure!(
         published_base.as_deref() == effective_base.map(str::as_bytes),
-        "The editor base no longer matches the published PR comparison. Your draft is kept."
+        "The editor base no longer matches the published review comparison. Your draft is kept."
     );
     let published = git_blob(executor, root, &pr.head.sha, path).await?;
     let current = match effective {
@@ -1531,7 +1860,7 @@ pub(crate) async fn validate_inline(
     .await?;
     ensure!(
         range_in_patch(&patch, *side, *start_line, *line),
-        "The selected lines are not in the published PR diff. Your draft is kept."
+        "The selected lines are not in the published review diff. Your draft is kept."
     );
     Ok(())
 }
@@ -1566,11 +1895,16 @@ pub(crate) struct PublishedComment {
     pub comment: RemoteComment,
     pub current: Option<String>,
     pub base: Option<String>,
+    pub provider_name: String,
 }
 
 impl PublishedComment {
     pub(crate) fn into_placed(self) -> Option<crate::review_provider::PlacedReviewComment> {
-        let path = self.comment.path.clone()?;
+        let path = self
+            .comment
+            .new_path
+            .clone()
+            .or_else(|| self.comment.path.clone())?;
         let line = self.comment.line?;
         let side = match self.comment.side? {
             DiffSide::Left => crate::review_provider::ReviewDiffSide::Left,
@@ -1599,7 +1933,7 @@ impl PublishedComment {
             root_comment_id,
             author: self.comment.user.login,
             body: self.comment.body.unwrap_or_default(),
-            provider_name: "GitHub".into(),
+            provider_name: self.provider_name,
             url: None,
             path,
             side,
@@ -1633,12 +1967,14 @@ pub(crate) async fn published_comments(
         };
         if !files.contains_key(path) {
             let pair: Result<_> = async {
-                let current = git_blob(executor, root, &pr.head.sha, path)
+                let current_path = comment.new_path.as_ref().unwrap_or(path);
+                let old_path = comment.old_path.as_ref().unwrap_or(path);
+                let current = git_blob(executor, root, &pr.head.sha, current_path)
                     .await?
                     .map(String::from_utf8)
                     .transpose()
                     .context("Inline comments require UTF-8 text")?;
-                let base = git_blob(executor, root, &merge_base, path)
+                let base = git_blob(executor, root, &merge_base, old_path)
                     .await?
                     .map(String::from_utf8)
                     .transpose()
@@ -1653,6 +1989,7 @@ pub(crate) async fn published_comments(
                 comment: comment.clone(),
                 current: current.clone(),
                 base: base.clone(),
+                provider_name: checkout.repository.provider_name().into(),
             });
         }
     }
@@ -1664,35 +2001,43 @@ mod tests {
     use super::*;
     use std::{collections::VecDeque, sync::Mutex};
 
-    fn repo() -> GitHubRepo {
-        GitHubRepo {
+    fn repo() -> ReviewRepository {
+        ReviewRepository {
             id: 7,
             full_name: "owner/project".into(),
+            provider: ReviewProviderKind::GitHub,
+            host: "github.com".into(),
+            web_url: None,
         }
     }
-    fn pr() -> PullRequest {
-        PullRequest {
+    fn pr() -> ReviewRequest {
+        ReviewRequest {
             number: 12,
             title: "Review changes".into(),
             body: None,
-            user: GitHubUser {
+            user: ReviewUser {
                 login: "author".into(),
             },
             state: "open".into(),
             merged_at: None,
-            head: PullRequestRef {
+            head: ReviewRequestRef {
                 branch: "feature".into(),
                 sha: "a".repeat(40),
-                repo: Some(GitHubRepo {
+                repo: Some(ReviewRepository {
                     id: 8,
                     full_name: "contributor/project".into(),
+                    provider: ReviewProviderKind::GitHub,
+                    host: "github.com".into(),
+                    web_url: None,
                 }),
             },
-            base: PullRequestRef {
+            base: ReviewRequestRef {
                 branch: "main".into(),
                 sha: "b".repeat(40),
                 repo: Some(repo()),
             },
+            start_sha: None,
+            web_url: None,
         }
     }
     fn comment() -> Value {
@@ -1846,7 +2191,7 @@ mod tests {
                     .unwrap_err();
                 assert!(
                     error
-                        .downcast_ref::<GitHubFailure>()
+                        .downcast_ref::<ReviewProviderFailure>()
                         .unwrap()
                         .outcome_unknown
                 );
@@ -1934,6 +2279,20 @@ mod tests {
         ] {
             assert!(pr_number(query, &repo()).is_err());
         }
+    }
+
+    #[test]
+    fn review_repository_choices_preserve_provider_and_host() {
+        let github = repository_choice_from_remote("git@github.com:owner/project.git").unwrap();
+        assert_eq!(github.provider, ReviewProviderKind::GitHub);
+        assert_eq!(github.host, "github.com");
+        assert_eq!(github.full_name, "owner/project");
+
+        let gitlab =
+            repository_choice_from_remote("https://gitlab.com/YashedP/SpotiNotifs.git").unwrap();
+        assert_eq!(gitlab.provider, ReviewProviderKind::GitLab);
+        assert_eq!(gitlab.host, "gitlab.com");
+        assert_eq!(gitlab.full_name, "YashedP/SpotiNotifs");
     }
 
     #[test]
@@ -2135,7 +2494,7 @@ mod tests {
                 .unwrap_err();
             assert!(
                 error
-                    .downcast_ref::<GitHubFailure>()
+                    .downcast_ref::<ReviewProviderFailure>()
                     .unwrap()
                     .outcome_unknown
             );
@@ -2201,7 +2560,7 @@ mod tests {
         tempfile::TempDir,
         std::path::PathBuf,
         std::path::PathBuf,
-        PullRequest,
+        ReviewRequest,
     ) {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("checkout");
@@ -2452,6 +2811,81 @@ mod tests {
                     .unwrap(),
                 pr.head.sha
             );
+        });
+    }
+
+    #[gpui::test]
+    fn gitlab_checkout_fetches_merge_request_ref_and_reuses_source_branch(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let executor = &cx.background_executor;
+        smol::block_on(async {
+            let (_directory, root, remote, mut request) = fixture(executor).await;
+            git_output(
+                executor,
+                &root,
+                &[
+                    "update-ref",
+                    "refs/merge-requests/12/head",
+                    &request.head.sha,
+                ],
+            )
+            .await
+            .unwrap();
+            git_output(
+                executor,
+                &root,
+                &[
+                    "push",
+                    remote.to_str().unwrap(),
+                    "refs/merge-requests/12/head:refs/merge-requests/12/head",
+                ],
+            )
+            .await
+            .unwrap();
+            let repository = ReviewRepository {
+                id: 7,
+                full_name: "group/subgroup/project".into(),
+                provider: ReviewProviderKind::GitLab,
+                host: "code.internal.example".into(),
+                web_url: Some("https://code.internal.example/group/subgroup/project".into()),
+            };
+            request.head.repo = Some(repository.clone());
+            request.base.repo = Some(repository.clone());
+            request.start_sha = Some(request.base.sha.clone());
+            request.web_url = Some(
+                "https://code.internal.example/group/subgroup/project/-/merge_requests/12".into(),
+            );
+            let checkout = checkout_from_remote(
+                executor,
+                root.clone(),
+                repository,
+                request.clone(),
+                None,
+                remote.to_string_lossy().into_owned(),
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(checkout.branch, "feature");
+            assert_eq!(
+                git_text(executor, &root, &["rev-parse", "HEAD"])
+                    .await
+                    .unwrap(),
+                request.head.sha
+            );
+            assert!(checkout.base_ref.contains("/gitlab-"));
+            let association = git_text(
+                executor,
+                &root,
+                &["config", "--get", &association_key("feature")],
+            )
+            .await
+            .unwrap();
+            let association: crate::review_provider::ReviewCheckoutAssociation =
+                serde_json::from_str(&association).unwrap();
+            assert_eq!(association.identity.provider, "gitlab");
+            assert_eq!(association.identity.source_host, "code.internal.example");
         });
     }
 

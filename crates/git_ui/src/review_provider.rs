@@ -1,7 +1,53 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ReviewProviderKind {
+    #[default]
+    GitHub,
+    GitLab,
+}
+
+impl ReviewProviderKind {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::GitHub => "GitHub",
+            Self::GitLab => "GitLab",
+        }
+    }
+
+    pub(crate) fn request_name(self) -> &'static str {
+        match self {
+            Self::GitHub => "PR",
+            Self::GitLab => "MR",
+        }
+    }
+
+    pub(crate) fn request_prefix(self) -> &'static str {
+        match self {
+            Self::GitHub => "#",
+            Self::GitLab => "!",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ReviewRepositoryChoice {
+    pub provider: ReviewProviderKind,
+    pub host: String,
+    pub full_name: String,
+    pub remote_url: String,
+}
+
+impl ReviewRepositoryChoice {
+    pub(crate) fn storage_id(&self) -> String {
+        format!("{}:{}:{}", self.provider.name(), self.host, self.full_name)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReviewProviderIdentity {
+    pub kind: ReviewProviderKind,
     pub name: String,
     pub repository: String,
 }

@@ -1,8 +1,8 @@
 use crate::{branch_diff::BranchDiff, branch_review::ReviewEvent, project_diff::CompareWithBranch};
 use crate::{
-    github_review::{Checkout, CommentTarget, DiffSide, GitHubRepo, PullRequest},
-    github_review_ui::{ReviewRequestPicker, ReviewService, ReviewServiceEvent},
+    github_review::{Checkout, CommentTarget, DiffSide, ReviewRepository, ReviewRequest},
     review_provider::ReviewBackend,
+    review_ui::{ReviewRequestPicker, ReviewService, ReviewServiceEvent},
 };
 use anyhow::{Context as _, Result, ensure};
 use db::kvp::KeyValueStore;
@@ -112,7 +112,7 @@ struct ReviewSession {
 
 pub struct BranchReviewPanel {
     workspace: WeakEntity<Workspace>,
-    github: Entity<ReviewService>,
+    review_service: Entity<ReviewService>,
     checkout_task: Option<Task<()>>,
     pending_checkout: Option<Checkout>,
     ignored_item: Option<gpui::EntityId>,
@@ -168,19 +168,26 @@ impl BranchReviewPanel {
         cx: &mut Context<Self>,
     ) -> Self {
         let git_store = workspace.project().read(cx).git_store().clone();
-        let github = cx.new(|cx| ReviewService::new(workspace.project().clone(), window, cx));
+        let review_service =
+            cx.new(|cx| ReviewService::new(workspace.project().clone(), window, cx));
         let subscriptions = vec![
-            cx.subscribe_in(&github, window, |this, _, event, window, cx| match event {
-                ReviewServiceEvent::Open { repo, pr } => {
-                    this.open_pull_request(repo.clone(), pr.clone(), window, cx)
-                }
-                ReviewServiceEvent::CommentsLoaded(comments) => {
-                    if let Some(session) = &this.session {
-                        let review = session.item.read(cx).review.clone();
-                        review.update(cx, |review, cx| review.set_comments(comments.clone(), cx));
+            cx.subscribe_in(
+                &review_service,
+                window,
+                |this, _, event, window, cx| match event {
+                    ReviewServiceEvent::Open {
+                        repository,
+                        request,
+                    } => this.open_review_request(repository.clone(), request.clone(), window, cx),
+                    ReviewServiceEvent::CommentsLoaded(comments) => {
+                        if let Some(session) = &this.session {
+                            let review = session.item.read(cx).review.clone();
+                            review
+                                .update(cx, |review, cx| review.set_comments(comments.clone(), cx));
+                        }
                     }
-                }
-            }),
+                },
+            ),
             cx.subscribe_in(&workspace_handle, window, |_, _, event, window, cx| {
                 if matches!(
                     event,
@@ -226,7 +233,7 @@ impl BranchReviewPanel {
         });
         Self {
             workspace: workspace_handle.downgrade(),
-            github,
+            review_service,
             checkout_task: None,
             pending_checkout: None,
             ignored_item: None,
@@ -299,23 +306,24 @@ impl BranchReviewPanel {
         }
         review.update(cx, |review, cx| {
             review.set_panel_focus_handle(Some(self.focus_handle.clone()), cx);
-            review.set_review_service(Some(self.github.downgrade()), cx);
+            review.set_review_service(Some(self.review_service.downgrade()), cx);
         });
         if let Some(checkout) = &comparison.checkout {
             match checkout.review_key(&comparison.worktree) {
                 Ok(key) => review.update(cx, |review, cx| review.set_storage_key(Some(key), cx)),
                 Err(error) => self.error = Some(error.to_string()),
             }
-            self.github.update(cx, |github, cx| {
-                github.attach(checkout.clone(), window, cx);
-                github.set_review(review.downgrade());
+            self.review_service.update(cx, |review_service, cx| {
+                review_service.attach(checkout.clone(), window, cx);
+                review_service.set_review(review.downgrade());
             });
         } else {
             review.update(cx, |review, cx| {
                 review.set_storage_key(None, cx);
                 review.set_comments(Vec::new(), cx);
             });
-            self.github.update(cx, |github, cx| github.detach(cx));
+            self.review_service
+                .update(cx, |review_service, cx| review_service.detach(cx));
         }
         let handler = comparison.checkout.as_ref().map(|_| {
             let review_for_enabled = review.downgrade();
@@ -354,14 +362,14 @@ impl BranchReviewPanel {
                 ReviewEvent::Reply {
                     comment_id,
                     thread_id,
-                } => this.github.update(cx, |github, cx| {
-                    github.reply_inline(comment_id, thread_id.clone(), window, cx)
+                } => this.review_service.update(cx, |review_service, cx| {
+                    review_service.reply_inline(comment_id, thread_id.clone(), window, cx)
                 }),
                 ReviewEvent::Resolve {
                     thread_id,
                     resolved,
-                } => this.github.update(cx, |github, cx| {
-                    github.set_thread_resolved(thread_id.0.clone(), *resolved, cx)
+                } => this.review_service.update(cx, |review_service, cx| {
+                    review_service.set_thread_resolved(thread_id.0.clone(), *resolved, cx)
                 }),
             },
         );
@@ -400,8 +408,8 @@ impl BranchReviewPanel {
             return;
         }
         let repository = workspace.read(cx).project().read(cx).active_repository(cx);
-        self.github.update(cx, |github, cx| {
-            github.set_repository(repository.clone(), cx)
+        self.review_service.update(cx, |review_service, cx| {
+            review_service.set_repository(repository.clone(), cx)
         });
         let Some(repo) = repository else {
             if self.session.is_some() {
@@ -442,14 +450,14 @@ impl BranchReviewPanel {
         }
     }
 
-    fn open_pull_request(
+    fn open_review_request(
         &mut self,
-        repo: GitHubRepo,
-        pr: PullRequest,
+        repo: ReviewRepository,
+        pr: ReviewRequest,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.github.read(cx).is_posting()
+        if self.review_service.read(cx).is_posting()
             || self
                 .checkout_task
                 .as_ref()
@@ -464,7 +472,11 @@ impl BranchReviewPanel {
         let Some(repository) = project.read(cx).active_repository(cx) else {
             return;
         };
-        if !self.github.read(cx).matches_repository(&repository, cx) {
+        if !self
+            .review_service
+            .read(cx)
+            .matches_repository(&repository, cx)
+        {
             self.error = Some(
                 "The active repository changed. Select a review for this repository again.".into(),
             );
@@ -472,20 +484,21 @@ impl BranchReviewPanel {
             return;
         }
         let root = repository.read(cx).work_directory_abs_path.to_path_buf();
-        let previous = self.github.read(cx).checkout.clone();
+        let request_name = repo.provider.request_name();
+        let previous = self.review_service.read(cx).checkout.clone();
         self.error = None;
         self.warning = None;
         let weak_repository = repository.downgrade();
         let project_for_job = project.clone();
-        let job = repository.update(cx, |repository, _| repository.send_job("open_pull_request", Some("Opening PR checkout".into()), move |state, cx| async move {
+        let job = repository.update(cx, |repository, _| repository.send_job("open_review_request", Some(format!("Opening {request_name} checkout").into()), move |state, cx| async move {
             let project = project_for_job;
-            crate::github_review::checkout_pull_request(cx.background_executor(), root, repo, pr, previous, || {
+            crate::github_review::checkout_review_request(cx.background_executor(), root, repo, pr, previous, || {
                 let project = project.read_with(&cx, |project, cx| {
                     let repository = weak_repository.upgrade().context("Repository closed")?;
-                    ensure!(project.is_local() && !project.is_read_only(cx), "PR checkout requires a writable local project");
-                    ensure!(repository.read(cx).is_trusted() && matches!(&state, project::git_store::RepositoryState::Local(local) if local.backend.is_trusted()), "Trust this project before opening a PR checkout");
+                    ensure!(project.is_local() && !project.is_read_only(cx), "Review checkout requires a writable local project");
+                    ensure!(repository.read(cx).is_trusted() && matches!(&state, project::git_store::RepositoryState::Local(local) if local.backend.is_trusted()), "Trust this project before opening a review checkout");
                     ensure!(project.active_repository(cx).as_ref() == Some(&repository), "The active repository changed during checkout");
-                    ensure!(!project.buffer_store().read(cx).buffers().any(|buffer| buffer.read(cx).is_dirty()), "Save or close unsaved buffers before opening a PR checkout");
+                    ensure!(!project.buffer_store().read(cx).buffers().any(|buffer| buffer.read(cx).is_dirty()), "Save or close unsaved buffers before opening a review checkout");
                     anyhow::Ok(())
                 });
                 project
@@ -530,12 +543,12 @@ impl BranchReviewPanel {
     ) {
         let anchor = range.end;
         match self.comment_target(&editor, range, cx) {
-            Ok(target) => self.github.update(cx, |github, cx| {
-                github.select_inline_target(target, editor, anchor, window, cx)
+            Ok(target) => self.review_service.update(cx, |review_service, cx| {
+                review_service.select_inline_target(target, editor, anchor, window, cx)
             }),
-            Err(error) => self
-                .github
-                .update(cx, |github, cx| github.show_error(format!("{error:#}"), cx)),
+            Err(error) => self.review_service.update(cx, |review_service, cx| {
+                review_service.show_error(format!("{error:#}"), cx)
+            }),
         }
     }
 
@@ -545,7 +558,10 @@ impl BranchReviewPanel {
         selection: Range<multi_buffer::Anchor>,
         cx: &App,
     ) -> Result<CommentTarget> {
-        let session = self.session.as_ref().context("Open a PR review first")?;
+        let session = self
+            .session
+            .as_ref()
+            .context("Open a remote review first")?;
         let checkout = session
             .comparison
             .checkout
@@ -580,7 +596,7 @@ impl BranchReviewPanel {
             .review
             .read(cx)
             .path_for_buffer(buffer.remote_id(), cx)
-            .context("The selected excerpt is not part of this PR comparison")?
+            .context("The selected excerpt is not part of this review comparison")?
             .to_string();
         use language::ToPoint as _;
         let start = range.start.to_point(buffer);
@@ -631,7 +647,8 @@ impl BranchReviewPanel {
         self.session = None;
         self.pending_restore = None;
         self.warning = None;
-        self.github.update(cx, |github, cx| github.close_review(cx));
+        self.review_service
+            .update(cx, |review_service, cx| review_service.close_review(cx));
         self.persist(cx);
         cx.notify();
     }
@@ -727,12 +744,21 @@ impl Panel for BranchReviewPanel {
 
 impl Render for BranchReviewPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let current_review = self.github.read(cx).current_review_header();
-        let provider = self.github.read(cx).identity();
-        let review_picker = self.github.clone();
-        let load_review_picker = self.github.clone();
-        let conversation = self.github.clone();
-        let load_conversation = self.github.clone();
+        let current_review = self.review_service.read(cx).current_review_header();
+        let provider = self.review_service.read(cx).identity();
+        let available_providers = self.review_service.read(cx).available_providers();
+        let providers_loading = self.review_service.read(cx).providers_loading();
+        let provider_discovery_error = self
+            .review_service
+            .read(cx)
+            .provider_discovery_error()
+            .map(str::to_string);
+        let has_current_review = current_review.is_some();
+        let attached_provider = provider.kind;
+        let review_picker = self.review_service.clone();
+        let load_review_picker = self.review_service.clone();
+        let conversation = self.review_service.clone();
+        let load_conversation = self.review_service.clone();
         v_flex()
             .size_full()
             .track_focus(&self.focus_handle)
@@ -788,7 +814,12 @@ impl Render for BranchReviewPanel {
                 )
             })
             .when_some(current_review, |view, review| {
-                let full_title = format!("#{} {}", review.number, review.title);
+                let full_title = format!(
+                    "{}{} {}",
+                    attached_provider.request_prefix(),
+                    review.number,
+                    review.title
+                );
                 view.child(
                     v_flex()
                         .px_2()
@@ -804,13 +835,18 @@ impl Render for BranchReviewPanel {
                                             .full_width(true)
                                             .on_open(std::rc::Rc::new(move |window, cx| {
                                                 load_review_picker.update(cx, |review, cx| {
-                                                    review.load_review_requests(window, cx)
+                                                    review.load_review_requests_for_provider(
+                                                        attached_provider,
+                                                        window,
+                                                        cx,
+                                                    )
                                                 });
                                             }))
                                             .menu(move |window, cx| {
                                                 Some(cx.new(|cx| {
                                                     ReviewRequestPicker::new(
                                                         review_picker.clone(),
+                                                        attached_provider,
                                                         window,
                                                         cx,
                                                     )
@@ -829,7 +865,9 @@ impl Render for BranchReviewPanel {
                                                             .child(
                                                                 div().flex_none().child(
                                                                     Label::new(format!(
-                                                                        "#{}",
+                                                                        "{}{}",
+                                                                        attached_provider
+                                                                            .request_prefix(),
                                                                         review.number
                                                                     ))
                                                                     .size(LabelSize::Small)
@@ -892,37 +930,65 @@ impl Render for BranchReviewPanel {
                         ),
                 )
             })
-            .when(
-                self.github.read(cx).has_provider()
-                    && self.github.read(cx).current_review_header().is_none(),
-                |view| {
-                    let picker = self.github.clone();
-                    let loader = self.github.clone();
-                    view.child(
-                        div().px_2().pb_1().child(
-                            PopoverMenu::new("branch-review-empty-request-picker")
-                                .full_width(true)
-                                .on_open(std::rc::Rc::new(move |window, cx| {
-                                    loader.update(cx, |review, cx| {
-                                        review.load_review_requests(window, cx)
-                                    });
-                                }))
-                                .menu(move |window, cx| {
-                                    Some(cx.new(|cx| {
-                                        ReviewRequestPicker::new(picker.clone(), window, cx)
-                                    }))
-                                })
-                                .trigger(
-                                    Button::new(
-                                        "choose-remote-review",
-                                        format!("Choose {} review", provider.name),
-                                    )
-                                    .full_width(),
+            .when(!has_current_review, |view| {
+                view.child(
+                    v_flex()
+                        .gap_1()
+                        .children(available_providers.into_iter().enumerate().map(
+                            |(index, provider)| {
+                                let picker = self.review_service.clone();
+                                let loader = self.review_service.clone();
+                                div().px_2().child(
+                                    PopoverMenu::new(("branch-review-empty-request-picker", index))
+                                        .full_width(true)
+                                        .on_open(std::rc::Rc::new(move |window, cx| {
+                                            loader.update(cx, |review, cx| {
+                                                review.load_review_requests_for_provider(
+                                                    provider, window, cx,
+                                                )
+                                            });
+                                        }))
+                                        .menu(move |window, cx| {
+                                            Some(cx.new(|cx| {
+                                                ReviewRequestPicker::new(
+                                                    picker.clone(),
+                                                    provider,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }))
+                                        })
+                                        .trigger(
+                                            Button::new(
+                                                ("choose-remote-review", index),
+                                                format!("Choose {} review", provider.name()),
+                                            )
+                                            .full_width(),
+                                        ),
+                                )
+                            },
+                        ))
+                        .when(providers_loading, |state| {
+                            state.child(
+                                div().px_2().child(
+                                    Label::new("Loading review providers…")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
                                 ),
-                        ),
-                    )
-                },
-            )
+                            )
+                        })
+                        .when_some(provider_discovery_error, |state, error| {
+                            state.child(
+                                div().px_2().child(
+                                    Label::new(error)
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Error)
+                                        .line_clamp(3),
+                                ),
+                            )
+                        }),
+                )
+            })
             .when(
                 self.checkout_task
                     .as_ref()
@@ -931,17 +997,22 @@ impl Render for BranchReviewPanel {
             )
             .map(|view| {
                 if let Some(session) = &self.session {
-                    view.child(div().px_2().pb_1().when(
-                        self.github.read(cx).current_review_header().is_none(),
-                        |row| {
-                            row.child(
-                                Label::new(format!("Base: {}", session.comparison.base_ref))
-                                    .size(LabelSize::Small)
-                                    .single_line()
-                                    .truncate(),
-                            )
-                        },
-                    ))
+                    view.child(
+                        div().px_2().pb_1().when(
+                            self.review_service
+                                .read(cx)
+                                .current_review_header()
+                                .is_none(),
+                            |row| {
+                                row.child(
+                                    Label::new(format!("Base: {}", session.comparison.base_ref))
+                                        .size(LabelSize::Small)
+                                        .single_line()
+                                        .truncate(),
+                                )
+                            },
+                        ),
+                    )
                     .child(
                         div()
                             .flex_1()

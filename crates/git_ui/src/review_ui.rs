@@ -1,9 +1,10 @@
 use crate::github_review::{
     self, Checkout, CommentDraft, CommentKind, CommentTarget, DiscussionAction, DiscussionComment,
-    GitHubClient, GitHubFailure, GitHubRepo, PullRequest,
+    ReviewClient, ReviewProviderFailure, ReviewRepository, ReviewRequest,
 };
 use crate::review_provider::{
-    ReviewBackend, ReviewHeader, ReviewProviderIdentity, ReviewRequestSummary,
+    ReviewBackend, ReviewHeader, ReviewProviderIdentity, ReviewProviderKind,
+    ReviewRepositoryChoice, ReviewRequestSummary,
 };
 use anyhow::{Context as _, Result, ensure};
 use db::kvp::KeyValueStore;
@@ -12,9 +13,10 @@ use editor::{
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
+use git::GitHostingProviderRegistry;
 use gpui::{
-    App, ClipboardItem, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
-    Task, WeakEntity,
+    App, ClipboardItem, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
+    Subscription, Task, WeakEntity,
 };
 use picker::{Picker, PickerDelegate};
 use project::{Project, git_store::Repository};
@@ -23,13 +25,143 @@ use std::{collections::BTreeMap, path::PathBuf};
 use ui::{ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt as _;
 
-pub(crate) enum GitHubReviewEvent {
-    Open { repo: GitHubRepo, pr: PullRequest },
+fn review_repository_from_remote(remote: &str, cx: &App) -> Option<ReviewRepositoryChoice> {
+    let choice = github_review::repository_choice_from_remote(remote)?;
+    if choice.provider == ReviewProviderKind::GitHub
+        || choice.host.eq_ignore_ascii_case("gitlab.com")
+        || choice.host.to_ascii_lowercase().contains("gitlab")
+        || crate::remote_output::review_remote_hints()
+            .iter()
+            .any(|hint| hint.host.eq_ignore_ascii_case(&choice.host))
+    {
+        return Some(choice);
+    }
+
+    let registry = GitHostingProviderRegistry::try_global(cx)?;
+    registry
+        .list_hosting_providers()
+        .into_iter()
+        .any(|provider| {
+            provider.parse_remote_url(remote).is_some_and(|parsed| {
+                provider
+                    .build_create_pull_request_url(&parsed, "zed-provider-detection")
+                    .is_some_and(|url| url.path().contains("/-/merge_requests/"))
+            })
+        })
+        .then_some(choice)
+}
+
+fn add_review_repository(
+    choices: &mut Vec<ReviewRepositoryChoice>,
+    choice: ReviewRepositoryChoice,
+) {
+    if !choices.iter().any(|existing| {
+        existing.provider == choice.provider
+            && existing.host.eq_ignore_ascii_case(&choice.host)
+            && existing.full_name == choice.full_name
+    }) {
+        choices.push(choice);
+    }
+}
+
+fn available_review_providers(choices: &[ReviewRepositoryChoice]) -> Vec<ReviewProviderKind> {
+    [ReviewProviderKind::GitHub, ReviewProviderKind::GitLab]
+        .into_iter()
+        .filter(|provider| choices.iter().any(|choice| choice.provider == *provider))
+        .collect()
+}
+
+fn repositories_for_provider(
+    choices: &[ReviewRepositoryChoice],
+    provider: ReviewProviderKind,
+) -> Vec<ReviewRepositoryChoice> {
+    choices
+        .iter()
+        .filter(|choice| choice.provider == provider)
+        .cloned()
+        .collect()
+}
+
+fn repository_for_provider(
+    choices: &[ReviewRepositoryChoice],
+    saved: Option<&str>,
+    provider: ReviewProviderKind,
+) -> Option<String> {
+    choices
+        .iter()
+        .find(|choice| {
+            choice.provider == provider
+                && saved
+                    .is_some_and(|saved| choice.storage_id() == saved || choice.full_name == saved)
+        })
+        .or_else(|| choices.iter().find(|choice| choice.provider == provider))
+        .map(ReviewRepositoryChoice::storage_id)
+}
+
+fn canonical_repository_selection(
+    choices: &[ReviewRepositoryChoice],
+    saved: Option<&str>,
+    active_provider: Option<ReviewProviderKind>,
+) -> Option<String> {
+    if let Some(provider) = active_provider {
+        return repository_for_provider(choices, saved, provider);
+    }
+    if let Some(choice) =
+        saved.and_then(|saved| choices.iter().find(|choice| choice.storage_id() == saved))
+    {
+        return Some(choice.storage_id());
+    }
+    if let Some(saved) = saved {
+        let mut matches = choices.iter().filter(|choice| choice.full_name == saved);
+        let choice = matches.next()?;
+        if matches.next().is_none() {
+            return Some(choice.storage_id());
+        }
+        return None;
+    }
+    choices.first().map(ReviewRepositoryChoice::storage_id)
+}
+
+fn repository_choice_by_id(
+    choices: &[ReviewRepositoryChoice],
+    repository_id: &str,
+    provider: ReviewProviderKind,
+) -> Option<ReviewRepositoryChoice> {
+    choices
+        .iter()
+        .find(|choice| choice.provider == provider && choice.storage_id() == repository_id)
+        .cloned()
+}
+
+fn review_picker_empty_message(
+    provider: ReviewProviderKind,
+    busy: bool,
+    loaded: bool,
+    has_error: bool,
+) -> Option<&'static str> {
+    if has_error {
+        None
+    } else if busy || !loaded {
+        Some(match provider {
+            ReviewProviderKind::GitHub => "Loading pull requests…",
+            ReviewProviderKind::GitLab => "Loading merge requests…",
+        })
+    } else {
+        Some(match provider {
+            ReviewProviderKind::GitHub => "No matching pull requests",
+            ReviewProviderKind::GitLab => "No matching merge requests",
+        })
+    }
+}
+
+pub(crate) enum ReviewServiceEvent {
+    Open {
+        repository: ReviewRepository,
+        request: ReviewRequest,
+    },
     CommentsLoaded(Vec<crate::review_provider::PlacedReviewComment>),
 }
-pub(crate) type ReviewService = GitHubReview;
-pub(crate) type ReviewServiceEvent = GitHubReviewEvent;
-impl EventEmitter<GitHubReviewEvent> for GitHubReview {}
+impl EventEmitter<ReviewServiceEvent> for ReviewService {}
 
 pub(crate) struct ReviewRequestPicker {
     picker: Entity<Picker<ReviewRequestPickerDelegate>>,
@@ -38,11 +170,13 @@ pub(crate) struct ReviewRequestPicker {
 
 impl ReviewRequestPicker {
     pub(crate) fn new(
-        review: Entity<GitHubReview>,
+        review: Entity<ReviewService>,
+        provider: ReviewProviderKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = ReviewRequestPickerDelegate::new(review.downgrade(), review.read(cx));
+        let delegate =
+            ReviewRequestPickerDelegate::new(review.downgrade(), provider, review.read(cx));
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
                 .initial_width(rems(24.))
@@ -50,9 +184,19 @@ impl ReviewRequestPicker {
         });
         let picker_for_subscription = picker.clone();
         let review_subscription = cx.observe_in(&review, window, move |_, review, window, cx| {
-            let requests = review.read(cx).request_summaries().to_vec();
+            let review = review.read(cx);
+            let requests = review.request_summaries().to_vec();
+            let repositories = repositories_for_provider(&review.choices, provider);
+            let selected_repositorysitory = review.saved.repository.clone();
+            let busy = review.busy;
+            let requests_loaded = review.requests_loaded;
+            let error = review.error.clone();
             picker_for_subscription.update(cx, |picker, cx| {
                 picker.delegate.set_requests(requests);
+                picker
+                    .delegate
+                    .set_repositories(repositories, selected_repositorysitory);
+                picker.delegate.set_status(busy, requests_loaded, error);
                 picker.refresh(window, cx);
             });
         });
@@ -80,31 +224,55 @@ impl Render for ReviewRequestPicker {
 }
 
 struct ReviewRequestPickerDelegate {
-    review: WeakEntity<GitHubReview>,
+    review: WeakEntity<ReviewService>,
+    provider: ReviewProviderKind,
+    repositories: Vec<ReviewRepositoryChoice>,
+    selected_repositorysitory: Option<String>,
     requests: Vec<ReviewRequestSummary>,
     matches: Vec<StringMatch>,
     selected_index: usize,
+    busy: bool,
+    loaded: bool,
+    error: Option<String>,
 }
 
 impl ReviewRequestPickerDelegate {
-    fn new(review: WeakEntity<GitHubReview>, state: &GitHubReview) -> Self {
+    fn new(
+        review: WeakEntity<ReviewService>,
+        provider: ReviewProviderKind,
+        state: &ReviewService,
+    ) -> Self {
         let requests = state.request_summaries().to_vec();
-        let matches = Self::all_matches(&requests);
+        let matches = Self::all_matches(&requests, provider);
         Self {
             review,
+            provider,
+            repositories: repositories_for_provider(&state.choices, provider),
+            selected_repositorysitory: state.saved.repository.clone(),
             requests,
             matches,
             selected_index: 0,
+            busy: state.busy,
+            loaded: state.requests_loaded,
+            error: state.error.clone(),
         }
     }
 
-    fn all_matches(requests: &[ReviewRequestSummary]) -> Vec<StringMatch> {
+    fn all_matches(
+        requests: &[ReviewRequestSummary],
+        provider: ReviewProviderKind,
+    ) -> Vec<StringMatch> {
         requests
             .iter()
             .enumerate()
             .map(|(index, request)| StringMatch {
                 candidate_id: index,
-                string: format!("#{} {}", request.number, request.title),
+                string: format!(
+                    "{}{} {}",
+                    provider.request_prefix(),
+                    request.number,
+                    request.title
+                ),
                 positions: Vec::new(),
                 score: 0.0,
             })
@@ -113,10 +281,25 @@ impl ReviewRequestPickerDelegate {
 
     fn set_requests(&mut self, requests: Vec<ReviewRequestSummary>) {
         self.requests = requests;
-        self.matches = Self::all_matches(&self.requests);
+        self.matches = Self::all_matches(&self.requests, self.provider);
         self.selected_index = self
             .selected_index
             .min(self.matches.len().saturating_sub(1));
+    }
+
+    fn set_repositories(
+        &mut self,
+        repositories: Vec<ReviewRepositoryChoice>,
+        selected_repositorysitory: Option<String>,
+    ) {
+        self.repositories = repositories;
+        self.selected_repositorysitory = selected_repositorysitory;
+    }
+
+    fn set_status(&mut self, busy: bool, loaded: bool, error: Option<String>) {
+        self.busy = busy;
+        self.loaded = loaded;
+        self.error = error;
     }
 }
 
@@ -125,6 +308,71 @@ impl PickerDelegate for ReviewRequestPickerDelegate {
 
     fn name() -> &'static str {
         "review request picker"
+    }
+
+    fn render_header(&self, _: &mut Window, _: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        (self.repositories.len() > 1 || self.error.is_some()).then(|| {
+            v_flex()
+                .id("review-request-picker-header")
+                .w_full()
+                .when(self.repositories.len() > 1, |header| {
+                    header.child(
+                        h_flex()
+                            .id("review-repository-selector")
+                            .w_full()
+                            .p_2()
+                            .gap_1()
+                            .flex_wrap()
+                            .children(self.repositories.iter().enumerate().map(
+                                |(index, repository)| {
+                                    let repository_id = repository.storage_id();
+                                    let selected = self
+                                        .selected_repositorysitory
+                                        .as_ref()
+                                        .is_some_and(|selected| selected == &repository_id);
+                                    let review = self.review.clone();
+                                    Button::new(
+                                        ("review-repository", index),
+                                        format!(
+                                            "{}: {}",
+                                            repository.provider.name(),
+                                            repository.full_name
+                                        ),
+                                    )
+                                    .toggle_state(selected)
+                                    .on_click(
+                                        move |_, _, cx| {
+                                            review
+                                                .update(cx, |review, cx| {
+                                                    review.select_repository(
+                                                        repository_id.clone(),
+                                                        cx,
+                                                    )
+                                                })
+                                                .log_err();
+                                        },
+                                    )
+                                },
+                            )),
+                    )
+                })
+                .when_some(self.error.clone(), |header, error| {
+                    header.child(
+                        div().px_2().pb_2().child(
+                            Label::new(error)
+                                .size(LabelSize::Small)
+                                .color(Color::Error)
+                                .line_clamp(3),
+                        ),
+                    )
+                })
+                .into_any_element()
+        })
+    }
+
+    fn no_matches_text(&self, _: &mut Window, _: &mut App) -> Option<SharedString> {
+        review_picker_empty_message(self.provider, self.busy, self.loaded, self.error.is_some())
+            .map(Into::into)
     }
 
     fn placeholder_text(&self, _: &mut Window, _: &mut App) -> std::sync::Arc<str> {
@@ -150,7 +398,7 @@ impl PickerDelegate for ReviewRequestPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         if query.is_empty() {
-            self.matches = Self::all_matches(&self.requests);
+            self.matches = Self::all_matches(&self.requests, self.provider);
             return Task::ready(());
         }
         let candidates = self
@@ -158,7 +406,15 @@ impl PickerDelegate for ReviewRequestPickerDelegate {
             .iter()
             .enumerate()
             .map(|(index, request)| {
-                StringMatchCandidate::new(index, &format!("#{} {}", request.number, request.title))
+                StringMatchCandidate::new(
+                    index,
+                    &format!(
+                        "{}{} {}",
+                        self.provider.request_prefix(),
+                        request.number,
+                        request.title
+                    ),
+                )
             })
             .collect::<Vec<_>>();
         cx.spawn_in(window, async move |picker, cx| {
@@ -221,8 +477,10 @@ impl PickerDelegate for ReviewRequestPickerDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .tooltip(Tooltip::text(format!(
-                    "#{} {}",
-                    request.number, request.title
+                    "{}{} {}",
+                    self.provider.request_prefix(),
+                    request.number,
+                    request.title
                 )))
                 .child(
                     h_flex()
@@ -231,9 +489,13 @@ impl PickerDelegate for ReviewRequestPickerDelegate {
                         .gap_1()
                         .child(
                             div().flex_none().child(
-                                Label::new(format!("#{}", request.number))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                Label::new(format!(
+                                    "{}{}",
+                                    self.provider.request_prefix(),
+                                    request.number
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
                             ),
                         )
                         .child(
@@ -267,32 +529,36 @@ struct InlineComposerBlock {
 }
 
 pub(crate) struct InlineReviewComposer {
-    github: gpui::WeakEntity<GitHubReview>,
+    review_service: gpui::WeakEntity<ReviewService>,
 }
 
 impl Render for InlineReviewComposer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.github
-            .update(cx, |github, cx| github.render_inline_composer(window, cx))
+        self.review_service
+            .update(cx, |review_service, cx| {
+                review_service.render_inline_composer(window, cx)
+            })
             .unwrap_or_else(|_| gpui::Empty.into_any_element())
     }
 }
 
-pub(crate) struct GitHubReview {
+pub(crate) struct ReviewService {
     project: Entity<Project>,
     review: Option<gpui::WeakEntity<crate::branch_review::BranchReview>>,
     repository: Option<Entity<Repository>>,
     root: Option<PathBuf>,
-    client: GitHubClient,
+    client: Option<ReviewClient>,
     query: Entity<Editor>,
     composer: Entity<Editor>,
-    choices: Vec<String>,
+    choices: Vec<ReviewRepositoryChoice>,
     saved: SavedDrafts,
     storage_key: Option<String>,
     load_failed: bool,
-    selected_repo: Option<GitHubRepo>,
+    selected_repository: Option<ReviewRepository>,
+    active_provider: Option<ReviewProviderKind>,
     requests: Vec<ReviewRequestSummary>,
-    preview: Option<PullRequest>,
+    requests_loaded: bool,
+    preview: Option<ReviewRequest>,
     pub checkout: Option<Checkout>,
     discussion: Vec<DiscussionComment>,
     viewer: Option<String>,
@@ -313,6 +579,9 @@ pub(crate) struct GitHubReview {
     error: Option<String>,
     task: Option<Task<()>>,
     remotes_task: Option<Task<()>>,
+    remotes_generation: u64,
+    remotes_loading: bool,
+    remotes_error: Option<String>,
     write_task: Option<Task<()>>,
     copied_prompt: bool,
     copied_prompt_task: Option<Task<()>>,
@@ -324,15 +593,41 @@ pub(crate) struct GitHubReview {
     _subscriptions: Vec<Subscription>,
 }
 
-impl EventEmitter<DismissEvent> for GitHubReview {}
+impl EventEmitter<DismissEvent> for ReviewService {}
 
-impl Focusable for GitHubReview {
+impl Focusable for ReviewService {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.composer.focus_handle(cx)
     }
 }
 
-impl GitHubReview {
+impl ReviewService {
+    fn include_push_hints(&mut self) {
+        for hint in crate::remote_output::review_remote_hints() {
+            if self.choices.iter().any(|choice| {
+                choice.host.eq_ignore_ascii_case(&hint.host)
+                    && choice.full_name == hint.project_path
+            }) {
+                continue;
+            }
+            if self
+                .choices
+                .iter()
+                .any(|choice| choice.host.eq_ignore_ascii_case(&hint.host))
+            {
+                add_review_repository(
+                    &mut self.choices,
+                    ReviewRepositoryChoice {
+                        provider: ReviewProviderKind::GitLab,
+                        host: hint.host.clone(),
+                        full_name: hint.project_path.clone(),
+                        remote_url: format!("https://{}/{}.git", hint.host, hint.project_path),
+                    },
+                );
+            }
+        }
+    }
+
     pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let query = cx.new(|cx| Editor::single_line(window, cx));
         query.update(cx, |editor, cx| {
@@ -362,15 +657,17 @@ impl GitHubReview {
             review: None,
             repository: None,
             root: None,
-            client: GitHubClient::new(cx.background_executor().clone()),
+            client: None,
             query,
             composer,
             choices: Vec::new(),
             saved: SavedDrafts::default(),
             storage_key: None,
             load_failed: false,
-            selected_repo: None,
+            selected_repository: None,
+            active_provider: None,
             requests: Vec::new(),
+            requests_loaded: false,
             preview: None,
             checkout: None,
             discussion: Vec::new(),
@@ -392,6 +689,9 @@ impl GitHubReview {
             error: None,
             task: None,
             remotes_task: None,
+            remotes_generation: 0,
+            remotes_loading: false,
+            remotes_error: None,
             write_task: None,
             copied_prompt: false,
             copied_prompt_task: None,
@@ -411,6 +711,7 @@ impl GitHubReview {
             .map(|repo| repo.read(cx).work_directory_abs_path.to_path_buf());
         if root == self.root {
             self.repository = repository;
+            self.refresh_repository_choices(cx);
             return;
         }
         // Never abandon a request whose server outcome may already be committed.
@@ -425,9 +726,12 @@ impl GitHubReview {
         self.repository = repository;
         self.root = root;
         self.checkout = None;
-        self.selected_repo = None;
+        self.client = None;
+        self.selected_repository = None;
+        self.active_provider = None;
         self.preview = None;
         self.requests.clear();
+        self.requests_loaded = false;
         self.discussion.clear();
         self.markdown.clear();
         self.expanded_comments.clear();
@@ -438,17 +742,16 @@ impl GitHubReview {
         self.choices.clear();
         if let Some(repo) = &self.repository {
             let repo = repo.read(cx);
-            for url in [&repo.remote_upstream_url, &repo.remote_origin_url]
+            for url in [&repo.remote_origin_url, &repo.remote_upstream_url]
                 .into_iter()
                 .flatten()
             {
-                if let Some(name) = github_review::repository_from_remote(url) {
-                    if !self.choices.contains(&name) {
-                        self.choices.push(name);
-                    }
+                if let Some(choice) = review_repository_from_remote(url, cx) {
+                    add_review_repository(&mut self.choices, choice);
                 }
             }
         }
+        self.include_push_hints();
         self.storage_key = self.root.as_ref().map(|root| {
             format!(
                 "github_review_drafts_v1:{}",
@@ -479,66 +782,98 @@ impl GitHubReview {
                 self.error = Some(format!("Could not restore comment drafts: {error}"));
             }
         }
-        if !self
-            .saved
-            .repository
-            .as_ref()
-            .is_some_and(|repo| self.choices.contains(repo))
-        {
-            self.saved.repository = self.choices.first().cloned();
-        }
         self.detached = true;
-        if let Some(repository) = &self.repository {
-            let remotes = repository.update(cx, |repository, _| repository.remote_urls());
-            let root = self.root.clone();
-            self.remotes_task = Some(cx.spawn(async move |this, cx| {
-                let result = remotes.await;
-                this.update(cx, |this, cx| {
-                    if this.root != root {
-                        return;
-                    }
-                    match result {
-                        Ok(Ok(remotes)) => {
-                            let mut remotes: Vec<_> = remotes.into_iter().collect();
-                            remotes.sort_by_key(|(name, _)| {
-                                (
-                                    match name.as_str() {
-                                        "upstream" => 0,
-                                        "origin" => 1,
-                                        _ => 2,
-                                    },
-                                    name.clone(),
-                                )
-                            });
-                            this.choices.clear();
-                            for (_, url) in remotes {
-                                if let Some(name) = github_review::repository_from_remote(&url) {
-                                    if !this.choices.contains(&name) {
-                                        this.choices.push(name);
-                                    }
-                                }
-                            }
-                            if !this
-                                .saved
-                                .repository
+        self.refresh_repository_choices(cx);
+        cx.notify();
+    }
+
+    fn refresh_repository_choices(&mut self, cx: &mut Context<Self>) {
+        let Some(repository) = self.repository.clone() else {
+            self.remotes_generation += 1;
+            self.remotes_task = None;
+            self.remotes_loading = false;
+            self.remotes_error = None;
+            self.choices.clear();
+            cx.notify();
+            return;
+        };
+        let remotes = repository.update(cx, |repository, _| repository.remote_urls());
+        let root = self.root.clone();
+        self.remotes_generation += 1;
+        let remotes_generation = self.remotes_generation;
+        self.remotes_loading = true;
+        self.remotes_task = Some(cx.spawn(async move |this, cx| {
+            let result = remotes.await;
+            this.update(cx, |this, cx| {
+                if this.root != root || this.remotes_generation != remotes_generation {
+                    return;
+                }
+                this.remotes_loading = false;
+                match result {
+                    Ok(Ok(remotes)) => {
+                        let mut remotes: Vec<_> = remotes.into_iter().collect();
+                        let tracking_remote = this.repository.as_ref().and_then(|repository| {
+                            repository
+                                .read(cx)
+                                .branch
                                 .as_ref()
-                                .is_some_and(|name| this.choices.contains(name))
-                            {
-                                this.saved.repository = this.choices.first().cloned();
+                                .and_then(|branch| branch.upstream.as_ref())
+                                .and_then(|upstream| upstream.remote_name())
+                                .map(str::to_string)
+                        });
+                        remotes.sort_by_key(|(name, _)| {
+                            (
+                                if tracking_remote.as_deref() == Some(name) {
+                                    0
+                                } else {
+                                    match name.as_str() {
+                                        "origin" => 1,
+                                        "upstream" => 2,
+                                        _ => 3,
+                                    }
+                                },
+                                name.clone(),
+                            )
+                        });
+                        let mut choices = Vec::new();
+                        for (_, url) in remotes {
+                            if let Some(choice) = review_repository_from_remote(&url, cx) {
+                                add_review_repository(&mut choices, choice);
                             }
                         }
-                        Ok(Err(error)) => {
-                            this.error = Some(format!("Could not load GitHub remotes: {error}"))
+                        this.choices = choices;
+                        this.include_push_hints();
+                        let canonical_selection = canonical_repository_selection(
+                            &this.choices,
+                            this.saved.repository.as_deref(),
+                            this.active_provider,
+                        );
+                        let selection_changed = this.saved.repository != canonical_selection;
+                        if selection_changed {
+                            this.saved.repository = canonical_selection;
+                            this.generation += 1;
+                            this.task = None;
+                            this.busy = false;
+                            this.client = None;
+                            this.selected_repository = None;
+                            this.preview = None;
+                            this.requests.clear();
+                            this.requests_loaded = false;
+                            this.persist(cx);
                         }
-                        Err(error) => {
-                            this.error = Some(format!("Could not load GitHub remotes: {error}"))
-                        }
+                        this.remotes_error = None;
                     }
-                    cx.notify();
-                })
-                .log_err();
-            }));
-        }
+                    Ok(Err(error)) => {
+                        this.remotes_error = Some(format!("Could not load review remotes: {error}"))
+                    }
+                    Err(error) => {
+                        this.remotes_error = Some(format!("Could not load review remotes: {error}"))
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        }));
         cx.notify();
     }
 
@@ -550,7 +885,25 @@ impl GitHubReview {
         self.remove_inline_composer(true, cx);
         self.save_draft(cx);
         self.generation += 1;
-        self.selected_repo = Some(checkout.repository.clone());
+        self.selected_repository = Some(checkout.repository.clone());
+        self.active_provider = Some(checkout.repository.provider);
+        if self.client.is_none()
+            && let Some(root) = self.root.clone()
+        {
+            let repository = &checkout.repository;
+            self.client = Some(ReviewClient::for_choice(
+                ReviewRepositoryChoice {
+                    provider: repository.provider,
+                    host: repository.host.clone(),
+                    full_name: repository.full_name.clone(),
+                    remote_url: repository.web_url.clone().unwrap_or_else(|| {
+                        format!("https://{}/{}", repository.host, repository.full_name)
+                    }),
+                },
+                root,
+                cx.background_executor().clone(),
+            ));
+        }
         self.preview = Some(checkout.pull_request.clone());
         self.checkout = Some(checkout);
         self.detached = false;
@@ -593,15 +946,79 @@ impl GitHubReview {
         self.detached = true;
         cx.notify();
     }
-    pub(crate) fn load_review_requests(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn load_review_requests_for_provider(
+        &mut self,
+        provider: ReviewProviderKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let canonical_repository =
+            repository_for_provider(&self.choices, self.saved.repository.as_deref(), provider);
+        let selection_changed =
+            self.saved.repository != canonical_repository || self.active_provider != Some(provider);
+        if selection_changed {
+            self.save_draft(cx);
+            self.saved.repository = canonical_repository;
+            self.active_provider = Some(provider);
+            self.generation += 1;
+            self.task = None;
+            self.busy = false;
+            self.requests.clear();
+            self.requests_loaded = false;
+            self.preview = None;
+            self.selected_repository = None;
+            self.client = None;
+            self.persist(cx);
+        }
         self.state = "open";
         self.page = 1;
-        self.query
-            .update(cx, |query, cx| query.set_text("", window, cx));
+        let request_name = provider.request_name();
+        self.query.update(cx, |query, cx| {
+            query.set_placeholder_text(
+                &format!("{request_name} number, URL, or title"),
+                window,
+                cx,
+            );
+            query.set_text("", window, cx)
+        });
+        self.search(cx);
+        self.refresh_repository_choices(cx);
+    }
+
+    fn select_repository(&mut self, repository_id: String, cx: &mut Context<Self>) {
+        let Some(provider) = self
+            .choices
+            .iter()
+            .find(|choice| choice.storage_id() == repository_id)
+            .map(|choice| choice.provider)
+        else {
+            return;
+        };
+        if self.posting || self.saved.repository.as_deref() == Some(repository_id.as_str()) {
+            return;
+        }
+        self.save_draft(cx);
+        self.saved.repository = Some(repository_id);
+        self.active_provider = Some(provider);
+        self.client = None;
+        self.selected_repository = None;
+        self.preview = None;
+        self.requests.clear();
+        self.requests_loaded = false;
+        self.page = 1;
+        self.persist(cx);
         self.search(cx);
     }
-    pub fn has_provider(&self) -> bool {
-        !self.choices.is_empty()
+    pub(crate) fn available_providers(&self) -> Vec<ReviewProviderKind> {
+        available_review_providers(&self.choices)
+    }
+
+    pub(crate) fn providers_loading(&self) -> bool {
+        self.remotes_loading
+    }
+
+    pub(crate) fn provider_discovery_error(&self) -> Option<&str> {
+        self.remotes_error.as_deref()
     }
     pub fn matches_repository(&self, repository: &Entity<Repository>, cx: &App) -> bool {
         self.root.as_deref() == Some(repository.read(cx).work_directory_abs_path.as_ref())
@@ -643,12 +1060,20 @@ impl GitHubReview {
 
     fn draft_key(&self) -> Option<String> {
         let checkout = self.checkout.as_ref()?;
-        Some(format!(
-            "{}:{}:{}",
-            checkout.repository.id,
-            checkout.pull_request.number,
-            crate::review_state::digest(&[&serde_json::to_vec(&self.target).ok()?])
-        ))
+        let target = crate::review_state::digest(&[&serde_json::to_vec(&self.target).ok()?]);
+        Some(
+            if checkout.repository.provider == ReviewProviderKind::GitHub {
+                format!(
+                    "{}:{}:{target}",
+                    checkout.repository.id, checkout.pull_request.number
+                )
+            } else {
+                format!(
+                    "gitlab:{}:{}:{}:{target}",
+                    checkout.repository.host, checkout.repository.id, checkout.pull_request.number
+                )
+            },
+        )
     }
     fn draft(&self) -> Option<&CommentDraft> {
         self.draft_key().and_then(|key| self.saved.drafts.get(&key))
@@ -739,8 +1164,8 @@ impl GitHubReview {
         if self.posting {
             return;
         }
-        let github = cx.weak_entity();
-        let view = cx.new(|_| InlineReviewComposer { github });
+        let review_service = cx.weak_entity();
+        let view = cx.new(|_| InlineReviewComposer { review_service });
         let path = match &self.target {
             CommentTarget::Inline { path, .. } => path.clone(),
             _ => return,
@@ -877,7 +1302,7 @@ impl GitHubReview {
                     .justify_between()
                     .child(Label::new(target).size(LabelSize::XSmall))
                     .child(
-                        Button::new("close-inline-github-comment", "Cancel").on_click(
+                        Button::new("close-inline-review-comment", "Cancel").on_click(
                             cx.listener(|this, _, _, cx| this.remove_inline_composer(true, cx)),
                         ),
                     ),
@@ -889,7 +1314,7 @@ impl GitHubReview {
                 h_flex()
                     .gap_1()
                     .child(
-                        Button::new("write-inline-github-comment", "Write")
+                        Button::new("write-inline-review-comment", "Write")
                             .toggle_state(!self.previewing)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.previewing = false;
@@ -897,7 +1322,7 @@ impl GitHubReview {
                             })),
                     )
                     .child(
-                        Button::new("preview-inline-github-comment", "Preview")
+                        Button::new("preview-inline-review-comment", "Preview")
                             .toggle_state(self.previewing)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.previewing = true;
@@ -945,39 +1370,66 @@ impl GitHubReview {
         if self.posting {
             return;
         }
-        let Some(name) = self.saved.repository.clone() else {
+        let Some(saved) = self.saved.repository.clone() else {
+            self.error = Some("Select a review repository first".into());
+            self.requests_loaded = false;
+            cx.notify();
+            return;
+        };
+        let Some(provider) = self.active_provider else {
+            self.error = Some("Select GitHub or GitLab before loading reviews".into());
+            self.requests_loaded = false;
+            cx.notify();
+            return;
+        };
+        let Some(choice) = repository_choice_by_id(&self.choices, &saved, provider) else {
+            self.error = Some("Select a review repository first".into());
+            self.requests_loaded = false;
+            cx.notify();
+            return;
+        };
+        let Some(root) = self.root.clone() else {
             return;
         };
         self.generation += 1;
         let generation = self.generation;
         self.busy = true;
+        self.requests_loaded = false;
         self.error = None;
         self.preview = None;
-        let client = self.client.clone();
+        let client =
+            ReviewClient::for_choice(choice.clone(), root, cx.background_executor().clone());
         let query = self.query.read(cx).text(cx);
         let state = self.state;
         let page = self.page;
         self.task = Some(cx.spawn(async move |this, cx| {
             let result: Result<_> = async {
-                let repo = client.repository(&name).await?;
-                if let Ok(number) = github_review::pr_number(&query, &repo) {
-                    let pr = client.pull_request(&repo, number).await?;
-                    return Ok((repo, vec![pr.into()], false));
+                let repo = client.repository(&choice).await?;
+                let parsed_number = match choice.provider {
+                    ReviewProviderKind::GitHub => github_review::pr_number(&query, &repo),
+                    ReviewProviderKind::GitLab => {
+                        crate::gitlab_review::merge_request_number(&query, &choice)
+                    }
+                };
+                if let Ok(number) = parsed_number {
+                    let pr = client.review_request(&repo, number).await?;
+                    return Ok((client, repo, vec![pr.into()], false));
                 }
                 ensure!(
                     !query.starts_with("https://"),
-                    "Enter a PR URL from the selected GitHub repository"
+                    "Enter a {} URL from the selected {} repository",
+                    choice.provider.request_name(),
+                    choice.provider.name(),
                 );
-                let (requests, has_next) = if query.trim().is_empty() {
-                    let values = client.pull_requests(&repo, state, page).await?;
-                    let next = values.len() == 100;
-                    (values.into_iter().map(Into::into).collect(), next)
-                } else {
-                    client
-                        .search_pull_requests(&repo, &query, state, page)
-                        .await?
-                };
-                Ok((repo, requests, has_next))
+                let (requests, has_next) = client
+                    .request_summaries(
+                        &repo,
+                        state,
+                        page,
+                        (!query.trim().is_empty()).then_some(query.as_str()),
+                    )
+                    .await?;
+                Ok((client, repo, requests, has_next))
             }
             .await;
             this.update(cx, |this, cx| {
@@ -986,8 +1438,9 @@ impl GitHubReview {
                 }
                 this.busy = false;
                 match result {
-                    Ok((repo, requests, _next)) => {
-                        this.selected_repo = Some(repo);
+                    Ok((client, repo, requests, _next)) => {
+                        this.client = Some(client);
+                        this.selected_repository = Some(repo);
                         this.requests = requests
                             .into_iter()
                             .map(|request| ReviewRequestSummary {
@@ -995,8 +1448,12 @@ impl GitHubReview {
                                 title: request.title,
                             })
                             .collect();
+                        this.requests_loaded = true;
                     }
-                    Err(error) => this.error = Some(format!("{error:#}")),
+                    Err(error) => {
+                        this.requests_loaded = false;
+                        this.error = Some(format!("{error:#}"));
+                    }
                 }
                 cx.notify();
             })
@@ -1009,17 +1466,21 @@ impl GitHubReview {
         if self.posting || self.busy {
             return;
         }
-        let Some(repository) = self.selected_repo.clone() else {
+        let Some(repository) = self.selected_repository.clone() else {
             self.error = Some("Select a review repository first".into());
             cx.notify();
             return;
         };
-        let client = self.client.clone();
+        let Some(client) = self.client.clone() else {
+            self.error = Some("Reload the review list before opening a review".into());
+            cx.notify();
+            return;
+        };
         self.generation += 1;
         let generation = self.generation;
         self.busy = true;
         self.task = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = client.pull_request(&repository, number).await;
+            let result = client.review_request(&repository, number).await;
             this.update(cx, |this, cx| {
                 if generation != this.generation {
                     return;
@@ -1029,9 +1490,9 @@ impl GitHubReview {
                     Ok(request) => {
                         this.preview = Some(request.clone());
                         this.error = None;
-                        cx.emit(GitHubReviewEvent::Open {
-                            repo: repository,
-                            pr: request,
+                        cx.emit(ReviewServiceEvent::Open {
+                            repository,
+                            request,
                         });
                     }
                     Err(error) => this.error = Some(format!("{error:#}")),
@@ -1053,12 +1514,16 @@ impl GitHubReview {
         self.generation += 1;
         let generation = self.generation;
         let root = self.root.clone();
-        let client = self.client.clone();
+        let Some(client) = self.client.clone() else {
+            self.error = Some("Review provider is unavailable".into());
+            cx.notify();
+            return;
+        };
         self.busy = true;
         self.task = Some(cx.spawn(async move |this, cx| {
             let result: Result<_> = async {
                 let pr = client
-                    .pull_request(&checkout.repository, checkout.pull_request.number)
+                    .review_request(&checkout.repository, checkout.pull_request.number)
                     .await?;
                 let mut comments = client.discussion(&checkout.repository, pr.number).await?;
                 let (viewer, thread_error) = match client.viewer().await {
@@ -1130,16 +1595,23 @@ impl GitHubReview {
                             comments.iter().any(|entry| key == &comment_key(entry))
                         });
                         let checkout = this.checkout.clone();
-                        cx.emit(GitHubReviewEvent::CommentsLoaded(
+                        cx.emit(ReviewServiceEvent::CommentsLoaded(
                             inline
                                 .into_iter()
                                 .filter_map(github_review::PublishedComment::into_placed)
                                 .map(|mut comment| {
                                     comment.url = checkout.as_ref().and_then(|checkout| {
                                         comment.id.parse::<u64>().ok().map(|id| {
+                                            let anchor = if checkout.repository.provider
+                                                == ReviewProviderKind::GitLab
+                                            {
+                                                format!("note_{id}")
+                                            } else {
+                                                format!("discussion_r{id}")
+                                            };
                                             format!(
-                                                "{}#discussion_r{id}",
-                                                checkout.pull_request.url(&checkout.repository)
+                                                "{}#{anchor}",
+                                                checkout.pull_request.url(&checkout.repository),
                                             )
                                         })
                                     });
@@ -1163,10 +1635,19 @@ impl GitHubReview {
 
     fn action_key(&self) -> Option<String> {
         let checkout = self.checkout.as_ref()?;
-        Some(format!(
-            "{}:{}",
-            checkout.repository.id, checkout.pull_request.number
-        ))
+        Some(
+            if checkout.repository.provider == ReviewProviderKind::GitHub {
+                format!(
+                    "{}:{}",
+                    checkout.repository.id, checkout.pull_request.number
+                )
+            } else {
+                format!(
+                    "gitlab:{}:{}:{}",
+                    checkout.repository.host, checkout.repository.id, checkout.pull_request.number
+                )
+            },
+        )
     }
 
     fn start_edit(
@@ -1234,7 +1715,11 @@ impl GitHubReview {
         let persisted = self.write_task.take();
         let value = serde_json::to_string(&self.saved);
         let database = KeyValueStore::global(cx);
-        let client = self.client.clone();
+        let Some(client) = self.client.clone() else {
+            self.error = Some("Review provider is unavailable".into());
+            cx.notify();
+            return;
+        };
         self.task = Some(cx.spawn(async move |this, cx| {
             if let Some(persisted) = persisted {
                 persisted.await;
@@ -1258,7 +1743,7 @@ impl GitHubReview {
                     }
                     Err(error) => {
                         if !error
-                            .downcast_ref::<GitHubFailure>()
+                            .downcast_ref::<ReviewProviderFailure>()
                             .is_some_and(|error| error.outcome_unknown)
                         {
                             this.saved.pending_actions.remove(&key);
@@ -1292,8 +1777,11 @@ impl GitHubReview {
             return;
         };
         self.select_target(CommentTarget::Reply { comment_id }, window, cx);
-        let github = cx.weak_entity();
-        self.inline_reply = Some((thread_id, cx.new(|_| InlineReviewComposer { github })));
+        let review_service = cx.weak_entity();
+        self.inline_reply = Some((
+            thread_id,
+            cx.new(|_| InlineReviewComposer { review_service }),
+        ));
         self.composer.focus_handle(cx).focus(window, cx);
         self.notify_review_ui(cx);
         cx.notify();
@@ -1462,17 +1950,26 @@ impl GitHubReview {
                             || permissions
                                 .is_some_and(|p| p.viewer_did_author && p.viewer_can_delete));
                     let url = self.checkout.as_ref().map(|checkout| {
+                        let anchor = if checkout.repository.provider == ReviewProviderKind::GitLab {
+                            format!("note_{}", comment.id)
+                        } else {
+                            format!(
+                                "{}{}",
+                                match entry.kind {
+                                    CommentKind::Conversation => "issuecomment-",
+                                    CommentKind::Review => "pullrequestreview-",
+                                    CommentKind::Inline => "discussion_r",
+                                },
+                                comment.id
+                            )
+                        };
                         format!(
-                            "{}#{}{}",
+                            "{}#{}",
                             checkout.pull_request.url(&checkout.repository),
-                            match entry.kind {
-                                CommentKind::Conversation => "issuecomment-",
-                                CommentKind::Review => "pullrequestreview-",
-                                CommentKind::Inline => "discussion_r",
-                            },
-                            comment.id
+                            anchor
                         )
                     });
+                    let provider_name = self.identity().name;
                     let markdown = self.comment_markdown(&entry, cx);
                     let mut content = v_flex()
                         .min_w_0()
@@ -1548,8 +2045,11 @@ impl GitHubReview {
                             .flex_wrap()
                             .when_some(url, |view, url| {
                                 view.child(
-                                    Button::new(("github-comment-link", id as usize), "GitHub ↗")
-                                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                                    Button::new(
+                                        ("provider-comment-link", id as usize),
+                                        format!("{provider_name} ↗"),
+                                    )
+                                    .on_click(move |_, _, cx| cx.open_url(&url)),
                                 )
                             })
                             .when(kind == CommentKind::Inline, |view| {
@@ -1596,9 +2096,11 @@ impl GitHubReview {
                     if self.pending_delete == Some((kind, id)) {
                         content = content
                             .child(
-                                Label::new("Permanently delete this comment from GitHub?")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Warning),
+                                Label::new(format!(
+                                    "Permanently delete this comment from {provider_name}?"
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Warning),
                             )
                             .child(
                                 h_flex()
@@ -1661,7 +2163,11 @@ impl GitHubReview {
         }
         let target = self.target.clone();
         let original_body = self.draft().and_then(|draft| draft.original_body.clone());
-        let client = self.client.clone();
+        let Some(client) = self.client.clone() else {
+            self.error = Some("Review provider is unavailable".into());
+            cx.notify();
+            return;
+        };
         let project = self.project.clone();
         let review = self.review.clone();
         let repository = self.repository.clone();
@@ -1694,7 +2200,7 @@ impl GitHubReview {
                         .await
                         .context("Could not save the draft before posting")?;
                     let pr = client
-                        .pull_request(&checkout.repository, checkout.pull_request.number)
+                        .review_request(&checkout.repository, checkout.pull_request.number)
                         .await?;
                     let effective = cx.update(|_, cx| -> Result<Option<(Option<String>, Option<String>)>> {
                     let repository = repository.as_ref().context("Repository is unavailable")?;
@@ -1705,10 +2211,10 @@ impl GitHubReview {
                                 .branch
                                 .as_ref()
                                 .is_some_and(|branch| branch.name() == checkout.branch),
-                        "The active checkout changed. This draft still belongs to the original PR."
+                        "The active checkout changed. This draft still belongs to the original review."
                     );
                     if let CommentTarget::Inline { path, .. } = &target {
-                        let comparison = review.as_ref().context("The PR diff is unavailable")?.read_with(cx, |review, cx| review.comparison_for_path(path, cx))?.context("The selected file is no longer in this PR comparison")?;
+                        let comparison = review.as_ref().context("The review diff is unavailable")?.read_with(cx, |review, cx| review.comparison_for_path(path, cx))?.context("The selected file is no longer in this review comparison")?;
                         return Ok(Some(comparison));
                     }
                     Ok(None)
@@ -1736,7 +2242,7 @@ impl GitHubReview {
                             "The checkout changed while validating this comment"
                         );
                         if let CommentTarget::Inline { path, .. } = &target {
-                            let now = review.as_ref().context("The PR diff is unavailable")?.read_with(cx, |review, cx| review.comparison_for_path(path, cx))?;
+                            let now = review.as_ref().context("The review diff is unavailable")?.read_with(cx, |review, cx| review.comparison_for_path(path, cx))?;
                             ensure!(
                                 now == effective,
                                 "The file changed while validating the comment. Your draft is kept."
@@ -1745,7 +2251,7 @@ impl GitHubReview {
                         Ok(())
                     })??;
                     if let CommentTarget::Edit { comment_id, comment_kind } = target {
-                        client.update_comment(&checkout.repository, comment_kind, comment_id, original_body.as_deref().context("Original comment unavailable; reopen the edit")?, &body).await
+                        client.update_comment(&checkout.repository, checkout.pull_request.number, comment_kind, comment_id, original_body.as_deref().context("Original comment unavailable; reopen the edit")?, &body).await
                     } else {
                         client.post(&checkout.repository, &pr, &target, &body).await
                     }
@@ -1777,7 +2283,7 @@ impl GitHubReview {
                     }
                     Err(error) => {
                         let unknown = error
-                            .downcast_ref::<GitHubFailure>()
+                            .downcast_ref::<ReviewProviderFailure>()
                             .is_some_and(|error| error.outcome_unknown);
                         if let Some(draft) = this.saved.drafts.get_mut(&key) {
                             draft.outcome_unknown = unknown;
@@ -1798,15 +2304,39 @@ impl GitHubReview {
     }
 }
 
-impl ReviewBackend for GitHubReview {
+impl ReviewBackend for ReviewService {
     fn identity(&self) -> ReviewProviderIdentity {
+        let active_choice = self.active_provider.and_then(|provider| {
+            self.saved.repository.as_ref().and_then(|saved| {
+                self.choices
+                    .iter()
+                    .find(|choice| choice.provider == provider && choice.storage_id() == *saved)
+            })
+        });
         ReviewProviderIdentity {
-            name: "GitHub".into(),
+            kind: self
+                .selected_repository
+                .as_ref()
+                .map(|repository| repository.provider)
+                .or(self.active_provider)
+                .unwrap_or_default(),
+            name: self
+                .selected_repository
+                .as_ref()
+                .map(|repository| repository.provider_name().to_string())
+                .or_else(|| active_choice.map(|choice| choice.provider.name().to_string()))
+                .or_else(|| {
+                    self.choices
+                        .first()
+                        .map(|choice| choice.provider.name().to_string())
+                })
+                .unwrap_or_else(|| "Review".into()),
             repository: self
-                .selected_repo
+                .selected_repository
                 .as_ref()
                 .map(|repository| repository.full_name.clone())
-                .or_else(|| self.saved.repository.clone())
+                .or_else(|| active_choice.map(|choice| choice.full_name.clone()))
+                .or_else(|| self.choices.first().map(|choice| choice.full_name.clone()))
                 .unwrap_or_default(),
         }
     }
@@ -1816,7 +2346,7 @@ impl ReviewBackend for GitHubReview {
     }
 }
 
-impl Render for GitHubReview {
+impl Render for ReviewService {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let discussion = self.render_discussion(window, cx);
         let body = self.composer.read(cx).text(cx);
@@ -1918,9 +2448,9 @@ impl Render for GitHubReview {
                             .disabled(pending || self.detached)
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 if let Some(repository) = &repository {
-                                    cx.emit(GitHubReviewEvent::Open {
-                                        repo: repository.clone(),
-                                        pr: request.clone(),
+                                    cx.emit(ReviewServiceEvent::Open {
+                                        repository: repository.clone(),
+                                        request: request.clone(),
                                     });
                                 }
                             })),
@@ -2058,21 +2588,29 @@ impl Render for GitHubReview {
 
 fn agent_prompt(checkout: &Checkout) -> String {
     let pull_request = &checkout.pull_request;
+    let (request_name, cli, login, thread_name) = match checkout.repository.provider {
+        ReviewProviderKind::GitHub => ("PR", "gh", "GitHub", "PR"),
+        ReviewProviderKind::GitLab => ("MR", "glab", "GitLab", "merge request"),
+    };
     format!(
         "Address my outstanding review feedback on {url} in the current checkout.\n\n\
 Repository: {repository}\n\
-PR: #{number}\n\
+{request_name}: #{number}\n\
 Checkout branch: {branch}\n\
 Reviewed base revision: {base_sha}\n\
 Reviewed head revision: {head_sha}\n\n\
-Read and follow every applicable repository instruction file before editing. Use the authenticated `gh` CLI to verify the repository and PR, identify the current GitHub login, and query GitHub directly for review threads, inline review comments, submitted review feedback, and PR conversation comments authored by that login. Address every unresolved thread and every still-applicable code-change request from that feedback. Re-query GitHub if the PR revision or thread state may have changed.\n\n\
-Work only in the current checkout. Preserve unrelated changes. Do not switch branches, reset, clean, discard work, post or edit GitHub comments, resolve or reopen threads, commit, or push. Make the requested code changes, run the relevant tests and checks, and finish with a concise summary of changes, validation, and any feedback that remains blocked or ambiguous. Do not create a feedback packet or verification-receipt file.",
+Read and follow every applicable repository instruction file before editing. Use the authenticated `{cli}` CLI to verify the repository and {thread_name}, identify the current {login} login, and query {login} directly for review threads, inline comments, submitted review feedback, and conversation comments authored by that login. Address every unresolved thread and every still-applicable code-change request from that feedback. Re-query {login} if the review revision or thread state may have changed.\n\n\
+Work only in the current checkout. Preserve unrelated changes. Do not switch branches, reset, clean, discard work, post or edit provider comments, resolve or reopen threads, commit, or push. Make the requested code changes, run the relevant tests and checks, and finish with a concise summary of changes, validation, and any feedback that remains blocked or ambiguous. Do not create a feedback packet or verification-receipt file.",
         url = pull_request.url(&checkout.repository),
         repository = checkout.repository.full_name,
         number = pull_request.number,
         branch = checkout.branch,
         base_sha = pull_request.base.sha,
         head_sha = pull_request.head.sha,
+        request_name = request_name,
+        cli = cli,
+        login = login,
+        thread_name = thread_name,
     )
 }
 
@@ -2082,7 +2620,7 @@ fn comment_key(entry: &DiscussionComment) -> String {
 
 fn target_label(target: &CommentTarget) -> String {
     match target {
-        CommentTarget::General => "PR conversation".into(),
+        CommentTarget::General => "Review conversation".into(),
         CommentTarget::Edit { comment_id, .. } => format!("Edit comment {comment_id}"),
         CommentTarget::Reply { comment_id } => format!("Reply to thread {comment_id}"),
         CommentTarget::Inline {
@@ -2104,35 +2642,168 @@ mod tests {
     use settings::SettingsStore;
     use util::path;
 
+    fn repository_choice(
+        provider: ReviewProviderKind,
+        host: &str,
+        full_name: &str,
+    ) -> ReviewRepositoryChoice {
+        ReviewRepositoryChoice {
+            provider,
+            host: host.into(),
+            full_name: full_name.into(),
+            remote_url: format!("https://{host}/{full_name}.git"),
+        }
+    }
+
+    #[test]
+    fn review_provider_actions_are_discovered_independently() {
+        let github = repository_choice(
+            ReviewProviderKind::GitHub,
+            "github.com",
+            "YashedP/SpotiNotifs",
+        );
+        let gitlab = repository_choice(
+            ReviewProviderKind::GitLab,
+            "gitlab.com",
+            "YashedP/SpotiNotifs",
+        );
+        let self_hosted = repository_choice(
+            ReviewProviderKind::GitLab,
+            "gitlab.example.com",
+            "team/project",
+        );
+
+        assert_eq!(
+            available_review_providers(std::slice::from_ref(&github)),
+            vec![ReviewProviderKind::GitHub]
+        );
+        assert_eq!(
+            available_review_providers(&[github.clone(), gitlab.clone(), self_hosted]),
+            vec![ReviewProviderKind::GitHub, ReviewProviderKind::GitLab]
+        );
+        assert_eq!(
+            repositories_for_provider(
+                &[github.clone(), gitlab.clone()],
+                ReviewProviderKind::GitLab,
+            ),
+            vec![gitlab.clone()]
+        );
+        assert_eq!(
+            repository_for_provider(
+                &[github.clone(), gitlab.clone()],
+                Some(&github.storage_id()),
+                ReviewProviderKind::GitLab,
+            ),
+            Some(gitlab.storage_id())
+        );
+        assert_eq!(
+            repository_for_provider(
+                &[github.clone(), gitlab.clone()],
+                Some(&gitlab.storage_id()),
+                ReviewProviderKind::GitLab,
+            ),
+            Some(gitlab.storage_id())
+        );
+        assert_eq!(
+            canonical_repository_selection(
+                &[github.clone(), gitlab.clone()],
+                Some("YashedP/SpotiNotifs"),
+                None,
+            ),
+            None,
+            "an ambiguous legacy path must not silently select GitHub"
+        );
+        assert_eq!(
+            canonical_repository_selection(
+                &[github.clone(), gitlab.clone()],
+                Some("YashedP/SpotiNotifs"),
+                Some(ReviewProviderKind::GitLab),
+            ),
+            Some(gitlab.storage_id())
+        );
+        assert_eq!(
+            canonical_repository_selection(
+                &[github.clone(), gitlab.clone()],
+                Some(&github.storage_id()),
+                Some(ReviewProviderKind::GitLab),
+            ),
+            Some(gitlab.storage_id()),
+            "the explicit provider action must override a saved repository from another provider"
+        );
+        assert_eq!(
+            repository_choice_by_id(
+                &[github.clone(), gitlab.clone()],
+                &gitlab.storage_id(),
+                ReviewProviderKind::GitLab,
+            ),
+            Some(gitlab.clone())
+        );
+        assert_eq!(
+            repository_choice_by_id(
+                &[github, gitlab.clone()],
+                &gitlab.storage_id(),
+                ReviewProviderKind::GitHub,
+            ),
+            None,
+            "a GitLab repository ID must never resolve through the GitHub client"
+        );
+    }
+
+    #[test]
+    fn review_picker_distinguishes_loading_empty_and_error_states() {
+        assert_eq!(
+            review_picker_empty_message(ReviewProviderKind::GitLab, true, false, false),
+            Some("Loading merge requests…")
+        );
+        assert_eq!(
+            review_picker_empty_message(ReviewProviderKind::GitLab, false, true, false),
+            Some("No matching merge requests")
+        );
+        assert_eq!(
+            review_picker_empty_message(ReviewProviderKind::GitHub, false, true, false),
+            Some("No matching pull requests")
+        );
+        assert_eq!(
+            review_picker_empty_message(ReviewProviderKind::GitLab, false, false, true),
+            None,
+            "the rendered provider error replaces the generic empty message"
+        );
+    }
+
     fn checkout(number: u64) -> Checkout {
-        let repo = GitHubRepo {
+        let repo = ReviewRepository {
             id: 42,
             full_name: "owner/project".into(),
+            provider: ReviewProviderKind::GitHub,
+            host: "github.com".into(),
+            web_url: None,
         };
         Checkout {
             repository: repo.clone(),
             branch: "feature".into(),
             base_ref: "main".into(),
             warning: None,
-            pull_request: PullRequest {
+            pull_request: ReviewRequest {
                 number,
                 title: "Fixture".into(),
                 body: None,
-                user: github_review::GitHubUser {
+                user: github_review::ReviewUser {
                     login: "author".into(),
                 },
                 state: "open".into(),
                 merged_at: None,
-                head: github_review::PullRequestRef {
+                head: github_review::ReviewRequestRef {
                     branch: "feature".into(),
                     sha: "a".repeat(40),
                     repo: Some(repo.clone()),
                 },
-                base: github_review::PullRequestRef {
+                base: github_review::ReviewRequestRef {
                     branch: "main".into(),
                     sha: "b".repeat(40),
                     repo: Some(repo),
                 },
+                start_sha: None,
+                web_url: None,
             },
         }
     }
@@ -2170,7 +2841,8 @@ mod tests {
                 title: "fix authentication".into(),
             },
         ];
-        let matches = ReviewRequestPickerDelegate::all_matches(&requests);
+        let matches =
+            ReviewRequestPickerDelegate::all_matches(&requests, ReviewProviderKind::GitHub);
         assert_eq!(
             matches[0].string,
             "#4 feat(cli): add targeted catch-up and user listing"
@@ -2178,6 +2850,12 @@ mod tests {
         assert_eq!(matches[1].string, "#23 fix authentication");
         assert_eq!(matches[0].candidate_id, 0);
         assert_eq!(matches[1].candidate_id, 1);
+        let gitlab_matches =
+            ReviewRequestPickerDelegate::all_matches(&requests, ReviewProviderKind::GitLab);
+        assert_eq!(
+            gitlab_matches[0].string,
+            "!4 feat(cli): add targeted catch-up and user listing"
+        );
     }
 
     #[gpui::test]
@@ -2193,7 +2871,7 @@ mod tests {
         fs.insert_tree(path!("/project"), json!({"a.txt":"base"}))
             .await;
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-        let (view, cx) = cx.add_window_view(|window, cx| GitHubReview::new(project, window, cx));
+        let (view, cx) = cx.add_window_view(|window, cx| ReviewService::new(project, window, cx));
         view.update_in(cx, |view, window, cx| {
             view.storage_key = Some("test-inline-github-draft".into());
             view.attach(checkout(1), window, cx);
@@ -2236,7 +2914,7 @@ mod tests {
         fs.insert_tree(path!("/project"), json!({"a.txt":"base"}))
             .await;
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-        let (view, cx) = cx.add_window_view(|window, cx| GitHubReview::new(project, window, cx));
+        let (view, cx) = cx.add_window_view(|window, cx| ReviewService::new(project, window, cx));
         view.update_in(cx, |view, window, cx| {
             view.storage_key = Some("test-review-edit-drafts".into());
             view.attach(checkout(1), window, cx);
@@ -2307,7 +2985,7 @@ mod tests {
             .await;
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
         let (view, cx) =
-            cx.add_window_view(|window, cx| GitHubReview::new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| ReviewService::new(project.clone(), window, cx));
         view.update_in(cx, |view, window, cx| {
             view.storage_key = Some("test-github-drafts".into());
             view.attach(checkout(1), window, cx);
@@ -2340,7 +3018,8 @@ mod tests {
             .unwrap()
         });
         assert_eq!(restored.drafts.len(), 2);
-        let recreated = cx.update(|window, cx| cx.new(|cx| GitHubReview::new(project, window, cx)));
+        let recreated =
+            cx.update(|window, cx| cx.new(|cx| ReviewService::new(project, window, cx)));
         recreated.update_in(cx, |view, window, cx| {
             view.saved = restored;
             view.attach(checkout(1), window, cx);

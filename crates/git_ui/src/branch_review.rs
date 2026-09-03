@@ -177,7 +177,7 @@ pub(crate) struct BranchReview {
     startup_fold_eligible: HashSet<RepoPath>,
     startup_fold_attempted: HashSet<RepoPath>,
     comments: Vec<PlacedReviewComment>,
-    review_service: Option<WeakEntity<crate::github_review_ui::ReviewService>>,
+    review_service: Option<WeakEntity<crate::review_ui::ReviewService>>,
     comment_markdown: BTreeMap<String, (String, Entity<markdown::Markdown>)>,
     expanded_threads: HashSet<ReviewThreadId>,
     known_threads: HashSet<ReviewThreadId>,
@@ -342,7 +342,7 @@ impl BranchReview {
 
     pub(crate) fn set_review_service(
         &mut self,
-        service: Option<WeakEntity<crate::github_review_ui::ReviewService>>,
+        service: Option<WeakEntity<crate::review_ui::ReviewService>>,
         cx: &mut Context<Self>,
     ) {
         self.review_service = service;
@@ -2902,6 +2902,7 @@ mod tests {
                     comment,
                     current: Some("reviewed a".into()),
                     base: Some("base a".into()),
+                    provider_name: "GitHub".into(),
                 }
                 .into_placed()
                 .unwrap()],

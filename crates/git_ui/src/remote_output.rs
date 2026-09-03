@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use std::sync::{Mutex, OnceLock};
 
 use git::repository::{Remote, RemoteCommandOutput};
 use ui::SharedString;
@@ -41,6 +42,52 @@ pub enum SuccessStyle {
 pub struct SuccessMessage {
     pub message: String,
     pub style: SuccessStyle,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ReviewRemoteHint {
+    pub host: String,
+    pub project_path: String,
+    pub review_number: Option<u64>,
+}
+
+fn hints() -> &'static Mutex<Vec<ReviewRemoteHint>> {
+    static HINTS: OnceLock<Mutex<Vec<ReviewRemoteHint>>> = OnceLock::new();
+    HINTS.get_or_init(Default::default)
+}
+
+pub(crate) fn review_remote_hints() -> Vec<ReviewRemoteHint> {
+    hints()
+        .lock()
+        .map(|hints| hints.clone())
+        .unwrap_or_default()
+}
+
+fn gitlab_hint(url: &str) -> Option<ReviewRemoteHint> {
+    let url = url::Url::parse(url).ok()?;
+    let host = url.host_str()?.to_string();
+    let path = url.path().trim_matches('/');
+    let (project_path, suffix) = path.split_once("/-/merge_requests/")?;
+    let review_number = suffix
+        .split(['/', '?', '#'])
+        .next()
+        .and_then(|value| value.parse().ok());
+    Some(ReviewRemoteHint {
+        host,
+        project_path: project_path.to_string(),
+        review_number,
+    })
+}
+
+fn record_review_remote_hint(url: &str) {
+    let Some(hint) = gitlab_hint(url) else {
+        return;
+    };
+    if let Ok(mut hints) = hints().lock()
+        && !hints.contains(&hint)
+    {
+        hints.push(hint);
+    }
 }
 
 fn extract_pull_request_link(output: &RemoteCommandOutput) -> Option<(&'static str, String)> {
@@ -171,6 +218,7 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                     style: SuccessStyle::Toast,
                 }
             } else if let Some((label, url)) = extract_pull_request_link(&output) {
+                record_review_remote_hint(&url);
                 SuccessMessage {
                     message: format!("Pushed {} to {}", branch_name, remote_ref.name),
                     style: SuccessStyle::PushPrLink { label, url },
@@ -258,6 +306,22 @@ mod tests {
         } else {
             panic!("Expected PushPrLink variant")
         }
+    }
+
+    #[test]
+    fn records_self_managed_gitlab_project_from_push_link() {
+        let hint =
+            gitlab_hint("https://code.corp.example/group/subgroup/project/-/merge_requests/73")
+                .unwrap();
+        assert_eq!(hint.host, "code.corp.example");
+        assert_eq!(hint.project_path, "group/subgroup/project");
+        assert_eq!(hint.review_number, Some(73));
+
+        let create = gitlab_hint(
+            "https://code.corp.example/group/subgroup/project/-/merge_requests/new?merge_request[source_branch]=feature",
+        )
+        .unwrap();
+        assert_eq!(create.review_number, None);
     }
 
     #[test]
