@@ -16575,6 +16575,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
+ "language_models",
  "log",
  "menu",
  "paths",
@@ -20992,13 +20993,17 @@ dependencies = [
 name = "which_key"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "command_palette",
  "gpui",
  "settings",
+ "theme",
  "theme_settings",
  "ui",
  "util",
+ "vim_mode_setting",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
