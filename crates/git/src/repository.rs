@@ -1910,51 +1910,65 @@ impl GitRepository for RealGitRepository {
     fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
         let git = self.git_binary_in_worktree();
         let working_directory = self.working_directory.clone();
-        let merge_base_ref = match &request {
-            DiffTreeType::MergeBaseWithWorktree { base } => Some(base.clone()),
-            DiffTreeType::MergeBase { .. } | DiffTreeType::Since { .. } => None,
-        };
-
-        let args = match request {
-            DiffTreeType::MergeBase { base, head } => [
-                "diff-tree",
-                "-r",
-                "-z",
-                "--abbrev=64",
-                "--no-renames",
-                "--merge-base",
-                base.as_str(),
-                head.as_str(),
-            ]
-            .map(OsString::from)
-            .to_vec(),
-            DiffTreeType::MergeBaseWithWorktree { base } => [
-                "diff",
-                "--raw",
-                "-z",
-                "--abbrev=64",
-                "--no-renames",
-                "--merge-base",
-                base.as_str(),
-            ]
-            .map(OsString::from)
-            .to_vec(),
-            DiffTreeType::Since { base, head } => [
-                "diff-tree",
-                "-r",
-                "-z",
-                "--abbrev=64",
-                "--no-renames",
-                base.as_str(),
-                head.as_str(),
-            ]
-            .map(OsString::from)
-            .to_vec(),
-        };
 
         self.executor
             .spawn(async move {
                 let git = git?;
+                // `git diff --merge-base` refuses to run when the base and head
+                // share more than one merge base (criss-cross history), exiting
+                // with "fatal: multiple merge bases found". Resolve the base
+                // explicitly instead, which still picks a single candidate and
+                // matches the semantics of `git diff A...B`.
+                let (args, merge_base_oid) = match &request {
+                    DiffTreeType::MergeBase { base, head } => {
+                        let merge_base = resolve_merge_base(&git, base, head).await?;
+                        (
+                            [
+                                "diff-tree",
+                                "-r",
+                                "-z",
+                                "--abbrev=64",
+                                "--no-renames",
+                                merge_base.as_str(),
+                                head.as_str(),
+                            ]
+                            .map(OsString::from)
+                            .to_vec(),
+                            None,
+                        )
+                    }
+                    DiffTreeType::MergeBaseWithWorktree { base } => {
+                        let merge_base = resolve_merge_base(&git, base, "HEAD").await?;
+                        (
+                            [
+                                "diff",
+                                "--raw",
+                                "-z",
+                                "--abbrev=64",
+                                "--no-renames",
+                                merge_base.as_str(),
+                            ]
+                            .map(OsString::from)
+                            .to_vec(),
+                            Some(merge_base),
+                        )
+                    }
+                    DiffTreeType::Since { base, head } => (
+                        [
+                            "diff-tree",
+                            "-r",
+                            "-z",
+                            "--abbrev=64",
+                            "--no-renames",
+                            base.as_str(),
+                            head.as_str(),
+                        ]
+                        .map(OsString::from)
+                        .to_vec(),
+                        None,
+                    ),
+                };
+
                 let output = git.build_command(&args).output().await?;
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1963,7 +1977,11 @@ impl GitRepository for RealGitRepository {
 
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let mut tree_diff = stdout.parse::<TreeDiff>()?;
-                let Some(merge_base_ref) = merge_base_ref else {
+                // Files the worktree diff reports as deleted but that exist on
+                // disk (deleted from the index or from a commit, then recreated).
+                // `git diff` compares them against the index, so compare their
+                // disk contents against the merge base ourselves.
+                let Some(merge_base) = merge_base_oid else {
                     return Ok(tree_diff);
                 };
                 let Some(working_directory) = working_directory else {
@@ -1983,10 +2001,6 @@ impl GitRepository for RealGitRepository {
                     anyhow::bail!("git status failed: {stderr}");
                 }
                 let status = String::from_utf8_lossy(&status_output.stdout).parse::<GitStatus>()?;
-                // Files the diff reports as deleted but that exist on disk
-                // (deleted from the index or from a commit, then recreated).
-                // `git diff` compares them against the index, so compare their
-                // disk contents against the merge base ourselves.
                 let recreated: Vec<(RepoPath, Oid)> = status
                     .entries
                     .iter()
@@ -2009,17 +2023,6 @@ impl GitRepository for RealGitRepository {
                     return Ok(tree_diff);
                 }
 
-                let merge_base_output = git
-                    .build_command(&["merge-base", merge_base_ref.as_ref(), "HEAD"])
-                    .output()
-                    .await?;
-                if !merge_base_output.status.success() {
-                    let stderr = String::from_utf8_lossy(&merge_base_output.stderr);
-                    anyhow::bail!("git merge-base failed: {stderr}");
-                }
-                let merge_base = String::from_utf8_lossy(&merge_base_output.stdout);
-                let merge_base = merge_base.trim();
-
                 for (path, old) in recreated {
                     let full_path = working_directory.join(path.as_std_path());
                     let metadata = match smol::fs::symlink_metadata(&full_path).await {
@@ -2028,7 +2031,8 @@ impl GitRepository for RealGitRepository {
                     };
                     let base_entry = git
                         .build_command(
-                            &["ls-tree", merge_base, "--", path.as_unix_str()].map(OsString::from),
+                            &["ls-tree", merge_base.as_str(), "--", path.as_unix_str()]
+                                .map(OsString::from),
                         )
                         .output()
                         .await?;
@@ -2494,9 +2498,10 @@ impl GitRepository for RealGitRepository {
                     }
                     DiffType::HeadToWorktree => git.build_command(&["diff"]).output().await?,
                     DiffType::MergeBase { base_ref } => {
-                        git.build_command(&["diff", "--merge-base", base_ref.as_ref()])
-                            .output()
-                            .await?
+                        // See `resolve_merge_base` for why the base is resolved
+                        // explicitly instead of using `--merge-base`.
+                        let merge_base = resolve_merge_base(&git, &base_ref, "HEAD").await?;
+                        git.build_command(&["diff", merge_base.as_str()]).output().await?
                     }
                 };
 
@@ -3736,6 +3741,16 @@ fn parse_initial_graph_output<'a>(
         .collect()
 }
 
+/// Resolves the merge base of `base` and `head` to a single commit.
+///
+/// `git diff --merge-base` refuses to run when the two commits share more than
+/// one merge base (criss-cross history), exiting with "fatal: multiple merge
+/// bases found". `git merge-base` itself still picks a single candidate in that
+/// situation, matching the semantics of `git diff A...B`.
+async fn resolve_merge_base(git: &GitBinary, base: &str, head: &str) -> Result<String> {
+    git.run(&["merge-base", base, head]).await
+}
+
 fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("status"),
@@ -4610,6 +4625,90 @@ mod tests {
                 )]),
             }
         );
+    }
+
+    #[gpui::test]
+    async fn test_merge_base_diff_with_multiple_merge_bases(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        // Build a criss-cross topology in which the base and HEAD share two
+        // merge bases. `git diff --merge-base` refuses to run here ("fatal:
+        // multiple merge bases found"), but resolving the base explicitly with
+        // `git merge-base` still picks a single candidate.
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("base.txt"), "base\n").unwrap();
+        git_command(repo_dir.path(), ["add", "base.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "M"]);
+        git_command(repo_dir.path(), ["checkout", "-b", "feature"]);
+        fs::write(repo_dir.path().join("b1.txt"), "b1\n").unwrap();
+        git_command(repo_dir.path(), ["add", "b1.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "B1"]);
+        git_command(repo_dir.path(), ["checkout", "main"]);
+        fs::write(repo_dir.path().join("a1.txt"), "a1\n").unwrap();
+        git_command(repo_dir.path(), ["add", "a1.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "A1"]);
+        git_command(repo_dir.path(), ["merge", "feature", "--no-edit"]);
+        git_command(repo_dir.path(), ["checkout", "feature"]);
+        git_command(repo_dir.path(), ["merge", "main@{1}", "--no-edit"]);
+        git_command(repo_dir.path(), ["checkout", "main"]);
+        fs::write(repo_dir.path().join("a2.txt"), "a2\n").unwrap();
+        git_command(repo_dir.path(), ["add", "a2.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "A3"]);
+
+        // Sanity check that the topology really has multiple merge bases.
+        let merge_base_count = git_command_output(
+            repo_dir.path(),
+            ["merge-base", "--all", "feature", "main"],
+        )
+        .lines()
+        .count();
+        assert!(merge_base_count > 1);
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let expected = HashSet::from_iter([
+            RepoPath::new("a2.txt").unwrap(),
+            RepoPath::new("b1.txt").unwrap(),
+        ]);
+        let committed = repository
+            .diff_tree(DiffTreeType::MergeBase {
+                base: "feature".into(),
+                head: "HEAD".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            committed.entries.keys().cloned().collect::<HashSet<_>>(),
+            expected
+        );
+
+        let worktree = repository
+            .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                base: "feature".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            worktree.entries.keys().cloned().collect::<HashSet<_>>(),
+            expected.clone()
+        );
+
+        let diff = repository
+            .diff(DiffType::MergeBase {
+                base_ref: "feature".into(),
+            })
+            .await
+            .unwrap();
+        assert!(diff.contains("a2.txt"));
+        assert!(diff.contains("b1.txt"));
     }
 
     #[gpui::test]
