@@ -684,30 +684,24 @@ fn synthetic_entry(id: ProjectEntryId, kind: EntryKind, path: Arc<RelPath>) -> E
     }
 }
 
-/// Falls back to resolving a buffer's worktree entry from its `File`'s path when the normal
-/// `project_entry_id`-based lookup finds nothing. That lookup fails for a deleted file — its
-/// `File` still carries a `path` and `worktree`, but `project_entry_id()` returns `None` for
-/// `DiskState::Deleted` — which would otherwise leave auto-reveal unable to tell which
-/// ancestor directories to expand. Mints the same synthetic id the tree-building code uses,
-/// so the returned entry's id matches the one already in `new_worktree_entries`.
-fn deleted_buffer_worktree_entry(
+/// The entry the panel synthesized for a buffer it renders as a deleted file, for auto-reveal
+/// to walk up from when the `project_entry_id`-based lookup finds nothing. This consults the
+/// tree the panel actually built rather than re-deriving deletion from the buffer's `File`:
+/// a buffer opened on a path that never existed has no entry id either, but it is rendered as
+/// an external file, and expanding the real directories above it would reveal nothing.
+fn deleted_file_entry_for_buffer(
+    fs_entries: &[FsEntry],
     project: &Project,
     buffer_id: BufferId,
     cx: &App,
 ) -> Option<(Entity<Worktree>, Entry)> {
-    let buffer = project.buffer_for_id(buffer_id, cx)?;
-    let file = File::from_dyn(buffer.read(cx).file())?;
-    if file.project_entry_id().is_some() {
-        return None;
-    }
-    let worktree = file.worktree.clone();
-    let worktree_id = worktree.read(cx).id();
-    let entry = synthetic_entry(
-        synthetic_entry_id(worktree_id, &file.path),
-        EntryKind::File,
-        file.path.clone(),
-    );
-    Some((worktree, entry))
+    fs_entries.iter().find_map(|fs_entry| match fs_entry {
+        FsEntry::File(file) if file.buffer_id == buffer_id && file.is_deleted => {
+            let worktree = project.worktree_for_id(file.worktree_id, cx)?;
+            Some((worktree, file.entry.entry.clone()))
+        }
+        _ => None,
+    })
 }
 
 struct BufferExcerpts {
@@ -2199,6 +2193,8 @@ impl OutlinePanel {
                 PanelEntry::Fs(FsEntry::File(FsEntryFile {
                     worktree_id,
                     buffer_id,
+                    entry: file_entry,
+                    is_deleted,
                     ..
                 })) => project.update(cx, |project, cx| {
                     let entry_id = project
@@ -2211,7 +2207,13 @@ impl OutlinePanel {
                             let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
                             Some((worktree, entry))
                         })
-                        .or_else(|| deleted_buffer_worktree_entry(project, *buffer_id, cx))
+                        .or_else(|| {
+                            if !*is_deleted {
+                                return None;
+                            }
+                            let worktree = project.worktree_for_id(*worktree_id, cx)?;
+                            Some((worktree, file_entry.entry.clone()))
+                        })
                 }),
                 PanelEntry::Outline(outline_entry) => {
                     let buffer_id = outline_entry.buffer_id();
@@ -2256,8 +2258,12 @@ impl OutlinePanel {
                                     })
                             })
                             .or_else(|| {
-                                let (worktree, entry) =
-                                    deleted_buffer_worktree_entry(project, buffer_id, cx)?;
+                                let (worktree, entry) = deleted_file_entry_for_buffer(
+                                    &outline_panel.fs_entries,
+                                    project,
+                                    buffer_id,
+                                    cx,
+                                )?;
                                 let worktree_id = worktree.read(cx).id();
                                 outline_panel
                                     .collapsed_entries
@@ -2295,8 +2301,12 @@ impl OutlinePanel {
                                         })
                                 })
                                 .or_else(|| {
-                                    let (worktree, entry) =
-                                        deleted_buffer_worktree_entry(project, buffer_id, cx)?;
+                                    let (worktree, entry) = deleted_file_entry_for_buffer(
+                                        &outline_panel.fs_entries,
+                                        project,
+                                        buffer_id,
+                                        cx,
+                                    )?;
                                     let worktree_id = worktree.read(cx).id();
                                     outline_panel
                                         .collapsed_entries
@@ -2322,15 +2332,19 @@ impl OutlinePanel {
                         // directories may themselves be synthetic (a wholly deleted directory),
                         // so fall back to the same deterministic id used when the tree was built.
                         for ancestor in buffer_entry.path.ancestors().skip(1) {
-                            let ancestor_id = worktree
-                                .entry_for_path(ancestor)
-                                .map(|entry| entry.id)
+                            let real_ancestor_id =
+                                worktree.entry_for_path(ancestor).map(|entry| entry.id);
+                            let ancestor_id = real_ancestor_id
                                 .unwrap_or_else(|| synthetic_entry_id(worktree_id, ancestor));
+                            // Only a real directory can be expanded in the worktree. On a
+                            // remote worktree a synthesized id would go out as an
+                            // `ExpandProjectEntry` request the host rejects.
                             if outline_panel
                                 .collapsed_entries
                                 .remove(&CollapsedEntry::Dir(worktree_id, ancestor_id))
+                                && let Some(real_ancestor_id) = real_ancestor_id
                             {
-                                dirs_to_expand.push(ancestor_id);
+                                dirs_to_expand.push(real_ancestor_id);
                             }
                         }
                     }
@@ -3265,13 +3279,16 @@ impl OutlinePanel {
                         .map(|(worktree_id, entries)| {
                             let mut entries = entries.into_values().collect::<Vec<_>>();
                             // A synthesized directory and a real file can share a path when a
-                            // path changed kind since the deleted file existed. Order directories
-                            // first so the rows nested under the directory follow it.
+                            // path changed kind since the deleted file existed. The file has to
+                            // come first: the nesting pass below tracks the current directory
+                            // chain, and meeting the file after the directory would pop that
+                            // directory (the file's parent is one level up) before the rows
+                            // nested under it arrive.
                             entries.sort_by(|a, b| {
                                 a.path
                                     .as_ref()
                                     .cmp(b.path.as_ref())
-                                    .then_with(|| b.is_dir().cmp(&a.is_dir()))
+                                    .then_with(|| a.is_dir().cmp(&b.is_dir()))
                             });
                             (worktree_id, entries)
                         })
@@ -7257,6 +7274,38 @@ two/  <==== selected
                  than adopting the same-path file as its parent and falling back to root depth"
             );
         });
+
+        // Now also open the file `foo` itself, so the tree holds a file and a directory with
+        // the same path. The file has to sort first: the nesting pass tracks the current
+        // directory chain, and meeting the file after `foo/` would pop that directory before
+        // `foo/a.txt` arrives, leaving it at root depth.
+        let buffer_foo = open_buffer(&project, path!("/root/foo"), cx).await;
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[
+                (&buffer_keep, Vec::new()),
+                (&buffer_a, Vec::new()),
+                (&buffer_foo, Vec::new()),
+            ],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    None,
+                    cx,
+                ),
+                "root/\n  foo\n  foo/\n    a.txt\n  keep.txt",
+                "with the same-path file open as well, the deleted file must still nest \
+                 under the synthesized directory"
+            );
+        });
     }
 
     #[gpui::test]
@@ -7489,6 +7538,127 @@ two/  <==== selected
                 }),
                 "the committed deletion should be marked deleted, got {:#?}",
                 outline_panel.fs_entries
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_auto_reveal_ignores_external_file_on_nonexistent_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "dir": {
+                    "real.rs": "pub fn real() {}\n",
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        // A buffer on a path that never existed: `DiskState::New`, no entry id, no diff. It
+        // renders as an external file, so revealing its symbols must not touch the real
+        // `dir` it merely shares a path prefix with. Give it symbols to reveal.
+        let buffer_real = open_buffer(&project, path!("/root/dir/real.rs"), cx).await;
+        let buffer_new = open_buffer(&project, path!("/root/dir/never_existed.rs"), cx).await;
+        buffer_new.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(0..0, "pub fn phantom() {\n    let x = 1;\n}\n")],
+                None,
+                cx,
+            );
+        });
+        let editor = add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_real, Vec::new()), (&buffer_new, Vec::new())],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
+
+        let (worktree_id, dir_entry_id) = outline_panel.read_with(cx, |outline_panel, _cx| {
+            outline_panel
+                .fs_entries
+                .iter()
+                .find_map(|entry| match entry {
+                    FsEntry::Directory(FsEntryDirectory {
+                        worktree_id, entry, ..
+                    }) if entry.path.file_name() == Some("dir") => Some((*worktree_id, entry.id)),
+                    _ => None,
+                })
+                .expect("`dir` should have a worktree entry via `real.rs`")
+        });
+        outline_panel.read_with(cx, |outline_panel, _cx| {
+            assert!(
+                outline_panel
+                    .fs_entries
+                    .iter()
+                    .any(|entry| matches!(entry, FsEntry::ExternalFile(_))),
+                "sanity check: the never-existing path should render as an external file, \
+                 got {:#?}",
+                outline_panel.fs_entries
+            );
+        });
+
+        let buffer_new_id = buffer_new.read_with(cx, |buffer, _cx| buffer.remote_id());
+        let outline_start = outline_panel.read_with(cx, |outline_panel, _cx| {
+            outline_panel
+                .cached_entries
+                .iter()
+                .find_map(|cached_entry| match &cached_entry.entry {
+                    PanelEntry::Outline(OutlineEntry::Outline(outline))
+                        if outline.range.start.buffer_id == buffer_new_id =>
+                    {
+                        Some(outline.range.start)
+                    }
+                    _ => None,
+                })
+                .expect("the external file should contribute an outline entry")
+        });
+
+        outline_panel.update(cx, |outline_panel, _cx| {
+            outline_panel
+                .collapsed_entries
+                .insert(CollapsedEntry::Dir(worktree_id, dir_entry_id));
+        });
+
+        let multibuffer_anchor = editor.read_with(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .anchor_in_excerpt(outline_start)
+        });
+        let multibuffer_anchor =
+            multibuffer_anchor.expect("the external file's excerpt should be present");
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges(Some(multibuffer_anchor..multibuffer_anchor))
+                });
+            });
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        outline_panel.read_with(cx, |outline_panel, _cx| {
+            assert!(
+                outline_panel
+                    .collapsed_entries
+                    .contains(&CollapsedEntry::Dir(worktree_id, dir_entry_id)),
+                "revealing an external file must not expand a real directory it is not \
+                 rendered under, got {:#?}",
+                outline_panel.collapsed_entries
             );
         });
     }
