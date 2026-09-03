@@ -40,11 +40,28 @@ pub struct HangIncident {
     /// The interval the hangs occurred in, including all non-hang foreground
     /// work recorded alongside them.
     pub snapshot: FrameSnapshot,
-    /// The events that blocked the foreground for at least the detector's
-    /// threshold, longest first. When the incident was triggered by the
-    /// frame budget alone, no event crossed the threshold and this instead
+    /// Which detection rule qualified the interval.
+    pub trigger: HangTrigger,
+    /// For [`HangTrigger::Threshold`], the events that blocked the foreground
+    /// for at least the detector's threshold, longest first. For
+    /// [`HangTrigger::Budget`], no event crossed the threshold and this instead
     /// holds every event in the interval, longest first.
     pub contributors: Vec<ForegroundEvent>,
+}
+
+/// The detection rule that qualified an interval as a [`HangIncident`].
+///
+/// Recorded explicitly so consumers can separate the two classes without
+/// re-deriving them from `stall_ms`, which stops working whenever the
+/// detector's thresholds change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HangTrigger {
+    /// A single event blocked the foreground for at least the hang threshold.
+    Threshold,
+    /// No single event crossed the threshold, but the interval's total
+    /// foreground spend reached the frame budget.
+    Budget,
 }
 
 impl HangDetector {
@@ -98,6 +115,8 @@ pub struct SerializedHangIncident {
     /// newly drawn frame finished platform submission (see
     /// [`HangDetector::first_present_at`]), otherwise `"steady"`.
     pub phase: &'static str,
+    /// `"threshold"` or `"budget"` (see [`HangTrigger`]).
+    pub trigger: HangTrigger,
     /// When the incident's active window started, in milliseconds since app
     /// startup: the sealing frame's first invalidation, or the earliest
     /// contributor's start when nothing was pending a repaint. Foreground
@@ -250,6 +269,7 @@ impl SerializedHangIncident {
                 Some(first_present_at) if active_start >= first_present_at => "steady",
                 _ => "startup",
             },
+            trigger: incident.trigger,
             start_ms: since_startup(active_start),
             active_ms: as_millis(active),
             stall_ms: incident
@@ -407,7 +427,7 @@ impl HangIncident {
             .filter(|event| event.duration() >= threshold)
             .copied()
             .collect();
-        if contributors.is_empty() {
+        let trigger = if contributors.is_empty() {
             if snapshot.journal_discontinuous {
                 return None;
             }
@@ -416,10 +436,14 @@ impl HangIncident {
                 return None;
             }
             contributors = snapshot.events.clone();
-        }
+            HangTrigger::Budget
+        } else {
+            HangTrigger::Threshold
+        };
         contributors.sort_by_key(|event| std::cmp::Reverse(event.duration()));
         Some(Self {
             snapshot,
+            trigger,
             contributors,
         })
     }
@@ -449,7 +473,9 @@ mod tests {
         InputTiming, IntervalBoundary, PollSummary, PresentedFrame, SmallPollFlush,
         install_test_foreground_journal, record_present,
     };
-    use super::{HangDetector, HangIncident, SerializedHangContributor, SerializedHangIncident};
+    use super::{
+        HangDetector, HangIncident, HangTrigger, SerializedHangContributor, SerializedHangIncident,
+    };
 
     actions!(hang_test, [HangyAction]);
 
@@ -567,6 +593,7 @@ mod tests {
         let serialized = SerializedHangIncident::convert(startup, &incident, 1, Some(at(50)));
 
         assert_eq!(serialized.phase, "steady");
+        assert_eq!(serialized.trigger, HangTrigger::Threshold);
         // The frame's first invalidation anchors the active window, not the
         // interval start or the first contributor.
         assert_eq!(serialized.start_ms, 100.0);
@@ -755,12 +782,14 @@ mod tests {
 
         let incident = HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
             .expect("foreground spend exceeded the frame budget");
+        assert_eq!(incident.trigger, HangTrigger::Budget);
         assert_eq!(incident.contributors.len(), 3);
         assert_eq!(
             incident.contributors[0].duration(),
             Duration::from_millis(8)
         );
         let serialized = SerializedHangIncident::convert(startup, &incident, 8, Some(startup));
+        assert_eq!(serialized.trigger, HangTrigger::Budget);
         assert_eq!(serialized.stall_ms, 8.0);
         assert_eq!(serialized.dirty_to_present_ms, Some(150.0));
         assert_eq!(serialized.sealed_by, "present");

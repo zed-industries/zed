@@ -192,9 +192,10 @@
   "reveal_if_open": false,
   // Whether to automatically close files that have been deleted on disk.
   "close_on_file_delete": false,
-  // Whether toggling a panel (e.g. with its keyboard shortcut) also closes
-  // the panel when it is already focused, instead of just moving focus back
-  // to the editor.
+  // Whether invoking a panel's ToggleFocus action while the panel is already
+  // focused closes the panel, instead of just moving focus back to the
+  // editor. This only applies to a panel's focus-toggle action, not to its
+  // regular visibility-toggle action.
   "close_panel_on_toggle": false,
   // Relative size of the drop target in the editor that will open dropped file as a split pane (0-0.5)
   // E.g. 0.25 == If you drop onto the top/bottom quarter of the pane a new vertical split will be used
@@ -209,6 +210,13 @@
   //  3. Never close the window
   //         "when_closing_with_no_tabs": "keep_window_open",
   "when_closing_with_no_tabs": "platform_default",
+  // What to show when opening a new window.
+  // May take 2 values:
+  //  1. Show an empty untitled buffer
+  //         "on_new_window": "empty_tab"
+  //  2. Show the launchpad with recent projects
+  //         "on_new_window": "launchpad"
+  "on_new_window": "launchpad",
   // What to do when the last window is closed.
   // May take 2 values:
   //  1. Use the current platform's convention
@@ -1919,6 +1927,10 @@
     "line_endings_button": false,
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
+    // Whether to show an indicator with a countdown while timed multi-stroke
+    // input is pending. Hovering the indicator pauses the timeout. Its binding
+    // preview popover is disabled when "which_key.enabled" is true.
+    "pending_keystrokes_indicator": true,
   },
   // Settings specific to the terminal
   "terminal": {
@@ -2741,6 +2753,8 @@
   // Which-key popup settings
   "which_key": {
     // Whether to show the which-key popup when holding down key combinations.
+    // When enabled, the pending keystrokes indicator remains visible, but its
+    // binding preview popover is disabled.
     "enabled": false,
     // Delay in milliseconds before showing the which-key popup.
     "delay_ms": 1000,
