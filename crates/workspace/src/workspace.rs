@@ -2286,6 +2286,10 @@ impl Workspace {
         &self.bottom_dock
     }
 
+    pub fn any_dock_open(&self, cx: &App) -> bool {
+        self.all_docks().iter().any(|dock| dock.read(cx).is_open())
+    }
+
     pub fn set_bottom_dock_layout(
         &mut self,
         layout: BottomDockLayout,
@@ -6134,6 +6138,11 @@ impl Workspace {
 
             cx.notify();
         } else {
+            if !self.any_dock_open(cx) {
+                self.project.update(cx, |_, cx| {
+                    cx.emit(project::Event::ActivateProjectPanel);
+                });
+            }
             self.active_item_path_changed(true, window, cx);
         }
         cx.emit(Event::PaneRemoved);
@@ -13987,6 +13996,41 @@ mod tests {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(workspace.zoomed.is_none());
         });
+    }
+
+    #[gpui::test]
+    async fn test_reveal_project_panel_on_last_item_closed(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let activated = Rc::new(RefCell::new(false));
+        cx.update(|_, cx| {
+            let activated = activated.clone();
+            cx.subscribe(&project, move |_, event, _cx| {
+                if matches!(event, project::Event::ActivateProjectPanel) {
+                    *activated.borrow_mut() = true;
+                }
+            })
+            .detach();
+        });
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let item_id = pane.update_in(cx, |pane, window, cx| {
+            let item = cx.new(TestItem::new);
+            let id = item.entity_id();
+            pane.add_item(Box::new(item), true, true, None, window, cx);
+            id
+        });
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.remove_item(item_id, true, true, window, cx);
+        });
+
+        assert!(*activated.borrow());
     }
 
     #[gpui::test]
