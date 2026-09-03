@@ -4302,8 +4302,8 @@ impl GitStore {
         let branch_name = envelope.payload.branch_name;
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.change_branch(branch_name)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.change_branch(branch_name, cx)
             })
             .await??;
 
@@ -9729,9 +9729,13 @@ impl Repository {
         )
     }
 
-    pub fn change_branch(&mut self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+    pub fn change_branch(
+        &mut self,
+        branch_name: String,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
-        self.send_job(
+        let receiver = self.send_job(
             "change_branch",
             Some(format!("git switch {branch_name}").into()),
             move |repo, _cx| async move {
@@ -9752,7 +9756,29 @@ impl Repository {
                     }
                 }
             },
-        )
+        );
+
+        // The worktree file watcher does not reliably observe the `.git/HEAD`
+        // change produced by `git switch` (notably over SSH, where the switch
+        // runs on the remote and the downstream `UpdateRepository` never gets
+        // sent). Refresh explicitly so the new branch propagates to the UI /
+        // downstream clients. Mirrors `reset`. `schedule_scan` is keyed by
+        // `ReloadGitState`, so any watcher-triggered scan is deduped.
+        let scan_updates_tx =
+            self.git_store()
+                .and_then(|git_store| match &git_store.read(cx).state {
+                    GitStoreState::Local { downstream, .. } => Some(
+                        downstream
+                            .as_ref()
+                            .map(|downstream| downstream.updates_tx.clone()),
+                    ),
+                    _ => None,
+                });
+        if let Some(updates_tx) = scan_updates_tx {
+            self.schedule_scan(updates_tx, cx);
+        }
+
+        receiver
     }
 
     pub fn delete_branch(
