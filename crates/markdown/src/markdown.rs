@@ -484,7 +484,7 @@ pub struct Markdown {
     autoscroll_request: Option<usize>,
     pending_heading_scroll: Option<SharedString>,
     pending_autoscroll: Option<usize>,
-    pending_select_all: bool,
+    has_pending_select_all: bool,
     active_root_block: Option<usize>,
     parsed_markdown: ParsedMarkdown,
     images_by_source_offset: HashMap<usize, Arc<Image>>,
@@ -686,7 +686,7 @@ impl Markdown {
             pending_heading_scroll: None,
             pending_autoscroll: None,
             active_root_block: None,
-            pending_select_all: false,
+            has_pending_select_all: false,
             should_reparse: false,
             images_by_source_offset: Default::default(),
             parsed_markdown: ParsedMarkdown::default(),
@@ -1167,7 +1167,7 @@ impl Markdown {
     }
 
     pub fn select_all(&mut self, cx: &mut Context<Self>) {
-        self.pending_select_all = true;
+        self.has_pending_select_all = true;
         cx.notify();
     }
 
@@ -3233,10 +3233,10 @@ impl Element for MarkdownElement {
         rendered_markdown.element.prepaint(window, cx);
         self.autoscroll(&rendered_markdown.text, window, cx);
         self.markdown.update(cx, |markdown, _| {
-            if markdown.pending_select_all {
+            if markdown.has_pending_select_all {
                 markdown.selection.mode = SelectMode::All;
                 markdown.selection.set_head(0, &rendered_markdown.text);
-                markdown.pending_select_all = false;
+                markdown.has_pending_select_all = false;
             }
         });
         hitbox
