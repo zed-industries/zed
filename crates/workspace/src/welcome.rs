@@ -1,6 +1,6 @@
 use crate::{
-    NewFile, Open, OpenMode, PathList, RecentWorkspace, SerializedWorkspaceLocation,
-    ToggleWorkspaceSidebar, Workspace, WorkspaceSettings,
+    MultiWorkspace, NewFile, Open, OpenMode, PathList, RecentWorkspace,
+    SerializedWorkspaceLocation, ToggleWorkspaceSidebar, Workspace, WorkspaceSettings,
     item::{Item, ItemEvent},
     persistence::WorkspaceDb,
 };
@@ -311,13 +311,25 @@ impl WelcomePage {
                         DefaultOpenBehavior::ExistingWindow => OpenMode::Activate,
                         DefaultOpenBehavior::NewWindow => OpenMode::NewWindow,
                     };
-                    self.workspace
-                        .update(cx, |workspace, cx| {
-                            workspace
-                                .open_workspace_for_paths(open_mode, paths, window, cx)
-                                .detach_and_log_err(cx);
-                        })
-                        .log_err();
+                    if open_mode != OpenMode::NewWindow
+                        && let Some(handle) = window.window_handle().downcast::<MultiWorkspace>()
+                    {
+                        handle
+                            .update(cx, |multi_workspace, window, cx| {
+                                multi_workspace
+                                    .open_project(paths, open_mode, window, cx)
+                                    .detach_and_log_err(cx);
+                            })
+                            .log_err();
+                    } else {
+                        self.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace
+                                    .open_workspace_for_paths(open_mode, paths, window, cx)
+                                    .detach_and_log_err(cx);
+                            })
+                            .log_err();
+                    }
                 } else {
                     use zed_actions::OpenRecent;
                     window.dispatch_action(OpenRecent::default().boxed_clone(), cx);

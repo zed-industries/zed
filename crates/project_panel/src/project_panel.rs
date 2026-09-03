@@ -72,8 +72,9 @@ use util::{
     rel_path::{RelPath, RelPathBuf},
 };
 use workspace::{
-    DraggedSelection, OpenInTerminal, OpenMode, OpenOptions, OpenVisible, PreviewTabsSettings,
-    SelectedEntry, SplitDirection, Workspace, WorkspaceSettings, copy_file_permalink,
+    DraggedSelection, MultiWorkspace, OpenInTerminal, OpenMode, OpenOptions, OpenVisible,
+    PreviewTabsSettings, SelectedEntry, SplitDirection, Workspace, WorkspaceSettings,
+    copy_file_permalink,
     dock::{DockPosition, Panel, PanelEvent},
     focus_follows_mouse::FocusFollowsMouse as _,
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
@@ -7738,7 +7739,22 @@ impl Render for ProjectPanel {
                         .on_drop(cx.listener(
                             move |this, external_paths: &ExternalPaths, window, cx| {
                                 this.clear_drag_state(cx);
-                                if let Some(task) = this
+                                if let Some(handle) =
+                                    window.window_handle().downcast::<MultiWorkspace>()
+                                {
+                                    handle
+                                        .update(cx, |multi_workspace, window, cx| {
+                                            multi_workspace
+                                                .open_project(
+                                                    external_paths.paths().to_owned(),
+                                                    OpenMode::Activate,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
+                                        })
+                                        .log_err();
+                                } else if let Some(task) = this
                                     .workspace
                                     .update(cx, |workspace, cx| {
                                         workspace.open_workspace_for_paths(
