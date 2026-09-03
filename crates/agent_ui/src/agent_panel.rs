@@ -3367,6 +3367,10 @@ impl AgentPanel {
         }
     }
 
+    pub fn has_active_or_pending_terminal(&self) -> bool {
+        self.active_terminal_id().is_some() || self.pending_terminal_spawn.is_some()
+    }
+
     pub fn has_terminal(&self, terminal_id: TerminalId) -> bool {
         self.terminals.contains_key(&terminal_id)
     }
@@ -6753,6 +6757,13 @@ impl AgentPanel {
             cx,
         )?;
         Ok(terminal_id)
+    }
+
+    pub fn set_terminal_restore_pending_for_tests(&mut self, pending: bool) {
+        self.pending_terminal_spawn = pending.then(TerminalId::new);
+        if pending {
+            self.last_created_entry_kind = AgentPanelEntryKind::Terminal;
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
