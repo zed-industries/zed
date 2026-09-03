@@ -1520,14 +1520,33 @@ impl DisplaySnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot
     }
 
+    /// The characters of the tab-expanded `tab_row`, up to `end_column` bytes into it.
+    fn tab_expanded_chars(
+        &self,
+        tab_row: u32,
+        end_column: u32,
+    ) -> impl Iterator<Item = char> + use<'_> {
+        self.tab_snapshot()
+            .chunks(
+                TabPoint::new(tab_row, 0)..TabPoint::new(tab_row, end_column),
+                LanguageAwareStyling {
+                    tree_sitter: false,
+                    diagnostics: false,
+                },
+                Highlights::default(),
+            )
+            .flat_map(|chunk| chunk.text.chars())
+    }
+
     /// The column `point` sits at once tabs are expanded, which is where it appears
     /// on screen when the line isn't soft-wrapped. Unlike a display column this is
-    /// counted from the start of the buffer row rather than the wrapped segment.
+    /// counted from the start of the buffer row rather than the wrapped segment, and
+    /// it counts characters rather than bytes so that a multi-byte character advances
+    /// the column by one the way it renders.
     pub(crate) fn tab_expanded_column(&self, point: Point) -> u32 {
-        self.tab_snapshot()
-            .point_to_tab_point(point, Bias::Left)
-            .0
-            .column
+        let tab_point = self.tab_snapshot().point_to_tab_point(point, Bias::Left);
+        self.tab_expanded_chars(tab_point.row(), tab_point.column())
+            .count() as u32
     }
 
     /// Inverse of [`Self::tab_expanded_column`], clamped to the end of the row.
@@ -1538,14 +1557,31 @@ impl DisplaySnapshot {
     ) -> Point {
         let tab_snapshot = self.tab_snapshot();
         let tab_row = tab_snapshot.buffer_row_to_tab_row(buffer_row);
-        let column = column.min(tab_snapshot.line_len(tab_row));
-        tab_snapshot.tab_point_to_point(TabPoint(Point::new(tab_row, column)), Bias::Left)
+        let line_len = tab_snapshot.line_len(tab_row);
+        let byte_column = self
+            .tab_expanded_chars(tab_row, line_len)
+            .take(column as usize)
+            .map(|character| character.len_utf8() as u32)
+            .sum();
+        let point =
+            tab_snapshot.tab_point_to_point(TabPoint(Point::new(tab_row, byte_column)), Bias::Left);
+        self.buffer_snapshot().clip_point(point, Bias::Left)
     }
 
-    /// The length of `buffer_row` once tabs are expanded.
-    pub(crate) fn tab_expanded_line_len(&self, buffer_row: MultiBufferRow) -> u32 {
+    /// Whether `buffer_row` still has a character at `column` once tabs are expanded.
+    /// Callers only ever need to know whether the row reaches a column, and answering
+    /// that by counting the row's characters would walk rows that are megabytes long,
+    /// once for every row a columnar selection skips past.
+    pub(crate) fn tab_expanded_line_contains_column(
+        &self,
+        buffer_row: MultiBufferRow,
+        column: u32,
+    ) -> bool {
         let tab_snapshot = self.tab_snapshot();
-        tab_snapshot.line_len(tab_snapshot.buffer_row_to_tab_row(buffer_row))
+        let tab_row = tab_snapshot.buffer_row_to_tab_row(buffer_row);
+        self.tab_expanded_chars(tab_row, tab_snapshot.line_len(tab_row))
+            .nth(column as usize)
+            .is_some()
     }
 
     pub fn fold_snapshot(&self) -> &FoldSnapshot {
