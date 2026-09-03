@@ -2740,18 +2740,7 @@ impl GitGraph {
             CommitDataState::Loading(_) => ("Loading…".into(), "".into(), None),
         };
 
-        let date_string = commit_timestamp
-            .and_then(|ts| OffsetDateTime::from_unix_timestamp(ts).ok())
-            .map(|datetime| {
-                let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-                let local_datetime = datetime.to_offset(local_offset);
-                let format =
-                    time::format_description::parse("[month repr:short] [day], [year]").ok();
-                format
-                    .and_then(|f| local_datetime.format(&f).ok())
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
+        let date_string = commit_timestamp.map(format_timestamp).unwrap_or_default();
 
         let remote = repository.update(cx, |repo, cx| {
             let remote_url = repo.default_remote_url()?;
