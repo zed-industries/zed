@@ -17,6 +17,11 @@ doctest = true
 
 [dependencies]
 log.workspace = true
-rustls.workspace = true
 rustls-platform-verifier.workspace = true
 webpki-roots.workspace = true
+
+[target.'cfg(target_os = "ios")'.dependencies]
+rustls = { workspace = true, features = ["ring"] }
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+rustls = { workspace = true, features = ["aws_lc_rs", "prefer-post-quantum"] }
