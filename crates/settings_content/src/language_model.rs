@@ -597,16 +597,24 @@ pub struct OpenRouterAvailableModel {
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct OpenRouterProvider {
+    /// List of provider slugs to try in order (e.g. ["anthropic", "openai"]).
     order: Option<Vec<String>>,
+    /// Whether to allow backup providers when the primary is unavailable.
     #[serde(default = "default_true")]
     allow_fallbacks: bool,
+    /// Only use providers that support all parameters in your request.
     #[serde(default)]
     require_parameters: bool,
+    /// Control whether to use providers that may store data.
     #[serde(default)]
     data_collection: DataCollection,
+    /// List of provider slugs to allow for this request.
     only: Option<Vec<String>>,
+    /// List of provider slugs to skip for this request.
     ignore: Option<Vec<String>>,
+    /// List of quantization levels to filter by (e.g. ["int4", "int8"]).
     quantizations: Option<Vec<String>>,
+    /// Sort providers by price, throughput, or latency. Can be a string (e.g. "price") or an object with by and partition fields.
     sort: Option<String>,
 }
 
