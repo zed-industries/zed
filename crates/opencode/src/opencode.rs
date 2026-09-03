@@ -929,7 +929,7 @@ impl Model {
             Self::LongCat2_0 => Some(vec![ReasoningEffort::None, ReasoningEffort::Max]),
 
             // Alibaba models
-            Self::Qwen3_8Flash => Some(vec![
+            Self::Qwen3_8Max | Self::Qwen3_8Flash => Some(vec![
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::XHigh,
