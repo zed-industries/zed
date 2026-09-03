@@ -117,8 +117,8 @@ impl<T: 'static> Render for PromptEditor<T> {
         };
 
         let bottom_padding = match &self.mode {
-            PromptEditorMode::Buffer { .. } => rems_from_px(2.0),
-            PromptEditorMode::Terminal { .. } => rems_from_px(4.0),
+            PromptEditorMode::Buffer { .. } => rems_from_px(2.0_f32),
+            PromptEditorMode::Terminal { .. } => rems_from_px(4.0_f32),
         };
 
         buttons.extend(self.render_buttons(window, cx));
@@ -237,7 +237,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                             div()
                                 .size_full()
                                 .min_w_0()
-                                .pt(rems_from_px(3.))
+                                .pt(rems_from_px(3_f32))
                                 .pl_0p5()
                                 .flex_1()
                                 .border_t_1()
@@ -1160,7 +1160,7 @@ impl<T: 'static> PromptEditor<T> {
 
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
         MarkdownElement::new(markdown, style)
-            .image_resolver(|dest_url| crate::resolve_agent_image(dest_url, &[]))
+            .image_resolver(|dest_url, _cx| crate::resolve_agent_image(dest_url, &[]))
     }
 }
 

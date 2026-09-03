@@ -68,6 +68,7 @@ struct ExtensionCardDetails {
     description: Option<SharedString>,
     authors: SharedString,
     repository_url: Option<SharedString>,
+    repository_icon: IconName,
     provided_features: Vec<&'static str>,
     source: ExtensionCardSource,
 }
@@ -145,6 +146,7 @@ impl ExtensionCard {
             description: extension.description.clone().map(Into::into),
             authors: extension.authors.join(", ").into(),
             repository_url: extension.repository.clone().map(Into::into),
+            repository_icon: IconName::Link,
             provided_features: provided_feature_labels(extension.provides()),
             source: ExtensionCardSource::Dev,
         };
@@ -169,6 +171,7 @@ impl ExtensionCard {
             description: extension.manifest.description.clone().map(Into::into),
             authors: extension.manifest.authors.join(", ").into(),
             repository_url: Some(extension.manifest.repository.clone().into()),
+            repository_icon: IconName::Link,
             provided_features: provided_feature_labels(extension.manifest.provides.iter().copied()),
             source: ExtensionCardSource::Remote {
                 status,
@@ -393,6 +396,11 @@ impl ExtensionCard {
         }
     }
 
+    pub fn repository_icon(mut self, icon: IconName) -> Self {
+        self.details.repository_icon = icon;
+        self
+    }
+
     pub fn context_menu(
         mut self,
         builder: impl Fn(Arc<str>, SharedString, &mut Window, &mut App) -> Option<Entity<ContextMenu>>
@@ -601,6 +609,7 @@ impl RenderOnce for ExtensionCard {
             description,
             authors,
             repository_url,
+            repository_icon,
             provided_features,
             source,
         } = details;
@@ -617,7 +626,7 @@ impl RenderOnce for ExtensionCard {
             v_flex()
                 .mt_4()
                 .w_full()
-                .h(rems_from_px(110.))
+                .h(rems_from_px(110_f32))
                 .p_3()
                 .gap_2()
                 .bg(cx.theme().colors().elevated_surface_background.opacity(0.5))
@@ -626,10 +635,14 @@ impl RenderOnce for ExtensionCard {
                 .rounded_md()
                 .child(
                     h_flex()
+                        .gap_2()
                         .justify_between()
                         .child(
                             h_flex()
                                 .flex_shrink_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
                                 .gap_2()
                                 .child(Headline::new(name).size(HeadlineSize::Small))
                                 .child(
@@ -653,7 +666,12 @@ impl RenderOnce for ExtensionCard {
                                     )
                                 }),
                         )
-                        .child(h_flex().gap_1().children(actions.into_iter().flatten())),
+                        .child(
+                            h_flex()
+                                .flex_shrink_0()
+                                .gap_1()
+                                .children(actions.into_iter().flatten()),
+                        ),
                 )
                 .child(
                     h_flex()
@@ -701,7 +719,7 @@ impl RenderOnce for ExtensionCard {
                                 .when_some(repository_url, |this, repository_url| {
                                     let repository_url_for_tooltip = repository_url.clone();
                                     this.child(
-                                        IconButton::new(repository_button_id, IconName::Github)
+                                        IconButton::new(repository_button_id, repository_icon)
                                             .icon_size(IconSize::Small)
                                             .tooltip(move |_, cx| {
                                                 Tooltip::with_meta(

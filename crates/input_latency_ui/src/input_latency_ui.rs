@@ -1,5 +1,5 @@
-use collections::HashMap;
-use gpui::{App, Global, InputLatencySnapshot, Window, WindowId, actions};
+use collections::{HashMap, HashSet};
+use gpui::{App, FrameDurationSnapshot, Global, InputLatencySnapshot, Window, WindowId, actions};
 use hdrhistogram::Histogram;
 use std::time::Instant;
 
@@ -102,7 +102,11 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
     let current = window.input_latency_snapshot();
     let window_id = window.window_handle().window_id();
 
+    let open_window_ids = open_window_ids(cx);
     let state = cx.default_global::<TelemetryReporterState>();
+    state
+        .previous
+        .retain(|window_id, _| open_window_ids.contains(window_id));
     let now = Instant::now();
 
     let (delta_latency, delta_coalesce, report_window_seconds) =
@@ -161,6 +165,130 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
         frames_with_3_events = frames_with_3_events,
         report_window_seconds = report_window_seconds,
     );
+}
+
+/// Per-window baselines for frame-duration telemetry, keyed by window id. Kept
+/// separate from the input-latency baselines so the two reports never share
+/// state.
+#[derive(Default)]
+struct FrameDurationTelemetryState {
+    previous: HashMap<WindowId, (Instant, FrameDurationSnapshot)>,
+}
+
+impl Global for FrameDurationTelemetryState {}
+
+/// Nanosecond boundaries for the present-interval buckets used in telemetry:
+/// roughly the 120Hz, 60Hz, and 30Hz frame budgets, with headroom for jitter.
+const MS9_NS: u64 = 9_000_000;
+const MS18_NS: u64 = 18_000_000;
+const MS36_NS: u64 = 36_000_000;
+
+/// Minimum number of draws that must be present in the delta window for the
+/// frame-duration report to be sent. Avoids sending noise for windows that are
+/// mostly idle.
+const MIN_DRAWS_TO_REPORT: u64 = 1_000;
+
+/// Computes and sends a `Frame Duration Report` telemetry event for the given
+/// window if enough frames were drawn since the last report.
+///
+/// The report contains bucketed draw durations (how long `Window::draw` took),
+/// bucketed present intervals (the achieved frame-to-frame cadence while the
+/// window was animating), and the average dirty-to-present duration.
+///
+/// Call this periodically from a spawned task.
+pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
+    let current = window.frame_duration_snapshot();
+    let window_handle = window.window_handle();
+    let window_id = window_handle.window_id();
+
+    let open_window_ids = open_window_ids(cx);
+    let state = cx.default_global::<FrameDurationTelemetryState>();
+    state
+        .previous
+        .retain(|window_id, _| open_window_ids.contains(window_id));
+    let now = Instant::now();
+
+    let (delta_draws, delta_intervals, delta_dirty_to_present, report_window_seconds) =
+        if let Some((prev_instant, prev_snapshot)) = state.previous.get(&window_id) {
+            let mut delta_draws = current.draw_duration_histogram.clone();
+            delta_draws
+                .subtract(&prev_snapshot.draw_duration_histogram)
+                .ok();
+            let mut delta_intervals = current.present_interval_histogram.clone();
+            delta_intervals
+                .subtract(&prev_snapshot.present_interval_histogram)
+                .ok();
+            let mut delta_dirty_to_present = current.dirty_to_present_histogram.clone();
+            if delta_dirty_to_present
+                .subtract(&prev_snapshot.dirty_to_present_histogram)
+                .is_err()
+            {
+                delta_dirty_to_present = current.dirty_to_present_histogram.clone();
+            }
+            let elapsed = now.duration_since(*prev_instant).as_secs();
+            (
+                delta_draws,
+                delta_intervals,
+                delta_dirty_to_present,
+                elapsed,
+            )
+        } else {
+            // First report for this window: the full cumulative histograms are
+            // the delta from the empty starting state. We don't know how long
+            // the window has been open, so record 0 to signal that this is the
+            // initial accumulation period rather than a fixed-width window.
+            (
+                current.draw_duration_histogram.clone(),
+                current.present_interval_histogram.clone(),
+                current.dirty_to_present_histogram.clone(),
+                0u64,
+            )
+        };
+
+    let total_draws = delta_draws.len();
+    if total_draws < MIN_DRAWS_TO_REPORT {
+        return;
+    }
+
+    state.previous.insert(window_id, (now, current));
+
+    let draws_sub4 = count_frames_in_range(&delta_draws, 0, MS4_NS);
+    let draws_4to8 = count_frames_in_range(&delta_draws, MS4_NS, MS8_NS);
+    let draws_8to16 = count_frames_in_range(&delta_draws, MS8_NS, MS16_NS);
+    let draws_16to33 = count_frames_in_range(&delta_draws, MS16_NS, MS33_NS);
+    // draws > 33ms are implicitly total_draws - (sub4 + 4to8 + 8to16 + 16to33)
+
+    let total_intervals = delta_intervals.len();
+    let intervals_sub9 = count_frames_in_range(&delta_intervals, 0, MS9_NS);
+    let intervals_9to18 = count_frames_in_range(&delta_intervals, MS9_NS, MS18_NS);
+    let intervals_18to36 = count_frames_in_range(&delta_intervals, MS18_NS, MS36_NS);
+    let intervals_36to100 = count_frames_in_range(&delta_intervals, MS36_NS, MS100_NS);
+    // intervals > 100ms are implicitly total_intervals - (the buckets above)
+    let average_dirty_to_present_ms = delta_dirty_to_present.mean() / 1_000_000.0;
+
+    telemetry::event!(
+        "Frame Duration Report",
+        draws_sub4 = draws_sub4,
+        draws_4to8 = draws_4to8,
+        draws_8to16 = draws_8to16,
+        draws_16to33 = draws_16to33,
+        total_draws = total_draws,
+        intervals_sub9 = intervals_sub9,
+        intervals_9to18 = intervals_9to18,
+        intervals_18to36 = intervals_18to36,
+        intervals_36to100 = intervals_36to100,
+        total_intervals = total_intervals,
+        average_dirty_to_present_ms = average_dirty_to_present_ms,
+        root_entity_type_name = window_handle.root_entity_type_name(),
+        report_window_seconds = report_window_seconds,
+    );
+}
+
+fn open_window_ids(cx: &App) -> HashSet<WindowId> {
+    cx.windows()
+        .into_iter()
+        .map(|window| window.window_id())
+        .collect()
 }
 
 fn count_frames_in_range(histogram: &Histogram<u64>, low_ns: u64, high_ns: u64) -> u64 {

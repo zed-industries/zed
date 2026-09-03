@@ -35,7 +35,10 @@ use serde_json::json;
 use workspace::notifications::{NotificationId, simple_message_notification::MessageNotification};
 use workspace::{DeploySearch, MultiWorkspace};
 
-use crate::{PushSneak, PushSneakBackward, VimAddon, insert::NormalBefore, motion, state::Mode};
+use crate::{
+    PushSneak, PushSneakBackward, SwitchToNormalMode, VimAddon, insert::NormalBefore, motion,
+    state::Mode,
+};
 
 use util_macros::perf;
 
@@ -76,7 +79,7 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     // Selections aren't changed if editor is blurred but vim-mode is still disabled.
     cx.cx.set_state("«hjklˇ»");
     cx.assert_editor_state("«hjklˇ»");
-    cx.update_editor(|_, window, _cx| window.blur());
+    cx.update_editor(|_, window, cx| window.blur(cx));
     cx.assert_editor_state("«hjklˇ»");
     cx.update_editor(|_, window, cx| cx.focus_self(window));
     cx.assert_editor_state("«hjklˇ»");
@@ -385,6 +388,25 @@ async fn test_escape_cancels(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes("escape");
 
     cx.assert_state("aˇbc", Mode::Normal);
+}
+
+#[gpui::test]
+async fn test_insert_line_with_multi_keybinding_to_normal(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "j j",
+            SwitchToNormalMode,
+            Some("vim_mode == insert"),
+        )]);
+    });
+
+    cx.set_state("hello worldˇ\n", Mode::Insert);
+    cx.simulate_keystrokes("j j");
+    cx.assert_state("hello worldˇ\n", Mode::Normal);
+    cx.simulate_keystrokes("o");
+    cx.assert_state("hello world\nˇ\n", Mode::Insert);
 }
 
 #[cfg(target_os = "windows")]

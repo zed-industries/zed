@@ -1,4 +1,4 @@
-use crate::available_languages::AvailableLanguage;
+use crate::available_languages::{AvailableLanguage, LanguageOrigin};
 use crate::{
     CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
     LanguageServerName, LspAdapter, ManifestName, PLAIN_TEXT, ToolchainLister,
@@ -8,17 +8,18 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, HashMap, HashSet, hash_map};
 pub use language_core::{
-    BinaryStatus, LanguageName, LanguageQueries, LanguageServerStatusUpdate,
-    QUERY_FILENAME_PREFIXES, ServerHealth,
+    BinaryStatus, LanguageName, LanguageQueries, LanguageServerStatusUpdate, QueryFile,
+    QueryFileContents, QueryFiles, ServerHealth,
 };
 use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 
 use futures::{
     Future,
     channel::{mpsc, oneshot},
+    future::{BoxFuture, FutureExt as _},
 };
 use globset::GlobSet;
-use gpui::{App, BackgroundExecutor};
+use gpui::{App, BackgroundExecutor, EntityId, Subscription};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -88,9 +89,17 @@ impl std::fmt::Display for LanguageNotFound {
     }
 }
 
+type ServerStatus = (Option<EntityId>, LanguageServerName, BinaryStatus);
+
 #[derive(Clone, Default)]
 struct ServerStatusSender {
-    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(LanguageServerName, BinaryStatus)>>>>,
+    state: Arc<Mutex<ServerStatusSenderState>>,
+}
+
+#[derive(Default)]
+struct ServerStatusSenderState {
+    next_subscription_id: usize,
+    txs: HashMap<usize, mpsc::UnboundedSender<ServerStatus>>,
 }
 
 pub struct LoadedLanguage {
@@ -100,6 +109,9 @@ pub struct LoadedLanguage {
     pub toolchain_provider: Option<Arc<dyn ToolchainLister>>,
     pub manifest_name: Option<ManifestName>,
 }
+
+pub type LanguageLoader =
+    Arc<dyn Fn() -> BoxFuture<'static, Result<LoadedLanguage>> + Send + Sync + 'static>;
 
 impl LanguageRegistry {
     pub fn new(executor: BackgroundExecutor) -> Self {
@@ -191,13 +203,17 @@ impl LanguageRegistry {
             config.hidden,
             None,
             Arc::new(move || {
-                Ok(LoadedLanguage {
-                    config: config.clone(),
-                    queries: Default::default(),
-                    toolchain_provider: None,
-                    context_provider: None,
-                    manifest_name: None,
-                })
+                let config = config.clone();
+                async move {
+                    Ok(LoadedLanguage {
+                        config,
+                        queries: Default::default(),
+                        toolchain_provider: None,
+                        context_provider: None,
+                        manifest_name: None,
+                    })
+                }
+                .boxed()
             }),
         )
     }
@@ -374,25 +390,73 @@ impl LanguageRegistry {
         matcher: Arc<LanguageMatcher>,
         hidden: bool,
         manifest_name: Option<ManifestName>,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
+        load: LanguageLoader,
     ) {
-        let state = &mut *self.state.write();
-
-        let was_added = state.available_languages.register(
+        self.register_language_with_origin(
             name,
             grammar_name,
             matcher,
             hidden,
             manifest_name,
             load,
+            LanguageOrigin::Native,
         );
-        if !was_added {
-            return;
+    }
+
+    pub fn register_extension_language(
+        &self,
+        name: LanguageName,
+        grammar_name: Option<Arc<str>>,
+        matcher: Arc<LanguageMatcher>,
+        hidden: bool,
+        manifest_name: Option<ManifestName>,
+        load: LanguageLoader,
+    ) -> bool {
+        self.register_language_with_origin(
+            name,
+            grammar_name,
+            matcher,
+            hidden,
+            manifest_name,
+            load,
+            LanguageOrigin::Extension,
+        )
+    }
+
+    fn register_language_with_origin(
+        &self,
+        name: LanguageName,
+        grammar_name: Option<Arc<str>>,
+        matcher: Arc<LanguageMatcher>,
+        hidden: bool,
+        manifest_name: Option<ManifestName>,
+        load: LanguageLoader,
+        origin: LanguageOrigin,
+    ) -> bool {
+        let state = &mut *self.state.write();
+
+        let Some(was_loaded) = state.available_languages.register(
+            name.clone(),
+            grammar_name,
+            matcher,
+            hidden,
+            manifest_name,
+            load,
+            origin,
+        ) else {
+            log::warn!(
+                "not registering extension language {name}: a language with this name is already registered outside of extensions"
+            );
+            return false;
+        };
+        if was_loaded {
+            state.languages.retain(|language| language.name() != name);
         }
 
         state.version += 1;
         state.reload_count += 1;
         *state.subscription.0.borrow_mut() = ();
+        true
     }
 
     /// Adds grammars to the registry. Language configurations reference a grammar by name. The
@@ -415,11 +479,17 @@ impl LanguageRegistry {
         }
 
         let mut state = self.state.write();
-        state.grammars.extend(
-            grammars
-                .into_iter()
-                .map(|(name, path)| (name, AvailableGrammar::Unloaded(path))),
-        );
+        for (name, path) in grammars {
+            if let Some(AvailableGrammar::Native(_)) = state.grammars.get(&name) {
+                log::warn!(
+                    "not registering extension grammar {name}: a native grammar with this name is already registered"
+                );
+                continue;
+            }
+            state
+                .grammars
+                .insert(name, AvailableGrammar::Unloaded(path));
+        }
         state.version += 1;
         state.reload_count += 1;
         *state.subscription.0.borrow_mut() = ();
@@ -459,8 +529,9 @@ impl LanguageRegistry {
             matcher: language.config.matcher.clone(),
             hidden: language.config.hidden,
             manifest_name: None,
-            load: Arc::new(|| Err(anyhow!("already loaded"))),
+            load: Arc::new(|| async { Err(anyhow!("already loaded")) }.boxed()),
             loaded: true,
+            origin: LanguageOrigin::Native,
         });
         state.add(language);
     }
@@ -633,7 +704,7 @@ impl LanguageRegistry {
                 self.executor
                     .spawn(async move {
                         let language = async {
-                            let loaded_language = (language_load)()?;
+                            let loaded_language = (language_load)().await?;
                             if let Some(grammar) = loaded_language.config.grammar.clone() {
                                 let grammar = Some(this.get_or_load_grammar(grammar).await?);
 
@@ -657,34 +728,76 @@ impl LanguageRegistry {
                         }
                         .await;
 
-                        match language {
-                            Ok(language) => {
-                                let language = Arc::new(language);
-                                let mut state = this.state.write();
-
-                                state.add(language.clone());
+                        let language = language.map(Arc::new);
+                        if let Err(error) = &language {
+                            log::error!("failed to load language {language_name}:\n{error:?}");
+                        }
+                        let stale_txs = {
+                            let mut state = this.state.write();
+                            let is_current = state
+                                .available_languages
+                                .get_language(language_id)
+                                .is_some();
+                            if is_current {
+                                if let Ok(language) = &language {
+                                    state.add(language.clone());
+                                }
                                 state.mark_language_loaded(language_id);
-                                if let Some(mut txs) = state.loading_languages.remove(&language_id)
-                                {
-                                    for tx in txs.drain(..) {
-                                        let _ = tx.send(Ok(language.clone()));
+                                if let Some(txs) = state.loading_languages.remove(&language_id) {
+                                    for tx in txs {
+                                        let _ = tx.send(match &language {
+                                            Ok(language) => Ok(language.clone()),
+                                            Err(error) => Err(anyhow!(
+                                                "failed to load language {language_name}: {error}"
+                                            )),
+                                        });
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                log::error!("failed to load language {language_name}:\n{e:?}");
-                                let mut state = this.state.write();
-                                state.mark_language_loaded(language_id);
-                                if let Some(mut txs) = state.loading_languages.remove(&language_id)
-                                {
-                                    for tx in txs.drain(..) {
-                                        let _ = tx.send(Err(anyhow!(
-                                            "failed to load language {language_name}: {e}",
-                                        )));
-                                    }
-                                }
+                                None
+                            } else {
+                                let txs = state
+                                    .loading_languages
+                                    .remove(&language_id)
+                                    .unwrap_or_default();
+                                let replacement_id = state
+                                    .available_languages
+                                    .find_by_exact_name(language_name.0.as_ref())
+                                    .map(|language| language.id());
+                                Some((txs, replacement_id))
                             }
                         };
+                        if let Some((txs, replacement_id)) = stale_txs
+                            && !txs.is_empty()
+                        {
+                            match replacement_id {
+                                Some(replacement_id) => {
+                                    let result = match this.load_language(replacement_id).await {
+                                        Ok(result) => result,
+                                        Err(_) => Err(anyhow!(LanguageNotFound)),
+                                    };
+                                    match result {
+                                        Ok(replacement_language) => {
+                                            for tx in txs {
+                                                let _ = tx.send(Ok(replacement_language.clone()));
+                                            }
+                                        }
+                                        Err(error) => {
+                                            let message = format!("{error:#}");
+                                            for tx in txs {
+                                                let _ = tx.send(Err(anyhow!(
+                                                    "failed to load language {language_name}: {message}"
+                                                )));
+                                            }
+                                        }
+                                    }
+                                }
+                                None => {
+                                    for tx in txs {
+                                        let _ = tx.send(Err(anyhow!(LanguageNotFound)));
+                                    }
+                                }
+                            }
+                        }
                     })
                     .detach();
 
@@ -789,6 +902,20 @@ impl LanguageRegistry {
             .unwrap_or_default()
     }
 
+    pub fn lsp_adapter(
+        &self,
+        language_name: &LanguageName,
+        server_name: &LanguageServerName,
+    ) -> Option<Arc<CachedLspAdapter>> {
+        self.state
+            .read()
+            .lsp_adapters
+            .get(language_name)?
+            .iter()
+            .find(|adapter| adapter.name() == *server_name)
+            .cloned()
+    }
+
     pub fn all_lsp_adapters(&self) -> Vec<Arc<CachedLspAdapter>> {
         self.state
             .read()
@@ -803,7 +930,17 @@ impl LanguageRegistry {
     }
 
     pub fn update_lsp_binary_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
-        self.lsp_binary_status_tx.send(server_name, status);
+        self.lsp_binary_status_tx.send(None, server_name, status);
+    }
+
+    pub fn update_lsp_binary_status_for_entity(
+        &self,
+        source: EntityId,
+        server_name: LanguageServerName,
+        status: BinaryStatus,
+    ) {
+        self.lsp_binary_status_tx
+            .send(Some(source), server_name, status);
     }
 
     pub fn next_language_server_id(&self) -> LanguageServerId {
@@ -849,7 +986,10 @@ impl LanguageRegistry {
 
     pub fn language_server_binary_statuses(
         &self,
-    ) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
+    ) -> (
+        mpsc::UnboundedReceiver<(Option<EntityId>, LanguageServerName, BinaryStatus)>,
+        Subscription,
+    ) {
         self.lsp_binary_status_tx.subscribe()
     }
 }
@@ -925,11 +1065,14 @@ impl LanguageRegistryState {
             return;
         }
 
+        let removed_languages = self
+            .available_languages
+            .remove_extension_languages(languages_to_remove);
         self.languages
-            .retain(|language| !languages_to_remove.contains(&language.name()));
-        self.available_languages.remove(languages_to_remove);
-        self.grammars
-            .retain(|name, _| !grammars_to_remove.contains(name));
+            .retain(|language| !removed_languages.contains(&language.name()));
+        self.grammars.retain(|name, grammar| {
+            !grammars_to_remove.contains(name) || matches!(grammar, AvailableGrammar::Native(_))
+        });
         self.version += 1;
         self.reload_count += 1;
         *self.subscription.0.borrow_mut() = ();
@@ -943,14 +1086,41 @@ impl LanguageRegistryState {
 }
 
 impl ServerStatusSender {
-    fn subscribe(&self) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
+    fn subscribe(&self) -> (mpsc::UnboundedReceiver<ServerStatus>, Subscription) {
         let (tx, rx) = mpsc::unbounded();
-        self.txs.lock().push(tx);
-        rx
+        let subscription_id = {
+            let mut state = self.state.lock();
+            let subscription_id = post_inc(&mut state.next_subscription_id);
+            state.txs.insert(subscription_id, tx);
+            subscription_id
+        };
+        let state = self.state.clone();
+        let subscription = Subscription::new(move || {
+            state.lock().txs.remove(&subscription_id);
+        });
+        (rx, subscription)
     }
 
-    fn send(&self, name: LanguageServerName, status: BinaryStatus) {
-        let mut txs = self.txs.lock();
-        txs.retain(|tx| tx.unbounded_send((name.clone(), status.clone())).is_ok());
+    fn send(&self, source: Option<EntityId>, name: LanguageServerName, status: BinaryStatus) {
+        let mut state = self.state.lock();
+        state.txs.retain(|_, tx| {
+            tx.unbounded_send((source, name.clone(), status.clone()))
+                .is_ok()
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_server_status_subscription_unregisters_sender() {
+        let sender = ServerStatusSender::default();
+        let (_receiver, subscription) = sender.subscribe();
+        assert_eq!(sender.state.lock().txs.len(), 1);
+
+        drop(subscription);
+        assert!(sender.state.lock().txs.is_empty());
     }
 }

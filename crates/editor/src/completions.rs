@@ -226,16 +226,91 @@ impl Editor {
                 push_to_lsp_host_history,
                 cx,
             )
-        });
+        })?;
+
+        // Cursors are right-biased, so an edit inserting text at one drags it along. Pin a
+        // left-biased copy, keyed by the current anchor so cursors the user moves are skipped.
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let cursors_to_pin = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .filter(|selection| selection.start == selection.end)
+            .map(|selection| (selection.head(), snapshot.anchor_before(selection.head())))
+            .collect::<HashMap<_, _>>();
+
         Some(cx.spawn_in(window, async move |editor, cx| {
             if let Some(transaction) = on_type_formatting.await? {
-                if push_to_client_history {
-                    buffer.update(cx, |buffer, _| {
+                let (formatted_buffer_id, formatted_ranges) = buffer.update(cx, |buffer, _| {
+                    let formatted_ranges = buffer
+                        .edited_ranges_for_transaction::<usize>(&transaction)
+                        .collect::<Vec<_>>();
+                    if push_to_client_history {
                         buffer.push_transaction(transaction, Instant::now());
                         buffer.finalize_last_transaction();
-                    });
-                }
-                editor.update(cx, |editor, cx| {
+                    }
+                    (buffer.remote_id(), formatted_ranges)
+                });
+                editor.update_in(cx, |editor, window, cx| {
+                    let snapshot = editor.buffer.read(cx).snapshot(cx);
+                    let pinned_cursor = |selection: &Selection<Anchor>| {
+                        if selection.start != selection.end {
+                            return None;
+                        }
+                        let head = selection.head();
+                        let &cursor = cursors_to_pin.get(&head)?;
+                        let (buffer_cursor, cursor_snapshot) =
+                            snapshot.anchor_to_buffer_anchor(cursor)?;
+                        let (buffer_head, head_snapshot) =
+                            snapshot.anchor_to_buffer_anchor(head)?;
+                        if cursor_snapshot.remote_id() != formatted_buffer_id
+                            || head_snapshot.remote_id() != formatted_buffer_id
+                        {
+                            return None;
+                        }
+                        let cursor_offset = buffer_cursor.to_offset(cursor_snapshot);
+                        let head_offset = buffer_head.to_offset(head_snapshot);
+                        if cursor_offset == head_offset {
+                            return None;
+                        }
+                        // A gap in the formatter's edits means something else, such as a user edit
+                        // while the request was in flight, moved the cursor.
+                        let mut formatted_end = cursor_offset;
+                        for range in &formatted_ranges {
+                            if range.end <= formatted_end {
+                                continue;
+                            }
+                            if range.start > formatted_end || range.end > head_offset {
+                                break;
+                            }
+                            formatted_end = range.end;
+                        }
+                        (formatted_end == head_offset).then_some(cursor)
+                    };
+
+                    let mut restored_any_cursor = false;
+                    let pinned = editor
+                        .selections
+                        .disjoint_anchors()
+                        .iter()
+                        .map(|selection| match pinned_cursor(selection) {
+                            Some(cursor) => {
+                                restored_any_cursor = true;
+                                Selection {
+                                    start: cursor,
+                                    end: cursor,
+                                    goal: SelectionGoal::None,
+                                    ..*selection
+                                }
+                            }
+                            None => *selection,
+                        })
+                        .collect();
+                    if restored_any_cursor {
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                            s.select_anchors(pinned)
+                        });
+                    }
                     editor.refresh_document_highlights(cx);
                 })?;
             }
@@ -1347,7 +1422,6 @@ fn snippet_completions(
                                     replace: lsp_range,
                                 },
                             )),
-                            filter_text: Some(snippet.body.clone()),
                             sort_text: Some(char::MAX.to_string()),
                             ..lsp::CompletionItem::default()
                         }),

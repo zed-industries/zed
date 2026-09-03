@@ -1183,9 +1183,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                                                 cx,
                                             )
                                         },
-                                        &[],
                                         None,
                                         OpenMode::Activate,
+                                        None,
                                         window,
                                         cx,
                                     )

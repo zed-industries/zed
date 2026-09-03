@@ -1,3 +1,4 @@
+pub mod chat_completion;
 mod provider;
 mod rate_limiter;
 mod request;
@@ -24,7 +25,6 @@ pub use crate::provider::*;
 pub use crate::rate_limiter::*;
 pub use crate::request::*;
 pub use crate::role::*;
-pub use crate::tool_schema::LanguageModelToolSchemaFormat;
 pub use crate::util::{
     fix_streamed_json, is_context_window_exceeded_message, parse_prompt_too_long,
     parse_tool_arguments,
@@ -102,10 +102,88 @@ impl LanguageModelCompletionEvent {
     }
 }
 
+/// Normalized semantic classification of a provider-originated rejection.
+///
+/// Each language model provider reports failures with its own wire format
+/// (Anthropic's `error.type` strings, OpenRouter's numeric codes, Zed cloud's
+/// `upstream_http_*` codes, ...). Callers that need to react to a rejection's
+/// meaning — deciding whether to retry, which message to show — shouldn't
+/// have to match on every provider's raw vocabulary. Wire-level parsing stays
+/// local to each provider crate, but is mapped once into this shared
+/// category so the rest of Zed only needs to understand one vocabulary.
+///
+/// A category does not replace `ProviderRejection`'s `status`, `code`, and
+/// `message` fields: those are always preserved verbatim alongside it so a
+/// caller can fall back to them for a category that doesn't need special
+/// handling (`Other`) or for diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderErrorCategory {
+    /// The request exceeded the model's context window, optionally including
+    /// the provider-reported token count.
+    PromptTooLarge {
+        tokens: Option<u64>,
+    },
+    /// The provider rejected previously-generated opaque content (e.g.
+    /// encrypted reasoning state) as invalid or unreadable.
+    InvalidEncryptedContent,
+    Authentication,
+    Permission,
+    ContentPolicy,
+    EndpointNotFound,
+    PaymentRequired,
+    RateLimit,
+    Overloaded,
+    InvalidRequest,
+    Conflict,
+    Timeout,
+    InternalServer,
+    /// No known semantic applies; callers should fall back to `status`/`code`.
+    Other,
+}
+
+impl ProviderErrorCategory {
+    /// Classifies a rejection from an HTTP status that the provider actually
+    /// returned, with message inspection for ambiguous bad-request responses.
+    pub fn from_http_status(status: StatusCode, message: &str) -> Self {
+        match status {
+            StatusCode::BAD_REQUEST if is_invalid_encrypted_content_message(message) => {
+                Self::InvalidEncryptedContent
+            }
+            // Anthropic reports a context-window overflow as HTTP 400 with a
+            // "prompt is too long" message rather than HTTP 413, so a
+            // bad request must be sniffed for both providers' phrasings.
+            StatusCode::BAD_REQUEST => match parse_prompt_too_long(message) {
+                Some(tokens) => Self::PromptTooLarge {
+                    tokens: Some(tokens),
+                },
+                None if is_context_window_exceeded_message(message) => {
+                    Self::PromptTooLarge { tokens: None }
+                }
+                None => Self::InvalidRequest,
+            },
+            StatusCode::UNAUTHORIZED => Self::Authentication,
+            StatusCode::FORBIDDEN => Self::Permission,
+            StatusCode::NOT_FOUND => Self::EndpointNotFound,
+            StatusCode::PAYMENT_REQUIRED => Self::PaymentRequired,
+            StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
+                tokens: parse_prompt_too_long(message),
+            },
+            StatusCode::CONFLICT => Self::Conflict,
+            StatusCode::REQUEST_TIMEOUT | StatusCode::GATEWAY_TIMEOUT => Self::Timeout,
+            StatusCode::TOO_MANY_REQUESTS => Self::RateLimit,
+            StatusCode::SERVICE_UNAVAILABLE => Self::Overloaded,
+            // There is no `StatusCode` variant for the unofficial HTTP 529
+            // ("the service is overloaded"), but providers such as
+            // Anthropic send it in practice. See https://http.dev/529
+            status_code if status_code.as_u16() == 529 => Self::Overloaded,
+            status_code if status_code.is_server_error() => Self::InternalServer,
+            _ => Self::Other,
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum LanguageModelCompletionError {
-    #[error("prompt too large for context window")]
-    PromptTooLarge { tokens: Option<u64> },
     /// The model requires the user to consent to the upstream provider
     /// retaining inference logs (see `LanguageModel::requires_data_retention`)
     /// and that consent has not been given.
@@ -116,50 +194,22 @@ pub enum LanguageModelCompletionError {
     DataRetentionConsentRequired { model_name: String },
     #[error("missing {provider} API key")]
     NoApiKey { provider: LanguageModelProviderName },
-    #[error("{provider}'s API rate limit exceeded")]
-    RateLimitExceeded {
-        provider: LanguageModelProviderName,
-        retry_after: Option<Duration>,
-    },
-    #[error("{provider}'s API servers are overloaded right now")]
-    ServerOverloaded {
-        provider: LanguageModelProviderName,
-        retry_after: Option<Duration>,
-    },
-    #[error("{provider}'s API server reported an internal server error: {message}")]
-    ApiInternalServerError {
-        provider: LanguageModelProviderName,
-        message: String,
-    },
+    /// A rejection reported by the language model provider itself, as
+    /// opposed to a transport or plumbing failure on Zed's side.
+    ///
+    /// `status` and `code` are preserved verbatim from the provider's
+    /// response even when `category` already gives them a known meaning, so
+    /// callers that need the raw wire details (diagnostics, provider-specific
+    /// workarounds) never lose them.
     #[error("{message}")]
-    UpstreamProviderError {
+    ProviderRejection {
+        provider: LanguageModelProviderName,
+        status: Option<StatusCode>,
+        code: Option<String>,
         message: String,
-        status: StatusCode,
         retry_after: Option<Duration>,
+        category: ProviderErrorCategory,
     },
-    #[error("HTTP response error from {provider}'s API: status {status_code} - {message:?}")]
-    HttpResponseError {
-        provider: LanguageModelProviderName,
-        status_code: StatusCode,
-        message: String,
-    },
-    #[error("invalid request format to {provider}'s API: {message}")]
-    BadRequestFormat {
-        provider: LanguageModelProviderName,
-        message: String,
-    },
-    #[error("authentication error with {provider}'s API: {message}")]
-    AuthenticationError {
-        provider: LanguageModelProviderName,
-        message: String,
-    },
-    #[error("Permission error with {provider}'s API: {message}")]
-    PermissionError {
-        provider: LanguageModelProviderName,
-        message: String,
-    },
-    #[error("language model provider API endpoint not found")]
-    ApiEndpointNotFound { provider: LanguageModelProviderName },
     #[error("I/O error reading response from {provider}'s API")]
     ApiReadResponseError {
         provider: LanguageModelProviderName,
@@ -178,9 +228,10 @@ pub enum LanguageModelCompletionError {
         #[source]
         error: http::Error,
     },
-    #[error("error sending HTTP request to {provider} API")]
+    #[error("error sending HTTP request to {host} for {provider}")]
     HttpSend {
         provider: LanguageModelProviderName,
+        host: String,
         #[source]
         error: anyhow::Error,
     },
@@ -192,8 +243,6 @@ pub enum LanguageModelCompletionError {
     },
     #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
-    #[error("payment required to use this language model; please upgrade your account")]
-    PaymentRequired,
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -220,34 +269,66 @@ impl LanguageModelCompletionError {
         message: String,
         retry_after: Option<Duration>,
     ) -> Self {
-        if let Some(tokens) = parse_prompt_too_long(&message) {
-            Self::PromptTooLarge {
-                tokens: Some(tokens),
-            }
-        } else if code == "upstream_http_error" {
+        if code == "upstream_http_error" {
             if let Some((upstream_status, inner_message)) =
                 Self::parse_upstream_error_json(&message)
             {
-                return Self::from_http_status(
+                let category =
+                    ProviderErrorCategory::from_http_status(upstream_status, &inner_message);
+                return Self::from_provider_response(
                     upstream_provider,
-                    upstream_status,
+                    Some(upstream_status),
+                    Some(code),
                     inner_message,
                     retry_after,
+                    category,
                 );
             }
-            anyhow!("completion request failed, code: {code}, message: {message}").into()
+            let category = category_from_cloud_failure(&code, &message);
+            Self::from_provider_response(
+                upstream_provider,
+                None,
+                Some(code),
+                message,
+                retry_after,
+                category,
+            )
         } else if let Some(status_code) = code
             .strip_prefix("upstream_http_")
             .and_then(|code| StatusCode::from_str(code).ok())
         {
-            Self::from_http_status(upstream_provider, status_code, message, retry_after)
+            let category = ProviderErrorCategory::from_http_status(status_code, &message);
+            Self::from_provider_response(
+                upstream_provider,
+                Some(status_code),
+                Some(code),
+                message,
+                retry_after,
+                category,
+            )
         } else if let Some(status_code) = code
             .strip_prefix("http_")
             .and_then(|code| StatusCode::from_str(code).ok())
         {
-            Self::from_http_status(ZED_CLOUD_PROVIDER_NAME, status_code, message, retry_after)
+            let category = ProviderErrorCategory::from_http_status(status_code, &message);
+            Self::from_provider_response(
+                ZED_CLOUD_PROVIDER_NAME,
+                Some(status_code),
+                Some(code),
+                message,
+                retry_after,
+                category,
+            )
         } else {
-            anyhow!("completion request failed, code: {code}, message: {message}").into()
+            let category = category_from_cloud_failure(&code, &message);
+            Self::from_provider_response(
+                upstream_provider,
+                None,
+                Some(code),
+                message,
+                retry_after,
+                category,
+            )
         }
     }
 
@@ -257,40 +338,163 @@ impl LanguageModelCompletionError {
         message: String,
         retry_after: Option<Duration>,
     ) -> Self {
-        match status_code {
-            StatusCode::BAD_REQUEST => {
-                if is_context_window_exceeded_message(&message) {
-                    Self::PromptTooLarge { tokens: None }
-                } else {
-                    Self::BadRequestFormat { provider, message }
-                }
-            }
-            StatusCode::UNAUTHORIZED => Self::AuthenticationError { provider, message },
-            StatusCode::FORBIDDEN => Self::PermissionError { provider, message },
-            StatusCode::NOT_FOUND => Self::ApiEndpointNotFound { provider },
-            StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
-                tokens: parse_prompt_too_long(&message),
-            },
-            StatusCode::TOO_MANY_REQUESTS => Self::RateLimitExceeded {
-                provider,
-                retry_after,
-            },
-            StatusCode::INTERNAL_SERVER_ERROR => Self::ApiInternalServerError { provider, message },
-            StatusCode::SERVICE_UNAVAILABLE => Self::ServerOverloaded {
-                provider,
-                retry_after,
-            },
-            _ if status_code.as_u16() == 529 => Self::ServerOverloaded {
-                provider,
-                retry_after,
-            },
-            _ => Self::HttpResponseError {
-                provider,
-                status_code,
-                message,
-            },
+        let category = ProviderErrorCategory::from_http_status(status_code, &message);
+        Self::from_provider_response(
+            provider,
+            Some(status_code),
+            None,
+            message,
+            retry_after,
+            category,
+        )
+    }
+
+    /// Builds a [`LanguageModelCompletionError::ProviderRejection`] from raw
+    /// provider response fields and the category assigned by its adapter.
+    pub fn from_provider_response(
+        provider: LanguageModelProviderName,
+        status: Option<StatusCode>,
+        code: Option<String>,
+        message: String,
+        retry_after: Option<Duration>,
+        category: ProviderErrorCategory,
+    ) -> Self {
+        Self::ProviderRejection {
+            provider,
+            status,
+            code,
+            message,
+            retry_after,
+            category,
         }
     }
+
+    /// Whether retrying the same request after a delay may succeed.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::ProviderRejection {
+                provider,
+                status,
+                retry_after,
+                category,
+                ..
+            } => {
+                status.is_some_and(|status| is_retryable_provider_status(provider, status))
+                    || matches!(
+                        category,
+                        ProviderErrorCategory::RateLimit
+                            | ProviderErrorCategory::Overloaded
+                            | ProviderErrorCategory::Timeout
+                            | ProviderErrorCategory::InternalServer
+                    )
+                    || retry_after.is_some()
+            }
+            Self::ApiReadResponseError { .. } | Self::HttpSend { .. } => true,
+            Self::DataRetentionConsentRequired { .. }
+            | Self::NoApiKey { .. }
+            | Self::SerializeRequest { .. }
+            | Self::BuildRequestBody { .. }
+            | Self::DeserializeResponse { .. }
+            | Self::StreamEndedUnexpectedly { .. }
+            | Self::Other(_) => false,
+        }
+    }
+
+    /// Returns the delay before a retry attempt, honoring a provider-supplied
+    /// delay before falling back to exponential backoff from five to forty
+    /// seconds.
+    ///
+    /// `attempt` is one-based. Provider rejections that are not classified as
+    /// transient, and error kinds without shared retry semantics, return
+    /// `None`.
+    pub fn retry_delay(&self, attempt: usize) -> Option<Duration> {
+        if attempt == 0 || !self.is_transient() {
+            return None;
+        }
+
+        match self {
+            Self::ProviderRejection { retry_after, .. } => {
+                (*retry_after).or_else(|| exponential_backoff(attempt))
+            }
+            Self::ApiReadResponseError { .. } | Self::HttpSend { .. } => {
+                exponential_backoff(attempt)
+            }
+            Self::DataRetentionConsentRequired { .. }
+            | Self::NoApiKey { .. }
+            | Self::SerializeRequest { .. }
+            | Self::BuildRequestBody { .. }
+            | Self::DeserializeResponse { .. }
+            | Self::StreamEndedUnexpectedly { .. }
+            | Self::Other(_) => None,
+        }
+    }
+}
+
+fn category_from_cloud_failure(code: &str, message: &str) -> ProviderErrorCategory {
+    if let Some(tokens) = parse_prompt_too_long(message) {
+        return ProviderErrorCategory::PromptTooLarge {
+            tokens: Some(tokens),
+        };
+    }
+    if is_context_window_exceeded_message(message) {
+        return ProviderErrorCategory::PromptTooLarge { tokens: None };
+    }
+    if code == "invalid_encrypted_content" || is_invalid_encrypted_content_message(message) {
+        return ProviderErrorCategory::InvalidEncryptedContent;
+    }
+
+    match code {
+        "context_length_exceeded" | "request_too_large" => {
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        }
+        "invalid_request_error" => ProviderErrorCategory::InvalidRequest,
+        "authentication_error" => ProviderErrorCategory::Authentication,
+        "billing_error" | "payment_required_error" => ProviderErrorCategory::PaymentRequired,
+        "permission_error" => ProviderErrorCategory::Permission,
+        "cyber_policy" | "invalid_prompt" => ProviderErrorCategory::ContentPolicy,
+        "not_found_error" => ProviderErrorCategory::EndpointNotFound,
+        "conflict_error" => ProviderErrorCategory::Conflict,
+        "rate_limit_error" | "rate_limit_exceeded" => ProviderErrorCategory::RateLimit,
+        "timeout_error" | "request_timed_out" => ProviderErrorCategory::Timeout,
+        "api_error" | "internal_server_error" => ProviderErrorCategory::InternalServer,
+        "overloaded_error" => ProviderErrorCategory::Overloaded,
+        _ => ProviderErrorCategory::Other,
+    }
+}
+
+fn is_retryable_provider_status(provider: &LanguageModelProviderName, status: StatusCode) -> bool {
+    // OpenAI sometimes returns 404 during service disruptions instead of a server-error status.
+    // Retrying adds only bounded delay and network traffic when the endpoint is genuinely absent,
+    // while potentially hiding a spurious failure from the user when the outage is transient.
+    status.is_server_error()
+        || matches!(status.as_u16(), 408 | 425 | 429)
+        || (provider == &OPEN_AI_PROVIDER_NAME && status == StatusCode::NOT_FOUND)
+}
+
+fn exponential_backoff(attempt: usize) -> Option<Duration> {
+    const INITIAL_BACKOFF: Duration = Duration::from_secs(5);
+    const MAXIMUM_BACKOFF: Duration = Duration::from_secs(40);
+
+    let exponent = u32::try_from(attempt.checked_sub(1)?).unwrap_or(u32::MAX);
+    let multiplier = 2_u32.checked_pow(exponent).unwrap_or(u32::MAX);
+    Some(
+        INITIAL_BACKOFF
+            .checked_mul(multiplier)
+            .unwrap_or(MAXIMUM_BACKOFF)
+            .min(MAXIMUM_BACKOFF),
+    )
+}
+
+fn is_invalid_encrypted_content_message(message: &str) -> bool {
+    let Ok(response) = serde_json::from_str::<serde_json::Value>(message) else {
+        return false;
+    };
+    response
+        .get("error")
+        .and_then(|error| error.get("code"))
+        .or_else(|| response.get("code"))
+        .and_then(serde_json::Value::as_str)
+        == Some("invalid_encrypted_content")
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
@@ -642,11 +846,15 @@ mod tests {
         );
 
         match error {
-            LanguageModelCompletionError::ServerOverloaded { provider, .. } => {
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                category: ProviderErrorCategory::Overloaded,
+                ..
+            } => {
                 assert_eq!(provider.0, "anthropic");
             }
             _ => panic!(
-                "Expected ServerOverloaded error for 503 status, got: {:?}",
+                "Expected Overloaded category for 503 status, got: {:?}",
                 error
             ),
         }
@@ -659,12 +867,22 @@ mod tests {
         );
 
         match error {
-            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status,
+                code,
+                message,
+                category,
+                ..
+            } => {
                 assert_eq!(provider.0, "anthropic");
+                assert_eq!(status, Some(StatusCode::INTERNAL_SERVER_ERROR));
+                assert_eq!(code.as_deref(), Some("upstream_http_error"));
                 assert_eq!(message, "Internal server error");
+                assert_eq!(category, ProviderErrorCategory::InternalServer);
             }
             _ => panic!(
-                "Expected ApiInternalServerError for 500 status, got: {:?}",
+                "Expected ProviderRejection for 500 status, got: {:?}",
                 error
             ),
         }
@@ -681,7 +899,10 @@ mod tests {
 
         assert!(matches!(
             error,
-            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                ..
+            }
         ));
 
         let error = LanguageModelCompletionError::from_http_status(
@@ -693,7 +914,32 @@ mod tests {
 
         assert!(matches!(
             error,
-            LanguageModelCompletionError::BadRequestFormat { .. }
+            LanguageModelCompletionError::ProviderRejection {
+                status: Some(StatusCode::BAD_REQUEST),
+                category: ProviderErrorCategory::InvalidRequest,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_from_http_status_maps_invalid_encrypted_content() {
+        let message = r#"{"error":{"type":"invalid_request_error","code":"invalid_encrypted_content","message":"The encrypted content is invalid.","param":"input"}}"#;
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("OpenAI").into(),
+            StatusCode::BAD_REQUEST,
+            message.to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                message: error_message,
+                category: ProviderErrorCategory::InvalidEncryptedContent,
+                ..
+            } if provider.0 == "OpenAI" && error_message == message
         ));
     }
 
@@ -707,11 +953,155 @@ mod tests {
         );
 
         match error {
-            LanguageModelCompletionError::ServerOverloaded { provider, .. } => {
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                category: ProviderErrorCategory::Overloaded,
+                ..
+            } => {
                 assert_eq!(provider.0, "anthropic");
             }
-            _ => panic!("Expected ServerOverloaded error for upstream_http_503"),
+            _ => panic!("Expected Overloaded category for upstream_http_503"),
         }
+    }
+
+    #[test]
+    fn test_from_cloud_failure_maps_content_policy_rejection() {
+        let error = LanguageModelCompletionError::from_cloud_failure(
+            OPEN_AI_PROVIDER_NAME,
+            "cyber_policy".to_string(),
+            "This content was flagged as potentially violating our terms of use.".to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                category: ProviderErrorCategory::ContentPolicy,
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "cyber_policy"
+                && message == "This content was flagged as potentially violating our terms of use."
+        ));
+    }
+
+    #[test]
+    fn test_provider_category_preserves_status_less_rejection_code() {
+        let error = LanguageModelCompletionError::from_provider_response(
+            ANTHROPIC_PROVIDER_NAME,
+            None,
+            Some("rate_limit_error".to_string()),
+            "Rate limit exceeded".to_string(),
+            None,
+            ProviderErrorCategory::RateLimit,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                status: None,
+                code: Some(code),
+                category: ProviderErrorCategory::RateLimit,
+                ..
+            } if code == "rate_limit_error"
+        ));
+    }
+
+    #[test]
+    fn test_retry_delay_uses_provider_delay_or_bounded_exponential_backoff() {
+        let retry_after = Duration::from_secs(17);
+        let error = LanguageModelCompletionError::from_http_status(
+            ANTHROPIC_PROVIDER_NAME,
+            StatusCode::TOO_MANY_REQUESTS,
+            "Rate limit exceeded".to_string(),
+            Some(retry_after),
+        );
+        assert!(error.is_transient());
+        assert_eq!(error.retry_delay(1), Some(retry_after));
+
+        let error = LanguageModelCompletionError::from_http_status(
+            ANTHROPIC_PROVIDER_NAME,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".to_string(),
+            None,
+        );
+        assert!(error.is_transient());
+        assert_eq!(error.retry_delay(0), None);
+        assert_eq!(error.retry_delay(1), Some(Duration::from_secs(5)));
+        assert_eq!(error.retry_delay(2), Some(Duration::from_secs(10)));
+        assert_eq!(error.retry_delay(4), Some(Duration::from_secs(40)));
+        assert_eq!(error.retry_delay(20), Some(Duration::from_secs(40)));
+    }
+
+    #[test]
+    fn test_retry_delay_retries_statusless_transient_provider_errors() {
+        for category in [
+            ProviderErrorCategory::Timeout,
+            ProviderErrorCategory::InternalServer,
+        ] {
+            let error = LanguageModelCompletionError::from_provider_response(
+                ANTHROPIC_PROVIDER_NAME,
+                None,
+                Some("provider_error".to_string()),
+                "Transient provider error".to_string(),
+                None,
+                category,
+            );
+
+            assert!(error.is_transient());
+            assert_eq!(error.retry_delay(1), Some(Duration::from_secs(5)));
+        }
+    }
+
+    #[test]
+    fn test_open_ai_not_found_is_transient() {
+        let error = LanguageModelCompletionError::from_http_status(
+            OPEN_AI_PROVIDER_NAME,
+            StatusCode::NOT_FOUND,
+            "Not found".to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::EndpointNotFound,
+                ..
+            }
+        ));
+        assert!(error.is_transient());
+        assert_eq!(error.retry_delay(1), Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn test_not_found_is_permanent_for_other_providers() {
+        let error = LanguageModelCompletionError::from_http_status(
+            ANTHROPIC_PROVIDER_NAME,
+            StatusCode::NOT_FOUND,
+            "Not found".to_string(),
+            None,
+        );
+
+        assert!(!error.is_transient());
+        assert_eq!(error.retry_delay(1), None);
+    }
+
+    #[test]
+    fn test_retry_delay_rejects_permanent_provider_error() {
+        let error = LanguageModelCompletionError::from_provider_response(
+            OPEN_AI_PROVIDER_NAME,
+            None,
+            Some("cyber_policy".to_string()),
+            "This content was flagged as potentially violating our terms of use.".to_string(),
+            None,
+            ProviderErrorCategory::Other,
+        );
+
+        assert!(!error.is_transient());
+        assert_eq!(error.retry_delay(1), None);
     }
 
     #[test]
@@ -724,11 +1114,15 @@ mod tests {
         );
 
         match error {
-            LanguageModelCompletionError::ServerOverloaded { provider, .. } => {
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                category: ProviderErrorCategory::Overloaded,
+                ..
+            } => {
                 assert_eq!(provider.0, "anthropic");
             }
             _ => panic!(
-                "Expected ServerOverloaded error for connection timeout with 503 status, got: {:?}",
+                "Expected Overloaded category for connection timeout with 503 status, got: {:?}",
                 error
             ),
         }
@@ -741,15 +1135,25 @@ mod tests {
         );
 
         match error {
-            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status,
+                code,
+                message,
+                category,
+                ..
+            } => {
                 assert_eq!(provider.0, "anthropic");
+                assert_eq!(status, Some(StatusCode::INTERNAL_SERVER_ERROR));
+                assert_eq!(code.as_deref(), Some("upstream_http_error"));
                 assert_eq!(
                     message,
                     "Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers. reset reason: connection timeout"
                 );
+                assert_eq!(category, ProviderErrorCategory::InternalServer);
             }
             _ => panic!(
-                "Expected ApiInternalServerError for connection timeout with 500 status, got: {:?}",
+                "Expected ProviderRejection for connection timeout with 500 status, got: {:?}",
                 error
             ),
         }

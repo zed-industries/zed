@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{Context as _, Result};
 use buffer_diff::DiffHunkStatus;
 use editor::{
-    DiffHunkDelegate, Editor, EditorEvent, ResolvedDiffHunks, SplittableEditor,
+    DiffHunkRenderer, Editor, EditorEvent, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk},
 };
 use git::{StageAll, StageAndNext};
@@ -26,87 +26,16 @@ use std::{
     sync::Arc,
 };
 use ui::{DiffStat, Divider, Icon, Tooltip, Window, prelude::*};
-use util::ResultExt as _;
 use workspace::{
     ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
+    item::{Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::SearchableItemHandle,
 };
 
-pub(crate) struct UnstagedDiffDelegate;
+pub(crate) struct UnstagedDiffHunkRenderer;
 
-impl DiffHunkDelegate for UnstagedDiffDelegate {
-    fn toggle(
-        &self,
-        hunks: Vec<ResolvedDiffHunks>,
-        editor: &mut Editor,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        self.stage_or_unstage(true, hunks, editor, window, cx);
-    }
-
-    fn stage_or_unstage(
-        &self,
-        stage: bool,
-        hunks: Vec<ResolvedDiffHunks>,
-        editor: &mut Editor,
-        _window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        if !stage {
-            return;
-        }
-        let Some(project) = editor.project().cloned() else {
-            return;
-        };
-        for hunks in hunks {
-            let Some(buffer) = hunks.buffer else {
-                continue;
-            };
-            let worktree_ranges = hunks
-                .hunks
-                .into_iter()
-                .map(|hunk| hunk.buffer_range)
-                .collect::<Vec<_>>();
-            if worktree_ranges.is_empty() {
-                continue;
-            }
-            project
-                .update(cx, |project, cx| {
-                    project.stage_hunks(buffer, hunks.diff, worktree_ranges, cx)
-                })
-                .log_err();
-        }
-    }
-
-    fn restore(
-        &self,
-        hunks: Vec<ResolvedDiffHunks>,
-        editor: &mut Editor,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        if hunks.is_empty() || editor.read_only(cx) {
-            return;
-        }
-        editor.transact(window, cx, |editor, window, cx| {
-            editor.restore_diff_hunks(hunks, cx);
-            let selections = editor
-                .selections
-                .all::<editor::MultiBufferOffset>(&editor.display_snapshot(cx));
-            editor.change_selections(
-                editor::SelectionEffects::no_scroll(),
-                window,
-                cx,
-                |selections_state| {
-                    selections_state.select(selections);
-                },
-            );
-        });
-    }
-
+impl DiffHunkRenderer for UnstagedDiffHunkRenderer {
     fn render_hunk_controls(
         &self,
         row: u32,
@@ -282,7 +211,7 @@ impl UnstagedDiff {
                 Capability::ReadWrite,
                 "No unstaged changes",
                 move |editor, cx| {
-                    editor.set_diff_hunk_delegate(Some(Arc::new(UnstagedDiffDelegate)), cx);
+                    editor.set_diff_hunk_renderer(Some(Arc::new(UnstagedDiffHunkRenderer)), cx);
                     editor.rhs_editor().update(cx, |rhs_editor, _cx| {
                         rhs_editor.set_read_only(false);
                         rhs_editor.register_addon(GitPanelAddon {
@@ -322,7 +251,7 @@ impl UnstagedDiff {
         let editor = diff.editor().read(cx).rhs_editor().clone();
         let editor = editor.read(cx);
         let snapshot = diff.multibuffer().read(cx).snapshot(cx);
-        let prev_next = snapshot.diff_hunks().nth(1).is_some();
+        let prev_next = snapshot.diff_hunks().next().is_some();
         let (selection, ranges) = diff.selected_ranges(cx);
         let stage = editor
             .diff_hunks_in_ranges(&ranges, &snapshot)
@@ -419,16 +348,6 @@ impl Item for UnstagedDiff {
 
     fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
         Some("Unstaged Changes".into())
-    }
-
-    fn tab_content(&self, params: TabContentParams, _window: &Window, _cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(0, _cx))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
     }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
@@ -598,7 +517,6 @@ impl SerializableItem for UnstagedDiff {
         _: &mut Workspace,
         _: workspace::ItemId,
         _: bool,
-        _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         Some(Task::ready(Ok(())))
@@ -826,7 +744,7 @@ impl Render for UnstagedDiffToolbar {
             .child(Divider::vertical())
             .child(
                 Button::new("stage-all", "Stage All")
-                    .width(rems_from_px(80.))
+                    .width(rems_from_px(80_f32))
                     .disabled(!button_states.stage_all)
                     .tooltip(Tooltip::for_action_title_in(
                         "Stage All Changes",
@@ -838,7 +756,7 @@ impl Render for UnstagedDiffToolbar {
             .child(Divider::vertical())
             .child(
                 Button::new("restore-all", "Restore All")
-                    .width(rems_from_px(80.))
+                    .width(rems_from_px(80_f32))
                     .disabled(!button_states.restore_all)
                     .tooltip(Tooltip::text("Restore All Changes"))
                     .on_click(cx.listener(|this, _, window, cx| this.restore_all(window, cx))),

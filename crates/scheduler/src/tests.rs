@@ -35,6 +35,15 @@ fn test_background_executor_spawn() {
 }
 
 #[test]
+fn test_dedicated_executor_spawn() {
+    TestScheduler::once(async |scheduler| {
+        let dedicated = DedicatedExecutor::new(&scheduler.background());
+        let task = dedicated.spawn(async move { 42 });
+        assert_eq!(task.await, 42);
+    });
+}
+
+#[test]
 fn test_scheduler_drops_with_stalled_detached_foreground_task() {
     let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
     let weak_scheduler = Arc::downgrade(&scheduler);

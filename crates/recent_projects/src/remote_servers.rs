@@ -330,7 +330,7 @@ impl PickerDelegate for DevContainerPickerDelegate {
                     Button::new("run-action", "Start Dev Container")
                         .key_binding(
                             KeyBinding::for_action(&menu::Confirm, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(12_f32))),
                         )
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::Confirm.boxed_clone(), cx)
@@ -340,7 +340,7 @@ impl PickerDelegate for DevContainerPickerDelegate {
                     Button::new("run-action-secondary", "Open devcontainer.json")
                         .key_binding(
                             KeyBinding::for_action(&menu::SecondaryConfirm, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(12_f32))),
                         )
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
@@ -1198,6 +1198,7 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                 let Some(server_entry) = self.state.servers.get(*server) else {
                     return;
                 };
+                cx.emit(DismissEvent);
                 match server_entry {
                     RemoteEntry::Project {
                         connection, index, ..
