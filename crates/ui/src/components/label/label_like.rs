@@ -81,7 +81,7 @@ pub struct LabelLike {
     weight: Option<FontWeight>,
     line_height_style: LineHeightStyle,
     pub(crate) color: Color,
-    pub(super) strikethrough: bool,
+    strikethrough: bool,
     italic: bool,
     children: SmallVec<[AnyElement; 2]>,
     alpha: Option<f32>,

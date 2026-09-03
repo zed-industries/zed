@@ -720,6 +720,11 @@ struct BufferExcerpts {
     /// Present whenever the buffer has a `File`, including deleted ones whose
     /// `project_entry_id()` is `None`.
     path: Option<Arc<RelPath>>,
+    /// A missing worktree entry alone does not mean the file was deleted: a buffer opened
+    /// on a path that never existed is `DiskState::New` and also has no entry id. Only a
+    /// buffer that is actually gone from disk, or one the git status reports as deleted,
+    /// may be synthesized into the tree.
+    is_deleted: bool,
 }
 
 struct ActiveItem {
@@ -1211,17 +1216,22 @@ impl OutlinePanel {
             PanelEntry::Fs(FsEntry::File(file)) => {
                 change_selection = false;
                 scroll_to_buffer = Some(file.buffer_id);
-                self.project
+                // A deleted file's entry is synthesized and belongs to no worktree, so
+                // `path_for_entry` cannot resolve it. Fall back to the buffer the panel already
+                // tracks for the entry, as the `ExternalFile` arm does.
+                let buffer_id = self
+                    .project
                     .update(cx, |project, cx| {
                         project
                             .path_for_entry(file.entry.id, cx)
                             .and_then(|path| project.get_open_buffer(&path, cx))
                     })
-                    .map(|buffer| {
-                        multi_buffer_snapshot.excerpts_for_buffer(buffer.read(cx).remote_id())
-                    })
-                    .and_then(|mut excerpts| {
-                        let excerpt_range = excerpts.next()?;
+                    .map(|buffer| buffer.read(cx).remote_id())
+                    .unwrap_or(file.buffer_id);
+                multi_buffer_snapshot
+                    .excerpts_for_buffer(buffer_id)
+                    .next()
+                    .and_then(|excerpt_range| {
                         multi_buffer_snapshot.anchor_in_excerpt(excerpt_range.context.start)
                     })
             }
@@ -2941,6 +2951,22 @@ impl OutlinePanel {
                             let status = git_store
                                 .read(cx)
                                 .display_status_for_buffer_id(buffer_id, cx);
+                            // A file deleted in a commit on the current branch is absent from
+                            // disk, so its buffer is `DiskState::New` — the same state as a
+                            // buffer opened on a path that never existed — and the working-tree
+                            // status says nothing about it either, since the deletion is already
+                            // committed. The branch-diff statuses that would name it are only
+                            // consulted when `git.diff_base` is `default_branch`
+                            // (`GitStore::display_status`), and the branch diff view can be
+                            // opened with the setting left at `head`. What separates the two
+                            // cases in every configuration is the diff the multibuffer shows for
+                            // the buffer: a deletion has a base version, a path that never
+                            // existed has none.
+                            let is_deleted = file.is_some_and(|file| file.disk_state.is_deleted())
+                                || status.is_some_and(|status| status.is_deleted())
+                                || multi_buffer_snapshot
+                                    .diff_for_buffer_id(buffer_id)
+                                    .is_some_and(|diff| diff.base_text_exists());
                             buffer_excerpts
                                 .entry(buffer_id)
                                 .or_insert_with(|| BufferExcerpts {
@@ -2951,6 +2977,7 @@ impl OutlinePanel {
                                     worktree,
                                     status,
                                     path,
+                                    is_deleted,
                                 })
                                 .excerpts
                                 .push(excerpt_range.clone());
@@ -3014,6 +3041,7 @@ impl OutlinePanel {
                             worktree,
                             status,
                             path,
+                            is_deleted,
                         },
                     ) in buffer_excerpts
                     {
@@ -3105,7 +3133,7 @@ impl OutlinePanel {
                                         .or_insert_with(HashMap::default)
                                         .extend(entries_to_add);
                                 }
-                                None => match path {
+                                None => match path.filter(|_| is_deleted) {
                                     // The buffer's file still has a path even though it has no
                                     // worktree entry (`DiskState::Deleted`): synthesize entries
                                     // for it and its ancestor chain so it renders nested in the
@@ -3134,8 +3162,14 @@ impl OutlinePanel {
                                         );
 
                                         for ancestor in path.ancestors().skip(1) {
+                                            // A real entry only stands in for the deleted path's
+                                            // ancestor if it is a directory. A path that is a file
+                                            // now but was a directory when the deleted file existed
+                                            // must still be synthesized, since only directories
+                                            // nest other entries beneath them.
                                             let (ancestor_id, ancestor_entry) = match worktree
                                                 .entry_for_path(ancestor)
+                                                .filter(|real_entry| real_entry.is_dir())
                                             {
                                                 Some(real_entry) => {
                                                     let is_root =
@@ -3230,7 +3264,15 @@ impl OutlinePanel {
                         .into_iter()
                         .map(|(worktree_id, entries)| {
                             let mut entries = entries.into_values().collect::<Vec<_>>();
-                            entries.sort_by(|a, b| a.path.as_ref().cmp(b.path.as_ref()));
+                            // A synthesized directory and a real file can share a path when a
+                            // path changed kind since the deleted file existed. Order directories
+                            // first so the rows nested under the directory follow it.
+                            entries.sort_by(|a, b| {
+                                a.path
+                                    .as_ref()
+                                    .cmp(b.path.as_ref())
+                                    .then_with(|| b.is_dir().cmp(&a.is_dir()))
+                            });
                             (worktree_id, entries)
                         })
                         .flat_map(|(worktree_id, entries)| {
@@ -4031,6 +4073,7 @@ impl OutlinePanel {
                     folded: bool,
                     expanded: bool,
                     depth: usize,
+                    is_deleted: bool,
                 }
 
                 let search_precomputed = if hide_symbols {
@@ -4119,9 +4162,18 @@ impl OutlinePanel {
                                 }
                                 parent_dirs.pop();
                             }
+                            // A folded chain renders as a single label, so striking it through
+                            // would strike every segment. A directory whose deletion state
+                            // differs from its parent's must therefore start its own row rather
+                            // than join the parent's chain.
+                            let deletion_state_matches_parent =
+                                parent_dirs.last().is_none_or(|parent| {
+                                    parent.is_deleted == directory_entry.is_deleted
+                                });
                             let auto_fold = match parent_dirs.last() {
                                 Some(parent) => {
                                     parent.folded
+                                        && deletion_state_matches_parent
                                         && Some(parent.path.as_ref())
                                             == directory_entry.entry.path.parent()
                                         && outline_panel
@@ -4139,7 +4191,8 @@ impl OutlinePanel {
                             let folded = folded || auto_fold;
                             let (depth, parent_expanded, parent_folded) = match parent_dirs.last() {
                                 Some(parent) => {
-                                    let parent_folded = parent.folded;
+                                    let parent_folded =
+                                        parent.folded && deletion_state_matches_parent;
                                     let parent_expanded = parent.expanded;
                                     let new_depth = if parent_folded {
                                         parent.depth
@@ -4151,6 +4204,7 @@ impl OutlinePanel {
                                         folded,
                                         expanded: parent_expanded && is_expanded,
                                         depth: new_depth,
+                                        is_deleted: directory_entry.is_deleted,
                                     });
                                     (new_depth, parent_expanded, parent_folded)
                                 }
@@ -4160,6 +4214,7 @@ impl OutlinePanel {
                                         folded,
                                         expanded: is_expanded,
                                         depth: fs_depth,
+                                        is_deleted: directory_entry.is_deleted,
                                     });
                                     (fs_depth, true, false)
                                 }
@@ -4169,6 +4224,7 @@ impl OutlinePanel {
                             {
                                 if folded
                                     && directory_entry.worktree_id == folded_dirs.worktree_id
+                                    && directory_entry.is_deleted == folded_dirs.is_deleted
                                     && directory_entry.entry.path.parent()
                                         == folded_dirs
                                             .entries
@@ -4176,7 +4232,6 @@ impl OutlinePanel {
                                             .map(|entry| entry.path.as_ref())
                                 {
                                     folded_dirs.entries.push(directory_entry.entry.clone());
-                                    folded_dirs.is_deleted |= directory_entry.is_deleted;
                                     folded_dirs_entry = Some((folded_depth, folded_dirs))
                                 } else {
                                     if !is_singleton {
@@ -4194,8 +4249,6 @@ impl OutlinePanel {
                                                 folded_dirs
                                                     .entries
                                                     .push(directory_entry.entry.clone());
-                                                folded_dirs.is_deleted |=
-                                                    directory_entry.is_deleted;
                                                 should_add = false;
                                             }
                                             let new_folded_dirs =
@@ -6984,6 +7037,460 @@ two/  <==== selected
                  Fs::Directory, got {other:#?}"
             ),
         }
+    }
+
+    #[gpui::test]
+    async fn test_open_deleted_file_entry_navigates_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "dir": {
+                    "a.txt": "hello world",
+                    "b.txt": "hello there",
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        // Plain multi-buffer, not a project search — see comment in
+        // `test_deleted_file_nests_under_existing_parent` for why.
+        let buffer_a = open_buffer(&project, path!("/root/dir/a.txt"), cx).await;
+        let buffer_b = open_buffer(&project, path!("/root/dir/b.txt"), cx).await;
+        let editor = add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_a, Vec::new()), (&buffer_b, Vec::new())],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
+
+        fs.remove_file(Path::new(path!("/root/dir/a.txt")), Default::default())
+            .await
+            .unwrap();
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let deleted_entry = outline_panel.read_with(cx, |outline_panel, _cx| {
+            outline_panel
+                .cached_entries
+                .iter()
+                .find_map(|cached_entry| match &cached_entry.entry {
+                    PanelEntry::Fs(FsEntry::File(file))
+                        if file.entry.path.file_name() == Some("a.txt") =>
+                    {
+                        assert!(
+                            file.is_deleted,
+                            "sanity check: the deleted file's row should be marked deleted"
+                        );
+                        Some(cached_entry.entry.clone())
+                    }
+                    _ => None,
+                })
+                .expect("deleted file should have a row in the panel")
+        });
+
+        // Selecting focuses the panel, so the editor gaining focus below can only come from
+        // the open action resolving an anchor for the deleted row.
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.select_entry(deleted_entry, true, window, cx);
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            assert!(
+                !editor.focus_handle(cx).is_focused(window),
+                "sanity check: the editor should not hold focus before the row is opened, so                  that it gaining focus below can only come from the navigation itself"
+            );
+        });
+
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+        });
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, window, cx| {
+            assert!(
+                editor.focus_handle(cx).is_focused(window),
+                "opening a deleted file's row should resolve its excerpt from the buffer id \
+                 and navigate the editor, which focuses it"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_buffer_for_nonexistent_path_not_treated_as_deleted(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/root"), json!({ "existing.txt": "hello" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        // Opening a project path that never existed yields a `DiskState::New` buffer: it has
+        // a `File` with a path, and `project_entry_id()` is `None`, exactly like a deleted
+        // file. Only the disk state tells them apart, so without consulting it this buffer
+        // and its nonexistent parent directories would render struck through.
+        let new_buffer = project
+            .update(cx, |project, cx| {
+                let path = project
+                    .find_project_path(path!("/root/missing_dir/new.txt"), cx)
+                    .expect("path inside the worktree should resolve");
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        new_buffer.read_with(cx, |buffer, _cx| {
+            assert_eq!(
+                buffer.file().map(|file| file.disk_state()),
+                Some(language::DiskState::New),
+                "sanity check: a buffer opened on a nonexistent path should be DiskState::New"
+            );
+        });
+        add_multi_buffer_editor(&workspace, &project, &[(&new_buffer, Vec::new())], cx);
+        settle_outline_panel(&outline_panel, cx);
+
+        outline_panel.update(cx, |outline_panel, _cx| {
+            assert!(
+                !outline_panel.fs_entries.iter().any(|entry| match entry {
+                    FsEntry::File(file) => file.is_deleted,
+                    FsEntry::Directory(directory) => directory.is_deleted,
+                    FsEntry::ExternalFile(_) => false,
+                }),
+                "a buffer on a nonexistent path is not deleted and must not be marked as \
+                 such, got {:#?}",
+                outline_panel.fs_entries
+            );
+            assert!(
+                outline_panel
+                    .fs_entries
+                    .iter()
+                    .any(|entry| matches!(entry, FsEntry::ExternalFile(_))),
+                "it should keep rendering as an external file, as it did before deleted \
+                 files were nested in the tree, got {:#?}",
+                outline_panel.fs_entries
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_deleted_file_ancestor_replaced_by_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "keep.txt": "hello there",
+                "foo": {
+                    "a.txt": "hello world"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+        update_outline_panel_settings(cx, |settings| {
+            settings.auto_fold_dirs = Some(false);
+        });
+
+        // Plain multi-buffer, not a project search — see comment in
+        // `test_deleted_file_nests_under_existing_parent` for why.
+        let buffer_keep = open_buffer(&project, path!("/root/keep.txt"), cx).await;
+        let buffer_a = open_buffer(&project, path!("/root/foo/a.txt"), cx).await;
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_keep, Vec::new()), (&buffer_a, Vec::new())],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
+
+        // Replace the directory `foo` with a *file* of the same path, so the deleted
+        // `foo/a.txt`'s ancestor lookup finds a real entry that is not a directory. Only
+        // directories nest other rows beneath them, so `foo` has to be synthesized anyway.
+        fs.remove_dir(
+            Path::new(path!("/root/foo")),
+            project::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+        fs.insert_file(path!("/root/foo"), "not a directory anymore".into())
+            .await;
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    None,
+                    cx,
+                ),
+                "root/\n  foo/\n    a.txt\n  keep.txt",
+                "the deleted file should nest under a synthesized `foo/` directory rather \
+                 than adopting the same-path file as its parent and falling back to root depth"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_folded_dirs_stop_at_deletion_boundary(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // `parent` holds nothing but `gone`, which is what makes it eligible for auto-folding
+        // at all: a directory with mixed children is marked unfolded while `fs_entries` is
+        // built (the `!children.may_be_fold_part()` branch), so a chain can only form when
+        // every link has a single subdirectory and no files.
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "keep.txt": "hello there",
+                "parent": {
+                    "gone": {
+                        "a.txt": "hello world"
+                    }
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+        update_outline_panel_settings(cx, |settings| {
+            settings.auto_fold_dirs = Some(true);
+        });
+
+        // Plain multi-buffer, not a project search — see comment in
+        // `test_deleted_file_nests_under_existing_parent` for why.
+        let buffer_keep = open_buffer(&project, path!("/root/keep.txt"), cx).await;
+        let buffer_a = open_buffer(&project, path!("/root/parent/gone/a.txt"), cx).await;
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_keep, Vec::new()), (&buffer_a, Vec::new())],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    None,
+                    cx,
+                ),
+                "root/\n  keep.txt\n  parent/gone/\n    a.txt",
+                "sanity check: while both directories exist they should fold into one row"
+            );
+        });
+
+        // Remove only `gone`, leaving `parent` on disk as an empty directory. Folding the two
+        // together now would strike `parent` through as well, since one folded row carries a
+        // single strikethrough for its whole label.
+        fs.remove_dir(
+            Path::new(path!("/root/parent/gone")),
+            project::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    None,
+                    cx,
+                ),
+                "root/\n  keep.txt\n  parent/\n    gone/\n      a.txt",
+                "the surviving and the deleted directory must stop folding together once \
+                 their deletion state differs"
+            );
+            let deletion_by_name = outline_panel
+                .cached_entries
+                .iter()
+                .filter_map(|cached_entry| match &cached_entry.entry {
+                    PanelEntry::Fs(FsEntry::Directory(directory)) => Some((
+                        directory.entry.path.file_name().unwrap_or_default(),
+                        directory.is_deleted,
+                    )),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                deletion_by_name.contains(&("parent", false)),
+                "the surviving parent directory must not be marked deleted, got \
+                 {deletion_by_name:?}"
+            );
+            assert!(
+                deletion_by_name.contains(&("gone", true)),
+                "the deleted directory must still be marked deleted, got {deletion_by_name:?}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_committed_deletion_nests_without_default_branch_diff_base(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        // The scenario the branch diff view puts the panel in: `dir/gone.txt` was deleted in
+        // a commit on this branch, so it is absent from disk and from the working-tree status,
+        // and `git.diff_base` is left at its default (`head`) so the branch-diff statuses in
+        // `GitStore::display_status` are not consulted. The only thing left that identifies
+        // the row as a deletion is the diff carried by its excerpt.
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".git": {},
+                "dir": {
+                    "keep.txt": "hello there",
+                }
+            }),
+        )
+        .await;
+        let dot_git = Path::new(path!("/root/.git"));
+        fs.set_branch_name(dot_git, Some("feature"));
+        fs.insert_branches(dot_git, &["main"]);
+        fs.set_head_for_repo(
+            dot_git,
+            &[("dir/keep.txt", "hello there".into())],
+            "deadbeef",
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+        update_outline_panel_settings(cx, |settings| {
+            settings.auto_fold_dirs = Some(false);
+        });
+
+        let buffer_keep = open_buffer(&project, path!("/root/dir/keep.txt"), cx).await;
+        let buffer_gone = open_buffer(&project, path!("/root/dir/gone.txt"), cx).await;
+
+        // Both halves of the premise: absent from disk looks exactly like a never-existing
+        // path, and git status has nothing to say about an already-committed deletion.
+        buffer_gone.read_with(cx, |buffer, _cx| {
+            assert_eq!(
+                buffer.file().map(|file| file.disk_state()),
+                Some(language::DiskState::New),
+                "sanity check: a committed deletion leaves the buffer in DiskState::New"
+            );
+        });
+        let buffer_gone_id = buffer_gone.read_with(cx, |buffer, _| buffer.remote_id());
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project
+                    .git_store()
+                    .read(cx)
+                    .display_status_for_buffer_id(buffer_gone_id, cx)
+                    .map(|status| status.is_deleted()),
+                None,
+                "sanity check: with diff_base at its default, no status reports the deletion"
+            );
+        });
+
+        // Attach the deletion's diff the way the branch diff view does: base text is the
+        // pre-deletion content, the buffer itself is empty.
+        let editor = workspace.update_in(cx, |workspace, window, cx| {
+            let multibuffer = cx.new(|cx| {
+                let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
+                for buffer in [&buffer_keep, &buffer_gone] {
+                    let ranges = vec![language::Point::default()..buffer.read(cx).max_point()];
+                    multibuffer.set_excerpts_for_buffer(buffer.clone(), ranges, 0, cx);
+                }
+                let diff = cx.new(|cx| {
+                    buffer_diff::BufferDiff::new_with_base_text(
+                        "hello world\n",
+                        &buffer_gone.read(cx).text_snapshot(),
+                        cx,
+                    )
+                });
+                multibuffer.add_diff(diff, cx);
+                multibuffer
+            });
+            let editor = cx
+                .new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            editor
+        });
+        drop(editor);
+        settle_outline_panel(&outline_panel, cx);
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    None,
+                    cx,
+                ),
+                "root/\n  dir/\n    gone.txt\n    keep.txt",
+                "a file deleted in a commit on this branch should nest in the tree rather \
+                 than fall back to the flat external files list (display_entries panics on \
+                 FsEntry::ExternalFile, so reaching this assertion is itself proof)"
+            );
+            assert!(
+                outline_panel.fs_entries.iter().any(|entry| match entry {
+                    FsEntry::File(file) => {
+                        file.entry.path.file_name() == Some("gone.txt") && file.is_deleted
+                    }
+                    _ => false,
+                }),
+                "the committed deletion should be marked deleted, got {:#?}",
+                outline_panel.fs_entries
+            );
+        });
     }
 
     #[gpui::test]

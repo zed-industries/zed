@@ -43,6 +43,7 @@ worktree.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+buffer_diff.workspace = true
 lsp.workspace = true
 search = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true

@@ -12447,6 +12447,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
+ "buffer_diff",
  "collections",
  "db",
  "editor",

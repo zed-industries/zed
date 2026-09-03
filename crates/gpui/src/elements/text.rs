@@ -1292,6 +1292,41 @@ mod tests {
         let _ = div().child(SharedString::from("SharedString"));
     }
 
+    #[crate::test]
+    fn test_with_highlights_inherits_ancestor_text_decorations(cx: &mut crate::TestAppContext) {
+        use crate::{IntoElement as _, ParentElement as _, Styled as _, div, point, px, red, size};
+
+        let cx = cx.add_empty_window();
+        let styled_text = StyledText::new("main.rs").with_highlights([(
+            0..4,
+            HighlightStyle {
+                color: Some(red()),
+                ..Default::default()
+            },
+        )]);
+        let text_layout = styled_text.layout().clone();
+
+        cx.draw(point(px(0.), px(0.)), size(px(200.), px(100.)), |_, _| {
+            div().line_through().child(styled_text).into_any_element()
+        });
+
+        let laid_out = text_layout.0.borrow();
+        let laid_out = laid_out.as_ref().expect("text should have been laid out");
+        let decorations = laid_out
+            .lines
+            .iter()
+            .flat_map(|line| line.decoration_runs.iter())
+            .collect::<Vec<_>>();
+        assert!(
+            !decorations.is_empty(),
+            "highlighted text should produce decoration runs"
+        );
+        assert!(
+            decorations.iter().all(|run| run.strikethrough.is_some()),
+            "every run should inherit the ancestor's strikethrough, got {decorations:?}"
+        );
+    }
+
     #[test]
     fn text_macro_id() {
         // one call to `text!` = one id

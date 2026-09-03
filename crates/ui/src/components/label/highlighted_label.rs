@@ -1,8 +1,6 @@
 use std::ops::Range;
 
-use gpui::{
-    FontWeight, HighlightStyle, StrikethroughStyle, StyleRefinement, StyledText, TextStyle,
-};
+use gpui::{FontWeight, HighlightStyle, StyleRefinement, StyledText};
 use gpui_util::debug_panic;
 
 use crate::utils::replace_control_characters_remapping_offsets;
@@ -120,19 +118,6 @@ impl HighlightedLabel {
         self.style().flex_shrink = Some(0.);
         self
     }
-
-    /// Applies decorations (currently just strikethrough) that the explicit `TextRun`s
-    /// built in `render` need set directly on their `TextStyle`. Unlike plain text
-    /// content, explicit runs don't inherit decorations from the wrapping `LabelLike`
-    /// element, so `LabelLike::strikethrough` alone has no visible effect here.
-    fn apply_run_decorations(&self, text_style: &mut TextStyle) {
-        if self.base.strikethrough {
-            text_style.strikethrough = Some(StrikethroughStyle {
-                thickness: px(1.),
-                ..Default::default()
-            });
-        }
-    }
 }
 
 impl LabelCommon for HighlightedLabel {
@@ -232,7 +217,7 @@ pub fn highlight_ranges(
 }
 
 impl RenderOnce for HighlightedLabel {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let highlight_color = cx.theme().colors().text_accent;
 
         let highlights = highlight_ranges(
@@ -244,12 +229,12 @@ impl RenderOnce for HighlightedLabel {
             },
         );
 
-        let mut text_style = window.text_style();
-        text_style.color = self.base.color.color(cx);
-        self.apply_run_decorations(&mut text_style);
-
+        // `with_highlights` defers building the text runs until layout, so they inherit the
+        // text style `LabelLike` sets on its wrapper - color, strikethrough, italic, weight.
+        // Building runs here instead would freeze them before those styles apply, which is
+        // what made `LabelCommon::strikethrough` a visible no-op on this label.
         self.base
-            .child(StyledText::new(self.label).with_default_highlights(&text_style, highlights))
+            .child(StyledText::new(self.label).with_highlights(highlights))
     }
 }
 
@@ -403,21 +388,5 @@ mod tests {
         // unless the caller asked for a single line.
         let label = HighlightedLabel::new("a\nb", vec![0]);
         assert_eq!(label.text(), "a\nb");
-    }
-
-    #[test]
-    fn test_strikethrough_sets_run_decoration() {
-        let label = HighlightedLabel::new("main.rs", Vec::new()).strikethrough();
-        let mut text_style = TextStyle::default();
-        label.apply_run_decorations(&mut text_style);
-        assert!(text_style.strikethrough.is_some());
-    }
-
-    #[test]
-    fn test_without_strikethrough_leaves_run_decoration_unset() {
-        let label = HighlightedLabel::new("main.rs", Vec::new());
-        let mut text_style = TextStyle::default();
-        label.apply_run_decorations(&mut text_style);
-        assert!(text_style.strikethrough.is_none());
     }
 }
