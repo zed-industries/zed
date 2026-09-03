@@ -223,8 +223,16 @@ pub struct ThemeColors {
     pub editor_invisible: Hsla,
     pub editor_wrap_guide: Hsla,
     pub editor_active_wrap_guide: Hsla,
-    pub editor_indent_guide: Hsla,
-    pub editor_indent_guide_active: Hsla,
+    /// Colors cycled for indent guide lines in IndentAware mode.
+    /// Each color should have its intended alpha already applied.
+    // Currently we use Vec to store colors for the coloring mode settings compatibility.
+    pub indent_line: Vec<Hsla>,
+    /// Colors cycled for active indent guide lines in IndentAware mode.
+    pub indent_line_active: Vec<Hsla>,
+    /// Colors cycled for indent guide backgrounds in IndentAware mode.
+    pub indent_background: Vec<Hsla>,
+    /// Colors cycled for active indent guide backgrounds in IndentAware mode.
+    pub indent_background_active: Vec<Hsla>,
     /// Read-access of a symbol, like reading a variable.
     ///
     /// A document highlight is a range inside a text document which deserves
@@ -414,8 +422,6 @@ pub enum ThemeColorField {
     EditorInvisible,
     EditorWrapGuide,
     EditorActiveWrapGuide,
-    EditorIndentGuide,
-    EditorIndentGuideActive,
     EditorDocumentHighlightReadBackground,
     EditorDocumentHighlightWriteBackground,
     EditorDocumentHighlightBracketBackground,
@@ -534,8 +540,6 @@ impl ThemeColors {
             ThemeColorField::EditorInvisible => self.editor_invisible,
             ThemeColorField::EditorWrapGuide => self.editor_wrap_guide,
             ThemeColorField::EditorActiveWrapGuide => self.editor_active_wrap_guide,
-            ThemeColorField::EditorIndentGuide => self.editor_indent_guide,
-            ThemeColorField::EditorIndentGuideActive => self.editor_indent_guide_active,
             ThemeColorField::EditorDocumentHighlightReadBackground => {
                 self.editor_document_highlight_read_background
             }
@@ -604,6 +608,15 @@ pub fn all_theme_colors(cx: &mut App) -> Vec<(Hsla, SharedString)> {
         .collect()
 }
 
+/// Returns the color at the given index, cycling through the array.
+/// If the array is empty, returns transparent black.
+pub fn cycle_hsla(colors: &[Hsla], index: u32) -> Hsla {
+    if colors.is_empty() {
+        return gpui::transparent_black();
+    }
+    colors[index as usize % colors.len()]
+}
+
 #[derive(Refineable, Clone, Debug, PartialEq)]
 pub struct ThemeStyles {
     /// The background appearance of the window.
@@ -669,6 +682,26 @@ mod tests {
 
         assert_eq!(colors.text, magenta);
         assert_eq!(colors.background, green);
+    }
+
+    #[test]
+    fn cycle_hsla_cycles_through_the_array() {
+        let red: Hsla = gpui::rgb(0xff0000).into();
+        let green: Hsla = gpui::rgb(0x00ff00).into();
+        let colors = [red, green];
+
+        assert_eq!(cycle_hsla(&colors, 0), red);
+        assert_eq!(cycle_hsla(&colors, 1), green);
+        assert_eq!(cycle_hsla(&colors, 2), red);
+        assert_eq!(cycle_hsla(&colors, 3), green);
+    }
+
+    #[test]
+    fn cycle_hsla_handles_empty_arrays() {
+        let colors: [Hsla; 0] = [];
+
+        assert_eq!(cycle_hsla(&colors, 0), gpui::transparent_black());
+        assert_eq!(cycle_hsla(&colors, 1), gpui::transparent_black());
     }
 
     #[test]
