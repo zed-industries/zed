@@ -2420,7 +2420,9 @@ async fn test_diagnostics_hint_markdown(cx: &mut TestAppContext) {
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(7, 4), lsp::Position::new(7, 12)),
                         severity: Some(lsp::DiagnosticSeverity::ERROR),
-                        message: "cannot borrow `x` as mutable".to_string(),
+                        message: lsp::DiagnosticMessage::String(
+                            "cannot borrow `x` as mutable".to_string(),
+                        ),
                         related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                             location: lsp::Location::new(
                                 uri.clone(),
