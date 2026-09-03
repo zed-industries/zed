@@ -324,8 +324,10 @@ fn render_inline_body(
     provider_name: SharedString,
     title: Option<SharedString>,
     description: Option<InlineDescription>,
-    view: AnyView,
+    view: impl IntoElement,
 ) -> AnyElement {
+    let view = view.into_any_element();
+
     if title.is_none() && description.is_none() {
         return v_flex()
             .pt_1()
@@ -1326,38 +1328,12 @@ fn parse_u64_field(value: &str, name: &str) -> Result<u64, SharedString> {
 #[cfg(test)]
 mod tests {
     use gpui::{TestAppContext, VisualTestContext, size};
+    use language_models::provider::cloud::young_account_configuration_for_test;
     use settings::SettingsStore;
-    use ui::{Banner, Button, Severity};
 
     use super::*;
 
-    struct YoungAccountControls;
-
-    impl Render for YoungAccountControls {
-        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            v_flex()
-                .gap_2()
-                .w_full()
-                .debug_selector(|| "young-account-controls".into())
-                .child(Banner::new().severity(Severity::Warning).child(
-                    div()
-                        .w_full()
-                        .text_sm()
-                        .text_color(cx.theme().colors().text_muted)
-                        .debug_selector(|| "young-account-warning".into())
-                        .child(
-                            "To prevent abuse of our service, GitHub accounts created fewer than \
-                             30 days ago are not eligible for the Pro trial. You can request an \
-                             exception by reaching out to billing-support@zed.dev",
-                        ),
-                ))
-                .child(Button::new("upgrade", "Upgrade to Pro").full_width())
-        }
-    }
-
-    struct YoungAccountProviderRow {
-        controls: AnyView,
-    }
+    struct YoungAccountProviderRow;
 
     impl Render for YoungAccountProviderRow {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -1367,18 +1343,19 @@ mod tests {
                     .debug_selector(|| "provider-row".into())
                     .child(render_inline_body(
                         "Zed".into(),
-                        None,
+                        Some("Subscribed to Business".into()),
                         Some(InlineDescription::Text(
-                            "Subscribe for access to Zed's hosted models.".into(),
+                            "You have access to Zed's hosted models through your organization."
+                                .into(),
                         )),
-                        self.controls.clone(),
+                        young_account_configuration_for_test(),
                     )),
             )
         }
     }
 
     #[gpui::test]
-    fn young_account_controls_stay_within_provider_row(cx: &mut TestAppContext) {
+    fn young_account_configuration_stays_within_provider_row(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -1387,11 +1364,8 @@ mod tests {
         });
 
         for width in [500., 600., 800.] {
-            let window = cx.open_window(size(px(width), px(400.)), |_window, cx| {
-                let controls = cx.new(|_| YoungAccountControls);
-                YoungAccountProviderRow {
-                    controls: controls.into(),
-                }
+            let window = cx.open_window(size(px(width), px(400.)), |_window, _cx| {
+                YoungAccountProviderRow
             });
             cx.run_until_parked();
 
@@ -1402,24 +1376,16 @@ mod tests {
             let description_bounds = visual_context
                 .debug_bounds("inline-provider-description")
                 .expect("provider description should be rendered");
-            let controls_bounds = visual_context
-                .debug_bounds("young-account-controls")
-                .expect("young account controls should be rendered");
-            let warning_bounds = visual_context
-                .debug_bounds("young-account-warning")
-                .expect("young account warning should be rendered");
+            let configuration_bounds = visual_context
+                .debug_bounds("zed-ai-configuration")
+                .expect("Zed AI configuration should be rendered");
 
             assert!(
-                controls_bounds.right() <= provider_row_bounds.right(),
-                "young account controls extend past the provider row at {width}px"
+                configuration_bounds.right() <= provider_row_bounds.right(),
+                "young account configuration extends past the provider row at {width}px"
             );
             assert!(
-                warning_bounds.left() >= controls_bounds.left()
-                    && warning_bounds.right() <= controls_bounds.right(),
-                "young account warning extends past its controls at {width}px"
-            );
-            assert!(
-                warning_bounds.size.height >= px(40.),
+                configuration_bounds.size.height >= px(80.),
                 "young account warning does not wrap at {width}px"
             );
             assert!(

@@ -436,6 +436,20 @@ struct ZedAiConfiguration {
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub fn young_account_configuration_for_test() -> AnyElement {
+    ZedAiConfiguration {
+        is_connected: true,
+        plan: Some(Plan::ZedBusiness),
+        is_zed_model_provider_enabled: true,
+        eligible_for_trial: false,
+        account_too_young: true,
+        compact: true,
+        sign_in_callback: Arc::new(|_, _| {}),
+    }
+    .into_any_element()
+}
+
 fn zed_ai_description(
     is_connected: bool,
     plan: Option<Plan>,
@@ -612,7 +626,7 @@ mod tests {
     use client::{Credentials, test::make_get_authenticated_user_response};
     use clock::FakeSystemClock;
     use feature_flags::FeatureFlagAppExt as _;
-    use gpui::{TestAppContext, VisualTestContext, size};
+    use gpui::TestAppContext;
     use http_client::{FakeHttpClient, Method, Response};
     use std::sync::{
         Arc, Mutex,
@@ -741,73 +755,6 @@ mod tests {
             is_disabled: false,
             disabled_reason: None,
         }
-    }
-
-    struct YoungAccountConfiguration;
-
-    impl Render for YoungAccountConfiguration {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            div().size_full().p_4().child(
-                h_flex()
-                    .w_full()
-                    .min_w_0()
-                    .gap_4()
-                    .debug_selector(|| "available-width".into())
-                    .child(
-                        v_flex()
-                            .w_full()
-                            .min_w_0()
-                            .max_w_1_2()
-                            .child("Subscribed to Business")
-                            .child(
-                                "You have access to Zed's hosted models through your organization.",
-                            ),
-                    )
-                    .child(h_flex().min_w_0().max_w_1_2().flex_1().justify_end().child(
-                        ZedAiConfiguration {
-                            is_connected: true,
-                            plan: Some(Plan::ZedBusiness),
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: false,
-                            account_too_young: true,
-                            compact: true,
-                            sign_in_callback: Arc::new(|_, _| {}),
-                        },
-                    )),
-            )
-        }
-    }
-
-    #[gpui::test]
-    fn young_account_configuration_wraps_to_its_available_width(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
-            theme_settings::init(theme::LoadThemes::JustBase, cx);
-        });
-
-        let window = cx.open_window(size(px(500.), px(400.)), |_window, _cx| {
-            YoungAccountConfiguration
-        });
-        cx.run_until_parked();
-
-        let mut visual_context = VisualTestContext::from_window(window.into(), cx);
-        let available_bounds = visual_context
-            .debug_bounds("available-width")
-            .expect("available width should be rendered");
-        let configuration_bounds = visual_context
-            .debug_bounds("zed-ai-configuration")
-            .expect("Zed AI configuration should be rendered");
-
-        assert!(
-            configuration_bounds.right() <= available_bounds.right(),
-            "young account configuration extends past its available width"
-        );
-        assert!(
-            configuration_bounds.size.height >= px(80.),
-            "young account warning does not wrap"
-        );
     }
 
     #[gpui::test]
