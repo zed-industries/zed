@@ -687,7 +687,7 @@ impl Model {
             Self::Qwen3_8Max | Self::Qwen3_8Flash => Some(131_072),
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
             Self::MimoV2_5Pro | Self::MimoV2_5 => Some(128_000),
-            Self::Hy3 => Some(64_000),
+            Self::Hy3 => Some(128_000),
 
             Self::Custom {
                 max_output_tokens, ..
