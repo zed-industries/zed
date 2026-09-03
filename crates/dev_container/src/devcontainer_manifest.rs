@@ -3359,10 +3359,13 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn command_to_shell_string(command: &Command) -> String {
-    let mut command_parts = vec![command.get_program().display().to_string()];
-    command_parts.extend(command.get_args().map(|arg| arg.display().to_string()));
-    command_parts.join(" ")
+pub(crate) fn command_to_shell_string(command: &Command) -> String {
+    // Single-quote each token so the embedded command keeps its original argv
+    std::iter::once(command.get_program())
+        .chain(command.get_args())
+        .map(|arg| shell_single_quote(&arg.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn post_start_marker_script(started_at: &str, script_commands: HashMap<String, Command>) -> String {
@@ -4001,7 +4004,7 @@ mod test {
         assert!(post_start_script.contains("marker=\"$marker_directory/.postStartCommandMarker\""));
         assert!(!post_start_script.contains("/tmp/zed-devcontainer"));
         assert!(post_start_script.contains(
-            "echo post-start\ncommand_status=$?\n[ \"$command_status\" -eq 0 ] || exit \"$command_status\""
+            "'echo post-start'\ncommand_status=$?\n[ \"$command_status\" -eq 0 ] || exit \"$command_status\""
         ));
         assert!(
             post_start_script.find("echo post-start").unwrap()
