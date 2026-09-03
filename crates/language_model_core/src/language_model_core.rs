@@ -463,7 +463,9 @@ fn category_from_cloud_failure(code: &str, message: &str) -> ProviderErrorCatego
 }
 
 fn is_retryable_provider_status(provider: &LanguageModelProviderName, status: StatusCode) -> bool {
-    // OpenAI has returned 404 during transient service disruptions.
+    // OpenAI sometimes returns 404 during service disruptions instead of a server-error status.
+    // Retrying adds only bounded delay and network traffic when the endpoint is genuinely absent,
+    // while potentially hiding a spurious failure from the user when the outage is transient.
     status.is_server_error()
         || matches!(status.as_u16(), 408 | 425 | 429)
         || (provider == &OPEN_AI_PROVIDER_NAME && status == StatusCode::NOT_FOUND)
