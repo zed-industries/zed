@@ -149,6 +149,7 @@ impl ExtensionImports for WasmState {
         };
 
         self.host.proxy.update_language_server_status(
+            self.language_server_status_source,
             lsp::LanguageServerName(server_name.into()),
             self.active_worktree_id,
             status,

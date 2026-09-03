@@ -616,6 +616,14 @@
     },
   },
   {
+    "context": "Editor && (extension == csv || extension == tsv || extension == ssv || extension == psv)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-k v": "tabular_data::OpenPreviewToTheSide",
+      "ctrl-shift-v": "tabular_data::OpenPreview",
+    },
+  },
+  {
     "context": "Editor && mode == full",
     "bindings": {
       "ctrl-shift-o": "outline::Toggle",
@@ -827,6 +835,12 @@
     },
   },
   {
+    "context": "Editor && inline_input",
+    "bindings": {
+      "enter": "menu::Confirm",
+    },
+  },
+  {
     "context": "Editor && showing_completions",
     "bindings": {
       "enter": "editor::ConfirmCompletion",
@@ -1028,6 +1042,8 @@
       "right": "git_panel::ExpandSelectedEntry",
       "up": "git_panel::PreviousEntry",
       "down": "git_panel::NextEntry",
+      "shift-up": "menu::SelectPrevious",
+      "shift-down": "menu::SelectNext",
       "enter": "menu::Confirm",
       "alt-y": "git::StageFile",
       "alt-shift-y": "git::UnstageFile",
@@ -1040,7 +1056,7 @@
       "alt-ctrl-shift-c": "workspace::CopyRelativePath",
       "tab": "git_panel::FocusEditor",
       "shift-tab": "git_panel::FocusEditor",
-      "escape": "git_panel::ToggleFocus",
+      "escape": "menu::Cancel",
       "alt-enter": "menu::SecondaryConfirm",
       "delete": ["git::RestoreFile", { "skip_prompt": false }],
       "backspace": ["git::RestoreFile", { "skip_prompt": false }],
@@ -1384,6 +1400,12 @@
       "ctrl-shift-c": "keymap_editor::CopyContext",
       "ctrl-t": "keymap_editor::ShowMatchingKeybinds",
       "ctrl-e": "zed::OpenKeymapFile",
+    },
+  },
+  {
+    "context": "KeymapEditor > BufferSearchBar",
+    "bindings": {
+      "alt-ctrl-f": "keymap_editor::ToggleKeystrokeSearch",
     },
   },
   {

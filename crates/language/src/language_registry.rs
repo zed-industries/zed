@@ -19,7 +19,7 @@ use futures::{
     future::{BoxFuture, FutureExt as _},
 };
 use globset::GlobSet;
-use gpui::{App, BackgroundExecutor};
+use gpui::{App, BackgroundExecutor, EntityId, Subscription};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -89,16 +89,24 @@ impl std::fmt::Display for LanguageNotFound {
     }
 }
 
-#[derive(Clone, Default)]
-struct ServerStatusSender {
-    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<BinaryStatusUpdate>>>>,
-}
-
 #[derive(Clone)]
 pub struct BinaryStatusUpdate {
     pub name: LanguageServerName,
     pub worktree_id: WorktreeId,
     pub binary_status: BinaryStatus,
+}
+
+type ServerStatus = (Option<EntityId>, BinaryStatusUpdate);
+
+#[derive(Clone, Default)]
+struct ServerStatusSender {
+    state: Arc<Mutex<ServerStatusSenderState>>,
+}
+
+#[derive(Default)]
+struct ServerStatusSenderState {
+    next_subscription_id: usize,
+    txs: HashMap<usize, mpsc::UnboundedSender<ServerStatus>>,
 }
 
 pub struct LoadedLanguage {
@@ -901,6 +909,20 @@ impl LanguageRegistry {
             .unwrap_or_default()
     }
 
+    pub fn lsp_adapter(
+        &self,
+        language_name: &LanguageName,
+        server_name: &LanguageServerName,
+    ) -> Option<Arc<CachedLspAdapter>> {
+        self.state
+            .read()
+            .lsp_adapters
+            .get(language_name)?
+            .iter()
+            .find(|adapter| adapter.name() == *server_name)
+            .cloned()
+    }
+
     pub fn all_lsp_adapters(&self) -> Vec<Arc<CachedLspAdapter>> {
         self.state
             .read()
@@ -915,7 +937,16 @@ impl LanguageRegistry {
     }
 
     pub fn update_lsp_binary_status(&self, binary_update_info: BinaryStatusUpdate) {
-        self.lsp_binary_status_tx.send(binary_update_info);
+        self.lsp_binary_status_tx.send(None, binary_update_info);
+    }
+
+    pub fn update_lsp_binary_status_for_entity(
+        &self,
+        source: EntityId,
+        binary_update_info: BinaryStatusUpdate,
+    ) {
+        self.lsp_binary_status_tx
+            .send(Some(source), binary_update_info);
     }
 
     pub fn next_language_server_id(&self) -> LanguageServerId {
@@ -959,7 +990,9 @@ impl LanguageRegistry {
         Some(server)
     }
 
-    pub fn language_server_binary_statuses(&self) -> mpsc::UnboundedReceiver<BinaryStatusUpdate> {
+    pub fn language_server_binary_statuses(
+        &self,
+    ) -> (mpsc::UnboundedReceiver<ServerStatus>, Subscription) {
         self.lsp_binary_status_tx.subscribe()
     }
 }
@@ -1056,14 +1089,41 @@ impl LanguageRegistryState {
 }
 
 impl ServerStatusSender {
-    fn subscribe(&self) -> mpsc::UnboundedReceiver<BinaryStatusUpdate> {
+    fn subscribe(&self) -> (mpsc::UnboundedReceiver<ServerStatus>, Subscription) {
         let (tx, rx) = mpsc::unbounded();
-        self.txs.lock().push(tx);
-        rx
+        let subscription_id = {
+            let mut state = self.state.lock();
+            let subscription_id = post_inc(&mut state.next_subscription_id);
+            state.txs.insert(subscription_id, tx);
+            subscription_id
+        };
+        let state = self.state.clone();
+        let subscription = Subscription::new(move || {
+            state.lock().txs.remove(&subscription_id);
+        });
+        (rx, subscription)
     }
 
-    fn send(&self, binary_status_update: BinaryStatusUpdate) {
-        let mut txs = self.txs.lock();
-        txs.retain(|tx| tx.unbounded_send(binary_status_update.clone()).is_ok());
+    fn send(&self, source: Option<EntityId>, binary_status_update: BinaryStatusUpdate) {
+        let mut state = self.state.lock();
+        state.txs.retain(|_, tx| {
+            tx.unbounded_send((source, binary_status_update.clone()))
+                .is_ok()
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_server_status_subscription_unregisters_sender() {
+        let sender = ServerStatusSender::default();
+        let (_receiver, subscription) = sender.subscribe();
+        assert_eq!(sender.state.lock().txs.len(), 1);
+
+        drop(subscription);
+        assert!(sender.state.lock().txs.is_empty());
     }
 }

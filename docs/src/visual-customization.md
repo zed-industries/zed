@@ -358,7 +358,12 @@ TBD: Centered layout related settings
     // Show/hide a button that displays the buffer's character encoding.
     // If set to "non_utf8", the button is hidden only for UTF-8 without BOM.
     // Defaults to "non_utf8".
-    "active_encoding_button": "non_utf8"
+    "active_encoding_button": "non_utf8",
+    // Show/hide an indicator with a countdown while timed multi-stroke
+    // input is pending. Hovering it pauses the timeout. Unless the which-key
+    // menu is enabled, hovering also lists the bindings that could still match.
+    // Defaults to true.
+    "pending_keystrokes_indicator": true
   },
   "global_lsp_settings": {
     // Show/hide the LSP button in the status bar.
@@ -608,7 +613,8 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "auto_fold_dirs": true,       // Fold dirs with single subdir
     "scrollbar": {                // Project panel scrollbar settings
       "show": null                // Show/hide: (auto, system, always, never)
-    }
+    },
+    "multi_buffer_hide_symbols": false  // Hide symbols in multi-buffer views (show only files)
   }
 ```
 

@@ -22,7 +22,7 @@ use extension::{
 };
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use futures::{AsyncReadExt, FutureExt, StreamExt, io::BufReader};
-use gpui::{AppContext as _, BackgroundExecutor, Entity, TaskExt, TestAppContext};
+use gpui::{AppContext as _, BackgroundExecutor, Entity, EntityId, TaskExt, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{
     BinaryStatus, LanguageConfig, LanguageMatcher, LanguageName, LanguageRegistry, QueryFiles,
@@ -834,6 +834,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+    let lsp_store_id = project.read_with(cx, |project, _| project.lsp_store().entity_id());
     language_extension::init(
         LspAccess::ViaLspStore(
             project
@@ -845,7 +846,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     );
     let node_runtime = NodeRuntime::unavailable();
 
-    let mut status_updates = language_registry.language_server_binary_statuses();
+    let (mut status_updates, _status_updates_subscription) =
+        language_registry.language_server_binary_statuses();
 
     struct FakeLanguageServerVersion {
         version: String,
@@ -1071,7 +1073,14 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
                 "awaiting status_updates #1",
                 5,
                 status_updates.next().map(|update| {
-                    update.map(|update| (update.name, update.worktree_id, update.binary_status))
+                    update.map(|update| {
+                        (
+                            update.0,
+                            update.1.name,
+                            update.1.worktree_id,
+                            update.1.binary_status,
+                        )
+                    })
                 })
             )
             .await
@@ -1081,7 +1090,14 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
                 "awaiting status_updates #2",
                 5,
                 status_updates.next().map(|update| {
-                    update.map(|update| (update.name, update.worktree_id, update.binary_status))
+                    update.map(|update| {
+                        (
+                            update.0,
+                            update.1.name,
+                            update.1.worktree_id,
+                            update.1.binary_status,
+                        )
+                    })
                 })
             )
             .await
@@ -1091,7 +1107,14 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
                 "awaiting status_updates #3",
                 5,
                 status_updates.next().map(|update| {
-                    update.map(|update| (update.name, update.worktree_id, update.binary_status))
+                    update.map(|update| {
+                        (
+                            update.0,
+                            update.1.name,
+                            update.1.worktree_id,
+                            update.1.binary_status,
+                        )
+                    })
                 })
             )
             .await
@@ -1101,7 +1124,14 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
                 "awaiting status_updates #4",
                 5,
                 status_updates.next().map(|update| {
-                    update.map(|update| (update.name, update.worktree_id, update.binary_status))
+                    update.map(|update| {
+                        (
+                            update.0,
+                            update.1.name,
+                            update.1.worktree_id,
+                            update.1.binary_status,
+                        )
+                    })
                 })
             )
             .await
@@ -1109,21 +1139,25 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         ],
         [
             (
+                Some(lsp_store_id),
                 LanguageServerName::new_static("gleam"),
                 worktree_id,
                 BinaryStatus::Starting
             ),
             (
+                Some(lsp_store_id),
                 LanguageServerName::new_static("gleam"),
                 worktree_id,
                 BinaryStatus::CheckingForUpdate
             ),
             (
+                Some(lsp_store_id),
                 LanguageServerName::new_static("gleam"),
                 worktree_id,
                 BinaryStatus::Downloading
             ),
             (
+                Some(lsp_store_id),
                 LanguageServerName::new_static("gleam"),
                 worktree_id,
                 BinaryStatus::None
@@ -4130,6 +4164,7 @@ impl Extension for FakeExtension {
         _language_server_id: LanguageServerName,
         _language_name: LanguageName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Command> {
         anyhow::bail!("not supported by FakeExtension")
     }
@@ -4139,6 +4174,7 @@ impl Extension for FakeExtension {
         _language_server_id: LanguageServerName,
         _language_name: LanguageName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Option<String>> {
         anyhow::bail!("not supported by FakeExtension")
     }
@@ -4147,6 +4183,7 @@ impl Extension for FakeExtension {
         &self,
         _language_server_id: LanguageServerName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Option<String>> {
         anyhow::bail!("not supported by FakeExtension")
     }
@@ -4155,6 +4192,7 @@ impl Extension for FakeExtension {
         &self,
         _language_server_id: LanguageServerName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Option<String>> {
         anyhow::bail!("not supported by FakeExtension")
     }
@@ -4163,6 +4201,7 @@ impl Extension for FakeExtension {
         &self,
         _language_server_id: LanguageServerName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Option<String>> {
         anyhow::bail!("not supported by FakeExtension")
     }
@@ -4172,6 +4211,7 @@ impl Extension for FakeExtension {
         _language_server_id: LanguageServerName,
         _target_language_server_id: LanguageServerName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Option<String>> {
         anyhow::bail!("not supported by FakeExtension")
     }
@@ -4181,6 +4221,7 @@ impl Extension for FakeExtension {
         _language_server_id: LanguageServerName,
         _target_language_server_id: LanguageServerName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Option<String>> {
         anyhow::bail!("not supported by FakeExtension")
     }

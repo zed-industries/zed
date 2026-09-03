@@ -25,9 +25,10 @@ use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::IconName;
 
+use language_model::chat_completion::ChatCompletionEventMapper;
 use open_ai::completion::token_usage_from_response_usage;
 pub use open_ai::completion::{
-    ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
+    ChatCompletionMaxTokensParameter, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response,
 };
 
@@ -669,7 +670,7 @@ impl LanguageModel for OpenAiLanguageModel {
             let completions = self.stream_completion(request, cx);
             let executor = cx.background_executor().clone();
             async move {
-                let mapper = OpenAiEventMapper::new();
+                let mapper = ChatCompletionEventMapper::new();
                 Ok(stream_in_background(
                     mapper.map_stream(completions.await?).boxed(),
                     executor,

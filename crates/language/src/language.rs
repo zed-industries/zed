@@ -39,7 +39,7 @@ use collections::{HashMap, HashSet};
 use futures::Future;
 use futures::future::LocalBoxFuture;
 use futures::lock::OwnedMutexGuard;
-use gpui::{App, AsyncApp, Entity};
+use gpui::{App, AsyncApp, Entity, EntityId};
 use http_client::HttpClient;
 
 pub use language_core::{
@@ -494,6 +494,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn worktree_root_path(&self) -> &Path;
     fn resolve_relative_path(&self, path: PathBuf) -> PathBuf;
     fn update_status(&self, binary_status_update: BinaryStatusUpdate);
+    fn status_source_id(&self) -> EntityId;
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 

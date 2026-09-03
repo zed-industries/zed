@@ -516,8 +516,8 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 
 accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
-accesskit_unix = "0.21.0"
-accesskit_windows = "0.33.1"
+accesskit_unix = "0.22"
+accesskit_windows = "0.34"
 agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
@@ -624,7 +624,7 @@ foreign-types = "0.5"
 fork = "0.4.0"
 futures = "0.3.32"
 futures-concurrency = "7.7.1"
-futures-lite = "1.13"
+futures-lite = "2"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
 globset = "0.4"
 handlebars = "4.3"
@@ -686,19 +686,22 @@ minidumper = "0.11"
 moka = { version = "0.12.10", features = ["sync"] }
 nanoid = "0.4"
 nbformat = "1.2.0"
-nix = "0.29"
+nix = "0.30"
 notify-rust = "4"
 nucleo = "0.5"
 num-format = "0.4.4"
 objc = "0.2"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "NSAlert",
+    "NSApplication",
     "NSButton",
     "NSControl",
     "NSGraphics",
     "NSResponder",
     "NSView",
     "NSWindow",
+    "block2",
     "objc2-core-foundation",
 ] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
@@ -729,7 +732,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
 ] }
 objc2-user-notifications = "0.3"
 open = "5.0.0"
-ordered-float = "2.1.1"
+ordered-float = "5"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
 parse_int = "0.9"
@@ -760,7 +763,7 @@ prost-types = "0.14"
 protox = "0.9"
 proxyvars = "0.2"
 pulldown-cmark = { version = "0.13.0", default-features = false }
-quick-xml = "0.38"
+quick-xml = "0.41"
 quote = "1.0.9"
 rand = "0.9"
 raw-window-handle = "0.6"
@@ -821,7 +824,7 @@ strum = { version = "0.28", features = ["derive"] }
 swash = "0.2.6"
 syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
 sys-locale = "0.3.1"
-sysinfo = "0.37.0"
+sysinfo = "0.39"
 take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
@@ -880,8 +883,8 @@ usvg = { version = "0.46.0", default-features = false }
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 vte = { version = "0.15.0", features = ["ansi"] }
 walkdir = "2.5"
-wasm-encoder = "0.252"
-wasmparser = "0.252"
+wasm-encoder = "0.254"
+wasmparser = "0.254"
 wasmtime = { version = "48", default-features = false, features = [
     "anyhow",
     "async",
@@ -901,7 +904,7 @@ webpki-roots = "1.0.8"
 webrtc-sys = "0.3.23"
 wgpu = "29.0.4"
 which = "8"
-windows-core = "0.61"
+windows-core = "0.62"
 windows-registry = "0.6.0"
 yaml-rust2 = "0.8"
 yawc = { git = "https://github.com/zed-industries/yawc", rev = "71a452f551cac178367eaac5d7418a09afa1f3a2", version = "0.3.3" }
@@ -909,7 +912,7 @@ zeroize = "1.8"
 zstd = "0.11"
 
 [workspace.dependencies.windows]
-version = "0.61"
+version = "0.62"
 features = [
     "Data_Xml_Dom",
     "Foundation_Numerics",
@@ -984,6 +987,18 @@ libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev =
 notify = { git = "https://github.com/zed-industries/notify", rev = "0890bbb8ca40a4b5d1f67031698dd7918b37d991" }
 notify-types = { git = "https://github.com/zed-industries/notify", rev = "0890bbb8ca40a4b5d1f67031698dd7918b37d991" }
 webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "0a1c519cfce9b365229026b55de9b9dbdb6fed3c" }
+
+# corgi runs build.rs/proc-macros in a sandbox with no write access outside the
+# action's own OUT_DIR. Upstream `scratch` bakes its build-time OUT_DIR in via
+# `env!` and hands every crate one shared directory, which the sandbox can't
+# grant and a content-addressed build can't share. This patch reads OUT_DIR at
+# runtime, so each build script gets a private, writable dir in its own entry —
+# where cxx-build writes its shared cxxbridge headers. Kept local rather than a
+# cxx git fork so Windows cargo builds are unaffected (a git checkout of cxx
+# needs symlink support that Windows CI lacks). webrtc-sys is self-contained, so
+# per-crate scratch dirs are sufficient. Upstream issue:
+# https://github.com/dtolnay/cxx/issues/1752
+scratch = { path = "corgi-patches/scratch" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

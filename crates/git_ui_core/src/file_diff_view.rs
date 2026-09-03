@@ -3,7 +3,7 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{
-    Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyUnstagedDiffHunkDelegate,
+    Editor, EditorEvent, EditorSettings, HiddenUnstagedDiffHunkRenderer, MultiBuffer,
     SplittableEditor,
 };
 use futures::{FutureExt, select_biased};
@@ -124,8 +124,7 @@ impl FileDiffView {
                 window,
                 cx,
             );
-            splittable
-                .set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
+            splittable.set_diff_hunk_renderer(Some(Arc::new(HiddenUnstagedDiffHunkRenderer)), cx);
             splittable
         });
 
@@ -214,13 +213,14 @@ pub async fn build_buffer_diff(
     let language_registry = new_buffer.read_with(cx, |buffer, _| buffer.language_registry());
 
     let diff = cx.new(|cx| {
-        BufferDiff::new(
+        let mut diff = BufferDiff::new(
             &new_buffer_snapshot.text,
             new_buffer_snapshot.language().cloned(),
             language_registry,
-            buffer_diff::DiffBaseKind::Custom,
             cx,
-        )
+        );
+        diff.set_operations(Arc::new(buffer_diff::RestoreDiffOperations));
+        diff
     });
 
     diff.update(cx, |diff, cx| {

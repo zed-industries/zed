@@ -29,5 +29,8 @@ tracing.workspace = true
 util.workspace = true
 ztracing.workspace = true
 
+[dev-dependencies]
+util = { workspace = true, features = ["test-support"] }
+
 [package.metadata.cargo-shear]
 ignored = ["tracing"]

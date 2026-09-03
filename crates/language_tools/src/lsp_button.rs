@@ -343,13 +343,23 @@ impl LanguageServerState {
             {
                 let server_name = server_name.clone();
                 let worktree_id = *worktree_id;
+                let project = self
+                    .workspace
+                    .upgrade()
+                    .map(|w| w.read(cx).project().downgrade());
                 let has_logs = lsp_logs
                     .read(cx)
                     .language_server_id_for_name_and_worktree(&server_name, worktree_id)
                     .map_or(false, |id| {
-                        lsp_logs
-                            .read(cx)
-                            .has_server_logs(&LanguageServerSelector::Id(id))
+                        if let Some(ref project) = project {
+                            lsp_logs.read(cx).has_server_logs(
+                                &LanguageServerSelector::Id(id),
+                                project,
+                                &self.lsp_store,
+                            )
+                        } else {
+                            false
+                        }
                     });
                 let state = cx.entity().downgrade();
                 let workspace = self.workspace.clone();
@@ -415,7 +425,15 @@ impl LanguageServerState {
                 .lsp_store
                 .update(cx, |lsp_store, _| lsp_store.as_remote().is_some())
                 .unwrap_or(false);
-            let has_logs = is_remote || lsp_logs.read(cx).has_server_logs(&server_selector);
+            let has_logs = is_remote
+                || self.workspace.upgrade().is_some_and(|workspace| {
+                    let project = workspace.read(cx).project();
+                    lsp_logs.read(cx).has_server_logs(
+                        &server_selector,
+                        &project.downgrade(),
+                        &self.lsp_store,
+                    )
+                });
 
             let (status_color, status_label) = server_info
                 .binary_status
@@ -2235,7 +2253,13 @@ mod tests {
         );
         assert!(
             log_store.read_with(cx, |store, _| {
-                store.has_server_logs(&LanguageServerSelector::Id(server_id))
+                let project_weak = project.downgrade();
+                let lsp_store_ref = project.read_with(cx, |p, _| p.lsp_store().downgrade());
+                store.has_server_logs(
+                    &LanguageServerSelector::Id(server_id),
+                    &project_weak,
+                    &lsp_store_ref,
+                )
             }),
             "the retained entry keeps the logs recorded before the stop",
         );
