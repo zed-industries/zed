@@ -11,6 +11,13 @@
     "int8" "int16" "int32" "int64" "rune" "string" "uint" "uint8" "uint16" "uint32" "uint64"
     "uintptr"))
 
+; Type parameters (Go generics, since 1.18). In tree-sitter-go the parameter
+; name is an `identifier` node (not `type_identifier`), so this rule sits after
+; the `(identifier) @variable` catch-all above to override it. The constraint
+; type (e.g. `int` in `[T int]`) is already captured by `(type_identifier) @type`.
+(type_parameter_declaration
+  name: (identifier) @type.parameter)
+
 (field_identifier) @property
 
 (package_identifier) @namespace
@@ -68,7 +75,6 @@
   "!"
   "!="
   "..."
-  "*"
   "*"
   "*="
   "/"
@@ -136,6 +142,24 @@
 
 (escape_sequence) @string.escape
 
+; Highlight struct tags (e.g. `json:"name,omitempty"`) as special strings. They
+; sit on `field_declaration` nodes and are almost always interpreted string
+; literals, but raw string literals are also valid.
+(field_declaration
+  tag: [
+    (interpreted_string_literal)
+    (raw_string_literal)
+  ] @string.special)
+
+; Highlight import paths as special strings.
+; This covers both plain (`import "fmt"`) and aliased (`import foo "bar/pkg"`)
+; import specifications. The `path` field is always a string literal.
+(import_spec
+  path: [
+    (interpreted_string_literal)
+    (raw_string_literal)
+  ] @string.special)
+
 [
   (int_literal)
   (float_literal)
@@ -144,6 +168,12 @@
 
 (const_spec
   name: (identifier) @constant)
+
+; Go convention: SCREAMING_SNAKE_CASE identifiers are treated as constants
+; regardless of whether they are declared with `const` or `var`. Placed after
+; the `(identifier) @variable` catch-all so it overrides it.
+((identifier) @constant
+  (#match? @constant "^_*[A-Z][A-Z0-9_]*$"))
 
 [
   (true)
