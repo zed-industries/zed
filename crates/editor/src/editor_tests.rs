@@ -18,7 +18,7 @@ use crate::{
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use collections::{HashMap, HashSet};
 use fs::Fs as _;
-use futures::{StreamExt, channel::oneshot};
+use futures::{FutureExt, StreamExt, channel::oneshot};
 use gpui::{
     BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
     VisualTestContext, WindowBounds, WindowOptions, div,
@@ -35446,10 +35446,15 @@ async fn test_dynamic_document_highlight_registration_refreshes_editor(cx: &mut 
         .into_response()
         .unwrap();
     cx.run_until_parked();
-    document_highlight_requests
-        .next()
-        .await
-        .expect("adding an applicable selector should refresh document highlights");
+    let document_highlight_request = document_highlight_requests.next().fuse();
+    let timeout = cx.background_executor.timer(Duration::from_secs(5)).fuse();
+    futures::pin_mut!(document_highlight_request, timeout);
+    futures::select! {
+        request = document_highlight_request => {
+            request.expect("adding an applicable selector should refresh document highlights");
+        }
+        _ = timeout => panic!("timed out waiting for a document highlight request"),
+    }
     cx.run_until_parked();
 
     assert!(cx.editor(|editor, _, _| {
