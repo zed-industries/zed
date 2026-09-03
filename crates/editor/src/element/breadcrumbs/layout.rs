@@ -300,6 +300,9 @@ pub(super) fn breadcrumb_path_is_navigable(
 }
 
 pub(super) const SEGMENT_TRIGGER_PADDING_X: f32 = 2.;
+/// `ButtonSize::None` still applies `px_px()` - one pixel each side - so the wrapper has to
+/// cancel that too, or every clickable segment paints two pixels wider than `widths` says.
+pub(super) const BUTTON_LIKE_EDGE_PX: f32 = 1.;
 // The trigger fills the bar so its hover and hit area cover the whole row; `ButtonSize::None`
 // would otherwise pin it to 16px inside a 22px bar and leave the edges dead.
 pub(super) const SEGMENT_TRIGGER_HEIGHT: f32 = 22.;
@@ -360,6 +363,11 @@ impl BreadcrumbStrip {
                 .as_ref()
                 .is_some_and(|target| target.matches_listing(listing))
         })
+    }
+
+    #[cfg(test)]
+    pub fn measured_widths_for_test(&self, window: &mut Window) -> Vec<Pixels> {
+        self.measure(window).widths
     }
 
     fn effective_text_style(&self, window: &Window) -> gpui::TextStyle {
@@ -566,6 +574,9 @@ impl BreadcrumbStrip {
             .child(div().px(px(SEGMENT_TRIGGER_PADDING_X)).child(label))
             .when(!menu_open, |this| {
                 this.tooltip(move |_, cx| {
+                    // The chord opens the active file's parent directory, so it only belongs on
+                    // directory segments; the file and symbol segments would advertise a shortcut
+                    // that never opens their own listing.
                     let title: SharedString = match tooltip_target.as_ref() {
                         BreadcrumbSegmentTarget::Directory { path, .. } => {
                             if path.is_empty() {
@@ -588,15 +599,15 @@ impl BreadcrumbStrip {
                             }
                         }
                     };
+                    let chord: Option<&dyn Action> =
+                        segment_tooltip_shows_navigation_chord(tooltip_target.as_ref())
+                            .then_some(&OpenBreadcrumbNavigation);
                     if copyable_path {
-                        Tooltip::with_meta(
-                            title,
-                            Some(&OpenBreadcrumbNavigation),
-                            "Right-click to copy this path",
-                            cx,
-                        )
+                        Tooltip::with_meta(title, chord, "Right-click to copy this path", cx)
+                    } else if let Some(chord) = chord {
+                        Tooltip::for_action(title, chord, cx)
                     } else {
-                        Tooltip::for_action(title, &OpenBreadcrumbNavigation, cx)
+                        Tooltip::simple(title, cx)
                     }
                 })
             })
@@ -619,7 +630,7 @@ impl BreadcrumbStrip {
         let mut wrapper = div()
             .id(element_id)
             .debug_selector(move || debug_selector(debug_index))
-            .mx(px(-SEGMENT_TRIGGER_PADDING_X));
+            .mx(px(-(SEGMENT_TRIGGER_PADDING_X + BUTTON_LIKE_EDGE_PX)));
 
         if copyable_path {
             let editor = editor.clone();
@@ -802,11 +813,6 @@ impl gpui::Element for BreadcrumbStrip {
             protected_index,
         );
 
-        enum FinalItem {
-            Segment(usize),
-            Ellipsis(Range<usize>),
-        }
-
         let segment_count = kinds.len();
         let mut sequence = Vec::with_capacity(plan.visible.len() + plan.ellipses.len());
         let mut index = 0;
@@ -831,14 +837,7 @@ impl gpui::Element for BreadcrumbStrip {
         // but removing it claims the trail ends where it does not. Collapsing it into an
         // ellipsis keeps `render_ellipsis` resolving to the target it hides.
         if sequence.len() > 1 && !tail_is_protected {
-            let tail_start = sequence
-                .iter()
-                .rev()
-                .skip(1)
-                .fold(bounds.origin.x, |x, item| match item {
-                    FinalItem::Segment(index) => x + metrics.widths[*index] + gap,
-                    FinalItem::Ellipsis(_) => x + metrics.ellipsis_width + gap,
-                });
+            let tail_start = folded_tail_start(bounds.origin.x, &sequence, metrics);
             let tail_index = match sequence.last() {
                 Some(FinalItem::Segment(index)) => Some(*index),
                 _ => None,
@@ -1042,6 +1041,36 @@ fn highlighted_text_runs(
     runs
 }
 
+enum FinalItem {
+    Segment(usize),
+    Ellipsis(Range<usize>),
+}
+
+/// The `OpenBreadcrumbNavigation` chord opens the active file's parent directory, so a segment's
+/// tooltip may name it only when that is what activating the segment does - the directory
+/// segments. The file and symbol segments open their own listing by click alone.
+pub(super) fn segment_tooltip_shows_navigation_chord(target: &BreadcrumbSegmentTarget) -> bool {
+    matches!(target, BreadcrumbSegmentTarget::Directory { .. })
+}
+
+/// Where the tail begins: the sum of every item before it. Each measured width already
+/// carries its trailing gap, so adding the inter-item gap again here overestimated the sum by
+/// a gap per item and folded tails that fit.
+fn folded_tail_start(
+    origin: Pixels,
+    sequence: &[FinalItem],
+    metrics: &BreadcrumbSegmentMetrics,
+) -> Pixels {
+    sequence
+        .iter()
+        .rev()
+        .skip(1)
+        .fold(origin, |x, item| match item {
+            FinalItem::Segment(index) => x + metrics.widths[*index],
+            FinalItem::Ellipsis(_) => x + metrics.ellipsis_width,
+        })
+}
+
 fn measure_dirty_filename_width(
     text: &str,
     segment: &HighlightedText,
@@ -1110,4 +1139,59 @@ pub(super) fn apply_dirty_filename_style(
             .with_default_highlights(text_style, highlight)
             .into_any(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::px;
+
+    #[test]
+    fn test_only_directory_segments_advertise_the_navigation_chord() {
+        use util::rel_path::rel_path;
+
+        let directory = BreadcrumbSegmentTarget::Directory {
+            worktree_id: project::WorktreeId::from_usize(0),
+            path: rel_path("src").into_arc(),
+        };
+        assert!(
+            segment_tooltip_shows_navigation_chord(&directory),
+            "a directory segment: the chord opens its listing"
+        );
+
+        let symbol = BreadcrumbSegmentTarget::Symbol {
+            buffer_id: language::BufferId::new(1).unwrap(),
+            item: None,
+        };
+        assert!(
+            !segment_tooltip_shows_navigation_chord(&symbol),
+            "file and symbol segments: the chord opens the parent directory, not this listing"
+        );
+    }
+
+    #[test]
+    fn test_tail_start_counts_each_item_once() {
+        let metrics = BreadcrumbSegmentMetrics {
+            widths: vec![px(40.), px(60.), px(50.)],
+            chrome_widths: vec![px(10.), px(10.), px(10.)],
+            ellipsis_width: px(20.),
+            ellipsis_chrome_width: px(12.),
+            protected_index: None,
+            kinds: vec![
+                BreadcrumbSegmentKind::Middle,
+                BreadcrumbSegmentKind::Middle,
+                BreadcrumbSegmentKind::File,
+            ],
+        };
+        let sequence = vec![
+            FinalItem::Segment(0),
+            FinalItem::Ellipsis(1..2),
+            FinalItem::Segment(2),
+        ];
+        assert_eq!(
+            folded_tail_start(px(100.), &sequence, &metrics),
+            px(160.),
+            "each width already carries its trailing gap; adding the gap again folded tails              that fit"
+        );
+    }
 }

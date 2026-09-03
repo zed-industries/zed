@@ -75,8 +75,11 @@ pub(super) fn single_child_directory(children: &[(Arc<RelPath>, bool)]) -> Optio
     }
 }
 
+/// Gated on the tab family for the same reason as the git colour: the bar describes the open
+/// file the way a tab does, and it stands in for the prefix icon, which follows
+/// `tabs.file_icons` too. The panel family stays with the menu's rows.
 pub(super) fn breadcrumb_file_icon(path: Option<&RelPath>, cx: &App) -> Option<SharedString> {
-    if !BreadcrumbListingSettings::get_global(cx).file_icons {
+    if !workspace::ItemSettings::get_global(cx).file_icons {
         return None;
     }
     file_icons::FileIcons::get_icon(path?.as_std_path(), cx)
