@@ -5,6 +5,11 @@ impl Editor {
         if self.read_only(cx) || self.mode.is_single_line() {
             return;
         }
+        // Rewrapping edits the buffer directly instead of going through `transact`, so the
+        // shared expansion in `start_transaction_at` never runs for it. Without this, a rewrap
+        // reflows a collapsed buffer while it stays collapsed and the change is invisible.
+        // Both snapshots below are taken afterwards, so they see the expanded buffer.
+        self.unfold_buffers_with_selections(cx);
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(&self.display_snapshot(cx));
 

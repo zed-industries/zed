@@ -2220,7 +2220,13 @@ impl Editor {
             bail!("`name` or `snippet` is required")
         };
 
-        self.insert_snippet(&insertion_ranges, snippet, window, cx)
+        // The other callers of `insert_snippet` already run inside a transaction; this one
+        // needs its own so that inserting into a collapsed buffer expands it.
+        let mut result = Ok(());
+        self.transact(window, cx, |this, window, cx| {
+            result = this.insert_snippet(&insertion_ranges, snippet, window, cx);
+        });
+        result
     }
 }
 

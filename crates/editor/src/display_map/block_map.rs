@@ -2489,6 +2489,19 @@ impl BlockSnapshot {
         matches!(transform.block, Some(Block::FoldedBuffer { .. }))
     }
 
+    /// Whether `row` is hidden behind a collapsed buffer, as opposed to any other kind of
+    /// replacement block.
+    #[ztracing::instrument(skip_all)]
+    pub(super) fn is_line_in_folded_buffer(&self, row: MultiBufferRow) -> bool {
+        let wrap_point = self
+            .wrap_snapshot
+            .make_wrap_point(Point::new(row.0, 0), Bias::Left);
+        let (_, _, item) = self
+            .transforms
+            .find::<WrapRow, _>((), &wrap_point.row(), Bias::Right);
+        item.is_some_and(|transform| matches!(transform.block, Some(Block::FoldedBuffer { .. })))
+    }
+
     #[ztracing::instrument(skip_all)]
     pub(super) fn is_line_replaced(&self, row: MultiBufferRow) -> bool {
         let wrap_point = self

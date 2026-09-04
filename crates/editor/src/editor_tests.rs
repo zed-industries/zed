@@ -27797,6 +27797,101 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
     }
 }
 
+/// Restoring is driven by the hunks handed to it, not by the selections, so the shared expansion
+/// in `start_transaction_at` does not cover it. The per-hunk restore buttons and the restore-all
+/// command both pass hunks for a buffer the cursor may not be in.
+#[gpui::test]
+async fn test_restoring_hunks_in_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let base_text_1 = "aaaa\nbbbb\ncccc";
+    let base_text_2 = "dddd\neeee\nffff";
+    let buffer_1 = cx.new(|cx| Buffer::local("Xaaa\nXbbb\nXccc", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("Xddd\nXeee\nXfff", cx));
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        for (index, buffer) in [buffer_1.clone(), buffer_2.clone()].into_iter().enumerate() {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(index as u64),
+                buffer,
+                [Point::new(0, 0)..Point::new(2, 4)],
+                0,
+                cx,
+            );
+        }
+        multibuffer
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let (editor, cx) = cx
+        .add_window_view(|window, cx| build_editor_with_project(project, multibuffer, window, cx));
+    editor.update_in(cx, |editor, _window, cx| {
+        editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
+        for (buffer, base_text) in [
+            (buffer_1.clone(), base_text_1),
+            (buffer_2.clone(), base_text_2),
+        ] {
+            let diff = cx.new(|cx| {
+                BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx)
+            });
+            editor
+                .buffer
+                .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
+        }
+    });
+    cx.executor().run_until_parked();
+
+    let buffer_1_id = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
+    let buffer_2_id = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
+
+    editor.update_in(cx, |editor, window, cx| {
+        // The cursor sits in the buffer that is *not* being restored, so a selection-based
+        // expansion would leave the restored buffer collapsed.
+        let elsewhere = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot
+                .excerpts_for_buffer(buffer_2_id)
+                .next()
+                .expect("the second buffer is excerpted");
+            snapshot
+                .anchor_in_excerpt(excerpt.context.start)
+                .expect("the second buffer's excerpt start has a multibuffer anchor")
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([elsewhere..elsewhere]);
+        });
+        editor.fold_buffer(buffer_1_id, cx);
+        assert!(editor.is_buffer_folded(buffer_1_id, cx));
+
+        let hunks = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let range = snapshot
+                .range_for_buffer(buffer_1_id)
+                .expect("the first buffer is excerpted");
+            let range = snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end);
+            editor
+                .diff_hunks_in_ranges(std::slice::from_ref(&range), &snapshot)
+                .collect::<Vec<_>>()
+        };
+        assert!(!hunks.is_empty(), "the folded buffer should have hunks");
+        editor.apply_restore(hunks, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    editor.update(cx, |editor, cx| {
+        // Without the restore having changed anything the unfold assertion would pass
+        // vacuously, so check that the hunks really were restored.
+        assert_eq!(buffer_1.read(cx).text(), base_text_1);
+        assert!(
+            !editor.is_buffer_folded(buffer_1_id, cx),
+            "restoring hunks edited the buffer without expanding it, \
+             leaving the change invisible"
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -41197,6 +41292,1512 @@ async fn test_next_prev_reference(cx: &mut TestAppContext) {
 
     _move(Direction::Prev, 2, &mut cx).await;
     cx.assert_editor_state(CYCLE_POSITIONS[1]);
+}
+
+/// A cursor can sit on a collapsed buffer's row without any click: folding the buffer that
+/// holds the only selection parks it there, and so does restoring or programmatically setting
+/// selections. Editing through such a cursor must behave exactly as it would with the buffer
+/// expanded, and must expand it so the change is visible.
+///
+/// This covers the whole family of editing actions at once rather than one guard per action:
+/// each one is run twice on identical multibuffers, once with the buffer expanded and once with
+/// it collapsed, and the two must agree. Every action is run against three selection shapes, so
+/// that the case families - indentation, sorting, case conversion, word motion, multi-selection
+/// - each have something to actually do rather than passing as a no-op.
+///
+/// Not covered here: `AutoIndent`, `Rewrap`, `UnwrapSyntaxNode` and `WrapSelectionsInTag` all
+/// need a real grammar to do anything, and the plain buffers this fixture builds leave them as
+/// no-ops in both runs, which would make them look tested without testing anything.
+#[gpui::test]
+async fn test_edit_actions_in_folded_buffer_match_the_expanded_buffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    type ActionFn = Box<dyn Fn(&mut Editor, &mut Window, &mut Context<Editor>)>;
+
+    fn texts_match(expanded: &str, folded: &str) -> bool {
+        expanded == folded
+    }
+
+    /// `ShuffleLines` reorders at random, so only the set of lines it produced can be compared.
+    /// The texts being compared are debug-escaped, so the line breaks are a literal `\n`.
+    fn texts_match_ignoring_line_order(expanded: &str, folded: &str) -> bool {
+        let lines = |text: &str| {
+            let mut lines = text
+                .replace(['"', '|'], "")
+                .split("\\n")
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            lines.sort();
+            lines
+        };
+        lines(expanded) == lines(folded)
+    }
+
+    /// The uuid actions generate a fresh identifier on every run, so their results can only be
+    /// compared by length and by the text surrounding the identifier.
+    fn texts_match_ignoring_generated_id(expanded: &str, folded: &str) -> bool {
+        fn without_hex(text: &str) -> String {
+            text.chars()
+                .filter(|c| !c.is_ascii_hexdigit() && *c != '-')
+                .collect()
+        }
+        expanded.len() == folded.len() && without_hex(expanded) == without_hex(folded)
+    }
+
+    let cases: Vec<(&str, ActionFn, fn(&str, &str) -> bool)> = vec![
+        (
+            "newline",
+            Box::new(|editor, window, cx| editor.newline(&Newline, window, cx)),
+            texts_match,
+        ),
+        (
+            "newline_above",
+            Box::new(|editor, window, cx| editor.newline_above(&NewlineAbove, window, cx)),
+            texts_match,
+        ),
+        (
+            "newline_below",
+            Box::new(|editor, window, cx| editor.newline_below(&NewlineBelow, window, cx)),
+            texts_match,
+        ),
+        (
+            "paste",
+            Box::new(|editor, window, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string("PASTED".into()));
+                editor.paste(&Paste, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "backspace",
+            Box::new(|editor, window, cx| editor.backspace(&Backspace, window, cx)),
+            texts_match,
+        ),
+        (
+            "delete",
+            Box::new(|editor, window, cx| editor.delete(&Delete, window, cx)),
+            texts_match,
+        ),
+        (
+            "delete_line",
+            Box::new(|editor, window, cx| editor.delete_line(&DeleteLine, window, cx)),
+            texts_match,
+        ),
+        (
+            "delete_to_end_of_line",
+            Box::new(|editor, window, cx| {
+                editor.delete_to_end_of_line(&DeleteToEndOfLine, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "delete_to_next_word_end",
+            Box::new(|editor, window, cx| {
+                editor.delete_to_next_word_end(&DeleteToNextWordEnd::default(), window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "cut",
+            Box::new(|editor, window, cx| editor.cut(&Cut, window, cx)),
+            texts_match,
+        ),
+        (
+            "tab",
+            Box::new(|editor, window, cx| editor.tab(&Tab, window, cx)),
+            texts_match,
+        ),
+        (
+            "indent",
+            Box::new(|editor, window, cx| editor.indent(&Indent, window, cx)),
+            texts_match,
+        ),
+        (
+            "outdent",
+            Box::new(|editor, window, cx| editor.outdent(&Outdent, window, cx)),
+            texts_match,
+        ),
+        (
+            "toggle_comments",
+            Box::new(|editor, window, cx| {
+                editor.toggle_comments(&ToggleComments::default(), window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "duplicate_line_down",
+            Box::new(|editor, window, cx| {
+                editor.duplicate_line_down(&DuplicateLineDown, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "sort_lines_case_sensitive",
+            Box::new(|editor, window, cx| {
+                editor.sort_lines_case_sensitive(&SortLinesCaseSensitive, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "reverse_lines",
+            Box::new(|editor, window, cx| editor.reverse_lines(&ReverseLines, window, cx)),
+            texts_match,
+        ),
+        (
+            "convert_to_upper_case",
+            Box::new(|editor, window, cx| {
+                editor.convert_to_upper_case(&ConvertToUpperCase, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "move_line_down",
+            Box::new(|editor, window, cx| editor.move_line_down(&MoveLineDown, window, cx)),
+            texts_match,
+        ),
+        (
+            "transpose",
+            Box::new(|editor, window, cx| editor.transpose(&Transpose, window, cx)),
+            texts_match,
+        ),
+        (
+            "join_lines",
+            Box::new(|editor, window, cx| editor.join_lines(&JoinLines, window, cx)),
+            texts_match,
+        ),
+        (
+            "cut_to_end_of_line",
+            Box::new(|editor, window, cx| {
+                editor.cut_to_end_of_line(&CutToEndOfLine::default(), window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "kill_ring_cut",
+            Box::new(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx)),
+            texts_match,
+        ),
+        (
+            "paste_item",
+            Box::new(|editor, window, cx| {
+                editor.paste_item(&ClipboardItem::new_string("PASTED".into()), window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "delete_to_beginning_of_line",
+            Box::new(|editor, window, cx| {
+                editor.delete_to_beginning_of_line(&DeleteToBeginningOfLine::default(), window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "delete_to_previous_word_start",
+            Box::new(|editor, window, cx| {
+                editor.delete_to_previous_word_start(
+                    &DeleteToPreviousWordStart::default(),
+                    window,
+                    cx,
+                )
+            }),
+            texts_match,
+        ),
+        (
+            "toggle_block_comments",
+            Box::new(|editor, window, cx| {
+                editor.toggle_block_comments(&ToggleBlockComments, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "unique_lines_case_sensitive",
+            Box::new(|editor, window, cx| {
+                editor.unique_lines_case_sensitive(&UniqueLinesCaseSensitive, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "align_selections",
+            Box::new(|editor, window, cx| editor.align_selections(&AlignSelections, window, cx)),
+            texts_match,
+        ),
+        (
+            "rotate_selections_forward",
+            Box::new(|editor, window, cx| {
+                editor.rotate_selections_forward(&RotateSelectionsForward, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "duplicate_selection",
+            Box::new(|editor, window, cx| {
+                editor.duplicate_selection(&DuplicateSelection, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "delete_to_next_subword_end",
+            Box::new(|editor, window, cx| {
+                editor.delete_to_next_subword_end(&DeleteToNextSubwordEnd::default(), window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "delete_to_previous_subword_start",
+            Box::new(|editor, window, cx| {
+                editor.delete_to_previous_subword_start(
+                    &DeleteToPreviousSubwordStart::default(),
+                    window,
+                    cx,
+                )
+            }),
+            texts_match,
+        ),
+        (
+            "sort_lines_case_insensitive",
+            Box::new(|editor, window, cx| {
+                editor.sort_lines_case_insensitive(&SortLinesCaseInsensitive, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "sort_lines_by_length",
+            Box::new(|editor, window, cx| {
+                editor.sort_lines_by_length(&SortLinesByLength, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "unique_lines_case_insensitive",
+            Box::new(|editor, window, cx| {
+                editor.unique_lines_case_insensitive(&UniqueLinesCaseInsensitive, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "shuffle_lines",
+            Box::new(|editor, window, cx| editor.shuffle_lines(&ShuffleLines, window, cx)),
+            texts_match_ignoring_line_order,
+        ),
+        (
+            "convert_to_lower_case",
+            Box::new(|editor, window, cx| {
+                editor.convert_to_lower_case(&ConvertToLowerCase, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "convert_to_title_case",
+            Box::new(|editor, window, cx| {
+                editor.convert_to_title_case(&ConvertToTitleCase, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "convert_to_snake_case",
+            Box::new(|editor, window, cx| {
+                editor.convert_to_snake_case(&ConvertToSnakeCase, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "convert_to_kebab_case",
+            Box::new(|editor, window, cx| {
+                editor.convert_to_kebab_case(&ConvertToKebabCase, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "convert_to_upper_camel_case",
+            Box::new(|editor, window, cx| {
+                editor.convert_to_upper_camel_case(&ConvertToUpperCamelCase, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "convert_to_lower_camel_case",
+            Box::new(|editor, window, cx| {
+                editor.convert_to_lower_camel_case(&ConvertToLowerCamelCase, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "convert_to_opposite_case",
+            Box::new(|editor, window, cx| {
+                editor.convert_to_opposite_case(&ConvertToOppositeCase, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "convert_to_sentence_case",
+            Box::new(|editor, window, cx| {
+                editor.convert_to_sentence_case(&ConvertToSentenceCase, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "convert_to_rot13",
+            Box::new(|editor, window, cx| editor.convert_to_rot13(&ConvertToRot13, window, cx)),
+            texts_match,
+        ),
+        (
+            "convert_to_rot47",
+            Box::new(|editor, window, cx| editor.convert_to_rot47(&ConvertToRot47, window, cx)),
+            texts_match,
+        ),
+        (
+            "convert_to_base64",
+            Box::new(|editor, window, cx| editor.convert_to_base64(&ConvertToBase64, window, cx)),
+            texts_match,
+        ),
+        (
+            "rotate_selections_backward",
+            Box::new(|editor, window, cx| {
+                editor.rotate_selections_backward(&RotateSelectionsBackward, window, cx)
+            }),
+            texts_match,
+        ),
+        (
+            "duplicate_line_up",
+            Box::new(|editor, window, cx| editor.duplicate_line_up(&DuplicateLineUp, window, cx)),
+            texts_match,
+        ),
+        (
+            "move_line_up",
+            Box::new(|editor, window, cx| editor.move_line_up(&MoveLineUp, window, cx)),
+            texts_match,
+        ),
+        (
+            "insert_snippet",
+            Box::new(|editor, window, cx| {
+                editor.insert_snippet_at_selections(
+                    &InsertSnippet {
+                        language: None,
+                        name: None,
+                        snippet: Some("wrapped($1)".into()),
+                    },
+                    window,
+                    cx,
+                )
+            }),
+            texts_match,
+        ),
+        (
+            "insert_uuid_v7",
+            Box::new(|editor, window, cx| editor.insert_uuid_v7(&InsertUuidV7, window, cx)),
+            texts_match_ignoring_generated_id,
+        ),
+        (
+            "insert_uuid_v4",
+            Box::new(|editor, window, cx| editor.insert_uuid_v4(&InsertUuidV4, window, cx)),
+            texts_match_ignoring_generated_id,
+        ),
+        (
+            "input",
+            Box::new(|editor, window, cx| editor.handle_input("X", window, cx)),
+            texts_match,
+        ),
+        (
+            "ime_composition",
+            Box::new(|editor, window, cx| {
+                editor.replace_and_mark_text_in_range(None, "n", None, window, cx)
+            }),
+            texts_match,
+        ),
+    ];
+
+    // Indented, mixed case, more than one word per line, one repeated line and lines of
+    // differing length, so that the indent, case, sort, unique, reverse and word-motion
+    // families all have something to do rather than quietly passing as no-ops.
+    const FOLDED_TEXT: &str = "    Beta alpha\n    Alpha beta gamma\n    Beta alpha\n  Delta\n";
+    const OTHER_TEXT: &str = "gamma delta\nepsilon zeta\n";
+
+    // A comment syntax is enough to give the comment actions something to toggle.
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["// ".into()],
+            block_comment: Some(BlockCommentConfig {
+                start: "/*".into(),
+                end: "*/".into(),
+                prefix: "* ".into(),
+                tab_size: 1,
+            }),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    /// Where the selections sit when the action runs. Folding parks the cursor at the collapsed
+    /// buffer's first row, but restoring a session, jumping to a search hit or moving a cursor
+    /// before the fold can leave any of these.
+    #[derive(Clone, Copy, Debug)]
+    enum Placement {
+        /// A cursor at the collapsed buffer's first row, where folding parks it.
+        CursorAtStart,
+        /// A cursor part way into the collapsed buffer's second line.
+        CursorMidLine,
+        /// A selection covering the collapsed buffer, plus a cursor in the other buffer, so
+        /// that whole-range and multi-selection actions have something to work with.
+        RangeAndCursorElsewhere,
+    }
+
+    /// Cursor-local edits: a column part way into a line is the discriminating spot, and the
+    /// excerpt boundary adds nothing for an action that only reaches forward from the cursor.
+    const AT_CURSOR: &[Placement] = &[Placement::CursorMidLine];
+
+    /// Edits that reach backwards or upwards out of the line they start on, where the collapsed
+    /// buffer's first row is a real boundary case.
+    const AT_CURSOR_AND_BUFFER_START: &[Placement] =
+        &[Placement::CursorAtStart, Placement::CursorMidLine];
+
+    /// Insertions and deletions that a range spanning the whole collapsed buffer would make
+    /// replace everything it hides - the case the fix exists for - as well as acting at a bare
+    /// cursor.
+    const AT_CURSOR_AND_OVER_RANGE: &[Placement] =
+        &[Placement::CursorMidLine, Placement::RangeAndCursorElsewhere];
+
+    /// Line-wise and whole-selection transforms: a range covering the collapsed buffer gives
+    /// them several lines to reorder, case-fold or comment, which a bare cursor does not.
+    const OVER_SELECTION: &[Placement] = &[Placement::RangeAndCursorElsewhere];
+
+    /// Which placements are meaningful for a given action. Most actions only need one or two of
+    /// the three placements to exercise their behavior against a collapsed buffer; running the
+    /// full Cartesian product for all of them just re-runs identical code paths.
+    fn placements_for(name: &str) -> &'static [Placement] {
+        match name {
+            "input" | "ime_composition" | "paste" | "paste_item" | "newline" | "backspace"
+            | "delete" | "cut" | "insert_snippet" => AT_CURSOR_AND_OVER_RANGE,
+            "transpose"
+            | "newline_above"
+            | "move_line_up"
+            | "duplicate_line_up"
+            | "delete_to_beginning_of_line"
+            | "delete_to_previous_word_start"
+            | "delete_to_previous_subword_start" => AT_CURSOR_AND_BUFFER_START,
+            "newline_below"
+            | "tab"
+            | "delete_to_end_of_line"
+            | "cut_to_end_of_line"
+            | "kill_ring_cut"
+            | "delete_to_next_word_end"
+            | "delete_to_next_subword_end"
+            | "insert_uuid_v7"
+            | "insert_uuid_v4" => AT_CURSOR,
+            _ => OVER_SELECTION,
+        }
+    }
+
+    let mut failures = Vec::new();
+    for (name, run, texts_agree) in cases {
+        for placement in placements_for(name) {
+            let placement = *placement;
+            let mut outcomes = Vec::new();
+            for collapse in [false, true] {
+                let (editor, window_cx) = cx.add_window_view(|window, cx| {
+                    let multi_buffer = MultiBuffer::build_multi(
+                        [
+                            (FOLDED_TEXT, vec![Point::row_range(0..4)]),
+                            (OTHER_TEXT, vec![Point::row_range(0..2)]),
+                        ],
+                        cx,
+                    );
+                    for buffer in multi_buffer.read(cx).all_buffers() {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.set_language(Some(language.clone()), cx)
+                        });
+                    }
+                    Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+                });
+                let mut editor_cx =
+                    EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+                let buffer_ids = editor_cx.multibuffer(|multi_buffer, cx| {
+                    multi_buffer
+                        .snapshot(cx)
+                        .excerpts()
+                        .map(|excerpt| excerpt.context.start.buffer_id)
+                        .collect::<Vec<_>>()
+                });
+
+                outcomes.push(editor_cx.update_editor(|editor, window, cx| {
+                    // Collapse first, then place the selections: no click is involved, and
+                    // folding would otherwise move any selection it finds out of the way.
+                    if collapse {
+                        editor.fold_buffer(buffer_ids[0], cx);
+                    }
+                    let ranges = {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let anchor = |buffer_id, point| {
+                            snapshot
+                                .anchor_in_excerpt(
+                                    snapshot
+                                        .buffer_for_id(buffer_id)
+                                        .unwrap()
+                                        .anchor_before(point),
+                                )
+                                .unwrap()
+                        };
+                        let folded_start = anchor(buffer_ids[0], Point::new(0, 0));
+                        match placement {
+                            Placement::CursorAtStart => vec![folded_start..folded_start],
+                            Placement::CursorMidLine => {
+                                let mid = anchor(buffer_ids[0], Point::new(1, 8));
+                                vec![mid..mid]
+                            }
+                            Placement::RangeAndCursorElsewhere => {
+                                // The whole buffer, not part of it: a range reaching into a
+                                // collapsed buffer resolves to everything that buffer holds,
+                                // which is what `resolve_selections_wrapping_blocks` is for. A
+                                // partial range would legitimately differ between the two runs.
+                                let folded_end = anchor(buffer_ids[0], Point::new(4, 0));
+                                let elsewhere = anchor(buffer_ids[1], Point::new(0, 6));
+                                vec![folded_start..folded_end, elsewhere..elsewhere]
+                            }
+                        }
+                    };
+                    editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| selections.select_ranges(ranges),
+                    );
+                    assert_eq!(
+                        editor.is_buffer_folded(buffer_ids[0], cx),
+                        collapse,
+                        "{name}/{placement:?}: buffer should start out {}",
+                        if collapse { "collapsed" } else { "expanded" }
+                    );
+
+                    run(editor, window, cx);
+
+                    // Both buffers, so that an action moving text across the excerpt boundary
+                    // cannot hide in the buffer this test does not look at.
+                    let text_of = |buffer_id, cx: &mut Context<Editor>| {
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .all_buffers()
+                            .into_iter()
+                            .find(|buffer| buffer.read(cx).remote_id() == buffer_id)
+                            .expect("the edited buffer is still in the multibuffer")
+                            .read(cx)
+                            .text()
+                    };
+                    let text = format!(
+                        "{:?} | {:?}",
+                        text_of(buffer_ids[0], cx),
+                        text_of(buffer_ids[1], cx)
+                    );
+                    (text, editor.is_buffer_folded(buffer_ids[0], cx))
+                }));
+            }
+
+            let unedited = format!("{FOLDED_TEXT:?} | {OTHER_TEXT:?}");
+            let (expanded_text, _) = &outcomes[0];
+            let (collapsed_text, still_collapsed) = &outcomes[1];
+            if !texts_agree(expanded_text, collapsed_text) {
+                failures.push(format!(
+                    "{name} with {placement:?} edited a collapsed buffer differently than an \
+                     expanded one:\n\x20   expanded:  {expanded_text}\n     collapsed: \
+                     {collapsed_text}"
+                ));
+            } else if *collapsed_text != unedited && *still_collapsed {
+                failures.push(format!(
+                    "{name} with {placement:?} edited a collapsed buffer without expanding it, \
+                     leaving the change invisible"
+                ));
+            }
+        }
+    }
+
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+#[gpui::test]
+async fn test_selecting_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    let buffer_ids = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let second_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[1]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([second_buffer_start..second_buffer_start]);
+        });
+        editor.fold_buffer(buffer_ids[0], cx);
+
+        let first_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        let folded_buffer_position =
+            first_buffer_start.to_display_point(&editor.display_snapshot(cx));
+        editor.begin_selection(folded_buffer_position, false, 3, window, cx);
+        editor.end_selection(window, cx);
+
+        // `assert_excerpts_with_selections` below compares heads only, so it cannot tell this
+        // apart from a selection that widened to cover everything the collapsed buffer hid.
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            editor.selections.newest::<Point>(&snapshot).range(),
+            Point::new(0, 0)..Point::new(1, 0),
+            "the triple click must select the clicked line, not the whole collapsed region"
+        );
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        alpha
+        ˇbeta
+        [EXCERPT]
+        gamma
+        delta
+        "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete(&Delete, window, cx);
+        editor.handle_input("X", window, cx);
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        Xˇbeta
+        [EXCERPT]
+        gamma
+        delta
+        "});
+}
+
+/// The same click, but on the *second* buffer. Expanding a buffer replaces its collapsed row
+/// with a header row, which is not a position a display point can clip to, so a display point
+/// taken before the expansion cannot be reused after it: clipping it leftwards lands at the end
+/// of the previous buffer.
+#[gpui::test]
+async fn test_selecting_second_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    let buffer_ids = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let first_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([first_buffer_start..first_buffer_start]);
+        });
+        editor.fold_buffer(buffer_ids[1], cx);
+
+        let second_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[1]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        let folded_buffer_position =
+            second_buffer_start.to_display_point(&editor.display_snapshot(cx));
+        editor.begin_selection(folded_buffer_position, false, 1, window, cx);
+        editor.end_selection(window, cx);
+
+        assert!(
+            !editor.is_buffer_folded(buffer_ids[1], cx),
+            "clicking into a collapsed buffer must expand it"
+        );
+        let snapshot = editor.display_snapshot(cx);
+        assert!(
+            editor.selections.newest::<Point>(&snapshot).is_empty(),
+            "the click must leave a cursor, not a range"
+        );
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        alpha
+        beta
+        [EXCERPT]
+        ˇgamma
+        delta
+        "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("X", window, cx);
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        alpha
+        beta
+        [EXCERPT]
+        Xˇgamma
+        delta
+        "});
+}
+
+#[gpui::test]
+async fn test_additive_selection_in_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    let buffer_ids = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let second_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[1]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        let second_buffer_position =
+            second_buffer_start.to_display_point(&editor.display_snapshot(cx));
+        editor.begin_selection(second_buffer_position, false, 1, window, cx);
+        editor.end_selection(window, cx);
+        editor.fold_buffer(buffer_ids[0], cx);
+
+        let first_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        let folded_buffer_position =
+            first_buffer_start.to_display_point(&editor.display_snapshot(cx));
+        editor.begin_selection(folded_buffer_position, true, 1, window, cx);
+        editor.end_selection(window, cx);
+
+        assert!(!editor.is_buffer_folded(buffer_ids[0], cx));
+
+        let display_snapshot = editor.display_snapshot(cx);
+        let selections = editor.selections.all::<Point>(&display_snapshot);
+        assert_eq!(selections.len(), 2);
+        assert!(
+            selections.iter().all(|selection| selection.is_empty()),
+            "adding a cursor must not select the folded buffer's contents: {selections:?}"
+        );
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇalpha
+        beta
+        [EXCERPT]
+        ˇgamma
+        delta
+        "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.insert("X", window, cx);
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        Xˇalpha
+        beta
+        [EXCERPT]
+        Xˇgamma
+        delta
+        "});
+}
+
+#[gpui::test]
+async fn test_editing_selection_in_buffer_folded_afterwards_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    let buffer_ids = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let first_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([first_buffer_start..first_buffer_start]);
+        });
+        editor.fold_buffer(buffer_ids[0], cx);
+        assert!(editor.is_buffer_folded(buffer_ids[0], cx));
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        ˇ[EXCERPT]
+        gamma
+        delta
+        "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.insert("X", window, cx);
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        Xˇalpha
+        beta
+        [EXCERPT]
+        gamma
+        delta
+        "});
+}
+
+#[gpui::test]
+async fn test_newline_in_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = folded_buffer_with_parked_cursor(cx).await;
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+
+        ˇalpha
+        beta
+        [EXCERPT]
+        gamma
+        delta
+        "});
+}
+
+#[gpui::test]
+async fn test_paste_in_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = folded_buffer_with_parked_cursor(cx).await;
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string("PASTED".into()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        PASTEDˇalpha
+        beta
+        [EXCERPT]
+        gamma
+        delta
+        "});
+}
+
+/// `Rewrap` edits the buffer directly rather than through `transact`, so it does not reach the
+/// shared expansion in `start_transaction_at` and needs its own.
+#[gpui::test]
+async fn test_rewrap_in_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    // Longer than the 40 column limit set below, so that rewrapping has to reflow it.
+    const PARAGRAPH: &str =
+        "the quick brown fox jumps over the lazy dog and keeps running\nand running\n";
+
+    init_test(cx, |settings| {
+        settings.defaults.allow_rewrap = Some(language_settings::RewrapBehavior::Anywhere);
+        settings.defaults.preferred_line_length = Some(40);
+    });
+
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                (PARAGRAPH, vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+    let buffer_ids = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let folded_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([folded_start..folded_start]);
+        });
+        editor.fold_buffer(buffer_ids[0], cx);
+        assert!(editor.is_buffer_folded(buffer_ids[0], cx));
+
+        editor.rewrap(RewrapOptions::default(), cx);
+
+        let text = editor
+            .buffer()
+            .read(cx)
+            .all_buffers()
+            .into_iter()
+            .find(|buffer| buffer.read(cx).remote_id() == buffer_ids[0])
+            .expect("the rewrapped buffer is still in the multibuffer")
+            .read(cx)
+            .text();
+
+        // Without the rewrap having done anything the unfold assertion below would pass
+        // vacuously, so check that the paragraph really was reflowed.
+        assert_ne!(text, PARAGRAPH, "rewrap left the paragraph unchanged");
+        assert!(
+            !editor.is_buffer_folded(buffer_ids[0], cx),
+            "rewrap edited the buffer without expanding it, leaving the change invisible"
+        );
+    });
+}
+
+/// Two cursors inside the same collapsed buffer must stay two cursors, at the positions they
+/// actually hold. They land on the same display row, so coalescing in display coordinates would
+/// see one selection and act once where the expanded buffer acts twice. `Tab` and `Cut` both
+/// resolve their selections before opening a transaction, so they see this before the shared
+/// expansion in `start_transaction_at` can help.
+#[gpui::test]
+async fn test_two_cursors_in_folded_buffer_stay_two_cursors(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    async fn two_cursors_in_folded_buffer(
+        cx: &mut TestAppContext,
+        reversed: [bool; 2],
+    ) -> (EditorTestContext, BufferId) {
+        let (editor, window_cx) = cx.add_window_view(|window, cx| {
+            let multi_buffer = MultiBuffer::build_multi(
+                [
+                    ("alpha\nbeta\ngamma\n", vec![Point::row_range(0..3)]),
+                    ("delta\n", vec![Point::row_range(0..1)]),
+                ],
+                cx,
+            );
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+        let mut cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+        let buffer_id = cx.multibuffer(|multi_buffer, cx| {
+            multi_buffer
+                .snapshot(cx)
+                .excerpts()
+                .next()
+                .unwrap()
+                .context
+                .start
+                .buffer_id
+        });
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_buffer(buffer_id, cx);
+            let (first, third) = {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let anchor = |point| {
+                    snapshot
+                        .anchor_in_excerpt(
+                            snapshot
+                                .buffer_for_id(buffer_id)
+                                .unwrap()
+                                .anchor_before(point),
+                        )
+                        .unwrap()
+                };
+                (anchor(Point::new(0, 0)), anchor(Point::new(2, 0)))
+            };
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select(
+                    [first, third]
+                        .into_iter()
+                        .zip(reversed)
+                        .enumerate()
+                        .map(|(id, (cursor, reversed))| Selection {
+                            id,
+                            start: cursor,
+                            end: cursor,
+                            reversed,
+                            goal: SelectionGoal::None,
+                        })
+                        .collect(),
+                );
+            });
+        });
+        (cx, buffer_id)
+    }
+
+    let text_of = |cx: &mut EditorTestContext, buffer_id| {
+        cx.update_editor(|editor, _, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .find(|buffer| buffer.read(cx).remote_id() == buffer_id)
+                .unwrap()
+                .read(cx)
+                .text()
+        })
+    };
+
+    // A cursor keeps whatever `reversed` the range it collapsed from had, so the two can
+    // disagree. Direction describes which end a range grew from and means nothing for a
+    // cursor, so none of these combinations may change the outcome.
+    for reversed in [[false, false], [true, true], [false, true], [true, false]] {
+        let (mut cx, buffer_id) = two_cursors_in_folded_buffer(cx, reversed).await;
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let selections = editor.selections.all::<Point>(&snapshot);
+            assert_eq!(
+                selections
+                    .iter()
+                    .map(|selection| selection.range())
+                    .collect::<Vec<_>>(),
+                vec![
+                    Point::new(0, 0)..Point::new(0, 0),
+                    Point::new(2, 0)..Point::new(2, 0)
+                ],
+                "the two cursors must resolve where they are, not merge or build a range, \
+                 reversed: {reversed:?}"
+            );
+            editor.cut(&Cut, window, cx);
+        });
+        assert_eq!(
+            text_of(&mut cx, buffer_id),
+            "beta\n",
+            "cut must take each cursor's line, the way it would with the buffer expanded, \
+             reversed: {reversed:?}"
+        );
+    }
+
+    {
+        let (mut cx, buffer_id) = two_cursors_in_folded_buffer(cx, [false, false]).await;
+        cx.update_editor(|editor, window, cx| editor.tab(&Tab, window, cx));
+        assert_eq!(
+            text_of(&mut cx, buffer_id),
+            "    alpha\nbeta\n    gamma\n",
+            "tab must indent each cursor's line, the way it would with the buffer expanded"
+        );
+    }
+}
+
+/// A range reaching into a collapsed buffer keeps wrapping around it, which is what
+/// [`resolve_selections_wrapping_blocks`] is for and how a selection that reaches any
+/// replacement block comes to cover it. Only cursors are exempt.
+#[gpui::test]
+async fn test_range_in_folded_buffer_still_wraps_the_block(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\ngamma\n", vec![Point::row_range(0..3)]),
+                ("delta\n", vec![Point::row_range(0..1)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+    let buffer_id = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .next()
+            .unwrap()
+            .context
+            .start
+            .buffer_id
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_buffer(buffer_id, cx);
+        let (start, middle) = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let anchor = |point| {
+                snapshot
+                    .anchor_in_excerpt(
+                        snapshot
+                            .buffer_for_id(buffer_id)
+                            .unwrap()
+                            .anchor_before(point),
+                    )
+                    .unwrap()
+            };
+            (anchor(Point::new(0, 0)), anchor(Point::new(1, 0)))
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([start..middle]);
+        });
+
+        let snapshot = editor.display_snapshot(cx);
+        let resolved = editor.selections.all::<Point>(&snapshot);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            (resolved[0].start, resolved[0].end),
+            (Point::new(0, 0), Point::new(3, 0)),
+            "a range inside a collapsed buffer covers the whole block it is drawn as"
+        );
+    });
+}
+
+/// Selecting a line with the cursor parked in a collapsed buffer expands it first. A collapsed
+/// buffer draws every one of its rows as a single replacement row, so a selection made inside
+/// one is invisible - the editor renders it as a bare cursor - and the next edit would land on
+/// text the user cannot see.
+#[gpui::test]
+async fn test_select_line_in_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = folded_buffer_with_parked_cursor(cx).await;
+
+    cx.update_editor(|editor, window, cx| {
+        editor.select_line(&SelectLine, window, cx);
+        let buffer_id = editor
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .excerpts()
+            .next()
+            .unwrap()
+            .context
+            .start
+            .buffer_id;
+        assert!(
+            !editor.is_buffer_folded(buffer_id, cx),
+            "selecting a line inside a collapsed buffer must expand it"
+        );
+        let snapshot = editor.display_snapshot(cx);
+        let resolved = editor.selections.all::<Point>(&snapshot);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            (resolved[0].start, resolved[0].end),
+            (Point::new(0, 0), Point::new(1, 0)),
+            "the collapsed buffer's first line should be selected, not the whole buffer"
+        );
+
+        let rendered = editor.selections.all_display(&snapshot);
+        assert_eq!(rendered.len(), 1);
+        assert!(
+            !rendered[0].is_empty(),
+            "the selected line must be visible, not drawn as a bare cursor: {rendered:?}"
+        );
+    });
+}
+
+/// Yanking the kill ring into a collapsed buffer. The ring is a global, so it is seeded from a
+/// separate editor: seeding it with `kill_ring_cut` in this editor would expand the buffer
+/// before the yank ever ran, and the case would prove nothing.
+#[gpui::test]
+async fn test_kill_ring_yank_in_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    {
+        let (source_editor, source_cx) = cx.add_window_view(|window, cx| {
+            Editor::new(
+                EditorMode::full(),
+                MultiBuffer::build_simple("YANKED\n", cx),
+                None,
+                window,
+                cx,
+            )
+        });
+        let mut source_cx = EditorTestContext::for_editor_in(source_editor, source_cx).await;
+        source_cx.update_editor(|editor, window, cx| {
+            editor.kill_ring_cut(&KillRingCut, window, cx);
+        });
+    }
+
+    let mut cx = folded_buffer_with_parked_cursor(cx).await;
+
+    cx.update_editor(|editor, window, cx| {
+        editor.kill_ring_yank(&KillRingYank, window, cx);
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇYANKEDalpha
+        beta
+        [EXCERPT]
+        gamma
+        delta
+        "});
+}
+
+/// Dropping dragged text onto a collapsed buffer expands that buffer. The dragged text comes
+/// from a different buffer, so the current selection is nowhere near the drop target and the
+/// shared expansion in `start_transaction_at` cannot cover this.
+#[gpui::test]
+async fn test_dropping_text_on_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+    let buffer_ids = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let second_buffer = snapshot
+            .excerpts_for_buffer(buffer_ids[1])
+            .next()
+            .expect("the second buffer is excerpted");
+        let dragged_start = snapshot
+            .anchor_in_excerpt(second_buffer.context.start)
+            .unwrap();
+        let dragged_end = snapshot
+            .anchor_in_excerpt(
+                snapshot
+                    .buffer_for_id(buffer_ids[1])
+                    .unwrap()
+                    .anchor_after(Point::new(0, "gamma".len() as u32)),
+            )
+            .unwrap();
+
+        // The selection sits on the dragged text, in the buffer that is *not* collapsed.
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([dragged_start..dragged_end]);
+        });
+        editor.fold_buffer(buffer_ids[0], cx);
+        assert!(editor.is_buffer_folded(buffer_ids[0], cx));
+
+        let dragged = Selection {
+            id: 0,
+            start: dragged_start,
+            end: dragged_end,
+            reversed: false,
+            goal: SelectionGoal::None,
+        };
+        let drop_target = snapshot
+            .anchor_in_excerpt(
+                snapshot
+                    .excerpts_for_buffer(buffer_ids[0])
+                    .next()
+                    .unwrap()
+                    .context
+                    .start,
+            )
+            .unwrap()
+            .to_display_point(&editor.display_snapshot(cx));
+
+        editor.move_selection_on_drop(&dragged, drop_target, true, window, cx);
+
+        assert!(
+            !editor.is_buffer_folded(buffer_ids[0], cx),
+            "dropping into a collapsed buffer must expand it"
+        );
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        gammaˇalpha
+        beta
+        [EXCERPT]
+
+        delta
+        "});
+}
+
+/// The same drop, but onto the *second* buffer, where the display point taken before the
+/// expansion no longer describes the drop target afterwards.
+#[gpui::test]
+async fn test_dropping_text_on_second_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+    let buffer_ids = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let first_buffer = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+        let dragged_start = snapshot
+            .anchor_in_excerpt(first_buffer.context.start)
+            .unwrap();
+        let dragged_end = snapshot
+            .anchor_in_excerpt(
+                snapshot
+                    .buffer_for_id(buffer_ids[0])
+                    .unwrap()
+                    .anchor_after(Point::new(0, "alpha".len() as u32)),
+            )
+            .unwrap();
+
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([dragged_start..dragged_end]);
+        });
+        editor.fold_buffer(buffer_ids[1], cx);
+
+        let dragged = Selection {
+            id: 0,
+            start: dragged_start,
+            end: dragged_end,
+            reversed: false,
+            goal: SelectionGoal::None,
+        };
+        let drop_target = snapshot
+            .anchor_in_excerpt(
+                snapshot
+                    .excerpts_for_buffer(buffer_ids[1])
+                    .next()
+                    .unwrap()
+                    .context
+                    .start,
+            )
+            .unwrap()
+            .to_display_point(&editor.display_snapshot(cx));
+
+        editor.move_selection_on_drop(&dragged, drop_target, true, window, cx);
+
+        assert!(
+            !editor.is_buffer_folded(buffer_ids[1], cx),
+            "dropping into a collapsed buffer must expand it"
+        );
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+
+        beta
+        [EXCERPT]
+        alphaˇgamma
+        delta
+        "});
+}
+
+/// Builds a two-buffer multibuffer, collapses the first buffer and leaves the cursor parked
+/// inside it. No click is involved: folding a buffer that holds the only selection parks the
+/// fallback cursor on that buffer's own row, which is also how navigating onto a collapsed
+/// buffer leaves it.
+async fn folded_buffer_with_parked_cursor(cx: &mut TestAppContext) -> EditorTestContext {
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    let buffer_ids = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let first_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([first_buffer_start..first_buffer_start]);
+        });
+        editor.fold_buffer(buffer_ids[0], cx);
+        assert!(editor.is_buffer_folded(buffer_ids[0], cx));
+    });
+
+    cx
 }
 
 #[gpui::test]

@@ -1258,17 +1258,51 @@ where
     D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
-    // Transforms `Anchor -> DisplayPoint -> Point -> DisplayPoint -> D`
+    // Transforms `Anchor -> Point -> DisplayPoint -> Point -> D`
     // todo(lw): We should be able to short circuit the `Anchor -> DisplayPoint -> Point` to `Anchor -> Point`
-    let (to_convert, selections) = resolve_selections_display(selections, map).tee();
-    let mut converted_endpoints =
-        map.buffer_snapshot()
-            .dimensions_from_points::<D>(to_convert.flat_map(|s| {
-                let start = map.display_point_to_point(s.start, Bias::Left);
-                let end = map.display_point_to_point(s.end, Bias::Right);
-                assert!(start <= end, "start: {:?}, end: {:?}", start, end);
-                [start, end]
-            }));
+    //
+    // Coalescing happens after the round trip rather than in display coordinates, so that it sees
+    // the same positions the caller will: collapsed content puts every position in a buffer on one
+    // display point, and coalescing there would merge cursors the expanded buffer keeps apart.
+    // This is also what the `has_collapsed_content` shortcut above does.
+    let wrapped_around_blocks = resolve_selections_point(selections, map).map(move |s| {
+        let (start, end) =
+            if s.start == s.end && map.is_line_in_folded_buffer(MultiBufferRow(s.start.row)) {
+                // A cursor inside a collapsed buffer keeps the position it actually holds. The round
+                // trip would otherwise bias its start to the beginning of that buffer and its end to
+                // the far edge of it, so the cursor would resolve to a range covering everything the
+                // buffer hides and the next edit would replace all of it. Ranges are left alone:
+                // wrapping them around the block is this function's documented job, and it is how a
+                // selection reaching a replacement block comes to cover it.
+                (s.start, s.start)
+            } else {
+                let display_start = map.point_to_display_point(s.start, Bias::Left);
+                let display_end = map.point_to_display_point(
+                    s.end,
+                    if s.start == s.end {
+                        Bias::Right
+                    } else {
+                        Bias::Left
+                    },
+                );
+                (
+                    map.display_point_to_point(display_start, Bias::Left),
+                    map.display_point_to_point(display_end, Bias::Right),
+                )
+            };
+        assert!(start <= end, "start: {:?}, end: {:?}", start, end);
+        Selection {
+            id: s.id,
+            start,
+            end,
+            reversed: s.reversed,
+            goal: s.goal,
+        }
+    });
+    let (to_convert, selections) = coalesce_selections(wrapped_around_blocks).tee();
+    let mut converted_endpoints = map
+        .buffer_snapshot()
+        .dimensions_from_points::<D>(to_convert.flat_map(|s| [s.start, s.end]));
     selections.map(move |s| {
         let start = converted_endpoints.next().unwrap();
         let end = converted_endpoints.next().unwrap();
@@ -1482,6 +1516,71 @@ mod tests {
         );
         assert_eq!(result[0].start, Point::new(1, 1));
         assert_eq!(result[0].end, Point::new(3, 2));
+    }
+
+    /// A cursor inside a folded buffer must resolve to a cursor. A folded buffer is a
+    /// replacement block, so the display round trip biases the selection's start to the
+    /// start of the block and its end to the end of the block; without preserving
+    /// emptiness the cursor would resolve to a range covering the buffer's whole text
+    /// and the next edit would replace all of it.
+    #[gpui::test]
+    fn cursor_in_folded_buffer_resolves_to_a_cursor(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            crate::init(cx);
+        });
+
+        let buffer = cx.update(|cx| {
+            MultiBuffer::build_multi(
+                [
+                    ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                    ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+                ],
+                cx,
+            )
+        });
+        let display_map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                test_font(),
+                px(14.),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+
+        let (snapshot, cursor) = display_map.update(cx, |map, cx| {
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let excerpt = buffer_snapshot.excerpts().next().unwrap();
+            let buffer_id = excerpt.context.start.buffer_id;
+            let cursor = buffer_snapshot
+                .anchor_in_excerpt(excerpt.context.start)
+                .unwrap();
+            map.fold_buffers([buffer_id], cx);
+            (map.snapshot(cx), cursor)
+        });
+        assert!(snapshot.has_collapsed_content());
+
+        let selections = [Selection {
+            id: 0,
+            start: cursor,
+            end: cursor,
+            reversed: false,
+            goal: SelectionGoal::None,
+        }];
+        let resolved = resolve_selections_wrapping_blocks::<Point, _>(selections.iter(), &snapshot)
+            .collect::<Vec<_>>();
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            resolved[0].start, resolved[0].end,
+            "a cursor in a folded buffer must not widen to the folded region: {resolved:?}"
+        );
     }
 
     #[gpui::test(iterations = 20)]

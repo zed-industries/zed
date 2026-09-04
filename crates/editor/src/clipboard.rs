@@ -432,6 +432,7 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        self.unfold_buffers_with_selections(cx);
         let selection_count = self.selections.count();
         let first_selection = self.selections.first_anchor();
         let snapshot = self.buffer.read(cx).snapshot(cx);

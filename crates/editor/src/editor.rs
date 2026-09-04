@@ -7390,12 +7390,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        // The dragged text may come from another buffer, so the shared expansion in
+        // `start_transaction_at` - which only looks at the current selections - would leave a
+        // collapsed drop target collapsed.
+        let (display_map, target) = self.unfold_buffer_at_display_point(target, cx);
         let buffer = display_map.buffer_snapshot();
         let mut edits = Vec::new();
-        let insert_point = display_map
-            .clip_point(target, Bias::Left)
-            .to_point(&display_map);
+        let insert_point = target.to_point(&display_map);
         let text = buffer
             .text_for_range(selection.start..selection.end)
             .collect::<String>();
@@ -7613,9 +7614,9 @@ impl Editor {
                         end_row.previous_row().0,
                         buffer.line_len(end_row.previous_row()),
                     );
-                let insertion_point = display_map
-                    .prev_line_boundary(Point::new(start_row.previous_row().0, 0))
-                    .0;
+                let insertion_point = display_map.prev_line_boundary_ignoring_collapsed_buffers(
+                    Point::new(start_row.previous_row().0, 0),
+                );
 
                 // Don't move lines across excerpts
                 if buffer
@@ -7720,9 +7721,9 @@ impl Editor {
             if end_row.0 <= buffer.max_point().row {
                 let range_to_move =
                     MultiBufferPoint::new(start_row.0, 0)..MultiBufferPoint::new(end_row.0, 0);
-                let insertion_point = display_map
-                    .next_line_boundary(MultiBufferPoint::new(end_row.0, 0))
-                    .0;
+                let insertion_point = display_map.next_line_boundary_ignoring_collapsed_buffers(
+                    MultiBufferPoint::new(end_row.0, 0),
+                );
 
                 // Don't move lines across excerpt boundaries
                 if buffer
@@ -8631,6 +8632,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<TransactionId> {
         self.end_selection(window, cx);
+        self.unfold_buffers_with_selections(cx);
         if let Some(tx_id) = self
             .buffer
             .update(cx, |buffer, cx| buffer.start_transaction_at(now, cx))
@@ -11950,7 +11952,11 @@ fn consume_contiguous_rows(
 
 fn starting_row(selection: &Selection<Point>, display_map: &DisplaySnapshot) -> MultiBufferRow {
     if selection.start.column > 0 {
-        MultiBufferRow(display_map.prev_line_boundary(selection.start).0.row)
+        MultiBufferRow(
+            display_map
+                .prev_line_boundary_ignoring_collapsed_buffers(selection.start)
+                .row,
+        )
     } else {
         MultiBufferRow(selection.start.row)
     }
@@ -11958,7 +11964,12 @@ fn starting_row(selection: &Selection<Point>, display_map: &DisplaySnapshot) -> 
 
 fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) -> MultiBufferRow {
     if next_selection.end.column > 0 || next_selection.is_empty() {
-        MultiBufferRow(display_map.next_line_boundary(next_selection.end).0.row + 1)
+        MultiBufferRow(
+            display_map
+                .next_line_boundary_ignoring_collapsed_buffers(next_selection.end)
+                .row
+                + 1,
+        )
     } else {
         MultiBufferRow(next_selection.end.row)
     }
@@ -12378,8 +12389,8 @@ impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
             end.row -= 1;
         }
 
-        let buffer_start = map.prev_line_boundary(start).0;
-        let buffer_end = map.next_line_boundary(end).0;
+        let buffer_start = map.prev_line_boundary_ignoring_collapsed_buffers(start);
+        let buffer_end = map.next_line_boundary_ignoring_collapsed_buffers(end);
         MultiBufferRow(buffer_start.row)..MultiBufferRow(buffer_end.row + 1)
     }
 }

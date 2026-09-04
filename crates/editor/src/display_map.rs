@@ -2188,6 +2188,38 @@ impl DisplaySnapshot {
             || self.fold_snapshot().is_line_folded(buffer_row)
     }
 
+    /// Whether `buffer_row` is hidden behind a collapsed buffer in a multibuffer.
+    pub fn is_line_in_folded_buffer(&self, buffer_row: MultiBufferRow) -> bool {
+        self.block_snapshot.is_line_in_folded_buffer(buffer_row)
+    }
+
+    pub fn prev_line_boundary_ignoring_collapsed_buffers(
+        &self,
+        point: MultiBufferPoint,
+    ) -> MultiBufferPoint {
+        if self.is_line_in_folded_buffer(MultiBufferRow(point.row)) {
+            MultiBufferPoint::new(point.row, 0)
+        } else {
+            self.prev_line_boundary(point).0
+        }
+    }
+
+    /// The counterpart of [`Self::prev_line_boundary_ignoring_collapsed_buffers`] for
+    /// [`Self::next_line_boundary`].
+    pub fn next_line_boundary_ignoring_collapsed_buffers(
+        &self,
+        point: MultiBufferPoint,
+    ) -> MultiBufferPoint {
+        if self.is_line_in_folded_buffer(MultiBufferRow(point.row)) {
+            MultiBufferPoint::new(
+                point.row,
+                self.buffer_snapshot().line_len(MultiBufferRow(point.row)),
+            )
+        } else {
+            self.next_line_boundary(point).0
+        }
+    }
+
     pub fn is_block_line(&self, display_row: DisplayRow) -> bool {
         self.block_snapshot.is_block_line(BlockRow(display_row.0))
     }
