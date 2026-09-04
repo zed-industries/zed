@@ -45937,3 +45937,124 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
         );
     });
 }
+
+#[gpui::test]
+async fn test_display_row_for_inline_code_action(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.soft_wrap = Some(language::language_settings::SoftWrap::Bounded);
+        settings.defaults.soft_wrap_indent =
+            Some(language::language_settings::SoftWrapIndent::None);
+        settings.defaults.preferred_line_length = Some(25);
+    });
+
+    // 20 spaces indent, then "123456789"
+    let text = "                    123456789";
+    let editor = cx.add_window(|window, cx| {
+        build_editor(
+            multi_buffer::MultiBuffer::build_simple(text, cx),
+            window,
+            cx,
+        )
+    });
+
+    let snapshot = editor
+        .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+        .unwrap();
+
+    // The text wraps after 25 columns.
+    // Indent is 20, plus "12345" is 25. So it wraps before "6789".
+    // Buffer point at column 26 (the '7').
+    let buffer_point = Point::new(0, 26);
+
+    let display_row = snapshot.display_row_for_inline_code_action(buffer_point);
+
+    // With SoftWrapIndent::None, the wrapped line has 0 indent (0 < 4),
+    // so it should snap back to the start of the physical line (DisplayRow 0).
+    assert_eq!(display_row, Some(DisplayRow(0)));
+
+    // Change to SoftWrapIndent::Same, which maintains the 20-space indent
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.soft_wrap = Some(language::language_settings::SoftWrap::Bounded);
+        settings.defaults.soft_wrap_indent =
+            Some(language::language_settings::SoftWrapIndent::Same);
+        settings.defaults.preferred_line_length = Some(25);
+    });
+
+    let snapshot = editor
+        .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+        .unwrap();
+
+    let display_row = snapshot.display_row_for_inline_code_action(buffer_point);
+
+    // With SoftWrapIndent::Same, there is enough space in the gutter,
+    // so it should render on the wrapped display row (DisplayRow 1).
+    assert_eq!(display_row, Some(DisplayRow(1)));
+
+    // 2 spaces of indent at column 0 (< 4), but ExtraTwo wrap adds extra indent (2 + 4 = 6 >= 4) on wrapped line
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.soft_wrap = Some(language::language_settings::SoftWrap::Bounded);
+        settings.defaults.soft_wrap_indent =
+            Some(language::language_settings::SoftWrapIndent::ExtraTwo);
+        settings.defaults.tab_size = std::num::NonZeroU32::new(2);
+        settings.defaults.preferred_line_length = Some(25);
+    });
+
+    let text_with_2_spaces = "  12345678901234567890123456789\n123456789";
+    let editor = cx.add_window(|window, cx| {
+        build_editor(
+            multi_buffer::MultiBuffer::build_simple(text_with_2_spaces, cx),
+            window,
+            cx,
+        )
+    });
+
+    let snapshot = editor
+        .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+        .unwrap();
+
+    let buffer_point = Point::new(0, 26);
+    let display_row = snapshot.display_row_for_inline_code_action(buffer_point);
+
+    // Physical line 0 has 2 spaces indent (< 4), but wrapped DisplayRow(1) has 6 spaces (>= 4).
+    // The code action helper should stay on physical line 0 and render on DisplayRow(1).
+    assert_eq!(display_row, Some(DisplayRow(1)));
+}
+
+#[gpui::test]
+async fn test_soft_wrap_indent_updated_on_language_changed(cx: &mut gpui::TestAppContext) {
+    // Configure Rust to have a different continuation indent behavior than the default.
+    init_test(cx, |settings| {
+        settings.defaults.soft_wrap = Some(language::language_settings::SoftWrap::Bounded);
+        settings.defaults.soft_wrap_indent =
+            Some(language::language_settings::SoftWrapIndent::Same);
+        settings.languages.0.insert(
+            "Rust".into(),
+            LanguageSettingsContent {
+                soft_wrap_indent: Some(language::language_settings::SoftWrapIndent::None),
+                ..Default::default()
+            },
+        );
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _window, cx| {
+        assert_eq!(
+            editor.soft_wrap_indent(cx),
+            language::language_settings::SoftWrapIndent::Same
+        );
+    });
+
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(rust_lang()), cx);
+    });
+
+    cx.update_editor(|editor, _window, cx| {
+        assert_eq!(
+            editor.soft_wrap_indent(cx),
+            language::language_settings::SoftWrapIndent::None
+        );
+    });
+}

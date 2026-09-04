@@ -3237,6 +3237,7 @@ The following settings can be overridden for each specific language:
 - [`show_whitespaces`](#show-whitespaces)
 - [`whitespace_map`](#whitespace-map)
 - [`soft_wrap`](#soft-wrap)
+- [`soft_wrap_indent`](#soft-wrap-indent)
 - [`tab_size`](#tab-size)
 - [`use_autoclose`](#use-autoclose)
 - [`always_treat_brackets_as_autoclosed`](#always-treat-brackets-as-autoclosed)
@@ -4327,6 +4328,19 @@ Positive integer values
 2. `prefer_line` (deprecated, same as `none`)
 3. `editor_width` to wrap lines that overflow the editor width
 4. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
+
+## Soft Wrap Indent
+
+- Description: How to indent soft-wrapped continuation lines.
+- Setting: `soft_wrap_indent`
+- Default: `same`
+
+**Options**
+
+1. `none` to start continuation lines at column 0
+2. `same` to match the original line's indentation
+3. `extra_one` to add 1 extra indent level beyond the original line
+4. `extra_two` to add 2 extra indent levels beyond the original line
 
 ## Show Wrap Guides
 

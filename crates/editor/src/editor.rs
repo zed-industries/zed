@@ -188,7 +188,7 @@ use language::{
     LocalFile, OffsetRangeExt, OutlineItem, Point, Selection, SelectionGoal, TextObject,
     TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
+        self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior, SoftWrapIndent,
         WordsCompletionMode, all_language_settings,
     },
     point_to_lsp, text_diff_with_options,
@@ -2692,6 +2692,10 @@ impl Editor {
                 editor.register_buffer(buffer.read(cx).remote_id(), cx);
             }
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
+        }
+
+        if !is_minimap {
+            editor.apply_soft_wrap_indent(cx);
         }
 
         editor
@@ -10067,6 +10071,7 @@ impl Editor {
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
                 self.update_edit_prediction_settings(cx);
+                self.apply_soft_wrap_indent(cx);
                 cx.notify();
             }
             multi_buffer::Event::SettingsChanged => {
@@ -10262,6 +10267,7 @@ impl Editor {
                 self.clear_disabled_lsp_folding_ranges(window, cx);
                 self.refresh_document_symbols(None, cx);
                 self.refresh_outline_symbols_at_cursor(cx);
+                self.apply_soft_wrap_indent(cx);
             }
 
             if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
@@ -12016,6 +12022,139 @@ impl EditorSnapshot {
         self.display_snapshot
             .buffer_snapshot()
             .language_at(position)
+    }
+
+    pub fn display_row_for_inline_code_action(&self, buffer_point: Point) -> Option<DisplayRow> {
+        // do not show code action for folded line
+        if self.is_line_folded(MultiBufferRow(buffer_point.row)) {
+            return None;
+        }
+
+        // do not show code action for blank line with cursor
+        let line_indent = self
+            .display_snapshot
+            .buffer_snapshot()
+            .line_indent_for_row(MultiBufferRow(buffer_point.row));
+        if line_indent.is_line_blank() {
+            return None;
+        }
+
+        const INLINE_SLOT_CHAR_LIMIT: u32 = 4;
+        const MAX_ALTERNATE_DISTANCE: u32 = 8;
+
+        let is_valid_row = |row_candidate: u32| -> bool {
+            // move to other row if folded row
+            if self.is_line_folded(MultiBufferRow(row_candidate)) {
+                return false;
+            }
+            if buffer_point.row == row_candidate {
+                // move to other row if cursor is in slot
+                if buffer_point.column < INLINE_SLOT_CHAR_LIMIT {
+                    return false;
+                }
+            } else {
+                let candidate_point = MultiBufferPoint {
+                    row: row_candidate,
+                    column: 0,
+                };
+                // move to other row if different excerpt
+                let range = if candidate_point < buffer_point {
+                    candidate_point..buffer_point
+                } else {
+                    buffer_point..candidate_point
+                };
+                if self
+                    .display_snapshot
+                    .buffer_snapshot()
+                    .excerpt_containing(range)
+                    .is_none()
+                {
+                    return false;
+                }
+            }
+            let line_indent = self
+                .display_snapshot
+                .buffer_snapshot()
+                .line_indent_for_row(MultiBufferRow(row_candidate));
+            // use this row if it's blank
+            if line_indent.is_line_blank() {
+                true
+            } else {
+                // use this row if code starts after slot
+                let indent_size = self
+                    .display_snapshot
+                    .buffer_snapshot()
+                    .indent_size_for_line(MultiBufferRow(row_candidate));
+                if indent_size.len >= INLINE_SLOT_CHAR_LIMIT {
+                    true
+                } else if row_candidate == buffer_point.row {
+                    // If the initial line indentation is less than the slot limit,
+                    // check if the cursor is on a soft-wrapped continuation row whose
+                    // wrap indentation provides enough space.
+                    let display_row = self
+                        .display_snapshot
+                        .point_to_display_point(buffer_point, text::Bias::Left)
+                        .row();
+                    if display_row.0 > 0 {
+                        self.display_snapshot
+                            .soft_wrap_indent(DisplayRow(display_row.0 - 1))
+                            .is_some_and(|indent| indent >= INLINE_SLOT_CHAR_LIMIT)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+        };
+
+        let new_buffer_row = if is_valid_row(buffer_point.row) {
+            Some(buffer_point.row)
+        } else {
+            let max_row = self.display_snapshot.buffer_snapshot().max_point().row;
+            (1..=MAX_ALTERNATE_DISTANCE).find_map(|offset| {
+                let row_above = buffer_point.row.saturating_sub(offset);
+                let row_below = buffer_point.row + offset;
+                if row_above != buffer_point.row && is_valid_row(row_above) {
+                    Some(row_above)
+                } else if row_below <= max_row && is_valid_row(row_below) {
+                    Some(row_below)
+                } else {
+                    None
+                }
+            })
+        }?;
+
+        let mut new_display_row = self
+            .display_snapshot
+            .point_to_display_point(
+                Point {
+                    row: new_buffer_row,
+                    column: buffer_point.column,
+                },
+                text::Bias::Left,
+            )
+            .row();
+
+        if new_display_row.0 > 0
+            && self
+                .display_snapshot
+                .soft_wrap_indent(DisplayRow(new_display_row.0 - 1))
+                .is_some_and(|indent| indent < INLINE_SLOT_CHAR_LIMIT)
+        {
+            new_display_row = self
+                .display_snapshot
+                .point_to_display_point(
+                    Point {
+                        row: new_buffer_row,
+                        column: 0,
+                    },
+                    text::Bias::Left,
+                )
+                .row();
+        }
+
+        Some(new_display_row)
     }
 
     pub fn is_focused(&self) -> bool {

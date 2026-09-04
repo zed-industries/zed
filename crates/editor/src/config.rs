@@ -257,6 +257,22 @@ impl Editor {
         wrap_guides
     }
 
+    pub(super) fn soft_wrap_indent(&self, cx: &App) -> SoftWrapIndent {
+        self.buffer.read(cx).language_settings(cx).soft_wrap_indent
+    }
+
+    pub(super) fn apply_soft_wrap_indent(&mut self, cx: &mut Context<Self>) {
+        let indent = self.soft_wrap_indent(cx);
+        self.display_map.update(cx, |map, cx| {
+            map.set_soft_wrap_indent(indent, cx);
+        });
+        if let Some(placeholder) = &self.placeholder_display_map {
+            placeholder.update(cx, |map, cx| {
+                map.set_soft_wrap_indent(indent, cx);
+            });
+        }
+    }
+
     pub fn soft_wrap_mode(&self, cx: &App) -> SoftWrap {
         let settings = self.buffer.read(cx).language_settings(cx);
         let mode = self.soft_wrap_mode_override.unwrap_or(settings.soft_wrap);
