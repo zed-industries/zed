@@ -71,8 +71,17 @@ impl LineWrapper {
                                 last_candidate_width = width;
                             }
                         } else {
-                            // CJK may not be space separated, e.g.: `Hello world你好世界`
-                            if c != ' ' && first_non_whitespace_ix.is_some() {
+                            // CJK may not be space separated, e.g.: `Hello world你好世界`,
+                            // so a non-word char is a break opportunity — but only when
+                            // the PREVIOUS char is a space or another non-word char. A
+                            // non-word char directly after a word char is closing
+                            // punctuation (`powerless."`, `word)`, `done!`); breaking
+                            // there orphans the punctuation at the start of the next
+                            // line.
+                            if c != ' '
+                                && !Self::is_word_char(prev_c)
+                                && first_non_whitespace_ix.is_some()
+                            {
                                 last_candidate_ix = ix;
                                 last_candidate_width = width;
                             }
@@ -861,6 +870,43 @@ mod tests {
                 )
                 .collect::<Vec<_>>(),
             &[Boundary::new(12, 0),], // special chars above take up 3, 2 and 3 bytes, so boundary ends up at 12
+        );
+    }
+
+    #[test]
+    fn test_wrap_line_keeps_closing_punctuation_attached() {
+        let mut wrapper = build_wrapper();
+
+        // `aaa aaaa."` at 72px (9 chars/line): the `"` is the overflow char.
+        // A break candidate directly before it (the old any-non-word-char
+        // rule) orphaned the quote at the start of the next line; the break
+        // must fall back to the space instead, keeping `aaaa."` together.
+        assert_eq!(
+            wrapper
+                .wrap_line(&[LineFragment::text("aaa aaaa.\"")], px(72.))
+                .collect::<Vec<_>>(),
+            &[Boundary::new(4, 0)],
+        );
+        // Same shape for other closing punctuation.
+        assert_eq!(
+            wrapper
+                .wrap_line(&[LineFragment::text("aaa aaaaa!")], px(72.))
+                .collect::<Vec<_>>(),
+            &[Boundary::new(4, 0)],
+        );
+        assert_eq!(
+            wrapper
+                .wrap_line(&[LineFragment::text("aaa (aaaa)")], px(72.))
+                .collect::<Vec<_>>(),
+            &[Boundary::new(4, 0)],
+        );
+        // Non-word chars after a SPACE (opening punctuation) still wrap with
+        // the word they introduce: the final line is `"cc"`, quote attached.
+        assert_eq!(
+            wrapper
+                .wrap_line(&[LineFragment::text("aaaa bbb \"cc\"")], px(72.))
+                .collect::<Vec<_>>(),
+            &[Boundary::new(5, 0), Boundary::new(9, 0)],
         );
     }
 

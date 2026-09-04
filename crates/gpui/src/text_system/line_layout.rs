@@ -232,7 +232,15 @@ impl LineLayout {
                     last_candidate_x = x;
                 }
             } else {
-                if ch != ' ' && first_non_whitespace_ix.is_some() {
+                // Break before a non-word char only when the previous char is
+                // a space or another non-word char (CJK sequences). A non-word
+                // char directly after a word char is closing punctuation
+                // (`powerless."`, `word)`, `done!`) — breaking there orphans
+                // the punctuation at the start of the next line.
+                if ch != ' '
+                    && !LineWrapper::is_word_char(prev_ch)
+                    && first_non_whitespace_ix.is_some()
+                {
                     last_candidate_ix = Some(boundary);
                     last_candidate_x = x;
                 }
@@ -1053,6 +1061,28 @@ mod tests {
             .iter()
             .map(|g| f32::from(g.position.x))
             .collect()
+    }
+
+    #[test]
+    fn test_wrap_boundaries_keep_closing_punctuation_attached() {
+        // `aaa aaaa."` shaped at 8px cells, wrapped at 72px: the `"` is the
+        // overflow glyph. The old any-non-word-char rule put a boundary right
+        // before it, orphaning the quote on the next line; the break must
+        // fall back to the word boundary at glyph 4 instead.
+        let text = "aaa aaaa.\"";
+        let glyphs = (0..text.len())
+            .map(|i| glyph_at(i as f32 * 8., i))
+            .collect::<Vec<_>>();
+        let mut layout = make_layout(glyphs);
+        layout.width = px(80.);
+        let boundaries = layout.compute_wrap_boundaries(text, px(72.), None);
+        assert_eq!(
+            boundaries.as_slice(),
+            &[WrapBoundary {
+                run_ix: 0,
+                glyph_ix: 4
+            }]
+        );
     }
 
     #[test]
