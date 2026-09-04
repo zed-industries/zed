@@ -2619,6 +2619,13 @@ impl Window {
         self.rendered_frame.scene.quads.clone()
     }
 
+    /// Returns the underlines in the most recently rendered frame's scene. Strikethroughs are
+    /// painted as underlines placed across the text, so they are included.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn painted_underlines(&self) -> Vec<Underline> {
+        self.rendered_frame.scene.underlines.clone()
+    }
+
     /// Set the content size of the window.
     pub fn resize(&mut self, size: Size<Pixels>) {
         self.platform_window.resize(size);
