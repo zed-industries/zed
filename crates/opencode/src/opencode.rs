@@ -1052,6 +1052,14 @@ impl Model {
                 ])
             }
 
+            Self::MiniMaxM3 => {
+                if subscription == OpenCodeSubscription::Go {
+                    Some(vec![ReasoningEffort::None])
+                } else {
+                    None
+                }
+            }
+
             Self::Custom {
                 reasoning_effort_levels,
                 ..
