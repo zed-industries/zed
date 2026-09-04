@@ -17,10 +17,8 @@ pub mod types;
 
 actions!(tabular_data, [OpenPreview, OpenPreviewToTheSide]);
 
-/// Editor-backed adapter: watches an [`Editor`], parses its buffer into a
-/// [`crate::types::TableLikeContent`], and feeds the result to an embedded [`TableView`] that owns
-/// all grid rendering. This keeps the editor/file/parsing concerns here and the reusable grid in
-/// [`TableView`].
+/// Editor-backed adapter: watches an [`Editor`], parses its buffer into a [`crate::types::TableLikeContent`],
+/// and feeds the result to an embedded [`TableView`] that owns all grid rendering.
 pub struct TabularDataPreviewPane {
     /// The reusable tabular viewer this adapter drives.
     pub(crate) table: Entity<TableView>,

@@ -1,10 +1,11 @@
 //! The reusable tabular-data viewer component.
 //!
 //! `TableView` owns the [`TableDataEngine`] (client-side filter/sort + display-to-data mapping)
-//! and all of the grid rendering over `ui::Table`. It is deliberately source-agnostic: it renders
-//! whatever [`TableLikeContent`] it is handed via [`TableView::set_contents`], whether that content
-//! comes from the CSV parser or from some other producer (e.g. a database result set). Callers
-//! embed it as a child entity and own their own chrome (tab, toolbar, connection state, etc.).
+//! and all of the grid rendering over `ui::Table`.
+//!
+//! It is deliberately source-agnostic: it renders whatever [`TableLikeContent`] it is handed
+//! via [`TableView::set_contents`], whether that content comes from the CSV parser or from some
+//! other producer (e.g. a database result set).
 
 use std::{
     collections::HashMap,
