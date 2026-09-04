@@ -173,6 +173,20 @@ fn general_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "On New Window",
+                description: "What to show when opening a new window.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("on_new_window"),
+                    pick: |settings_content| settings_content.workspace.on_new_window.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.on_new_window = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "On Last Window Closed",
                 description: "What to do when the last window is closed.",
                 field: Box::new(SettingField {
@@ -1315,7 +1329,7 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn cursor_section() -> [SettingsPageItem; 6] {
+    fn cursor_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Cursor"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1341,6 +1355,31 @@ fn appearance_page() -> SettingsPage {
                     pick: |settings_content| settings_content.editor.cursor_blink.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.editor.cursor_blink = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursor Animation",
+                description: "Whether the cursor smoothly animates when moving around the editor.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("cursor_animation.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .cursor_animation
+                            .as_ref()?
+                            .enabled
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .cursor_animation
+                            .get_or_insert_default()
+                            .enabled = value;
                     },
                 }),
                 metadata: None,
@@ -1746,7 +1785,7 @@ fn editor_page() -> SettingsPage {
             SettingsPageItem::SectionHeader("Which-key Menu"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Which-key Menu",
-                description: "Display the which-key menu with matching bindings while a multi-stroke binding is pending.",
+                description: "Display the which-key menu with matching bindings while a multi-stroke binding is pending. The pending keystrokes indicator remains visible, but its binding preview popover is disabled.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("which_key.enabled"),
@@ -3974,7 +4013,7 @@ fn search_and_files_page() -> SettingsPage {
 }
 
 fn window_and_layout_page() -> SettingsPage {
-    fn status_bar_section() -> [SettingsPageItem; 11] {
+    fn status_bar_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Status Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4083,6 +4122,29 @@ fn window_and_layout_page() -> SettingsPage {
                             .status_bar
                             .get_or_insert_default()
                             .line_endings_button = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Pending Keystrokes Indicator",
+                description: "Show an indicator with a countdown while a multi-stroke key binding is pending. Its binding preview popover is disabled when the which-key menu is enabled.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("status_bar.pending_keystrokes_indicator"),
+                    pick: |settings_content| {
+                        settings_content
+                            .status_bar
+                            .as_ref()?
+                            .pending_keystrokes_indicator
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .status_bar
+                            .get_or_insert_default()
+                            .pending_keystrokes_indicator = value;
                     },
                 }),
                 metadata: None,
