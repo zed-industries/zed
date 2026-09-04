@@ -107,6 +107,27 @@ By default, context compaction (both `/compact` and auto-compaction) uses the th
 
 - The configured model should have a context window at least as large as the thread's primary model for predictable behavior.
 
+## Prompt History Navigation {#prompt-history-navigation}
+
+Message history navigation is enabled by default. When the top-level Agent
+Panel message editor is focused and empty, {#kb editor::MoveUp} opens prompts
+previously submitted in that thread. See
+[Reusing Previous Prompts](./agent-panel.md#prompt-history-navigation) for the
+full focus and arrow-key behavior.
+
+To disable prompt history navigation, turn off **Message History Navigation** in
+the AI settings page.
+
+Or add this to your settings.json:
+
+```json [settings]
+{
+  "agent": {
+    "message_history_navigation": false
+  }
+}
+```
+
 ## External Agents {#external-agents}
 
 The External Agents section configures ACP-integrated agents.

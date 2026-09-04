@@ -8909,6 +8909,29 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Message History Navigation",
+                description: "Whether pressing the up arrow in an empty agent message editor opens prompt history.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.message_history_navigation"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .message_history_navigation
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .message_history_navigation = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Message Editor Min Lines",
                 description: "Minimum number of lines to display in the agent message editor.",
                 field: Box::new(SettingField {

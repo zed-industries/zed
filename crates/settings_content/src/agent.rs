@@ -328,6 +328,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub use_modifier_to_send: Option<bool>,
+    /// Whether pressing the up arrow in an empty agent message editor opens prompt history.
+    ///
+    /// Default: true
+    pub message_history_navigation: Option<bool>,
     /// Minimum number of lines of height the agent message editor should have.
     ///
     /// Default: 4

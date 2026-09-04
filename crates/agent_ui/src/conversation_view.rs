@@ -109,6 +109,7 @@ pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis
 
 pub(crate) mod elicitation;
 mod message_queue;
+mod prompt_history;
 mod thread_search_bar;
 mod thread_view;
 pub use message_queue::*;
@@ -3693,8 +3694,8 @@ pub(crate) mod tests {
     use action_log::ActionLog;
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
     use agent_servers::FakeAcpAgentServer;
-    use editor::MultiBufferOffset;
     use editor::actions::Paste;
+    use editor::{MultiBufferOffset, ToOffset};
     use feature_flags::{AcpBetaFeatureFlag, FeatureFlag as _, FeatureFlagAppExt as _};
     use fs::FakeFs;
     use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, point, size};
@@ -3703,6 +3704,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::any::Any;
+    use std::cell::Cell;
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::Arc;
@@ -6669,6 +6671,809 @@ pub(crate) mod tests {
     ) -> Entity<MessageEditor> {
         let thread = active_thread(conversation_view, cx);
         cx.read(|cx| thread.read(cx).message_editor.clone())
+    }
+
+    fn selected_prompt_history_preview(
+        conversation_view: &Entity<ConversationView>,
+        cx: &TestAppContext,
+    ) -> Option<String> {
+        active_thread(conversation_view, cx)
+            .read_with(cx, |view, cx| view.selected_prompt_history_preview(cx))
+    }
+
+    fn prompt_history_horizontal_scroll_state(
+        conversation_view: &Entity<ConversationView>,
+        cx: &TestAppContext,
+    ) -> Option<(Pixels, Pixels)> {
+        active_thread(conversation_view, cx).read_with(cx, |view, cx| {
+            view.prompt_history_horizontal_scroll_state(cx)
+        })
+    }
+
+    fn bind_default_linux_keymap(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-linux.json",
+                cx,
+            )
+            .unwrap();
+            for binding in &mut bindings {
+                binding.set_meta(settings::KeybindSource::Default.meta());
+            }
+            cx.bind_keys(bindings);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_opens_from_empty_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Remember this prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let editor_focus = message_editor.read_with(cx, |editor, cx| editor.focus_handle(cx));
+        cx.update(|window, cx| editor_focus.focus(window, cx));
+        cx.run_until_parked();
+        assert!(message_editor.read_with(cx, |editor, cx| editor.is_empty(cx)));
+
+        let history =
+            active_thread(&conversation_view, cx).read_with(cx, |view, cx| view.prompt_history(cx));
+        assert!(matches!(
+            history
+                .as_ref()
+                .and_then(|history| history.selected_chunks())
+                .and_then(|chunks| chunks.first()),
+            Some(acp::ContentBlock::Text(text)) if text.text == "Remember this prompt"
+        ));
+        assert_eq!(
+            history
+                .as_ref()
+                .and_then(|history| history.selected_preview())
+                .map(SharedString::as_ref),
+            Some("Remember this prompt")
+        );
+
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        cx.update(|window, _cx| {
+            assert!(window.context_stack().iter().any(|context| {
+                context
+                    .primary()
+                    .is_some_and(|entry| entry.key.as_ref() == "AgentPromptHistory")
+            }));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_keyboard_navigation_clamps_at_boundaries(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        for prompt in ["First", "Second", "Third"] {
+            connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+                acp::ContentChunk::new("Response".into()),
+            )]);
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text(prompt, window, cx);
+            });
+            active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+                view.send(window, cx);
+            });
+            cx.run_until_parked();
+        }
+
+        let editor_focus = message_editor.read_with(cx, |editor, cx| editor.focus_handle(cx));
+        cx.update(|window, cx| editor_focus.focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Third")
+        );
+
+        cx.simulate_keystrokes("up up up");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("First")
+        );
+
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Second")
+        );
+
+        cx.simulate_keystrokes("down down");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Third")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_enter_and_tab_restore_without_sending(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Recall this prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let entry_count = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, cx| view.thread.read(cx).entries().len());
+        let editor_focus = message_editor.read_with(cx, |editor, cx| editor.focus_handle(cx));
+
+        for confirm_key in ["enter", "tab"] {
+            cx.update(|window, cx| editor_focus.focus(window, cx));
+            cx.simulate_keystrokes("up");
+            cx.run_until_parked();
+            assert_eq!(
+                selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+                Some("Recall this prompt")
+            );
+
+            cx.simulate_keystrokes(confirm_key);
+            cx.run_until_parked();
+
+            assert_eq!(
+                message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+                "Recall this prompt"
+            );
+            message_editor.read_with(cx, |message_editor, cx| {
+                let editor = message_editor.editor().read(cx);
+                let selection = editor.selections.newest_anchor();
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let expected_offset = MultiBufferOffset("Recall this prompt".len());
+                assert_eq!(selection.start.to_offset(&snapshot), expected_offset);
+                assert_eq!(selection.end.to_offset(&snapshot), expected_offset);
+            });
+            cx.update(|window, cx| {
+                assert!(message_editor.read(cx).focus_handle(cx).is_focused(window));
+            });
+            assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+            active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+                assert_eq!(view.thread.read(cx).entries().len(), entry_count);
+                assert_eq!(view.thread.read(cx).status(), ThreadStatus::Idle);
+            });
+
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.clear(window, cx);
+            });
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_escape_dismisses_without_restoring(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Do not restore this prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let entry_count = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, cx| view.thread.read(cx).entries().len());
+        let editor_focus = message_editor.read_with(cx, |editor, cx| editor.focus_handle(cx));
+        cx.update(|window, cx| editor_focus.focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Do not restore this prompt")
+        );
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        assert!(message_editor.read_with(cx, |editor, cx| editor.is_empty(cx)));
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+        cx.update(|window, cx| {
+            assert!(message_editor.read(cx).focus_handle(cx).is_focused(window));
+        });
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            assert_eq!(view.thread.read(cx).entries().len(), entry_count);
+            assert_eq!(view.thread.read(cx).status(), ThreadStatus::Idle);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_click_accepts_clicked_entry(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        for prompt in ["First", "Second", "Third"] {
+            connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+                acp::ContentChunk::new("Response".into()),
+            )]);
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text(prompt, window, cx);
+            });
+            active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+                view.send(window, cx);
+            });
+            cx.run_until_parked();
+        }
+
+        let entry_count = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, cx| view.thread.read(cx).entries().len());
+        let editor_focus = message_editor.read_with(cx, |editor, cx| editor.focus_handle(cx));
+        cx.update(|window, cx| editor_focus.focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Third")
+        );
+
+        let first_entry_bounds = cx
+            .debug_bounds("agent-prompt-history-entry-0")
+            .expect("first prompt history entry should be rendered");
+        cx.simulate_click(first_entry_bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "First"
+        );
+        message_editor.read_with(cx, |message_editor, cx| {
+            let editor = message_editor.editor().read(cx);
+            let selection = editor.selections.newest_anchor();
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let expected_offset = MultiBufferOffset("First".len());
+            assert_eq!(selection.start.to_offset(&snapshot), expected_offset);
+            assert_eq!(selection.end.to_offset(&snapshot), expected_offset);
+        });
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+        cx.update(|window, cx| {
+            assert!(message_editor.read(cx).focus_handle(cx).is_focused(window));
+        });
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            assert_eq!(view.thread.read(cx).entries().len(), entry_count);
+            assert_eq!(view.thread.read(cx).status(), ThreadStatus::Idle);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_long_preview_stays_within_popup_width(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        cx.simulate_resize(size(px(500.), px(600.)));
+        cx.run_until_parked();
+
+        let long_prompt = (0..100)
+            .map(|index| format!("prompt-word-{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text(&long_prompt, window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let editor_focus = message_editor.read_with(cx, |editor, cx| editor.focus_handle(cx));
+        cx.update(|window, cx| editor_focus.focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        let assert_popup_is_width_constrained = |cx: &mut VisualTestContext| {
+            let window_bounds = cx.update(|window, _cx| window.bounds());
+            let popup_bounds = cx
+                .debug_bounds("agent-prompt-history-popover")
+                .expect("prompt history popup should be rendered");
+            let entry_bounds = cx
+                .debug_bounds("agent-prompt-history-entry-0")
+                .expect("prompt history entry should be rendered");
+            let preview_bounds = cx
+                .debug_bounds("agent-prompt-history-preview-0")
+                .expect("prompt history preview should be rendered");
+
+            assert!(
+                popup_bounds.left() >= window_bounds.left(),
+                "popup {popup_bounds:?} extends left of window {window_bounds:?}"
+            );
+            assert!(
+                popup_bounds.right() <= window_bounds.right(),
+                "popup {popup_bounds:?} extends right of window {window_bounds:?}"
+            );
+            assert!(entry_bounds.left() >= popup_bounds.left());
+            assert!(entry_bounds.right() <= popup_bounds.right());
+            assert!(preview_bounds.left() >= entry_bounds.left());
+            assert!(preview_bounds.right() <= entry_bounds.right());
+        };
+
+        assert_popup_is_width_constrained(cx);
+        let (horizontal_offset, horizontal_overflow) =
+            prompt_history_horizontal_scroll_state(&conversation_view, cx)
+                .expect("prompt history should be open");
+        assert_eq!(horizontal_offset, px(0.));
+        assert_eq!(horizontal_overflow, px(0.));
+
+        cx.simulate_resize(size(px(360.), px(600.)));
+        cx.run_until_parked();
+        assert_popup_is_width_constrained(cx);
+        let (horizontal_offset, horizontal_overflow) =
+            prompt_history_horizontal_scroll_state(&conversation_view, cx)
+                .expect("prompt history should remain open after resizing");
+        assert_eq!(horizontal_offset, px(0.));
+        assert_eq!(horizontal_overflow, px(0.));
+
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            long_prompt
+        );
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_non_empty_draft_preserves_move_up(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("History prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let draft = "First line\nOther line";
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text(draft, window, cx);
+            editor.set_cursor_offset(draft.len(), window, cx);
+            editor.focus_handle(cx).focus(window, cx);
+        });
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            draft
+        );
+        message_editor.read_with(cx, |message_editor, cx| {
+            let editor = message_editor.editor().read(cx);
+            let selection = editor.selections.newest_anchor();
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let expected_offset = MultiBufferOffset("First line".len());
+            assert_eq!(selection.start.to_offset(&snapshot), expected_offset);
+            assert_eq!(selection.end.to_offset(&snapshot), expected_offset);
+        });
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_move_up_propagates_without_history(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let move_up_propagated = Rc::new(Cell::new(false));
+        cx.update({
+            let move_up_propagated = move_up_propagated.clone();
+            move |cx| {
+                cx.on_action(move |_: &zed_actions::editor::MoveUp, _cx| {
+                    move_up_propagated.set(true)
+                });
+            }
+        });
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        cx.update(|window, cx| message_editor.focus_handle(cx).focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        assert!(move_up_propagated.get());
+        assert!(message_editor.read_with(cx, |editor, cx| editor.is_empty(cx)));
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_move_up_propagates_when_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let move_up_propagated = Rc::new(Cell::new(false));
+        cx.update({
+            let move_up_propagated = move_up_propagated.clone();
+            move |cx| {
+                cx.on_action(move |_: &zed_actions::editor::MoveUp, _cx| {
+                    move_up_propagated.set(true)
+                });
+            }
+        });
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Available history", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            active_thread(&conversation_view, cx)
+                .read_with(cx, |view, cx| { view.prompt_history(cx).is_some() })
+        );
+        cx.update(|window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    message_history_navigation: false,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+            message_editor.focus_handle(cx).focus(window, cx);
+        });
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        assert!(move_up_propagated.get());
+        assert!(message_editor.read_with(cx, |editor, cx| editor.is_empty(cx)));
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_move_up_prefers_last_queued_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("History prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            for prompt in ["First queued", "Second queued"] {
+                view.add_to_queue(
+                    vec![acp::ContentBlock::Text(acp::TextContent::new(prompt))],
+                    vec![],
+                    window,
+                    cx,
+                );
+            }
+        });
+        cx.run_until_parked();
+
+        assert!(
+            active_thread(&conversation_view, cx)
+                .read_with(cx, |view, cx| { view.prompt_history(cx).is_some() })
+        );
+        cx.update(|window, cx| message_editor.focus_handle(cx).focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "Second queued"
+        );
+        assert_eq!(
+            active_thread(&conversation_view, cx)
+                .read_with(cx, |view, _cx| view.message_queue.len()),
+            1
+        );
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_thread_focus_preserves_line_scrolling(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("History prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: 1,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+        let scroll_top_before =
+            thread_view.read_with(cx, |view, _cx| view.list_state.logical_scroll_top());
+        assert_eq!(scroll_top_before.item_ix, 1);
+
+        let thread_focus = thread_view.read_with(cx, |view, _cx| view.focus_handle.clone());
+        cx.update(|window, cx| thread_focus.focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        let scroll_top_after =
+            thread_view.read_with(cx, |view, _cx| view.list_state.logical_scroll_top());
+        assert!(scroll_top_after.item_ix < scroll_top_before.item_ix);
+        assert!(message_editor.read_with(cx, |editor, cx| editor.is_empty(cx)));
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_restores_resumed_acp_entry_without_client_id(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update(cx, |view, cx| {
+            view.thread.update(cx, |thread, cx| {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(
+                            "Restored ACP prompt".into(),
+                        )),
+                        cx,
+                    )
+                    .expect("restored ACP prompt should be applied");
+            });
+        });
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, cx| {
+            let Some(AgentThreadEntry::UserMessage(message)) =
+                view.thread.read(cx).entries().last()
+            else {
+                panic!("restored entry should be a user message");
+            };
+            assert!(message.client_id.is_none());
+        });
+
+        let message_editor = message_editor(&conversation_view, cx);
+        cx.update(|window, cx| message_editor.focus_handle(cx).focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Restored ACP prompt")
+        );
+
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "Restored ACP prompt"
+        );
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_restores_supported_structured_content(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let image_uri = acp_thread::MentionUri::PastedImage {
+            name: "History image".to_string(),
+        }
+        .to_uri()
+        .to_string();
+        let expected_blocks = vec![
+            acp::ContentBlock::Text(acp::TextContent::new("Before:")),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                "link.rs",
+                "file:///project/link.rs",
+            )),
+            acp::ContentBlock::Text(acp::TextContent::new(":Between:")),
+            acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents::new(
+                        "fn restored() {}",
+                        "file:///project/context.rs",
+                    ),
+                ),
+            )),
+            acp::ContentBlock::Text(acp::TextContent::new(":After:")),
+            acp::ContentBlock::Image(
+                acp::ImageContent::new(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+                    "image/png",
+                )
+                .uri(Some(image_uri)),
+            ),
+            acp::ContentBlock::Text(acp::TextContent::new(":Done")),
+        ];
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _cx| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            for block in expected_blocks.iter().cloned() {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(block)),
+                        cx,
+                    )
+                    .expect("restored structured ACP prompt should be applied");
+            }
+        });
+        cx.run_until_parked();
+
+        let message_editor = message_editor(&conversation_view, cx);
+        cx.update(|window, cx| message_editor.focus_handle(cx).focus(window, cx));
+        cx.simulate_keystrokes("up enter");
+        cx.run_until_parked();
+
+        let restored_blocks =
+            message_editor.read_with(cx, |editor, cx| editor.draft_content_blocks_snapshot(cx));
+        assert_eq!(restored_blocks, expected_blocks);
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_only_opens_for_root_thread_input(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let root_message_editor = message_editor(&conversation_view, cx);
+        root_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Root history prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.update(|window, cx| root_message_editor.focus_handle(cx).focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Root history prompt")
+        );
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        let root_thread = active_thread(&conversation_view, cx);
+        let (parent_session_id, connection, project, conversation) =
+            root_thread.read_with(cx, |view, cx| {
+                let thread = view.thread.read(cx);
+                (
+                    thread.session_id().clone(),
+                    thread.connection().clone(),
+                    thread.project().clone(),
+                    view.conversation.clone(),
+                )
+            });
+        let subagent_session_id = acp::SessionId::new("subagent-history");
+        let subagent_thread = cx.update(|_window, cx| {
+            create_test_acp_thread(
+                Some(parent_session_id),
+                "subagent-history",
+                connection,
+                project,
+                cx,
+            )
+        });
+        subagent_thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(
+                None,
+                acp::ContentBlock::Text(acp::TextContent::new("Subagent history prompt")),
+                cx,
+            );
+        });
+        conversation.update(cx, |conversation, cx| {
+            conversation.register_thread(subagent_thread.clone(), cx);
+        });
+        let subagent_view = conversation_view.update_in(cx, |view, window, cx| {
+            let subagent_view =
+                view.new_thread_view(subagent_thread, conversation, false, None, window, cx);
+            if let Some(connected) = view.as_connected_mut() {
+                connected
+                    .threads
+                    .insert(subagent_session_id.clone(), subagent_view.clone());
+            }
+            view.navigate_to_thread(subagent_session_id, window, cx);
+            subagent_view
+        });
+        cx.run_until_parked();
+
+        assert!(subagent_view.read_with(cx, |view, cx| view.prompt_history(cx).is_some()));
+        let subagent_focus = subagent_view.read_with(cx, |view, _cx| view.focus_handle.clone());
+        cx.update(|window, cx| subagent_focus.focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        assert!(subagent_view.read_with(cx, |view, cx| {
+            view.message_editor.read(cx).is_empty(cx)
+                && view.selected_prompt_history_preview(cx).is_none()
+        }));
     }
 
     #[gpui::test]
