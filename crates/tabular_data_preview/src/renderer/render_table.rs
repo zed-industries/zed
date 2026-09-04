@@ -50,9 +50,7 @@ impl TableView {
                         table.variable_row_height_list(row_count, self.list_state.clone(), {
                             cx.processor(move |this, display_row: usize, _window, cx| {
                                 this.performance_metrics.rendered_indices.push(display_row);
-                                // The mapping may be transiently stale while a filter/sort task is
-                                // in-flight. Return an empty row rather than panicking, consistent
-                                // with the UniformList arm's filter_map behaviour.
+                                // The mapping may be transiently stale while a filter/sort task is in-flight. Return an empty row rather than panicking
                                 Self::render_single_table_row(
                                     this,
                                     cols,
