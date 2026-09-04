@@ -4347,9 +4347,12 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, InputEvent, Keystroke, MouseMoveEvent,
-        TestAppContext, canvas, util::FluentBuilder as _,
+        ScrollDelta, TestAppContext, canvas, util::FluentBuilder as _,
     };
-    use std::{cell::Cell, rc::Weak};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Weak,
+    };
 
     struct GroupHoverTestView {
         render_count: Rc<Cell<usize>>,
@@ -5449,5 +5452,57 @@ mod tests {
         assert_eq!(bounds("cell-0").origin.x, px(0.));
         assert_eq!(bounds("cell-1").origin.x, px(100.));
         assert_eq!(bounds("cell-2").origin.x, px(300.));
+    }
+
+    fn scroll_log_view(
+        log: Rc<RefCell<Vec<&'static str>>>,
+        stop: bool,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyElement {
+        move |_, _| {
+            let capture_log = log.clone();
+            let bubble_log = log.clone();
+            div()
+                .size(px(100.))
+                .capture_scroll_wheel(move |_, _, cx| {
+                    capture_log.borrow_mut().push("outer capture");
+                    if stop {
+                        cx.stop_propagation();
+                    }
+                })
+                .child(
+                    div().size(px(50.)).on_scroll_wheel(move |_, _, _| {
+                        bubble_log.borrow_mut().push("inner bubble")
+                    }),
+                )
+                .into_any_element()
+        }
+    }
+
+    #[gpui::test]
+    fn capture_scroll_wheel_runs_before_the_bubble_listeners(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let scroll = ScrollWheelEvent {
+            position: point(px(10.), px(10.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-10.))),
+            ..Default::default()
+        };
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(px(100.), px(100.)),
+            scroll_log_view(log.clone(), false),
+        );
+        cx.simulate_event(scroll.clone());
+        assert_eq!(*log.borrow(), ["outer capture", "inner bubble"]);
+
+        log.borrow_mut().clear();
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(px(100.), px(100.)),
+            scroll_log_view(log.clone(), true),
+        );
+        cx.simulate_event(scroll);
+        assert_eq!(*log.borrow(), ["outer capture"]);
     }
 }
