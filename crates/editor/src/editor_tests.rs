@@ -636,6 +636,58 @@ fn test_ime_composition(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_ime_composition_is_cleared_on_blur(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer = cx.new(|cx| {
+        let mut buffer = language::Buffer::local("abcde", cx);
+        buffer.set_group_interval(Duration::ZERO);
+        buffer
+    });
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer.clone(), window, cx));
+    let elsewhere = cx.update(|_, cx| cx.focus_handle());
+
+    // Focus events are only dispatched for an active window.
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+        editor.replace_and_mark_text_in_range(Some(0..1), "à", None, window, cx);
+        assert_eq!(
+            editor.marked_text_ranges(cx),
+            Some(vec![
+                MultiBufferOffsetUtf16(OffsetUtf16(0))..MultiBufferOffsetUtf16(OffsetUtf16(1))
+            ])
+        );
+    });
+    cx.run_until_parked();
+
+    // Clicking away ends the IME session at the platform layer, so the editor must
+    // not keep treating the previously marked range as an active composition.
+    cx.update(|window, cx| window.focus(&elsewhere, cx));
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, _window, cx| {
+        assert_eq!(editor.marked_text_ranges(cx), None);
+    });
+
+    // Returning to the editor and pressing backspace must delete the character
+    // before the cursor rather than replacing the stale marked range.
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.backspace(&Default::default(), window, cx);
+        assert_eq!(editor.text(cx), "bcde");
+    });
+}
+
+#[gpui::test]
 fn test_selection_with_mouse(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
