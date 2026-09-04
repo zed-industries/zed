@@ -522,10 +522,7 @@ pub trait Styled: Sized {
     where
         Self: Sized,
     {
-        self.style()
-            .effects
-            .get_or_insert_with(Default::default)
-            .blur = sigma;
+        self.style().effects.blur = Some(sigma);
         self
     }
 
@@ -535,10 +532,7 @@ pub trait Styled: Sized {
     where
         Self: Sized,
     {
-        self.style()
-            .effects
-            .get_or_insert_with(Default::default)
-            .color_matrix = matrix;
+        self.style().effects.color_matrix = Some(matrix);
         self
     }
 
@@ -547,10 +541,7 @@ pub trait Styled: Sized {
     where
         Self: Sized,
     {
-        self.style()
-            .effects
-            .get_or_insert_with(Default::default)
-            .backdrop_blur = sigma;
+        self.style().effects.backdrop_blur = Some(sigma);
         self
     }
 
@@ -560,10 +551,7 @@ pub trait Styled: Sized {
     where
         Self: Sized,
     {
-        self.style()
-            .effects
-            .get_or_insert_with(Default::default)
-            .backdrop_matrix = matrix;
+        self.style().effects.backdrop_matrix = Some(matrix);
         self
     }
 
@@ -573,10 +561,7 @@ pub trait Styled: Sized {
     where
         Self: Sized,
     {
-        self.style()
-            .effects
-            .get_or_insert_with(Default::default)
-            .mask = Some(mask.into());
+        self.style().effects.mask = Some(mask.into());
         self
     }
 
@@ -585,10 +570,7 @@ pub trait Styled: Sized {
     where
         Self: Sized,
     {
-        self.style()
-            .effects
-            .get_or_insert_with(Default::default)
-            .blend_mode = mode;
+        self.style().effects.blend_mode = Some(mode);
         self
     }
 

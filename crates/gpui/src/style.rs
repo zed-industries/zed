@@ -310,6 +310,7 @@ pub struct Style {
 
     /// What the element does to the picture of itself and its children.
     /// CSS `filter`, `backdrop-filter`, `mask-image` and `mix-blend-mode`.
+    #[refineable]
     pub effects: LayerEffects,
 
     /// The text style of this element
@@ -368,7 +369,8 @@ pub enum Visibility {
 /// What an element does to the picture of its subtree before that picture
 /// lands on the frame. The renderer draws the subtree offscreen when any of
 /// these is set, so leave them alone for elements that need none.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Refineable, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LayerEffects {
     /// CSS `filter: blur()`, as the standard deviation of the Gaussian.
     pub blur: Pixels,
@@ -1650,5 +1652,21 @@ mod tests {
             Some(FontWeight::SEMIBOLD),
             style.text_style().unwrap().font_weight
         );
+    }
+
+    #[perf]
+    fn a_hover_refinement_keeps_the_other_effects() {
+        let mut base = StyleRefinement::default();
+        base.effects.mask = Some(red().into());
+        let mut hover = StyleRefinement::default();
+        hover.effects.blur = Some(px(4.));
+        base.refine(&hover);
+        assert_eq!(base.effects.blur, Some(px(4.)));
+        assert_eq!(base.effects.mask, Some(red().into()));
+
+        let mut style = Style::default();
+        style.refine(&base);
+        assert_eq!(style.effects.blur, px(4.));
+        assert!(style.effects.mask.is_some());
     }
 }
