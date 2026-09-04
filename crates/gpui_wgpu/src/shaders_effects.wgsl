@@ -25,6 +25,11 @@ struct EffectLayer {
     has_mask: u32,
     has_backdrop: u32,
     clips_content: u32,
+    has_shadow: u32,
+    shadow_blur: f32,
+    shadow_offset_x: f32,
+    shadow_offset_y: f32,
+    shadow_color: Hsla,
     color_matrix: array<f32, 20>,
     backdrop_matrix: array<f32, 20>,
     mask: Background,
@@ -46,6 +51,7 @@ struct LayerComposite {
 @group(2) @binding(2) var t_layer_backdrop: texture_2d<f32>;
 @group(2) @binding(3) var s_layer_smooth: sampler;
 @group(2) @binding(4) var s_layer_exact: sampler;
+@group(2) @binding(5) var t_layer_shadow: texture_2d<f32>;
 
 fn full_screen_unit_vertex(vertex_id: u32) -> vec2<f32> {
     return vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
@@ -292,6 +298,7 @@ struct LayerCompositeVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) mask_solid: vec4<f32>,
     @location(1) clip_distances: vec4<f32>,
+    @location(2) @interpolate(flat) shadow_color: vec4<f32>,
 }
 
 @vertex
@@ -301,6 +308,8 @@ fn vs_layer_composite(@builtin(vertex_index) vertex_id: u32) -> LayerCompositeVa
     out.position = to_device_position(unit_vertex, b_layer.region);
     out.mask_solid = prepare_fill_color(b_layer.layer.mask);
     out.clip_distances = distance_from_clip_rect(unit_vertex, b_layer.region, b_layer.layer.content_mask);
+    let shadow_color = hsla_to_rgba(b_layer.layer.shadow_color);
+    out.shadow_color = vec4<f32>(shadow_color.rgb * shadow_color.a, shadow_color.a);
     return out;
 }
 
@@ -400,6 +409,25 @@ fn fs_layer_composite(input: LayerCompositeVarying) -> @location(0) vec4<f32> {
         content = textureSampleLevel(t_layer_content, s_layer_exact, uv, 0.0);
     }
     content = filter_color(b_layer.layer.color_matrix, content) * b_layer.layer.opacity;
+    if (b_layer.layer.has_shadow != 0u) {
+        // The shadow is the alpha the content has after the colour matrix,
+        // read where the content sat before the offset moved it. Past the
+        // edge of the layer there is no content, so there is no shadow.
+        let offset = vec2<f32>(b_layer.layer.shadow_offset_x, b_layer.layer.shadow_offset_y);
+        let shadow_uv = uv - offset / b_layer.region.size;
+        var source: vec4<f32>;
+        if (b_layer.layer.blur > 0.0 || b_layer.layer.shadow_blur > 0.0) {
+            source = textureSampleLevel(t_layer_shadow, s_layer_smooth, shadow_uv, 0.0);
+        } else {
+            source = textureSampleLevel(t_layer_shadow, s_layer_exact, shadow_uv, 0.0);
+        }
+        var shadow_alpha = 0.0;
+        if (all(shadow_uv >= vec2<f32>(0.0)) && all(shadow_uv <= vec2<f32>(1.0))) {
+            shadow_alpha = filter_color(b_layer.layer.color_matrix, source).a;
+        }
+        let shadow = input.shadow_color * shadow_alpha * b_layer.layer.opacity;
+        content = content + shadow * (1.0 - content.a);
+    }
 
     let shape = box_coverage(
         position,

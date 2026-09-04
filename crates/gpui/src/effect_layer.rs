@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Background, Bounds, ContentMask, Corners, DevicePixels, ScaledPixels, Size, point, size,
+    Background, Bounds, ContentMask, Corners, DevicePixels, Hsla, ScaledPixels, Size, point, size,
 };
 
 /// How a layer mixes with what is under it. The CSS `mix-blend-mode` values
@@ -107,6 +107,18 @@ pub struct EffectLayer {
     pub has_backdrop: u32,
     /// 1 when the box clips its content to its rounded corners.
     pub clips_content: u32,
+    /// 1 when the layer paints a shadow of its content.
+    pub has_shadow: u32,
+    /// Gaussian sigma of the shadow. 0 is a sharp copy.
+    pub shadow_blur: f32,
+    /// Where the shadow sits against the content, in device pixels. Two
+    /// scalars, because a `float2` here would need 8 byte alignment in
+    /// Metal and the Rust struct has none.
+    pub shadow_offset_x: f32,
+    /// See `shadow_offset_x`.
+    pub shadow_offset_y: f32,
+    /// The colour of the shadow.
+    pub shadow_color: Hsla,
     /// Applied to the content after the blur.
     pub color_matrix: [f32; 20],
     /// Applied to the backdrop after its blur.
@@ -123,7 +135,12 @@ impl EffectLayer {
     /// The pixels of the frame the layer touches: its box grown by the reach
     /// of its blurs, inside its content mask and inside `parent`.
     pub fn region(&self, parent: LayerRegion) -> LayerRegion {
-        let pad = (3.0 * self.blur.max(self.backdrop_blur)).ceil() as i32;
+        let shadow = if self.has_shadow != 0 {
+            3.0 * self.shadow_blur + self.shadow_offset_x.abs().max(self.shadow_offset_y.abs())
+        } else {
+            0.0
+        };
+        let pad = (3.0 * self.blur.max(self.backdrop_blur)).max(shadow).ceil() as i32;
         LayerRegion::around(self.bounds, pad)
             .intersect(LayerRegion::around(self.content_mask.bounds, 0))
             .intersect(parent)

@@ -1452,6 +1452,11 @@ struct EffectLayer {
     uint has_mask;
     uint has_backdrop;
     uint clips_content;
+    uint has_shadow;
+    float shadow_blur;
+    float shadow_offset_x;
+    float shadow_offset_y;
+    Hsla shadow_color;
     float color_matrix[20];
     float backdrop_matrix[20];
     Background mask;
@@ -1470,6 +1475,7 @@ StructuredBuffer<BlurParams> blur_params: register(t1);
 StructuredBuffer<LayerComposite> layer_composites: register(t1);
 Texture2D<float4> t_layer_under: register(t2);
 Texture2D<float4> t_layer_backdrop: register(t3);
+Texture2D<float4> t_layer_shadow: register(t4);
 SamplerState s_layer_exact: register(s1);
 
 struct BlurVertexOutput {
@@ -1644,12 +1650,14 @@ float box_coverage(float2 position, Bounds bounds, Corners corner_radii, Corners
 struct LayerCompositeVertexOutput {
     float4 position: SV_Position;
     nointerpolation float4 mask_solid: COLOR0;
+    nointerpolation float4 shadow_color: COLOR1;
     float4 clip_distance: SV_ClipDistance;
 };
 
 struct LayerCompositeFragmentInput {
     float4 position: SV_Position;
     nointerpolation float4 mask_solid: COLOR0;
+    nointerpolation float4 shadow_color: COLOR1;
 };
 
 LayerCompositeVertexOutput layer_composite_vertex(uint vertex_id: SV_VertexID) {
@@ -1659,6 +1667,8 @@ LayerCompositeVertexOutput layer_composite_vertex(uint vertex_id: SV_VertexID) {
     LayerCompositeVertexOutput output;
     output.position = to_device_position(unit_vertex, composite.region);
     output.mask_solid = prepare_fill_color(composite.layer.mask);
+    float4 shadow_color = hsla_to_rgba(composite.layer.shadow_color);
+    output.shadow_color = float4(shadow_color.rgb * shadow_color.a, shadow_color.a);
     output.clip_distance = distance_from_clip_rect(unit_vertex, composite.region,
                                                    composite.layer.content_mask);
     return output;
@@ -1751,6 +1761,19 @@ float4 layer_composite_fragment(LayerCompositeFragmentInput input): SV_Target {
     float4 content = layer.blur > 0.0 ? t_sprite.SampleLevel(s_sprite, uv, 0.0)
                                       : t_sprite.SampleLevel(s_layer_exact, uv, 0.0);
     content = filter_color(layer.color_matrix, content) * layer.opacity;
+    if (layer.has_shadow != 0) {
+        // The shadow is the alpha the content has after the colour matrix,
+        // read where the content sat before the offset moved it. Past the
+        // edge of the layer there is no content, so there is no shadow.
+        float2 shadow_uv = uv - float2(layer.shadow_offset_x, layer.shadow_offset_y) / composite.region.size;
+        bool blurred = layer.blur > 0.0 || layer.shadow_blur > 0.0;
+        float4 source = blurred ? t_layer_shadow.SampleLevel(s_sprite, shadow_uv, 0.0)
+                                : t_layer_shadow.SampleLevel(s_layer_exact, shadow_uv, 0.0);
+        bool inside = all(shadow_uv >= 0.0) && all(shadow_uv <= 1.0);
+        float shadow_alpha = inside ? filter_color(layer.color_matrix, source).a : 0.0;
+        float4 shadow = input.shadow_color * shadow_alpha * layer.opacity;
+        content = content + shadow * (1.0 - content.a);
+    }
 
     float shape = box_coverage(position, layer.bounds, layer.corner_radii, layer.corner_shapes);
     if (layer.clips_content != 0) {

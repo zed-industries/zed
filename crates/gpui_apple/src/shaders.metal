@@ -1609,12 +1609,14 @@ float box_coverage(float2 position, Bounds_ScaledPixels bounds,
 struct LayerCompositeVertexOutput {
   float4 position [[position]];
   float4 mask_solid [[flat]];
+  float4 shadow_color [[flat]];
   float clip_distance [[clip_distance]][4];
 };
 
 struct LayerCompositeFragmentInput {
   float4 position [[position]];
   float4 mask_solid [[flat]];
+  float4 shadow_color [[flat]];
 };
 
 vertex LayerCompositeVertexOutput layer_composite_vertex(
@@ -1628,9 +1630,11 @@ vertex LayerCompositeVertexOutput layer_composite_vertex(
       to_device_position(unit_vertex, composite->region, viewport_size);
   float4 clip_distance = distance_from_clip_rect(
       unit_vertex, composite->region, composite->layer.content_mask.bounds);
+  float4 shadow_color = hsla_to_rgba(composite->layer.shadow_color);
   return LayerCompositeVertexOutput{
       device_position,
       prepare_fill_color(composite->layer.mask),
+      float4(shadow_color.rgb * shadow_color.a, shadow_color.a),
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
@@ -1721,7 +1725,8 @@ fragment float4 layer_composite_fragment(
     constant LayerComposite *composite [[buffer(LayerInputIndex_Layer)]],
     texture2d<float> content_texture [[texture(LayerInputIndex_ContentTexture)]],
     texture2d<float> under_texture [[texture(LayerInputIndex_UnderTexture)]],
-    texture2d<float> backdrop_texture [[texture(LayerInputIndex_BackdropTexture)]]) {
+    texture2d<float> backdrop_texture [[texture(LayerInputIndex_BackdropTexture)]],
+    texture2d<float> shadow_texture [[texture(LayerInputIndex_ShadowTexture)]]) {
   constexpr sampler smooth(mag_filter::linear, min_filter::linear,
                            address::clamp_to_edge);
   constexpr sampler exact(mag_filter::nearest, min_filter::nearest,
@@ -1735,6 +1740,21 @@ fragment float4 layer_composite_fragment(
   float4 content = layer.blur > 0.0 ? content_texture.sample(smooth, uv)
                                     : content_texture.sample(exact, uv);
   content = filter_color(layer.color_matrix, content) * layer.opacity;
+  if (layer.has_shadow != 0) {
+    // The shadow is the alpha the content has after the colour matrix,
+    // read where the content sat before the offset moved it. Past the
+    // edge of the layer there is no content, so there is no shadow.
+    float2 shadow_uv = uv - float2(layer.shadow_offset_x, layer.shadow_offset_y) /
+                                float2(composite->region.size.width,
+                                       composite->region.size.height);
+    bool blurred = layer.blur > 0.0 || layer.shadow_blur > 0.0;
+    float4 source = blurred ? shadow_texture.sample(smooth, shadow_uv)
+                            : shadow_texture.sample(exact, shadow_uv);
+    bool inside = all(shadow_uv >= 0.0) && all(shadow_uv <= 1.0);
+    float shadow_alpha = inside ? filter_color(layer.color_matrix, source).a : 0.0;
+    float4 shadow = input.shadow_color * shadow_alpha * layer.opacity;
+    content = content + shadow * (1.0 - content.a);
+  }
 
   float shape = box_coverage(position, layer.bounds, layer.corner_radii,
                              layer.corner_shapes);

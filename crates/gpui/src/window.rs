@@ -4171,16 +4171,17 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let content_mask = self.content_mask();
-        // A content blur bleeds past the border box, the way a CSS filter
-        // does, so the layer grows by the blur's support of three sigmas.
-        // The backdrop, the mask and the corner clip all map over the
-        // layer's bounds, so the layer only grows when none of them is set.
-        let bounds = if effects.blur > px(0.)
+        // A content blur and a drop shadow bleed past the border box, the
+        // way a CSS filter does, so the layer grows by their reach. The
+        // backdrop, the mask and the corner clip all map over the layer's
+        // bounds, so the layer only grows when none of them is set.
+        let bleed = effects.bleed();
+        let bounds = if bleed > px(0.)
             && effects.mask.is_none()
             && !effects.has_backdrop()
             && !effects.clips
         {
-            bounds.dilate(px((3.0 * effects.blur.0).ceil()))
+            bounds.dilate(bleed)
         } else {
             bounds
         };
@@ -4191,6 +4192,7 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let opacity = self.element_opacity();
+        let shadow = effects.drop_shadow.as_ref();
         let layer = EffectLayer {
             bounds: self.cover_bounds(clipped_bounds),
             content_mask: self.snapped_content_mask(),
@@ -4203,6 +4205,11 @@ impl Window {
             has_mask: effects.mask.is_some() as u32,
             has_backdrop: effects.has_backdrop() as u32,
             clips_content: effects.clips as u32,
+            has_shadow: shadow.is_some() as u32,
+            shadow_blur: shadow.map_or(0.0, |shadow| shadow.blur.0 * scale_factor),
+            shadow_offset_x: shadow.map_or(0.0, |shadow| shadow.offset.x.0 * scale_factor),
+            shadow_offset_y: shadow.map_or(0.0, |shadow| shadow.offset.y.0 * scale_factor),
+            shadow_color: shadow.map_or_else(Hsla::default, |shadow| shadow.color),
             color_matrix: effects.color_matrix.0,
             backdrop_matrix: effects.backdrop_matrix.0,
             mask: effects.mask.unwrap_or_default(),

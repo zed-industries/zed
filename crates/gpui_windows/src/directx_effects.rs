@@ -236,6 +236,16 @@ impl DirectXEffects {
         } else {
             None
         };
+        // The shadow is the content blurred by its own sigma on top of the
+        // content blur. A Gaussian of a Gaussian is a Gaussian, so one blur
+        // of the sharp content with the two sigmas added in quadrature
+        // gives it, and a sharp shadow reads the content as it is.
+        let shadow_sigma = (layer.blur * layer.blur + layer.shadow_blur * layer.shadow_blur).sqrt();
+        let blurred_shadow = if layer.has_shadow != 0 && shadow_sigma > 0.0 {
+            Some(self.blur(&content, region, shadow_sigma)?)
+        } else {
+            None
+        };
 
         let backdrop_blurs = layer.has_backdrop != 0 && layer.backdrop_blur > 0.0;
         // A mask over a blurred backdrop asks for a blur whose width
@@ -259,9 +269,14 @@ impl DirectXEffects {
             context.OMSetRenderTargets(Some(slice::from_ref(&parent_view)), None);
             context.RSSetViewports(Some(slice::from_ref(&frame.viewport)));
             let backdrop = blurred_under.as_ref().unwrap_or(&under);
+            let shadow = blurred_shadow.as_ref().unwrap_or(&content);
             context.PSSetShaderResources(
                 2,
-                Some(&[under.resource.clone(), backdrop.resource.clone()]),
+                Some(&[
+                    under.resource.clone(),
+                    backdrop.resource.clone(),
+                    shadow.resource.clone(),
+                ]),
             );
             context.PSSetSamplers(1, Some(slice::from_ref(&self.exact_sampler)));
         }
@@ -279,6 +294,9 @@ impl DirectXEffects {
             self.give_back(texture);
         }
         if let Some(texture) = blurred_under {
+            self.give_back(texture);
+        }
+        if let Some(texture) = blurred_shadow {
             self.give_back(texture);
         }
         Ok(())
@@ -503,13 +521,13 @@ fn copy_region(
     }
 }
 
-/// Clears t0 on both stages and t2 to t5, so a texture can become a render
+/// Clears t0 on both stages and t2 to t4, so a texture can become a render
 /// target again.
 fn unbind_textures(context: &ID3D11DeviceContext) {
     unsafe {
         context.VSSetShaderResources(0, Some(&[None]));
         context.PSSetShaderResources(0, Some(&[None]));
-        context.PSSetShaderResources(2, Some(&[None, None]));
+        context.PSSetShaderResources(2, Some(&[None, None, None]));
     }
 }
 

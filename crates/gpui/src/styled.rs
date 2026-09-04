@@ -1,6 +1,6 @@
 use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, Background, BlendMode,
-    BorderStyle, ColorMatrix, CornerShape, CursorStyle, DefiniteLength, Display, Fill,
+    BorderStyle, ColorMatrix, CornerShape, CursorStyle, DefiniteLength, Display, DropShadow, Fill,
     FlexDirection, FlexWrap, Font, FontFeatures, FontStyle, FontWeight, GridPlacement,
     GridTemplate, GridTemplateMinSize, Hsla, JustifyContent, Length, Pixels, SharedString,
     StrikethroughStyle, StyleRefinement, TextAlign, TextOverflow, TextStyleRefinement,
@@ -571,6 +571,16 @@ pub trait Styled: Sized {
         Self: Sized,
     {
         self.style().effects.blend_mode = Some(mode);
+        self
+    }
+
+    /// Paints a blurred, offset copy of the element's alpha under it.
+    /// CSS `filter: drop-shadow()`.
+    fn drop_shadow(mut self, shadow: DropShadow) -> Self
+    where
+        Self: Sized,
+    {
+        self.style().effects.drop_shadow = Some(shadow);
         self
     }
 

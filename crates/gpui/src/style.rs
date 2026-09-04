@@ -388,6 +388,8 @@ pub struct LayerEffects {
     /// The layer drops the content outside the rounded box, which a
     /// rectangular content mask cannot do.
     pub clips: bool,
+    /// CSS `filter: drop-shadow()`.
+    pub drop_shadow: Option<DropShadow>,
 }
 
 impl LayerEffects {
@@ -399,12 +401,38 @@ impl LayerEffects {
             && self.mask.is_none()
             && self.blend_mode == BlendMode::Normal
             && !self.clips
+            && self.drop_shadow.is_none()
+    }
+
+    /// How far past its box the content paints: three sigmas of the blur,
+    /// or the shadow's offset plus three sigmas of its blur, whichever
+    /// reaches further. Whole pixels.
+    pub fn bleed(&self) -> Pixels {
+        let blur = 3.0 * self.blur.0;
+        let shadow = self.drop_shadow.as_ref().map_or(0.0, |shadow| {
+            3.0 * shadow.blur.0 + shadow.offset.x.0.abs().max(shadow.offset.y.0.abs())
+        });
+        px(blur.max(shadow).ceil())
     }
 
     /// Whether the element changes what is under it.
     pub fn has_backdrop(&self) -> bool {
         self.backdrop_blur > px(0.) || !self.backdrop_matrix.is_identity()
     }
+}
+
+/// A shadow of the picture of an element, CSS `filter: drop-shadow()`.
+/// The alpha of the content, after the colour matrix, is blurred, moved
+/// by `offset`, painted in `color` and put under the content.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DropShadow {
+    /// Where the shadow sits against the content.
+    pub offset: Point<Pixels>,
+    /// The standard deviation of the Gaussian. The CSS blur radius is two
+    /// sigmas.
+    pub blur: Pixels,
+    /// The colour of the shadow.
+    pub color: Hsla,
 }
 
 /// The possible values of the box-shadow property
@@ -1470,6 +1498,24 @@ mod tests {
     use super::*;
 
     use util_macros::perf;
+
+    #[test]
+    fn a_drop_shadow_makes_a_layer_and_grows_it_by_its_reach() {
+        let mut effects = LayerEffects::default();
+        assert!(effects.is_none());
+        assert_eq!(effects.bleed(), px(0.));
+        effects.drop_shadow = Some(DropShadow {
+            offset: point(px(4.), px(-10.)),
+            blur: px(2.5),
+            color: red(),
+        });
+        assert!(!effects.is_none());
+        // Three sigmas, 7.5, plus the larger offset, 10, rounded up.
+        assert_eq!(effects.bleed(), px(18.));
+        effects.blur = px(7.);
+        // The content blur reaches 21, past the shadow.
+        assert_eq!(effects.bleed(), px(21.));
+    }
 
     #[perf]
     fn test_basic_highlight_style_combination() {

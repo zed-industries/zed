@@ -199,6 +199,20 @@ impl Effects {
                 MTLPixelFormat::BGRA8Unorm,
             )
         });
+        // The shadow is the content blurred by its own sigma on top of the
+        // content blur. A Gaussian of a Gaussian is a Gaussian, so one blur
+        // of the sharp content with the two sigmas added in quadrature
+        // gives it, and a sharp shadow reads the content as it is.
+        let shadow_sigma = (layer.blur * layer.blur + layer.shadow_blur * layer.shadow_blur).sqrt();
+        let blurred_shadow = (layer.has_shadow != 0 && shadow_sigma > 0.0).then(|| {
+            self.blur(
+                frame,
+                &content,
+                region,
+                shadow_sigma,
+                MTLPixelFormat::BGRA8Unorm,
+            )
+        });
         // A mask over a blurred backdrop asks for a blur whose width
         // follows the mask, pixel by pixel. That blur reads the mask,
         // so it runs at full size, not on the shrunk texture the fixed
@@ -252,6 +266,10 @@ impl Effects {
         encoder.set_fragment_texture(LayerInputIndex::UnderTexture as u64, Some(&under));
         let backdrop = blurred_under.as_deref().unwrap_or(&under);
         encoder.set_fragment_texture(LayerInputIndex::BackdropTexture as u64, Some(backdrop));
+        encoder.set_fragment_texture(
+            LayerInputIndex::ShadowTexture as u64,
+            Some(blurred_shadow.as_deref().unwrap_or(&content)),
+        );
         encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
 
         self.give_back(content);
@@ -260,6 +278,9 @@ impl Effects {
             self.give_back(texture);
         }
         if let Some(texture) = blurred_under {
+            self.give_back(texture);
+        }
+        if let Some(texture) = blurred_shadow {
             self.give_back(texture);
         }
         encoder
@@ -566,6 +587,9 @@ pub(crate) enum LayerInputIndex {
     ContentTexture = 3,
     UnderTexture = 4,
     BackdropTexture = 5,
+    /// The content blurred for the shadow, or the content itself when the
+    /// shadow is sharp.
+    ShadowTexture = 6,
 }
 
 /// Everything the composite shader needs to paint one layer.
