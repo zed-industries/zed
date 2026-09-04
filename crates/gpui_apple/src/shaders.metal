@@ -136,10 +136,15 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   // mirrored into bottom right quadrant.
   float2 corner_center_to_point = corner_to_point + corner_radius;
 
-  // Whether the nearest point on the border is rounded
+  // Whether the nearest point on the border is rounded. A concave corner
+  // puts its border along the bite, which reaches one border width past the
+  // corner box.
+  float2 corner_reach = corner_shape < 0.0
+    ? corner_center_to_point + reduced_border
+    : corner_center_to_point;
   bool is_near_rounded_corner =
-    corner_center_to_point.x >= 0.0 &&
-    corner_center_to_point.y >= 0.0;
+    corner_reach.x >= 0.0 &&
+    corner_reach.y >= 0.0;
 
   // Vector from straight border inner corner to point.
   //

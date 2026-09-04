@@ -689,10 +689,14 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // mirrored into bottom right quadrant.
     let corner_center_to_point = corner_to_point + corner_radius;
 
-    // Whether the nearest point on the border is rounded
-    let is_near_rounded_corner =
-            corner_center_to_point.x >= 0 &&
-            corner_center_to_point.y >= 0;
+    // Whether the nearest point on the border is rounded. A concave corner
+    // puts its border along the bite, which reaches one border width past the
+    // corner box.
+    var corner_reach = corner_center_to_point;
+    if (corner_shape < 0.0) {
+        corner_reach = corner_center_to_point + reduced_border;
+    }
+    let is_near_rounded_corner = corner_reach.x >= 0.0 && corner_reach.y >= 0.0;
 
     // Vector from straight border inner corner to point.
     let straight_border_inner_corner_to_point = corner_to_point + reduced_border;
