@@ -645,7 +645,7 @@ impl TableView {
                 }),
             };
             this.engine.applied_sorting = new_sorting;
-            this.apply_sort(cx);
+            this.apply_filter_sort(cx);
             cx.notify();
         }))
     }

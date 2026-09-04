@@ -156,10 +156,6 @@ impl TableView {
         });
     }
 
-    pub(crate) fn apply_sort(&mut self, cx: &mut Context<Self>) {
-        self.apply_filter_sort(cx);
-    }
-
     pub fn clear_filters(&mut self, col: AnyColumn, cx: &mut Context<Self>) {
         self.engine.clear_filters_for_col(col);
         self.apply_filter_sort(cx);
@@ -211,5 +207,3 @@ impl Focusable for TableView {
         self.focus_handle.clone()
     }
 }
-
-
