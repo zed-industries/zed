@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use ui::{SpinnerLabel, div, prelude::*};
 
 use crate::TableView;
@@ -18,7 +16,7 @@ impl Render for TableView {
             // item's prior size as a hint rather than dropping straight to a fresh guess.
             self.list_state.remeasure();
         }
-        let render_prep_start = Instant::now();
+        let render_prep_start = std::time::Instant::now();
         let table_with_settings = v_flex()
             .size_full()
             .bg(theme.colors().editor_background)
@@ -61,11 +59,9 @@ impl Render for TableView {
                     self.create_table(&self.column_widths, cx)
                 }
             });
-
-        let render_prep_duration = render_prep_start.elapsed();
         self.performance_metrics.timings.insert(
             "render_prep",
-            (render_prep_duration, std::time::Instant::now()),
+            (render_prep_start.elapsed(), std::time::Instant::now()),
         );
 
         let div = div()
