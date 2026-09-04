@@ -219,6 +219,44 @@ impl MarkdownStyle {
             MarkdownFont::Editor => theme_settings.buffer_font.family.clone(),
         };
 
+        let (
+            code_block_background,
+            code_block_border,
+            code_block_foreground,
+            inline_code_background,
+            inline_code_foreground,
+            prose_foreground,
+            rule_color,
+            link_foreground,
+            link_background,
+            link_underline,
+        ) = match font {
+            MarkdownFont::Agent => (
+                colors.agent_panel_code_block_background,
+                colors.agent_panel_code_block_border,
+                colors.agent_panel_code_block_foreground,
+                colors.agent_panel_inline_code_background,
+                colors.agent_panel_inline_code_foreground,
+                colors.agent_panel_text_foreground,
+                colors.agent_panel_rule,
+                colors.agent_panel_link_foreground,
+                colors.agent_panel_link_background,
+                colors.agent_panel_link_underline,
+            ),
+            _ => (
+                colors.editor_background,
+                colors.border_variant,
+                colors.text,
+                colors.editor_foreground.opacity(0.08),
+                colors.text,
+                colors.text,
+                colors.border,
+                colors.text_accent,
+                colors.editor_foreground.opacity(0.025),
+                colors.text_accent.opacity(0.5),
+            ),
+        };
+
         let mut text_style = window.text_style();
         let line_height = buffer_font_size * 1.75;
 
@@ -232,7 +270,7 @@ impl MarkdownStyle {
                 ui_font_size.into()
             }),
             line_height: Some(line_height.into()),
-            color: Some(colors.text),
+            color: Some(prose_foreground),
             ..Default::default()
         });
 
@@ -240,7 +278,7 @@ impl MarkdownStyle {
             base_text_style: text_style.clone(),
             syntax: syntax.clone(),
             selection_background_color: colors.element_selection_background,
-            rule_color: colors.border,
+            rule_color,
             block_quote_border_color: colors.border,
             block_quote_kind_colors: {
                 let status = cx.theme().status();
@@ -273,8 +311,8 @@ impl MarkdownStyle {
                     right: Some(AbsoluteLength::Pixels(px(1.))),
                     bottom: Some(AbsoluteLength::Pixels(px(1.))),
                 },
-                border_color: Some(colors.border_variant),
-                background: Some(colors.editor_background.into()),
+                border_color: Some(code_block_border),
+                background: Some(code_block_background.into()),
                 text: TextStyleRefinement {
                     font_family: Some(code_font_family.clone()),
                     font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
@@ -282,6 +320,7 @@ impl MarkdownStyle {
                     font_size: Some(buffer_font_size.into()),
                     font_weight: Some(buffer_font_weight),
                     line_height: Some(relative(theme_settings.buffer_line_height.value())),
+                    color: Some(code_block_foreground),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -292,14 +331,15 @@ impl MarkdownStyle {
                 font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
                 font_weight: Some(buffer_font_weight),
-                background_color: Some(colors.editor_foreground.opacity(0.08)),
+                background_color: Some(inline_code_background),
+                color: Some(inline_code_foreground),
                 ..Default::default()
             },
             link: TextStyleRefinement {
-                background_color: Some(colors.editor_foreground.opacity(0.025)),
-                color: Some(colors.text_accent),
+                background_color: Some(link_background),
+                color: Some(link_foreground),
                 underline: Some(UnderlineStyle {
-                    color: Some(colors.text_accent.opacity(0.5)),
+                    color: Some(link_underline),
                     thickness: px(1.),
                     ..Default::default()
                 }),
@@ -423,8 +463,7 @@ impl MarkdownStyle {
     }
 
     pub fn with_muted_text(mut self, cx: &App) -> Self {
-        let colors = cx.theme().colors();
-        self.base_text_style.color = colors.text_muted;
+        self.base_text_style.color = cx.theme().colors().agent_panel_muted_text_foreground;
         self
     }
 }
@@ -2692,6 +2731,15 @@ impl Element for MarkdownElement {
 
                             match (&self.code_block_renderer, is_indented) {
                                 (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
+                                    let code_block_background = self
+                                        .style
+                                        .code_block
+                                        .background
+                                        .as_ref()
+                                        .and_then(|fill| fill.color())
+                                        .and_then(|background| background.as_solid())
+                                        .unwrap_or(cx.theme().colors().editor_background);
+
                                     // This is a parent container that we can position the copy button inside.
                                     let parent_container =
                                         div().group("code_block").relative().w_full();
@@ -2704,7 +2752,7 @@ impl Element for MarkdownElement {
                                             .tracked_scroll_handle(scroll_handle)
                                             .with_track_along(
                                                 ScrollAxes::Horizontal,
-                                                cx.theme().colors().editor_background,
+                                                code_block_background,
                                             )
                                             .notify_content();
 
@@ -3019,10 +3067,19 @@ impl Element for MarkdownElement {
                                         == WrapButtonVisibility::AlwaysVisible;
                                 let use_hover = any_hover && !any_always;
 
+                                let code_block_background = self
+                                    .style
+                                    .code_block
+                                    .background
+                                    .as_ref()
+                                    .and_then(|fill| fill.color())
+                                    .and_then(|background| background.as_solid())
+                                    .unwrap_or(cx.theme().colors().editor_background);
+
                                 let button_row = h_flex()
                                     .gap_0p5()
                                     .absolute()
-                                    .bg(cx.theme().colors().editor_background)
+                                    .bg(code_block_background)
                                     .when_else(
                                         use_hover,
                                         |this| {
@@ -6614,6 +6671,146 @@ mod tests {
                 "preview container font size must be rem-based, got {:?}",
                 style.container_style.text.font_size
             );
+        });
+    }
+
+    fn agent_panel_test_colors() -> theme::ThemeColors {
+        let mut colors = theme::ThemeColors::light();
+        colors.editor_background = gpui::rgb(0x111111).into();
+        colors.editor_foreground = gpui::rgb(0xeeeeee).into();
+        colors.border = gpui::rgb(0x222222).into();
+        colors.border_variant = gpui::rgb(0x333333).into();
+        colors.text = gpui::rgb(0xaaaaaa).into();
+        colors.text_muted = gpui::rgb(0x888888).into();
+        colors.text_accent = gpui::rgb(0x3366ff).into();
+
+        colors.agent_panel_code_block_background = gpui::rgb(0x444444).into();
+        colors.agent_panel_code_block_border = gpui::rgb(0x555555).into();
+        colors.agent_panel_code_block_foreground = gpui::rgb(0xbbbbbb).into();
+        colors.agent_panel_inline_code_background = gpui::rgb(0x666666).into();
+        colors.agent_panel_inline_code_foreground = gpui::rgb(0xcccccc).into();
+        colors.agent_panel_text_foreground = gpui::rgb(0xdddddd).into();
+        colors.agent_panel_rule = gpui::rgb(0x777777).into();
+        colors.agent_panel_link_foreground = gpui::rgb(0x99aaff).into();
+        colors.agent_panel_link_background = gpui::rgb(0x888899).into();
+        colors.agent_panel_link_underline = gpui::rgb(0x7788cc).into();
+        colors.agent_panel_muted_text_foreground = gpui::rgb(0x999999).into();
+        colors
+    }
+
+    #[gpui::test]
+    fn test_agent_markdown_style_uses_agent_panel_theme_colors(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let colors = agent_panel_test_colors();
+        let syntax = Arc::new(SyntaxTheme::default());
+
+        cx.update(|window, cx| {
+            let style = MarkdownStyle::themed_with_overrides(
+                MarkdownFont::Agent,
+                &colors,
+                &syntax,
+                window,
+                cx,
+            );
+
+            assert_eq!(
+                style.base_text_style.color,
+                colors.agent_panel_text_foreground
+            );
+            assert_eq!(
+                style.code_block.background,
+                Some(colors.agent_panel_code_block_background.into())
+            );
+            assert_eq!(
+                style.code_block.border_color,
+                Some(colors.agent_panel_code_block_border)
+            );
+            assert_eq!(
+                style.code_block.text.color,
+                Some(colors.agent_panel_code_block_foreground)
+            );
+            assert_eq!(
+                style.inline_code.background_color,
+                Some(colors.agent_panel_inline_code_background)
+            );
+            assert_eq!(
+                style.inline_code.color,
+                Some(colors.agent_panel_inline_code_foreground)
+            );
+            assert_eq!(style.rule_color, colors.agent_panel_rule);
+            assert_eq!(style.link.color, Some(colors.agent_panel_link_foreground));
+            assert_eq!(
+                style.link.background_color,
+                Some(colors.agent_panel_link_background)
+            );
+            assert_eq!(
+                style.link.underline.unwrap().color,
+                Some(colors.agent_panel_link_underline)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_editor_markdown_style_uses_editor_theme_colors_not_agent_panel(
+        cx: &mut TestAppContext,
+    ) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let colors = agent_panel_test_colors();
+        let syntax = Arc::new(SyntaxTheme::default());
+
+        cx.update(|window, cx| {
+            let style = MarkdownStyle::themed_with_overrides(
+                MarkdownFont::Editor,
+                &colors,
+                &syntax,
+                window,
+                cx,
+            );
+
+            assert_eq!(style.base_text_style.color, colors.text);
+            assert_eq!(
+                style.code_block.background,
+                Some(colors.editor_background.into())
+            );
+            assert_eq!(
+                style.code_block.border_color,
+                Some(colors.border_variant)
+            );
+            assert_eq!(style.code_block.text.color, Some(colors.text));
+            assert_eq!(
+                style.inline_code.background_color,
+                Some(colors.editor_foreground.opacity(0.08))
+            );
+            assert_eq!(style.inline_code.color, Some(colors.text));
+            assert_eq!(style.rule_color, colors.border);
+            assert_eq!(style.link.color, Some(colors.text_accent));
+            assert_eq!(
+                style.link.background_color,
+                Some(colors.editor_foreground.opacity(0.025))
+            );
+            assert_eq!(
+                style.link.underline.unwrap().color,
+                Some(colors.text_accent.opacity(0.5))
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_agent_muted_text_uses_agent_panel_muted_text_foreground(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let muted_color: Hsla = gpui::rgb(0x987654).into();
+
+        cx.update(|window, cx| {
+            let mut theme = theme::GlobalTheme::theme(cx).as_ref().clone();
+            theme.styles.colors.agent_panel_muted_text_foreground = muted_color;
+            theme::GlobalTheme::update_theme(cx, Arc::new(theme));
+
+            let style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx);
+
+            assert_eq!(style.base_text_style.color, muted_color);
         });
     }
 

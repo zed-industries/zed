@@ -207,6 +207,7 @@ pub struct MessageEditor {
     local_commands: SharedLocalCommands,
     agent_id: AgentId,
     thread_store: Option<Entity<ThreadStore>>,
+    use_user_message_foreground: bool,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
 }
@@ -609,9 +610,14 @@ impl MessageEditor {
             local_commands,
             agent_id,
             thread_store,
+            use_user_message_foreground: false,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
         }
+    }
+
+    pub fn set_use_user_message_foreground(&mut self, use_user_message_foreground: bool) {
+        self.use_user_message_foreground = use_user_message_foreground;
     }
 
     pub fn set_local_commands(&self, commands: Vec<PromptLocalCommand>) {
@@ -2018,7 +2024,11 @@ impl Render for MessageEditor {
                 let settings = ThemeSettings::get_global(cx);
 
                 let text_style = TextStyle {
-                    color: cx.theme().colors().text,
+                    color: if self.use_user_message_foreground {
+                        cx.theme().colors().agent_panel_user_message_foreground
+                    } else {
+                        cx.theme().colors().text
+                    },
                     font_family: settings.agent_buffer_font_family().clone(),
                     font_fallbacks: settings.buffer_font.fallbacks.clone(),
                     font_features: settings.buffer_font.features.clone(),

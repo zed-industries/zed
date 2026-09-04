@@ -78,6 +78,21 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   // and any other snippet of code.
   "agent_buffer_font_size": 12,
 
+  // Agent panel color overrides (via theme_overrides):
+  // "agent_panel.code_block.background": "#2a2f45",
+  // "agent_panel.code_block.foreground": "#e0e4f0",
+  // "agent_panel.code_block.border": "#3d4259",
+  // "agent_panel.inline_code.background": "#ffffff14",
+  // "agent_panel.inline_code.foreground": "#e0e4f0",
+  // "agent_panel.text.foreground": "#e0e4f0",
+  // "agent_panel.muted_text.foreground": "#9aa3b8",
+  // "agent_panel.link.foreground": "#7eb6ff",
+  // "agent_panel.link.background": "#ffffff06",
+  // "agent_panel.link.underline": "#7eb6ff80",
+  // "agent_panel.rule": "#4a5068",
+  // "agent_panel.user_message.foreground": "#e0e4f0",
+  // "agent_panel.user_message.border": "#4a5068",
+
   // Controls the font size for the markdown preview.
   // If not specified, it falls back to the editor font size.
   "markdown_preview_font_size": null,
