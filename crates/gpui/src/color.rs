@@ -811,6 +811,10 @@ pub struct Background {
     /// corner the line points at: 1 top left, 2 top right, 3 bottom right,
     /// 4 bottom left.
     pub(crate) corner: u32,
+    /// WGSL rounds the stride of an `array<Quad>` up to 8 bytes because
+    /// `Bounds` holds a `vec2<f32>`. Rust packs at 4. This pad keeps every
+    /// record that holds a `Background` at a size that is a multiple of 8.
+    pad: u32,
 }
 
 impl std::fmt::Debug for Background {
@@ -849,6 +853,7 @@ impl Default for Background {
             colors: [LinearColorStop::default(); MAX_GRADIENT_STOPS],
             stop_count: 0,
             corner: 0,
+            pad: 0,
         }
     }
 }

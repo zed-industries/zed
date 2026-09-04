@@ -148,6 +148,7 @@ struct Background {
     stop_count: u32,
     // 0 = angle, 1 top left, 2 top right, 3 bottom right, 4 bottom left.
     corner: u32,
+    pad: u32,
 }
 
 struct AtlasTextureId {

@@ -71,6 +71,7 @@ struct Background {
     // 0 = the angle applies, 1..4 = the line points at a corner: top left,
     // top right, bottom right, bottom left.
     uint corner;
+    uint pad;
 };
 
 struct AtlasTextureId {

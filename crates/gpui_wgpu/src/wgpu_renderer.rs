@@ -2231,13 +2231,30 @@ mod tests {
 
     #[test]
     fn webgl_record_sizes_match_shader_word_strides() {
-        assert_eq!(std::mem::size_of::<Quad>(), 83 * 4);
+        assert_eq!(std::mem::size_of::<Quad>(), 84 * 4);
         assert_eq!(std::mem::size_of::<Shadow>(), 28 * 4);
-        assert_eq!(std::mem::size_of::<PathRasterizationVertex>(), 65 * 4);
+        assert_eq!(std::mem::size_of::<PathRasterizationVertex>(), 66 * 4);
         assert_eq!(std::mem::size_of::<PathSprite>(), 4 * 4);
         assert_eq!(std::mem::size_of::<Underline>(), 16 * 4);
         assert_eq!(std::mem::size_of::<MonochromeSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<SubpixelSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<PolychromeSprite>(), 24 * 4);
+    }
+
+    /// The storage shaders index `array<T>` with the WGSL stride, which is
+    /// the record size rounded up to the alignment of the struct. Every
+    /// record holds a `vec2<f32>`, so that alignment is 8. A Rust record
+    /// that is not a multiple of 8 bytes puts every instance after the
+    /// first at the wrong offset.
+    #[test]
+    fn storage_record_sizes_are_multiples_of_the_wgsl_alignment() {
+        assert_eq!(std::mem::size_of::<Quad>() % 8, 0);
+        assert_eq!(std::mem::size_of::<Shadow>() % 8, 0);
+        assert_eq!(std::mem::size_of::<PathRasterizationVertex>() % 8, 0);
+        assert_eq!(std::mem::size_of::<PathSprite>() % 8, 0);
+        assert_eq!(std::mem::size_of::<Underline>() % 8, 0);
+        assert_eq!(std::mem::size_of::<MonochromeSprite>() % 8, 0);
+        assert_eq!(std::mem::size_of::<SubpixelSprite>() % 8, 0);
+        assert_eq!(std::mem::size_of::<PolychromeSprite>() % 8, 0);
     }
 }
