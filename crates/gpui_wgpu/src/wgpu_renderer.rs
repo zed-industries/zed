@@ -4,7 +4,7 @@ use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
 use gpui::{
     AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, Path, Point, PrimitiveBatch,
-    ScaledPixels, Scene, Size, get_gamma_correction_ratios, size,
+    ScaledPixels, Scene, Size, get_gamma_correction_ratios,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
@@ -212,31 +212,27 @@ impl WgpuResources {
 }
 
 impl WgpuResources {
-    /// Splits out the effect layer state and the renderer state it reads,
-    /// so a layer can open or close while the rest stays borrowed.
+    /// The effect layer state and what one frame of it reads. `None` when
+    /// the device has no storage buffers or the frame cannot be copied
+    /// from. The scene then draws layer content straight into the frame.
     fn effects_and_frame<'a>(
         &'a mut self,
         view: &'a wgpu::TextureView,
         texture: &'a wgpu::Texture,
-        format: wgpu::TextureFormat,
         viewport_size: Size<DevicePixels>,
-    ) -> (&'a mut Effects, EffectFrame<'a>) {
+    ) -> Option<(&'a mut Effects, EffectFrame<'a>)> {
+        let pipelines = self.pipelines.effects.as_ref()?;
+        if !texture.usage().contains(wgpu::TextureUsages::COPY_SRC) {
+            return None;
+        }
         let frame = EffectFrame {
-            device: &self.device,
-            queue: &self.queue,
-            pipelines: self
-                .pipelines
-                .effects
-                .as_ref()
-                .expect("effect pipelines exist when effects are supported"),
-            layouts: &self.bind_group_layouts.effects,
+            pipelines,
             globals: &self.globals_bind_group,
             texture,
             view,
-            format,
             viewport_size,
         };
-        (&mut self.effects, frame)
+        Some((&mut self.effects, frame))
     }
 }
 
@@ -604,7 +600,7 @@ impl WgpuRenderer {
             *guard = Some(error.to_string());
         }));
 
-        let effects = Effects::new(&device);
+        let effects = Effects::new(&device, &queue, &bind_group_layouts.effects);
         let resources = WgpuResources {
             device,
             queue,
@@ -1290,7 +1286,6 @@ impl WgpuRenderer {
         }
     }
 
-    #[allow(dead_code)]
     pub fn viewport_size(&self) -> Size<DevicePixels> {
         Size {
             width: DevicePixels(self.surface_config.width as i32),
@@ -1488,16 +1483,7 @@ impl WgpuRenderer {
                     label: Some("main_encoder"),
                 });
 
-        let format = self.surface_config.format;
-        let viewport_size = size(
-            DevicePixels(self.surface_config.width as i32),
-            DevicePixels(self.surface_config.height as i32),
-        );
-        let effects_supported = self.resources().pipelines.effects.is_some()
-            && self
-                .surface_config
-                .usage
-                .contains(wgpu::TextureUsages::COPY_SRC);
+        let viewport_size = self.viewport_size();
         self.resources_mut().effects.begin_frame();
 
         {
@@ -1530,17 +1516,11 @@ impl WgpuRenderer {
                             &mut instance_offset,
                         )?;
 
-                        let view = if effects_supported {
-                            let (effects, frame) = self.resources_mut().effects_and_frame(
-                                frame_view,
-                                frame_texture,
-                                format,
-                                viewport_size,
-                            );
-                            effects.target_view(&frame)
-                        } else {
-                            frame_view
-                        };
+                        let view = self
+                            .resources_mut()
+                            .effects_and_frame(frame_view, frame_texture, viewport_size)
+                            .map(|(effects, frame)| effects.target_view(&frame))
+                            .unwrap_or(frame_view);
                         pass = begin_pass(&mut encoder, view, false, "main_pass_continued");
 
                         if rasterized {
@@ -1592,26 +1572,26 @@ impl WgpuRenderer {
                     // end mark paints that texture into the parent. Without
                     // storage buffers or `COPY_SRC` on the frame the content
                     // draws straight into the frame with no effect.
-                    PrimitiveBatch::LayerBegin(index) | PrimitiveBatch::LayerEnd(index)
-                        if effects_supported =>
-                    {
+                    PrimitiveBatch::LayerBegin(index) | PrimitiveBatch::LayerEnd(index) => {
                         drop(pass);
                         let layer = &scene.effect_layers[index];
-                        let (effects, frame) = self.resources_mut().effects_and_frame(
+                        let view = match self.resources_mut().effects_and_frame(
                             frame_view,
                             frame_texture,
-                            format,
                             viewport_size,
-                        );
-                        if matches!(batch, PrimitiveBatch::LayerBegin(_)) {
-                            effects.begin_layer(&frame, &mut encoder, layer);
-                        } else {
-                            effects.end_layer(&frame, &mut encoder, layer);
-                        }
-                        let view = effects.target_view(&frame);
+                        ) {
+                            Some((effects, frame)) => {
+                                if matches!(batch, PrimitiveBatch::LayerBegin(_)) {
+                                    effects.begin_layer(&frame, &mut encoder, layer);
+                                } else {
+                                    effects.end_layer(&frame, &mut encoder, layer);
+                                }
+                                effects.target_view(&frame)
+                            }
+                            None => frame_view,
+                        };
                         pass = begin_pass(&mut encoder, view, false, "layer_pass");
                     }
-                    PrimitiveBatch::LayerBegin(_) | PrimitiveBatch::LayerEnd(_) => {}
                 }
             }
         }
@@ -1730,7 +1710,7 @@ impl WgpuRenderer {
         );
     }
 
-    unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
+    pub(crate) unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
         unsafe {
             std::slice::from_raw_parts(
                 instances.as_ptr() as *const u8,
