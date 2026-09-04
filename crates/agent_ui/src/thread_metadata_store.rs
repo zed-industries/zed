@@ -632,6 +632,15 @@ impl ThreadMetadataStore {
             .filter(move |s| s.matches_remote_connection(remote_connection))
     }
 
+    pub fn project_less_entries(&self) -> impl Iterator<Item = &ThreadMetadata> + '_ {
+        self.threads_by_paths
+            .get(&PathList::default())
+            .into_iter()
+            .flatten()
+            .filter_map(|thread_id| self.threads.get(thread_id))
+            .filter(|thread| !thread.archived)
+    }
+
     /// Returns threads whose `main_worktree_paths` matches the given path list
     /// and remote connection, excluding archived threads. This finds threads
     /// that were opened in a linked worktree but are associated with the given
@@ -1325,9 +1334,7 @@ impl ThreadMetadataStore {
         // Threads without a folder path (e.g. started in a project-less
         // window) are surfaced under the sidebar's "No project" group, so
         // they're kept unarchived by default like any other new thread.
-        let archived = existing_thread.map(|t| t.archived).unwrap_or_else(|| {
-            archive_new_thread_by_default(&worktree_paths, remote_connection.as_ref())
-        });
+        let archived = existing_thread.map(|t| t.archived).unwrap_or(false);
 
         let was_draft = existing_thread.map_or(true, |t| t.is_draft());
         if was_draft && !is_draft {
@@ -1353,13 +1360,6 @@ impl ThreadMetadataStore {
 
         self.save(metadata, cx);
     }
-}
-
-fn archive_new_thread_by_default(
-    worktree_paths: &WorktreePaths,
-    remote_connection: Option<&RemoteConnectionOptions>,
-) -> bool {
-    worktree_paths.is_empty() && remote_connection.is_some()
 }
 
 impl Global for ThreadMetadataStore {}
@@ -2823,21 +2823,6 @@ mod tests {
                 "expected thread with project association to remain unarchived"
             );
         });
-    }
-
-    #[test]
-    fn test_only_remote_project_less_threads_are_archived_by_default() {
-        let empty_paths = WorktreePaths::from_folder_paths(&PathList::default());
-        let project_paths = WorktreePaths::from_folder_paths(&PathList::new(&[Path::new("/a")]));
-        let remote = RemoteConnectionOptions::Mock(remote::MockConnectionOptions { id: 1 });
-
-        assert!(!archive_new_thread_by_default(&empty_paths, None));
-        assert!(archive_new_thread_by_default(&empty_paths, Some(&remote)));
-        assert!(!archive_new_thread_by_default(&project_paths, None));
-        assert!(!archive_new_thread_by_default(
-            &project_paths,
-            Some(&remote)
-        ));
     }
 
     #[gpui::test]

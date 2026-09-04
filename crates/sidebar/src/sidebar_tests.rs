@@ -1069,6 +1069,63 @@ async fn test_window_with_project_shows_no_project_group_for_orphan_threads(
             "  Orphan thread",
         ]
     );
+
+    seed_thread_metadata(
+        ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(acp::SessionId::new(Arc::from("remote-orphan"))),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Remote orphan thread".into()),
+            title_override: None,
+            updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 1, 0, 0).unwrap(),
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
+            archived: false,
+            remote_connection: Some(RemoteConnectionOptions::Mock(
+                remote::MockConnectionOptions { id: 1 },
+            )),
+        },
+        cx,
+    );
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [my-project]",
+            "  Project thread",
+            "v [No project]",
+            "  Remote orphan thread",
+            "  Orphan thread",
+        ],
+        "blank remote projects share the local \"No project\" group"
+    );
+    let remote_row_key = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ListEntry::Thread(thread)
+                    if thread.metadata.title.as_deref() == Some("Remote orphan thread") =>
+                {
+                    match &thread.workspace {
+                        ThreadEntryWorkspace::Closed {
+                            project_group_key, ..
+                        } => Some(project_group_key.clone()),
+                        ThreadEntryWorkspace::Open(_) => None,
+                    }
+                }
+                _ => None,
+            })
+    });
+    assert_eq!(
+        remote_row_key.as_ref().and_then(|key| key.host()),
+        Some(RemoteConnectionOptions::Mock(
+            remote::MockConnectionOptions { id: 1 }
+        )),
+        "activating a remote blank-project row must reconnect to its host"
+    );
 }
 
 #[gpui::test]

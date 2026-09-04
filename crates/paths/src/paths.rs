@@ -218,6 +218,11 @@ pub fn temp_dir() -> &'static PathBuf {
     })
 }
 
+pub fn agent_scratch_dir() -> &'static PathBuf {
+    static AGENT_SCRATCH_DIR: OnceLock<PathBuf> = OnceLock::new();
+    AGENT_SCRATCH_DIR.get_or_init(|| temp_dir().join("agent_scratch"))
+}
+
 /// Returns the path to the hang traces directory.
 pub fn hang_traces_dir() -> &'static PathBuf {
     static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();

@@ -2601,6 +2601,39 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
     assert!(path.is_none());
 }
 
+#[gpui::test]
+async fn test_remote_project_without_worktrees_uses_server_agent_scratch_dir(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+
+    assert!(
+        !fs.is_dir(paths::agent_scratch_dir()).await,
+        "opening a remote project must not create anything on the server by itself"
+    );
+    assert!(project.read_with(cx, |project, cx| project.default_path_list(cx).is_empty()));
+
+    let work_dirs = project
+        .update(cx, |project, cx| project.agent_work_dirs(cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        work_dirs.ordered_paths().cloned().collect::<Vec<_>>(),
+        vec![paths::agent_scratch_dir().to_path_buf()],
+        "a blank remote project must point agents at the server's scratch dir, not a local path"
+    );
+    assert!(
+        fs.is_dir(paths::agent_scratch_dir()).await,
+        "the server must create its scratch dir before handing it out"
+    );
+    assert_eq!(
+        project.read_with(cx, |project, cx| project.default_path_list(cx)),
+        work_dirs
+    );
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());

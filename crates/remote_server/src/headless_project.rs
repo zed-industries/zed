@@ -293,6 +293,7 @@ impl HeadlessProject {
 
         session.add_request_handler(cx.weak_entity(), Self::handle_list_remote_directory);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_path_metadata);
+        session.add_request_handler(cx.weak_entity(), Self::handle_get_agent_scratch_dir);
         session.add_request_handler(cx.weak_entity(), Self::handle_shutdown_remote_server);
         session.add_request_handler(cx.weak_entity(), Self::handle_ping);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_processes);
@@ -1230,6 +1231,19 @@ impl HeadlessProject {
             exists: metadata.is_some(),
             is_dir,
             path: expanded.to_string_lossy().into_owned(),
+        })
+    }
+
+    async fn handle_get_agent_scratch_dir(
+        this: Entity<Self>,
+        _envelope: TypedEnvelope<proto::GetAgentScratchDir>,
+        cx: AsyncApp,
+    ) -> Result<proto::GetAgentScratchDirResponse> {
+        let fs = cx.read_entity(&this, |this, _| this.fs.clone());
+        let path = paths::agent_scratch_dir();
+        fs.create_dir(path).await?;
+        Ok(proto::GetAgentScratchDirResponse {
+            path: path.to_string_lossy().into_owned(),
         })
     }
 

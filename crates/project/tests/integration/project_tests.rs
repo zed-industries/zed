@@ -174,7 +174,7 @@ async fn test_default_session_work_dirs_prefers_directory_worktrees_over_single_
 }
 
 #[gpui::test]
-async fn test_default_session_work_dirs_falls_back_to_home_for_empty_project(
+async fn test_default_session_work_dirs_falls_back_to_agent_scratch_dir_for_empty_project(
     cx: &mut gpui::TestAppContext,
 ) {
     init_test(cx);
@@ -185,7 +185,11 @@ async fn test_default_session_work_dirs_falls_back_to_home_for_empty_project(
     let work_dirs = project.read_with(cx, |project, cx| project.default_path_list(cx));
     let ordered_paths = work_dirs.ordered_paths().cloned().collect::<Vec<_>>();
 
-    assert_eq!(ordered_paths, vec![paths::home_dir().to_path_buf()]);
+    assert_eq!(
+        ordered_paths,
+        vec![paths::agent_scratch_dir().to_path_buf()]
+    );
+    assert!(ordered_paths[0].starts_with(paths::temp_dir()));
 }
 
 // NOTE:

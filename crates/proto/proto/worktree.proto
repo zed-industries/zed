@@ -60,6 +60,14 @@ message GetPathMetadataResponse {
   bool is_dir = 3;
 }
 
+message GetAgentScratchDir {
+  uint64 project_id = 1;
+}
+
+message GetAgentScratchDirResponse {
+  string path = 1;
+}
+
 message WorktreeMetadata {
   uint64 id = 1;
   string root_name = 2;

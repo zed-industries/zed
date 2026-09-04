@@ -1662,6 +1662,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
         paths::database_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
+        paths::agent_scratch_dir(),
         paths::hang_traces_dir(),
     ]
     .into_iter()

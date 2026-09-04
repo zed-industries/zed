@@ -505,8 +505,7 @@ struct SidebarContents {
     notified_terminals: HashSet<TerminalId>,
     project_header_indices: Vec<usize>,
     /// Whether the thread list should render instead of the empty state.
-    /// True when the window has open projects or when the synthetic
-    /// "No project" group is shown.
+    /// True when the window has open projects or when project-less threads exist.
     has_thread_list_content: bool,
 }
 
@@ -561,6 +560,19 @@ fn root_repository_snapshots(
 
 fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
     PathList::new(&workspace.read(cx).root_paths(cx))
+}
+
+struct GroupRows {
+    key: ProjectGroupKey,
+    label: SharedString,
+    threads: Vec<Arc<ThreadEntry>>,
+    terminals: Vec<TerminalEntry>,
+    has_threads: bool,
+    hide_when_empty: bool,
+    is_collapsed: bool,
+    is_active: bool,
+    has_running_threads: bool,
+    waiting_thread_count: usize,
 }
 
 fn no_project_group_key() -> ProjectGroupKey {
@@ -1774,145 +1786,40 @@ impl Sidebar {
             };
             let has_threads = has_visible_rows || has_stored_thread_rows;
 
-            if !query.is_empty() {
-                let workspace_highlight_positions =
-                    fuzzy_match_positions(&query, &label).unwrap_or_default();
-                let workspace_matched = !workspace_highlight_positions.is_empty();
-
-                let mut matched_threads: Vec<Arc<ThreadEntry>> = Vec::new();
-                for mut thread in threads {
-                    let mut worktree_matched = false;
-                    {
-                        let thread = Arc::make_mut(&mut thread);
-                        let title = thread.metadata.display_title();
-                        if let Some(positions) = fuzzy_match_positions(&query, title.as_ref()) {
-                            thread.highlight_positions = positions;
-                        }
-                        for worktree in &mut thread.worktrees {
-                            let Some(name) = worktree.worktree_name.as_ref() else {
-                                continue;
-                            };
-                            if let Some(positions) = fuzzy_match_positions(&query, name) {
-                                worktree.highlight_positions = positions;
-                                worktree_matched = true;
-                            }
-                        }
-                    }
-                    if workspace_matched
-                        || !thread.highlight_positions.is_empty()
-                        || worktree_matched
-                    {
-                        matched_threads.push(thread);
-                    }
-                }
-
-                let mut matched_terminals: Vec<TerminalEntry> = Vec::new();
-                for mut terminal in terminals {
-                    let mut terminal_matched = false;
-                    let terminal_title = terminal.metadata.display_title();
-                    if let Some(positions) = fuzzy_match_positions(&query, terminal_title.as_ref())
-                    {
-                        terminal.highlight_positions = positions;
-                        terminal_matched = true;
-                    }
-                    let mut worktree_matched = false;
-                    for worktree in &mut terminal.worktrees {
-                        let Some(name) = worktree.worktree_name.as_ref() else {
-                            continue;
-                        };
-                        if let Some(positions) = fuzzy_match_positions(&query, name) {
-                            worktree.highlight_positions = positions;
-                            worktree_matched = true;
-                        }
-                    }
-                    if workspace_matched || terminal_matched || worktree_matched {
-                        matched_terminals.push(terminal);
-                    }
-                }
-
-                if matched_threads.is_empty() && matched_terminals.is_empty() && !workspace_matched
-                {
-                    continue;
-                }
-
-                // Check for notifications: threads that completed while not active.
-                let has_thread_notifications = matched_threads
-                    .iter()
-                    .any(|t| notified_threads.contains(&t.metadata.thread_id));
-                let has_terminal_notifications = matched_terminals
-                    .iter()
-                    .any(|t| notified_terminals.contains(&t.metadata.terminal_id));
-
-                project_header_indices.push(entries.len());
-                entries.push(ListEntry::ProjectHeader {
+            // When collapsed, threads aren't loaded into `threads`, so we
+            // query the store for thread IDs to check notifications and
+            // to prevent the retain below from purging them.
+            let stored_thread_ids = || {
+                let thread_store = ThreadMetadataStore::global(cx);
+                let store = thread_store.read(cx);
+                store
+                    .entries_for_main_worktree_path(group_key.path_list(), group_host.as_ref())
+                    .chain(store.entries_for_path(group_key.path_list(), group_host.as_ref()))
+                    .map(|m| m.thread_id)
+                    .collect::<HashSet<_>>()
+            };
+            Self::push_group_entries(
+                GroupRows {
                     key: group_key.clone(),
                     label,
-                    highlight_positions: workspace_highlight_positions,
-                    has_running_threads,
-                    waiting_thread_count,
-                    has_notifications: has_thread_notifications || has_terminal_notifications,
-                    is_active,
-                    has_threads,
-                });
-
-                Self::push_entries_by_display_time(
-                    &mut entries,
-                    matched_terminals,
-                    matched_threads,
-                    &mut current_session_ids,
-                    &mut current_thread_ids,
-                );
-            } else {
-                let has_terminal_notifications = terminals
-                    .iter()
-                    .any(|t| notified_terminals.contains(&t.metadata.terminal_id));
-
-                // When collapsed, threads aren't loaded into `threads`, so we
-                // query the store for thread IDs to check notifications and
-                // to prevent the retain below from purging them.
-                let has_thread_notifications = if threads.is_empty() && !notified_threads.is_empty()
-                {
-                    let thread_store = ThreadMetadataStore::global(cx);
-                    let store = thread_store.read(cx);
-                    let group_thread_ids = store
-                        .entries_for_main_worktree_path(group_key.path_list(), group_host.as_ref())
-                        .chain(store.entries_for_path(group_key.path_list(), group_host.as_ref()))
-                        .map(|m| m.thread_id)
-                        .collect::<HashSet<_>>();
-                    current_thread_ids.extend(group_thread_ids.iter());
-                    group_thread_ids
-                        .iter()
-                        .any(|id| notified_threads.contains(id))
-                } else {
-                    threads
-                        .iter()
-                        .any(|t| notified_threads.contains(&t.metadata.thread_id))
-                };
-
-                project_header_indices.push(entries.len());
-                entries.push(ListEntry::ProjectHeader {
-                    key: group_key.clone(),
-                    label,
-                    highlight_positions: Vec::new(),
-                    has_running_threads,
-                    waiting_thread_count,
-                    has_notifications: has_thread_notifications || has_terminal_notifications,
-                    is_active,
-                    has_threads,
-                });
-
-                if is_collapsed {
-                    continue;
-                }
-
-                Self::push_entries_by_display_time(
-                    &mut entries,
-                    terminals,
                     threads,
-                    &mut current_session_ids,
-                    &mut current_thread_ids,
-                );
-            }
+                    terminals,
+                    has_threads,
+                    hide_when_empty: false,
+                    is_collapsed,
+                    is_active,
+                    has_running_threads,
+                    waiting_thread_count,
+                },
+                &query,
+                stored_thread_ids,
+                &mut entries,
+                &mut project_header_indices,
+                &mut current_session_ids,
+                &mut current_thread_ids,
+                &notified_threads,
+                &notified_terminals,
+            );
         }
 
         // Synthetic "No project" group. Threads started in project-less
@@ -1921,30 +1828,46 @@ impl Sidebar {
         // that would otherwise hide them.
         let has_no_project_threads;
         {
-            let empty_paths = PathList::default();
             let no_project_key = no_project_group_key();
-            let no_project_workspace = workspaces
+            let no_project_workspaces = workspaces
                 .iter()
-                .find(|ws| workspace_path_list(ws, cx).paths().is_empty())
-                .cloned();
+                .filter(|ws| workspace_path_list(ws, cx).paths().is_empty())
+                .cloned()
+                .collect::<Vec<_>>();
             // Without a project-less workspace in this window, rows use the
             // same closed-workspace mechanism as threads whose project isn't
             // open: activation finds or creates an empty workspace.
-            let workspace_entry = match &no_project_workspace {
-                Some(workspace) => ThreadEntryWorkspace::Open(workspace.clone()),
-                None => ThreadEntryWorkspace::Closed {
-                    folder_paths: empty_paths.clone(),
-                    project_group_key: no_project_key.clone(),
-                },
+            let workspace_entry_for = |remote_connection: Option<&RemoteConnectionOptions>| {
+                no_project_workspaces
+                    .iter()
+                    .find(|workspace| {
+                        same_remote_connection_identity(
+                            workspace
+                                .read(cx)
+                                .project()
+                                .read(cx)
+                                .remote_connection_options(cx)
+                                .as_ref(),
+                            remote_connection,
+                        )
+                    })
+                    .map(|workspace| ThreadEntryWorkspace::Open(workspace.clone()))
+                    .unwrap_or_else(|| ThreadEntryWorkspace::Closed {
+                        folder_paths: PathList::default(),
+                        project_group_key: ProjectGroupKey::new(
+                            remote_connection.cloned(),
+                            PathList::default(),
+                        ),
+                    })
             };
             let is_collapsed = self.is_group_collapsed(&no_project_key, cx);
             let should_load_threads = !is_collapsed || !query.is_empty();
-            let is_active =
-                no_project_workspace.is_some() && active_workspace == no_project_workspace;
+            let is_active = active_workspace
+                .as_ref()
+                .is_some_and(|workspace| no_project_workspaces.contains(workspace));
 
-            let live_infos = workspaces
+            let live_infos = no_project_workspaces
                 .iter()
-                .filter(|ws| workspace_path_list(ws, cx).paths().is_empty())
                 .flat_map(|ws| all_thread_infos_for_workspace(ws, cx));
 
             let mut threads: Vec<Arc<ThreadEntry>> = Vec::new();
@@ -1952,14 +1875,15 @@ impl Sidebar {
             let (has_running_threads, waiting_thread_count) = if should_load_threads {
                 let rows = ThreadMetadataStore::global(cx)
                     .read(cx)
-                    .entries_for_path(&empty_paths, None)
+                    .project_less_entries()
                     .cloned()
                     .collect::<Vec<_>>();
                 for row in rows {
                     if !seen_thread_ids.insert(row.thread_id) {
                         continue;
                     }
-                    threads.push(make_thread_entry(row, workspace_entry.clone()));
+                    let workspace_entry = workspace_entry_for(row.remote_connection.as_ref());
+                    threads.push(make_thread_entry(row, workspace_entry));
                 }
 
                 Self::resolve_draft_rows(
@@ -1998,94 +1922,44 @@ impl Sidebar {
             } else {
                 ThreadMetadataStore::global(cx)
                     .read(cx)
-                    .entries_for_path(&empty_paths, None)
+                    .project_less_entries()
                     .any(|metadata| {
+                        let workspace_entry =
+                            workspace_entry_for(metadata.remote_connection.as_ref());
                         thread_metadata_would_render_sidebar_row(metadata, &workspace_entry, cx)
                     })
             };
             has_no_project_threads = has_threads;
 
-            let label: SharedString = "No project".into();
-            if !query.is_empty() {
-                let header_highlight_positions =
-                    fuzzy_match_positions(&query, &label).unwrap_or_default();
-                let label_matched = !header_highlight_positions.is_empty();
-                let mut matched: Vec<Arc<ThreadEntry>> = Vec::new();
-                for mut thread in threads {
-                    let title = thread.metadata.display_title();
-                    if let Some(positions) = fuzzy_match_positions(&query, title.as_ref()) {
-                        Arc::make_mut(&mut thread).highlight_positions = positions;
-                        matched.push(thread);
-                    } else if label_matched {
-                        matched.push(thread);
-                    }
-                }
-                threads = matched;
-
-                if (label_matched && has_threads) || !threads.is_empty() {
-                    let has_notifications = threads
-                        .iter()
-                        .any(|thread| notified_threads.contains(&thread.metadata.thread_id));
-                    project_header_indices.push(entries.len());
-                    entries.push(ListEntry::ProjectHeader {
-                        key: no_project_key,
-                        label,
-                        highlight_positions: header_highlight_positions,
-                        has_running_threads,
-                        waiting_thread_count,
-                        has_notifications,
-                        is_active,
-                        has_threads,
-                    });
-                    Self::push_entries_by_display_time(
-                        &mut entries,
-                        Vec::new(),
-                        threads,
-                        &mut current_session_ids,
-                        &mut current_thread_ids,
-                    );
-                }
-            } else if has_threads {
-                // When collapsed, threads aren't loaded, so query the store
-                // for thread IDs to check notifications and to prevent the
-                // retain below from purging them.
-                let has_notifications = if threads.is_empty() && !notified_threads.is_empty() {
-                    let group_thread_ids = ThreadMetadataStore::global(cx)
-                        .read(cx)
-                        .entries_for_path(&empty_paths, None)
-                        .map(|metadata| metadata.thread_id)
-                        .collect::<HashSet<_>>();
-                    current_thread_ids.extend(group_thread_ids.iter());
-                    group_thread_ids
-                        .iter()
-                        .any(|id| notified_threads.contains(id))
-                } else {
-                    threads
-                        .iter()
-                        .any(|thread| notified_threads.contains(&thread.metadata.thread_id))
-                };
-
-                project_header_indices.push(entries.len());
-                entries.push(ListEntry::ProjectHeader {
+            let stored_thread_ids = || {
+                ThreadMetadataStore::global(cx)
+                    .read(cx)
+                    .project_less_entries()
+                    .map(|metadata| metadata.thread_id)
+                    .collect::<HashSet<_>>()
+            };
+            Self::push_group_entries(
+                GroupRows {
                     key: no_project_key,
-                    label,
-                    highlight_positions: Vec::new(),
+                    label: "No project".into(),
+                    threads,
+                    terminals: Vec::new(),
+                    has_threads,
+                    hide_when_empty: true,
+                    is_collapsed,
+                    is_active,
                     has_running_threads,
                     waiting_thread_count,
-                    has_notifications,
-                    is_active,
-                    has_threads,
-                });
-                if !is_collapsed {
-                    Self::push_entries_by_display_time(
-                        &mut entries,
-                        Vec::new(),
-                        threads,
-                        &mut current_session_ids,
-                        &mut current_thread_ids,
-                    );
-                }
-            }
+                },
+                &query,
+                stored_thread_ids,
+                &mut entries,
+                &mut project_header_indices,
+                &mut current_session_ids,
+                &mut current_thread_ids,
+                &notified_threads,
+                &notified_terminals,
+            );
         }
 
         notified_threads.retain(|id| current_thread_ids.contains(id));
@@ -6007,6 +5881,124 @@ impl Sidebar {
             }
             entries.push(entry);
         }
+    }
+
+    fn push_group_entries(
+        group: GroupRows,
+        query: &str,
+        stored_thread_ids: impl FnOnce() -> HashSet<agent_ui::ThreadId>,
+        entries: &mut Vec<ListEntry>,
+        project_header_indices: &mut Vec<usize>,
+        current_session_ids: &mut HashSet<acp::SessionId>,
+        current_thread_ids: &mut HashSet<agent_ui::ThreadId>,
+        notified_threads: &HashSet<agent_ui::ThreadId>,
+        notified_terminals: &HashSet<TerminalId>,
+    ) {
+        let GroupRows {
+            key,
+            label,
+            mut threads,
+            mut terminals,
+            has_threads,
+            hide_when_empty,
+            is_collapsed,
+            is_active,
+            has_running_threads,
+            waiting_thread_count,
+        } = group;
+        let header_stands_alone = has_threads || !hide_when_empty;
+
+        let mut header_highlight_positions = Vec::new();
+        if !query.is_empty() {
+            header_highlight_positions = fuzzy_match_positions(query, &label).unwrap_or_default();
+            let label_matched = !header_highlight_positions.is_empty();
+
+            threads.retain_mut(|thread| {
+                let thread = Arc::make_mut(thread);
+                let mut matched = label_matched;
+                let title = thread.metadata.display_title();
+                if let Some(positions) = fuzzy_match_positions(query, title.as_ref()) {
+                    thread.highlight_positions = positions;
+                    matched = true;
+                }
+                for worktree in &mut thread.worktrees {
+                    let Some(name) = worktree.worktree_name.as_ref() else {
+                        continue;
+                    };
+                    if let Some(positions) = fuzzy_match_positions(query, name) {
+                        worktree.highlight_positions = positions;
+                        matched = true;
+                    }
+                }
+                matched
+            });
+
+            terminals.retain_mut(|terminal| {
+                let mut matched = label_matched;
+                let title = terminal.metadata.display_title();
+                if let Some(positions) = fuzzy_match_positions(query, title.as_ref()) {
+                    terminal.highlight_positions = positions;
+                    matched = true;
+                }
+                for worktree in &mut terminal.worktrees {
+                    let Some(name) = worktree.worktree_name.as_ref() else {
+                        continue;
+                    };
+                    if let Some(positions) = fuzzy_match_positions(query, name) {
+                        worktree.highlight_positions = positions;
+                        matched = true;
+                    }
+                }
+                matched
+            });
+
+            if threads.is_empty() && terminals.is_empty() && !(label_matched && header_stands_alone)
+            {
+                return;
+            }
+        } else if !header_stands_alone {
+            return;
+        }
+
+        let has_thread_notifications =
+            if query.is_empty() && threads.is_empty() && !notified_threads.is_empty() {
+                let group_thread_ids = stored_thread_ids();
+                current_thread_ids.extend(group_thread_ids.iter());
+                group_thread_ids
+                    .iter()
+                    .any(|id| notified_threads.contains(id))
+            } else {
+                threads
+                    .iter()
+                    .any(|thread| notified_threads.contains(&thread.metadata.thread_id))
+            };
+        let has_terminal_notifications = terminals
+            .iter()
+            .any(|terminal| notified_terminals.contains(&terminal.metadata.terminal_id));
+
+        project_header_indices.push(entries.len());
+        entries.push(ListEntry::ProjectHeader {
+            key,
+            label,
+            highlight_positions: header_highlight_positions,
+            has_running_threads,
+            waiting_thread_count,
+            has_notifications: has_thread_notifications || has_terminal_notifications,
+            is_active,
+            has_threads,
+        });
+
+        if query.is_empty() && is_collapsed {
+            return;
+        }
+
+        Self::push_entries_by_display_time(
+            entries,
+            terminals,
+            threads,
+            current_session_ids,
+            current_thread_ids,
+        );
     }
 
     /// Resolves draft labels for a group's thread rows and drops drafts that

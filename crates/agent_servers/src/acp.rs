@@ -813,13 +813,12 @@ impl AcpConnection {
         default_config_options: HashMap<String, AgentConfigOptionValue>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let root_dir = project.read_with(cx, |project, cx| {
-            project
-                .default_path_list(cx)
-                .ordered_paths()
-                .next()
-                .cloned()
-        });
+        let root_dir = project
+            .update(cx, |project, cx| project.agent_work_dirs(cx))
+            .await?
+            .ordered_paths()
+            .next()
+            .cloned();
         let original_command = command.clone();
         let (path, args, env) = project
             .read_with(cx, |project, cx| {

@@ -1064,19 +1064,10 @@ impl ConversationView {
                 ),
             };
         }
-        // In a project-less window there are no worktrees; the native agent
-        // ignores the work dirs entirely, so leave them empty rather than
-        // defaulting to $HOME (which would otherwise get scanned/grouped).
-        // External agents still need a real cwd, so keep the default for them.
-        let session_work_dirs = work_dirs.unwrap_or_else(|| {
-            let project = project.read(cx);
-            let is_native = agent.clone().downcast::<NativeAgentServer>().is_some();
-            if is_native && project.visible_worktrees(cx).next().is_none() {
-                PathList::default()
-            } else {
-                project.default_path_list(cx)
-            }
-        });
+        let session_work_dirs = match work_dirs {
+            Some(work_dirs) => Task::ready(Ok(work_dirs)),
+            None => project.update(cx, |project, cx| project.agent_work_dirs(cx)),
+        };
 
         let connection_entry = connection_store.update(cx, |store, cx| {
             store.request_connection(connection_key, agent.clone(), cx)
@@ -1109,6 +1100,21 @@ impl ConversationView {
                 Err(err) => {
                     this.update_in(cx, |this, window, cx| {
                         this.handle_load_error(err, window, cx);
+                        cx.notify();
+                    })
+                    .log_err();
+                    return;
+                }
+            };
+            let session_work_dirs = match session_work_dirs.await {
+                Ok(work_dirs) => work_dirs,
+                Err(err) => {
+                    this.update_in(cx, |this, window, cx| {
+                        this.handle_load_error(
+                            LoadError::Other(format!("{err:#}").into()),
+                            window,
+                            cx,
+                        );
                         cx.notify();
                     })
                     .log_err();

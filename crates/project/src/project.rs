@@ -254,6 +254,7 @@ pub struct Project {
     agent_location: Option<AgentLocation>,
     downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
     last_worktree_paths: WorktreePaths,
+    remote_agent_scratch_dir: Option<PathBuf>,
 }
 
 struct DownloadingFile {
@@ -1411,6 +1412,7 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
+                remote_agent_scratch_dir: None,
             }
         })
     }
@@ -1654,6 +1656,7 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
+                remote_agent_scratch_dir: None,
             };
 
             // remote server -> local machine handlers
@@ -1943,6 +1946,7 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
+                remote_agent_scratch_dir: None,
             };
             project.set_role(role, cx);
             for worktree in worktrees {
@@ -2462,11 +2466,45 @@ impl Project {
         let worktree_roots =
             Self::default_visible_worktree_paths(&self.worktree_store.read(cx), cx);
 
-        if worktree_roots.is_empty() {
-            PathList::new(&[paths::home_dir().as_path()])
-        } else {
+        if !worktree_roots.is_empty() {
             PathList::new(&worktree_roots)
+        } else if self.is_local() {
+            PathList::new(&[paths::agent_scratch_dir().as_path()])
+        } else if let Some(scratch_dir) = &self.remote_agent_scratch_dir {
+            PathList::new(&[scratch_dir.as_path()])
+        } else {
+            PathList::default()
         }
+    }
+
+    pub fn agent_work_dirs(&self, cx: &mut Context<Self>) -> Task<Result<PathList>> {
+        let work_dirs = self.default_path_list(cx);
+        if !work_dirs.is_empty() {
+            if self.is_local() && self.visible_worktrees(cx).next().is_none() {
+                let fs = self.fs.clone();
+                return cx.background_spawn(async move {
+                    fs.create_dir(paths::agent_scratch_dir()).await?;
+                    Ok(work_dirs)
+                });
+            }
+            return Task::ready(Ok(work_dirs));
+        }
+        let Some(remote_client) = self.remote_client.as_ref() else {
+            return Task::ready(Ok(work_dirs));
+        };
+        let request = remote_client
+            .read(cx)
+            .proto_client()
+            .request(proto::GetAgentScratchDir {
+                project_id: REMOTE_SERVER_PROJECT_ID,
+            });
+        cx.spawn(async move |this, cx| {
+            let scratch_dir = PathBuf::from(request.await?.path);
+            this.update(cx, |this, _cx| {
+                this.remote_agent_scratch_dir = Some(scratch_dir.clone());
+            })?;
+            Ok(PathList::new(&[scratch_dir]))
+        })
     }
 
     #[inline]

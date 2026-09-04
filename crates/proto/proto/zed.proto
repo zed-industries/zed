@@ -518,7 +518,9 @@ message Envelope {
     GetOutgoingCalls get_outgoing_calls = 486;
     GetOutgoingCallsResponse get_outgoing_calls_response = 487;
     LspExtExpandAbbreviation lsp_ext_expand_abbreviation = 488;
-    LspExtExpandAbbreviationResponse lsp_ext_expand_abbreviation_response = 489; // current max
+    LspExtExpandAbbreviationResponse lsp_ext_expand_abbreviation_response = 489;
+    GetAgentScratchDir get_agent_scratch_dir = 490;
+    GetAgentScratchDirResponse get_agent_scratch_dir_response = 491; // current max
   }
 
   reserved 87 to 88;
