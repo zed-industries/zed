@@ -58,7 +58,7 @@ impl Render for TableView {
                         )
                         .into_any_element()
                 } else {
-                    self.create_table(&self.column_widths.widths, cx)
+                    self.create_table(&self.column_widths, cx)
                 }
             });
 
