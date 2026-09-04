@@ -81,6 +81,8 @@ pub struct DbThread {
     pub ui_scroll_position: Option<SerializedScrollPosition>,
     #[serde(default)]
     pub sandboxed_terminal_temp_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub mcp_downloads_dir: Option<PathBuf>,
     /// Sandbox escalations the user approved "for the rest of this thread".
     /// Persisted so reopening a thread keeps its grants. See
     /// [`crate::sandboxing::ThreadSandboxGrants`].
@@ -168,6 +170,7 @@ impl SharedThread {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            mcp_downloads_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
         }
     }
@@ -354,6 +357,7 @@ impl DbThread {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            mcp_downloads_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
         })
     }
@@ -665,24 +669,27 @@ impl ThreadsDatabase {
         DbThread::from_json(json_data.as_bytes())
     }
 
-    fn sandboxed_terminal_temp_dir(data_type: DataType, data: Vec<u8>) -> Option<PathBuf> {
+    fn thread_scratch_dirs(data_type: DataType, data: Vec<u8>) -> Vec<PathBuf> {
         match Self::deserialize_thread(data_type, data) {
-            Ok(thread) => thread.sandboxed_terminal_temp_dir,
+            Ok(thread) => [thread.sandboxed_terminal_temp_dir, thread.mcp_downloads_dir]
+                .into_iter()
+                .flatten()
+                .collect(),
             Err(error) => {
                 log::warn!("failed to deserialize thread before deleting it: {error:#}");
-                None
+                Vec::new()
             }
         }
     }
 
-    fn remove_sandboxed_terminal_temp_dir(temp_dir: PathBuf) {
-        match std::fs::remove_dir_all(&temp_dir) {
+    fn remove_thread_scratch_dir(scratch_dir: PathBuf) {
+        match std::fs::remove_dir_all(&scratch_dir) {
             Ok(()) => {}
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => {
                 log::warn!(
-                    "failed to remove sandboxed terminal temp directory {}: {error}",
-                    temp_dir.display()
+                    "failed to remove thread scratch directory {}: {error}",
+                    scratch_dir.display()
                 );
             }
         }
@@ -692,7 +699,7 @@ impl ThreadsDatabase {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
-            let sandboxed_terminal_temp_dirs = {
+            let thread_scratch_dirs = {
                 let connection = connection.lock();
 
                 let mut select_children =
@@ -720,21 +727,20 @@ impl ThreadsDatabase {
                     DELETE FROM threads WHERE id = ?
                 "})?;
 
-                let mut sandboxed_terminal_temp_dirs = Vec::new();
+                let mut thread_scratch_dirs = Vec::new();
                 for thread_id in ids_to_delete {
-                    if let Some(temp_dir) = select(thread_id.clone())?.into_iter().next().and_then(
-                        |(data_type, data)| Self::sandboxed_terminal_temp_dir(data_type, data),
-                    ) {
-                        sandboxed_terminal_temp_dirs.push(temp_dir);
+                    if let Some(scratch_dirs) = select(thread_id.clone())?.into_iter().next() {
+                        thread_scratch_dirs
+                            .extend(Self::thread_scratch_dirs(scratch_dirs.0, scratch_dirs.1));
                     }
                     delete(thread_id)?;
                 }
 
-                sandboxed_terminal_temp_dirs
+                thread_scratch_dirs
             };
 
-            for temp_dir in sandboxed_terminal_temp_dirs {
-                Self::remove_sandboxed_terminal_temp_dir(temp_dir);
+            for scratch_dir in thread_scratch_dirs {
+                Self::remove_thread_scratch_dir(scratch_dir);
             }
 
             Ok(())
@@ -745,18 +751,16 @@ impl ThreadsDatabase {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
-            let sandboxed_terminal_temp_dirs = {
+            let thread_scratch_dirs = {
                 let connection = connection.lock();
 
                 let mut select = connection.select_bound::<(), (DataType, Vec<u8>)>(indoc! {"
                     SELECT data_type, data FROM threads
                 "})?;
 
-                let sandboxed_terminal_temp_dirs = select(())?
+                let thread_scratch_dirs = select(())?
                     .into_iter()
-                    .filter_map(|(data_type, data)| {
-                        Self::sandboxed_terminal_temp_dir(data_type, data)
-                    })
+                    .flat_map(|(data_type, data)| Self::thread_scratch_dirs(data_type, data))
                     .collect::<Vec<_>>();
 
                 let mut delete = connection.exec_bound::<()>(indoc! {"
@@ -765,11 +769,11 @@ impl ThreadsDatabase {
 
                 delete(())?;
 
-                sandboxed_terminal_temp_dirs
+                thread_scratch_dirs
             };
 
-            for temp_dir in sandboxed_terminal_temp_dirs {
-                Self::remove_sandboxed_terminal_temp_dir(temp_dir);
+            for scratch_dir in thread_scratch_dirs {
+                Self::remove_thread_scratch_dir(scratch_dir);
             }
 
             Ok(())
@@ -825,6 +829,7 @@ mod tests {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            mcp_downloads_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
         }
     }
@@ -1003,9 +1008,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_sandboxed_terminal_temp_dir_roundtrips_through_save_load(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_scratch_dirs_roundtrip_through_save_load(cx: &mut TestAppContext) {
         let database = ThreadsDatabase::new(cx.executor()).unwrap();
         let thread_id = session_id("sandbox-temp-dir-thread");
         let temp_dir = tempfile::Builder::new()
@@ -1018,6 +1021,12 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
         );
         thread.sandboxed_terminal_temp_dir = Some(temp_dir.clone());
+        let downloads_dir = tempfile::Builder::new()
+            .prefix("zed-agent-mcp-test-")
+            .tempdir()
+            .unwrap()
+            .keep();
+        thread.mcp_downloads_dir = Some(downloads_dir.clone());
 
         database
             .save_thread(thread_id.clone(), thread, PathList::default())
@@ -1030,24 +1039,33 @@ mod tests {
             .unwrap()
             .expect("thread should exist");
         assert_eq!(loaded.sandboxed_terminal_temp_dir, Some(temp_dir.clone()));
+        assert_eq!(loaded.mcp_downloads_dir, Some(downloads_dir.clone()));
         std::fs::remove_dir_all(temp_dir).unwrap();
+        std::fs::remove_dir_all(downloads_dir).unwrap();
     }
 
     #[gpui::test]
-    async fn test_delete_thread_removes_sandboxed_terminal_temp_dir(cx: &mut TestAppContext) {
+    async fn test_delete_thread_removes_scratch_dirs(cx: &mut TestAppContext) {
         let database = ThreadsDatabase::new(cx.executor()).unwrap();
         let thread_id = session_id("sandbox-temp-dir-delete-thread");
+        let mut thread = make_thread(
+            "Sandbox Temp Dir Delete Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-agent-terminal-test-")
             .tempdir()
             .unwrap()
             .keep();
         std::fs::write(temp_dir.join("sentinel"), b"content").unwrap();
-        let mut thread = make_thread(
-            "Sandbox Temp Dir Delete Thread",
-            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-        );
         thread.sandboxed_terminal_temp_dir = Some(temp_dir.clone());
+        let downloads_dir = tempfile::Builder::new()
+            .prefix("zed-agent-mcp-test-")
+            .tempdir()
+            .unwrap()
+            .keep();
+        std::fs::write(downloads_dir.join("sentinel"), b"content").unwrap();
+        thread.mcp_downloads_dir = Some(downloads_dir.clone());
 
         database
             .save_thread(thread_id.clone(), thread, PathList::default())
@@ -1056,6 +1074,7 @@ mod tests {
         database.delete_thread(thread_id).await.unwrap();
 
         assert!(!temp_dir.exists());
+        assert!(!downloads_dir.exists());
     }
 
     #[gpui::test]

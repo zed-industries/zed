@@ -2078,6 +2078,169 @@ async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_mcp_tool_resource_saved_to_downloads_dir(cx: &mut TestAppContext) {
+    use base64::Engine as _;
+
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {}
+                    },
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    let mut mcp_tool_calls = setup_context_server(
+        "resource_server",
+        vec![context_server::types::Tool {
+            name: "get_report".into(),
+            title: None,
+            description: None,
+            input_schema: json!({ "type": "object", "properties": {} }),
+            output_schema: None,
+            annotations: None,
+        }],
+        &context_server_store,
+        cx,
+    );
+
+    let events = thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["Get the report"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "get_report".into(),
+            raw_input: json!({}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    let _ = completion;
+
+    let png_blob = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    let (tool_call_params, tool_call_response) = mcp_tool_calls.next().await.unwrap();
+    assert_eq!(tool_call_params.name, "get_report");
+    tool_call_response
+        .send(context_server::types::CallToolResponse {
+            content: vec![
+                context_server::types::ToolResponseContent::Text {
+                    text: "Report:".into(),
+                },
+                context_server::types::ToolResponseContent::Resource {
+                    resource: context_server::types::ResourceContents::Text(
+                        context_server::types::TextResourceContents {
+                            uri: "file:///report.md".parse().unwrap(),
+                            mime_type: Some("text/markdown".into()),
+                            text: "# Findings\n\nEverything is fine.".into(),
+                        },
+                    ),
+                },
+                context_server::types::ToolResponseContent::Resource {
+                    resource: context_server::types::ResourceContents::Blob(
+                        context_server::types::BlobResourceContents {
+                            uri: "file:///logo.png".parse().unwrap(),
+                            mime_type: Some("image/png".into()),
+                            blob: png_blob.into(),
+                        },
+                    ),
+                },
+            ],
+            is_error: None,
+            meta: None,
+            structured_content: None,
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // The model receives the download paths (plus MIME type, size, URI) rather
+    // than the resource contents.
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let tool_result = completion
+        .messages
+        .last()
+        .unwrap()
+        .content
+        .iter()
+        .find_map(|c| match c {
+            MessageContent::ToolResult(r) => Some(r.clone()),
+            _ => None,
+        })
+        .expect("expected a tool result");
+    let text_parts: Vec<&str> = tool_result
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            language_model::LanguageModelToolResultContent::Text(text) => Some(text.as_ref()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text_parts[0], "Report:");
+
+    let downloads_dir = thread
+        .update(cx, |thread, cx| thread.mcp_downloads_dir(cx))
+        .unwrap();
+    let markdown_path = downloads_dir.join("report.md");
+    let png_path = downloads_dir.join("logo.png");
+
+    assert!(text_parts[1].starts_with(&format!(
+        "Saved MCP resource to {}",
+        markdown_path.display()
+    )));
+    assert!(text_parts[1].contains("(mime: text/markdown"));
+    assert!(text_parts[1].contains("uri: file:///report.md"));
+    assert!(text_parts[2].starts_with(&format!("Saved MCP resource to {}", png_path.display())));
+    assert!(text_parts[2].contains("(mime: image/png"));
+
+    assert!(markdown_path.exists());
+    assert_eq!(
+        std::fs::read_to_string(&markdown_path).unwrap(),
+        "# Findings\n\nEverything is fine."
+    );
+    assert!(png_path.exists());
+    assert_eq!(
+        std::fs::read(&png_path).unwrap(),
+        base64::engine::general_purpose::STANDARD
+            .decode(png_blob)
+            .unwrap()
+    );
+
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+}
+
+#[gpui::test]
 async fn test_mcp_tool_result_displayed_when_server_disconnected(cx: &mut TestAppContext) {
     let ThreadTest {
         model,

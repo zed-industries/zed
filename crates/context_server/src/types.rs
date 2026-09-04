@@ -284,16 +284,9 @@ pub struct InitializeResponse {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesReadResponse {
-    pub contents: Vec<ResourceContentsType>,
+    pub contents: Vec<ResourceContents>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ResourceContentsType {
-    Text(TextResourceContents),
-    Blob(BlobResourceContents),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -584,11 +577,26 @@ pub struct Resource {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResourceContents {
-    pub uri: Url,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
+#[serde(untagged)]
+pub enum ResourceContents {
+    Text(TextResourceContents),
+    Blob(BlobResourceContents),
+}
+
+impl ResourceContents {
+    pub fn uri(&self) -> &Url {
+        match self {
+            Self::Text(text) => &text.uri,
+            Self::Blob(blob) => &blob.uri,
+        }
+    }
+
+    pub fn mime_type(&self) -> Option<&str> {
+        match self {
+            Self::Text(text) => text.mime_type.as_deref(),
+            Self::Blob(blob) => blob.mime_type.as_deref(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
