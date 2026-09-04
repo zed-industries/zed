@@ -530,7 +530,7 @@ impl Model {
         }
     }
 
-    pub fn interleaved_reasoning(&self) -> bool {
+    pub fn interleaved_reasoning(&self, _subscription: OpenCodeSubscription) -> bool {
         match self {
             Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
@@ -836,7 +836,10 @@ impl Model {
         }
     }
 
-    pub fn supported_reasoning_effort_levels(&self) -> Option<Vec<ReasoningEffort>> {
+    pub fn supported_reasoning_effort_levels(
+        &self,
+        _subscription: OpenCodeSubscription,
+    ) -> Option<Vec<ReasoningEffort>> {
         match self {
             // Anthropic models
             Self::ClaudeFable5
