@@ -18,6 +18,7 @@ mod color;
 pub mod colors;
 #[cfg(feature = "profiler")]
 mod debug_overlay;
+mod effect_layer;
 mod element;
 mod elements;
 mod executor;
@@ -99,6 +100,7 @@ pub use color::*;
 pub use ctor::ctor;
 #[cfg(feature = "profiler")]
 pub use debug_overlay::*;
+pub use effect_layer::*;
 pub use element::*;
 pub use elements::*;
 pub use executor::*;
