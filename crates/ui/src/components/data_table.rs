@@ -689,9 +689,7 @@ pub fn render_table_row(
                     }
                 })
             })
-            .children(
-                cells.map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
-            )
+            .children(cells.map(|(cell, width)| render_cell(width, cell, &table_context, cx)))
     };
 
     if is_pinned_layout(pinned_cols, cols) && is_absolute_width_table {
@@ -724,7 +722,8 @@ pub fn render_table_row(
         row = row.child(pinned_section).child(scrollable_section);
     } else {
         row = row.child(
-            render_section(Box::new(cell_iter)).when(!is_absolute_width_table, |this| this.size_full()),
+            render_section(Box::new(cell_iter))
+                .when(!is_absolute_width_table, |this| this.size_full()),
         );
     }
 
