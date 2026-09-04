@@ -213,6 +213,9 @@ fn format_fim_prompt(
         EditPredictionPromptFormat::Glm => {
             format!("<|code_prefix|>{prefix}<|code_suffix|>{suffix}<|code_middle|>")
         }
+        EditPredictionPromptFormat::Mellum => {
+            format!("<fim_suffix>{suffix}<fim_prefix>{prefix}<fim_middle>")
+        }
         _ => {
             format!("<fim_prefix>{prefix}<fim_suffix>{suffix}<fim_middle>")
         }

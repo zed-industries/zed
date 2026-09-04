@@ -216,6 +216,7 @@ pub enum EditPredictionPromptFormatContent {
     Codestral,
     Glm,
     Sweep,
+    Mellum,
 }
 
 #[with_fallible_options]
