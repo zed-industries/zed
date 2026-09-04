@@ -445,9 +445,13 @@ impl WgpuRenderer {
         }
 
         // Effect layers copy the pixels under a layer out of the frame, which
-        // needs `COPY_SRC`. Without it they draw with no effect.
+        // needs `COPY_SRC`. Without it they draw with no effect. wgpu reports
+        // the browser canvas as `RENDER_ATTACHMENT` only, but the WebGPU spec
+        // accepts `COPY_SRC` in `GPUCanvasConfiguration.usage` and wgpu passes
+        // the bits through, so the browser backend asks for it anyway.
         let mut usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
-        if surface_caps.usages.contains(wgpu::TextureUsages::COPY_SRC) {
+        let canvas = context.adapter.get_info().backend == wgpu::Backend::BrowserWebGpu;
+        if canvas || surface_caps.usages.contains(wgpu::TextureUsages::COPY_SRC) {
             usage |= wgpu::TextureUsages::COPY_SRC;
         }
         let surface_config = wgpu::SurfaceConfiguration {
