@@ -335,6 +335,7 @@ impl VsCodeSettings {
             completion_menu_scrollbar: None,
             completion_detail_alignment: None,
             completion_menu_item_kind: None,
+            completion_menu_item_kind_symbols: None,
             diff_view_style: None,
             minimum_split_diff_width: None,
         }
