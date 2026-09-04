@@ -740,7 +740,7 @@ impl Style {
                     border_color,
                     self.border_style,
                 )
-                .corner_shapes(self.corner_shapes.clone()),
+                .corner_shapes(self.corner_shapes),
             );
         }
 
@@ -761,7 +761,7 @@ impl Style {
                     self.border_color.unwrap_or_default(),
                     self.border_style,
                 )
-                .corner_shapes(self.corner_shapes.clone()),
+                .corner_shapes(self.corner_shapes),
             );
         }
 
