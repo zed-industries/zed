@@ -1640,6 +1640,11 @@ struct VariableBlurVertexOutput {
   float4 mask_solid [[flat]];
 };
 
+// The most taps a variable blur pass takes on each side of a pixel. The
+// cap trims the tails of a sigma past 32 device pixels, and it bounds
+// the cost of one huge blur.
+constant int VARIABLE_BLUR_RADIUS_CAP = 96;
+
 vertex VariableBlurVertexOutput variable_blur_vertex(
     uint unit_vertex_id [[vertex_id]],
     constant float2 *unit_vertices [[buffer(BlurInputIndex_Vertices)]],
@@ -1661,7 +1666,6 @@ vertex VariableBlurVertexOutput variable_blur_vertex(
 // as in the fixed blur.
 fragment float4 variable_blur_fragment(
     VariableBlurVertexOutput input [[stage_in]],
-    constant BlurParams *params [[buffer(BlurInputIndex_Params)]],
     constant LayerComposite *composite [[buffer(BlurInputIndex_Layer)]],
     texture2d<float> source [[texture(BlurInputIndex_Source)]]) {
   constexpr sampler edge_sampler(mag_filter::linear, min_filter::linear,
@@ -1680,16 +1684,14 @@ fragment float4 variable_blur_fragment(
   float2 mask_position = clamp(position, box_min, box_max);
   float mask =
       saturate(fill_color(layer.mask, mask_position, layer.bounds, input.mask_solid).a);
-  float sigma = mask * params->sigma;
+  float sigma = mask * layer.backdrop_blur;
   float4 centre = source.sample(edge_sampler, input.uv);
   if (sigma < 0.3) {
     return centre;
   }
-  // `params->radius` caps the reach, so one huge sigma cannot stall the
-  // pass. The cap trims the tails past it, which slightly narrows only
-  // the widest blurs.
-  int radius = min(int(ceil(3.0 * sigma)), params->radius);
-  float2 step = float2(params->step[0], params->step[1]);
+  int radius = min(int(ceil(3.0 * sigma)), VARIABLE_BLUR_RADIUS_CAP);
+  float2 texel = 1.0 / float2(source.get_width(), source.get_height());
+  float2 step = composite->blur_axis == 0u ? float2(texel.x, 0.0) : float2(0.0, texel.y);
   float4 sum = centre;
   float weight_sum = 1.0;
   for (int i = 1; i <= radius; i += 2) {

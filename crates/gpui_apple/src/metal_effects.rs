@@ -187,6 +187,7 @@ impl Effects {
         let composite = LayerComposite {
             layer: *layer,
             region: region.bounds(),
+            blur_axis: 0,
         };
 
         let blurred_content = (layer.blur > 0.0).then(|| {
@@ -353,23 +354,9 @@ impl Effects {
     ) -> metal::Texture {
         let size = LayerRegion::new(0, 0, region.width, region.height);
         let first = self.take_texture(size, MTLPixelFormat::BGRA8Unorm);
-        self.variable_blur_pass(
-            frame,
-            source,
-            &first,
-            size,
-            [1.0 / size.width as f32, 0.0],
-            composite,
-        );
+        self.variable_blur_pass(frame, source, &first, size, composite, 0);
         let second = self.take_texture(size, MTLPixelFormat::BGRA8Unorm);
-        self.variable_blur_pass(
-            frame,
-            &first,
-            &second,
-            size,
-            [0.0, 1.0 / size.height as f32],
-            composite,
-        );
+        self.variable_blur_pass(frame, &first, &second, size, composite, 1);
         self.give_back(first);
         second
     }
@@ -380,48 +367,28 @@ impl Effects {
         source: &metal::TextureRef,
         target: &metal::TextureRef,
         target_region: LayerRegion,
-        step: [f32; 2],
         composite: &LayerComposite,
+        blur_axis: u32,
     ) {
-        let params = BlurParams {
-            step,
-            sigma: composite.layer.backdrop_blur,
-            radius: VARIABLE_BLUR_RADIUS_CAP,
+        let composite = LayerComposite {
+            blur_axis,
+            ..*composite
         };
-        let descriptor = metal::RenderPassDescriptor::new();
-        let attachment = descriptor.color_attachments().object_at(0).unwrap();
-        attachment.set_texture(Some(target));
-        attachment.set_load_action(metal::MTLLoadAction::DontCare);
-        attachment.set_store_action(metal::MTLStoreAction::Store);
-        let encoder = frame.command_buffer.new_render_command_encoder(descriptor);
-        encoder.set_viewport(metal::MTLViewport {
-            originX: 0.0,
-            originY: 0.0,
-            width: target_region.width as f64,
-            height: target_region.height as f64,
-            znear: 0.0,
-            zfar: 1.0,
-        });
-        encoder.set_render_pipeline_state(&self.variable_blur_pipeline_state);
-        encoder.set_vertex_buffer(
-            BlurInputIndex::Vertices as u64,
-            Some(&self.unit_vertices),
-            0,
+        let encoder = self.full_pass(
+            frame,
+            target,
+            target_region,
+            &self.variable_blur_pipeline_state,
         );
         encoder.set_vertex_bytes(
             BlurInputIndex::Layer as u64,
             mem::size_of::<LayerComposite>() as u64,
-            composite as *const LayerComposite as *const _,
-        );
-        encoder.set_fragment_bytes(
-            BlurInputIndex::Params as u64,
-            mem::size_of::<BlurParams>() as u64,
-            &params as *const BlurParams as *const _,
+            &composite as *const LayerComposite as *const _,
         );
         encoder.set_fragment_bytes(
             BlurInputIndex::Layer as u64,
             mem::size_of::<LayerComposite>() as u64,
-            composite as *const LayerComposite as *const _,
+            &composite as *const LayerComposite as *const _,
         );
         encoder.set_fragment_texture(BlurInputIndex::Source as u64, Some(source));
         encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
@@ -436,6 +403,25 @@ impl Effects {
         target_region: LayerRegion,
         params: BlurParams,
     ) {
+        let encoder = self.full_pass(frame, target, target_region, &self.blur_pipeline_state);
+        encoder.set_fragment_bytes(
+            BlurInputIndex::Params as u64,
+            mem::size_of::<BlurParams>() as u64,
+            &params as *const BlurParams as *const _,
+        );
+        encoder.set_fragment_texture(BlurInputIndex::Source as u64, Some(source));
+        encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
+        encoder.end_encoding();
+    }
+
+    /// Starts a pass that draws the unit quad over the whole of `target`.
+    fn full_pass<'a>(
+        &self,
+        frame: &'a Frame,
+        target: &metal::TextureRef,
+        target_region: LayerRegion,
+        pipeline: &metal::RenderPipelineStateRef,
+    ) -> &'a metal::RenderCommandEncoderRef {
         let descriptor = metal::RenderPassDescriptor::new();
         let attachment = descriptor.color_attachments().object_at(0).unwrap();
         attachment.set_texture(Some(target));
@@ -450,20 +436,13 @@ impl Effects {
             znear: 0.0,
             zfar: 1.0,
         });
-        encoder.set_render_pipeline_state(&self.blur_pipeline_state);
+        encoder.set_render_pipeline_state(pipeline);
         encoder.set_vertex_buffer(
             BlurInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
             0,
         );
-        encoder.set_fragment_bytes(
-            BlurInputIndex::Params as u64,
-            mem::size_of::<BlurParams>() as u64,
-            &params as *const BlurParams as *const _,
-        );
-        encoder.set_fragment_texture(BlurInputIndex::Source as u64, Some(source));
-        encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
-        encoder.end_encoding();
+        encoder
     }
 
     /// A texture of exactly the size of `region`, from the pool when one fits.
@@ -563,14 +542,9 @@ pub(crate) enum BlurInputIndex {
     Vertices = 0,
     Params = 1,
     Source = 2,
-    /// The `LayerComposite`, for the variable blur, which reads the mask.
+    /// The `LayerComposite` of the variable blur, which reads the mask.
     Layer = 3,
 }
-
-/// The most taps a variable blur pass takes on each side of a pixel. The
-/// cap trims the tails of a sigma past 32 device pixels, and it bounds
-/// the cost of one huge blur.
-pub(crate) const VARIABLE_BLUR_RADIUS_CAP: i32 = 96;
 
 /// One pass of a separable Gaussian blur.
 #[derive(Clone, Copy, Debug)]
@@ -601,4 +575,7 @@ pub(crate) struct LayerComposite {
     pub layer: EffectLayer,
     /// The pixels of the frame the layer textures cover.
     pub region: Bounds<ScaledPixels>,
+    /// Which axis a variable blur pass runs along: 0 is x, 1 is y. The
+    /// composite draw does not read it.
+    pub blur_axis: u32,
 }
