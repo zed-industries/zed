@@ -391,8 +391,17 @@ impl PickerDelegate for KernelPickerDelegate {
                                                     )
                                                 })
                                                 .when(!has_ipykernel, |flex| {
+                                                    // "not installed" reads as "pick me
+                                                    // and I will install it", which is a
+                                                    // dead end for an environment no
+                                                    // installer will write to.
+                                                    let label = if spec.can_install_ipykernel() {
+                                                        "ipykernel not installed"
+                                                    } else {
+                                                        "needs a virtual environment"
+                                                    };
                                                     flex.child(
-                                                        Label::new("ipykernel not installed")
+                                                        Label::new(label)
                                                             .size(LabelSize::XSmall)
                                                             .color(Color::Warning),
                                                     )

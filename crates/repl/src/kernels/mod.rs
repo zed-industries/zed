@@ -202,6 +202,54 @@ pub fn start_kernel_tasks<S: KernelSession + 'static>(
     (request_tx, stdin_tx)
 }
 
+/// Asks an interpreter whether `ipykernel` is importable and, if not, whether it could
+/// be installed.
+///
+/// PEP 668 lets a distribution drop an `EXTERNALLY-MANAGED` marker beside the stdlib to
+/// say "an installer must refuse to write here"; Homebrew and uv both ship one. The
+/// marker alone is not the answer, though: a virtual environment shares its base
+/// interpreter's stdlib, so the marker is still visible from inside one even though
+/// installing there is fine. So the venv test has to come first, which is exactly the
+/// order pip itself uses.
+const IPYKERNEL_PROBE: &str = r#"
+import os, sys, sysconfig
+try:
+    import ipykernel
+    has = 1
+except Exception:
+    has = 0
+in_venv = sys.prefix != sys.base_prefix
+marker = os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")
+can = 1 if in_venv or not os.path.exists(marker) else 0
+print(has, can)
+"#;
+
+/// Returns `(has_ipykernel, can_install_ipykernel)`.
+///
+/// A probe that does not run at all leaves installability `true`: that keeps the install
+/// offer for environments we could not classify, where attempting it and reporting the
+/// real error beats hiding the only route forward.
+async fn probe_ipykernel(python_path: &str) -> (bool, bool) {
+    let Ok(output) = util::command::new_command(python_path)
+        .args(["-c", IPYKERNEL_PROBE])
+        .output()
+        .await
+    else {
+        return (false, true);
+    };
+
+    if !output.status.success() {
+        return (false, true);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut fields = stdout.split_whitespace();
+    match (fields.next(), fields.next()) {
+        (Some(has), Some(can)) => (has == "1", can == "1"),
+        _ => (false, true),
+    }
+}
+
 pub trait KernelSession: Sized {
     fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>);
     fn kernel_errored(&mut self, error_message: String, cx: &mut Context<Self>);
@@ -213,6 +261,11 @@ pub struct PythonEnvKernelSpecification {
     pub path: PathBuf,
     pub kernelspec: JupyterKernelspec,
     pub has_ipykernel: bool,
+    /// Whether `ipykernel` could be installed here if it is missing. PEP 668 lets an
+    /// interpreter mark itself externally managed, and pip and uv both refuse to write
+    /// to one, so offering an install for those environments only ever produces a
+    /// failure.
+    pub can_install_ipykernel: bool,
     /// Display label for the environment type: "venv", "Conda", "Pyenv", etc.
     pub environment_kind: Option<String>,
 }
@@ -346,6 +399,15 @@ impl KernelSpecification {
                 true
             }
             Self::PythonEnv(spec) => spec.has_ipykernel,
+        }
+    }
+
+    pub fn can_install_ipykernel(&self) -> bool {
+        match self {
+            Self::Jupyter(_) | Self::JupyterServer(_) | Self::SshRemote(_) | Self::WslRemote(_) => {
+                true
+            }
+            Self::PythonEnv(spec) => spec.can_install_ipykernel,
         }
     }
 
@@ -507,12 +569,8 @@ pub fn python_env_kernel_specifications(
                     let python_path = toolchain.path.to_string();
                     let environment_kind = extract_environment_kind(&toolchain.as_json);
 
-                    let has_ipykernel = util::command::new_command(&python_path)
-                        .args(&["-c", "import ipykernel"])
-                        .output()
-                        .await
-                        .map(|output| output.status.success())
-                        .unwrap_or(false);
+                    let (has_ipykernel, can_install_ipykernel) =
+                        probe_ipykernel(&python_path).await;
 
                     let mut env = HashMap::new();
                     if let Some(python_bin_dir) = PathBuf::from(&python_path).parent() {
@@ -560,6 +618,7 @@ pub fn python_env_kernel_specifications(
                         path: PathBuf::from(&python_path),
                         kernelspec,
                         has_ipykernel,
+                        can_install_ipykernel,
                         environment_kind,
                     }))
                 })
