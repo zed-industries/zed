@@ -5265,7 +5265,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 29] {
+    fn project_panel_section() -> [SettingsPageItem; 30] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5304,6 +5304,105 @@ fn panels_page() -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    title: "Project Panel Title Tooltips Delay",
+                    description: "Delay in milliseconds before tooltips appear for project panel titles.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("project_panel.title_tooltip_delay$"),
+                        pick: |settings_content| {
+                            Some(
+                                &dynamic_variants::<settings::ProjectPanelTitleTooltipDelay>()
+                                    [settings_content
+                                        .project_panel
+                                        .as_ref()?
+                                        .title_tooltip_delay
+                                        .as_ref()?
+                                        .discriminant()
+                                        as usize],
+                            )
+                        },
+                        write: |settings_content, value, _| {
+                            let project_panel =
+                                settings_content.project_panel.get_or_insert_default();
+                            project_panel.title_tooltip_delay = value.map(|value| match value {
+                                settings::ProjectPanelTitleTooltipDelayDiscriminants::Default => {
+                                    settings::ProjectPanelTitleTooltipDelay::Default
+                                }
+                                settings::ProjectPanelTitleTooltipDelayDiscriminants::Disabled => {
+                                    settings::ProjectPanelTitleTooltipDelay::Disabled
+                                }
+                                settings::ProjectPanelTitleTooltipDelayDiscriminants::Custom => {
+                                    let delay = match project_panel.title_tooltip_delay {
+                                        Some(settings::ProjectPanelTitleTooltipDelay::Custom(
+                                            delay,
+                                        )) => settings::DelayMs(delay.0),
+                                        _ => settings::DelayMs(1500),
+                                    };
+                                    settings::ProjectPanelTitleTooltipDelay::Custom(delay)
+                                }
+                            });
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .title_tooltip_delay
+                            .as_ref()?
+                            .discriminant() as usize,
+                    )
+                },
+                fields: dynamic_variants::<settings::ProjectPanelTitleTooltipDelay>()
+                    .into_iter()
+                    .map(|variant| match variant {
+                        settings::ProjectPanelTitleTooltipDelayDiscriminants::Default => vec![],
+                        settings::ProjectPanelTitleTooltipDelayDiscriminants::Disabled => vec![],
+                        settings::ProjectPanelTitleTooltipDelayDiscriminants::Custom => {
+                            vec![SettingItem {
+                                files: USER,
+                                title: "Custom Delay",
+                                description: "Delay in milliseconds of the project panel title tooltips.",
+                                field: Box::new(SettingField {
+                                    organization_override: None,
+                                    json_path: Some("project_panel.title_tooltip_delay"),
+                                    pick: |settings_content| match settings_content
+                                        .project_panel
+                                        .as_ref()
+                                        .and_then(|project_panel| {
+                                            project_panel.title_tooltip_delay.as_ref()
+                                        }) {
+                                        Some(settings::ProjectPanelTitleTooltipDelay::Custom(
+                                            value,
+                                        )) => Some(value),
+                                        _ => None,
+                                    },
+                                    write: |settings_content, value, _| {
+                                        let Some(value) = value else {
+                                            return;
+                                        };
+                                        if let Some(
+                                            settings::ProjectPanelTitleTooltipDelay::Custom(width),
+                                        ) = settings_content.project_panel.as_mut().and_then(
+                                            |project_panel| {
+                                                project_panel.title_tooltip_delay.as_mut()
+                                            },
+                                        ) {
+                                            *width = value;
+                                        }
+                                    },
+                                }),
+                                metadata: None,
+                            }]
+                        }
+                    })
+                    .collect(),
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Hide .gitignore",
