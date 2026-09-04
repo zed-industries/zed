@@ -1162,8 +1162,8 @@ async fn test_non_blocking_tool_call(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
 
-    // The runtime offers an optional `blocking` property on every tool
-    // schema, defaulting to blocking.
+    // The runtime injects the `blocking` property into every tool schema,
+    // and requires it so the model states its choice on every call.
     let completion = fake_model.pending_completions().pop().unwrap();
     let echo_tool = completion
         .tools
@@ -1174,9 +1174,15 @@ async fn test_non_blocking_tool_call(cx: &mut TestAppContext) {
         panic!("expected a function tool");
     };
     assert_eq!(
-        input_schema["properties"]["blocking"]["default"],
-        json!(true),
+        input_schema["properties"]["blocking"]["type"],
+        json!("boolean"),
         "tools should offer the blocking property"
+    );
+    assert!(
+        input_schema["required"]
+            .as_array()
+            .is_some_and(|required| required.contains(&json!("blocking"))),
+        "the blocking property should be required, got schema: {input_schema}"
     );
 
     // The model calls one tool non-blockingly and one blockingly.
