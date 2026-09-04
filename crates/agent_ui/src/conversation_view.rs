@@ -4323,10 +4323,12 @@ pub(crate) mod tests {
                 "Conversation should transition to LoadError when an ACP thread exits"
             );
         });
+
+        release_dropped_entities(cx);
         assert_eq!(
             close_session_count.load(std::sync::atomic::Ordering::SeqCst),
             1,
-            "ConversationView should close the ACP session after a thread exit"
+            "dropping the thread views after a thread exit should close the ACP session"
         );
     }
 
@@ -6669,6 +6671,11 @@ pub(crate) mod tests {
     ) -> Entity<MessageEditor> {
         let thread = active_thread(conversation_view, cx);
         cx.read(|cx| thread.read(cx).message_editor.clone())
+    }
+
+    fn release_dropped_entities(cx: &mut VisualTestContext) {
+        cx.update(|_, _| ());
+        cx.run_until_parked();
     }
 
     #[gpui::test]
