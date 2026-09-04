@@ -78,6 +78,7 @@ zed_credentials_provider.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+language_models = { workspace = true, features = ["test-support"] }
 paths.workspace = true
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }

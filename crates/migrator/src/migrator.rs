@@ -255,6 +255,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         ),
         MigrationType::Json(migrations::m_2026_08_17::make_git_gutter_width_an_enum),
         MigrationType::Json(migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator),
+        MigrationType::Json(migrations::m_2026_08_30::nest_markdown_preview_settings),
     ];
     run_migrations(text, migrations)
 }
@@ -5536,6 +5537,200 @@ mod tests {
                 {
                     "project_panel": {
                         "folder_indicator": "chevron"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_nest_markdown_preview_settings_across_all_scopes() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_markdown_preview_settings,
+            )],
+            &r#"
+            {
+                "markdown_preview_font_size": 14,
+                "macos": {
+                    "markdown_preview_font_size": 15
+                },
+                "preview": {
+                    "markdown_preview_font_size": 16
+                },
+                "profiles": {
+                    "work": {
+                        "settings": {
+                            "markdown_preview_font_size": 17
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "markdown_preview": {
+                        "font_size": 14
+                    },
+                    "macos": {
+                        "markdown_preview": {
+                            "font_size": 15
+                        }
+                    },
+                    "preview": {
+                        "markdown_preview": {
+                            "font_size": 16
+                        }
+                    },
+                    "profiles": {
+                        "work": {
+                            "settings": {
+                                "markdown_preview": {
+                                    "font_size": 17
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_nest_markdown_preview_settings_merges_without_clobbering() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_markdown_preview_settings,
+            )],
+            &r#"
+            {
+                "markdown_preview_font_size": 15,
+                "markdown_preview_font_family": "Zed Sans",
+                "markdown_preview_code_font_family": "Zed Mono",
+                "markdown_preview_theme": "One Dark",
+                "markdown_preview": {
+                    "font_size": 18,
+                    "limit_content_width": false,
+                    "max_width": 900
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "markdown_preview": {
+                        "theme": "One Dark",
+                        "code_font_family": "Zed Mono",
+                        "font_family": "Zed Sans",
+                        "font_size": 18,
+                        "limit_content_width": false,
+                        "max_width": 900
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_nest_markdown_preview_settings_leaves_malformed_object() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_markdown_preview_settings,
+            )],
+            &r#"
+            {
+                "markdown_preview_font_size": 15,
+                "markdown_preview": false
+            }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_nest_markdown_preview_settings_replaces_null_when_legacy_settings_exist() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_markdown_preview_settings,
+            )],
+            &r#"
+            {
+                "markdown_preview": null,
+                "markdown_preview_font_size": 15,
+                "preview": {
+                    "markdown_preview": null,
+                    "markdown_preview_theme": "One Dark"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "markdown_preview": {
+                        "font_size": 15
+                    },
+                    "preview": {
+                        "markdown_preview": {
+                            "theme": "One Dark"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_nest_markdown_preview_settings_leaves_null_without_legacy_settings() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_markdown_preview_settings,
+            )],
+            &r#"
+            {
+                "markdown_preview": null,
+                "preview": {
+                    "markdown_preview": null
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_nest_markdown_preview_settings_is_registered() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "markdown_preview_font_size": 15,
+                "markdown_preview_font_family": "Zed Sans",
+                "markdown_preview_code_font_family": "Zed Mono",
+                "markdown_preview_theme": "One Dark"
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "markdown_preview": {
+                        "font_size": 15,
+                        "font_family": "Zed Sans",
+                        "code_font_family": "Zed Mono",
+                        "theme": "One Dark"
                     }
                 }
                 "#

@@ -254,7 +254,9 @@ pub mod dev {
             ToggleFpsOverlay,
             /// Resets the debug frame-time overlay's statistics, except for the
             /// total frame count.
-            ResetFrameOverlayStats
+            ResetFrameOverlayStats,
+            /// Opens the key context view for debugging keybindings.
+            OpenKeyContextView
         ]
     );
 }

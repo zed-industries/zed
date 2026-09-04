@@ -4532,8 +4532,15 @@ impl MultiBufferSnapshot {
         if self.language_settings(cx).extend_comment_on_newline
             && let Some(language_scope) = self.language_scope_at(Point::new(row.0, 0))
         {
-            let delimiters = language_scope.line_comment_prefixes();
-            for delimiter in delimiters {
+            let documentation_delimiter = language_scope
+                .documentation_comment()
+                .filter(|_| language_scope.override_name() == Some("comment"))
+                .map(|comment| &comment.prefix);
+            for delimiter in language_scope
+                .line_comment_prefixes()
+                .iter()
+                .chain(documentation_delimiter)
+            {
                 if *self
                     .chars_at(Point::new(row.0, indent.len() as u32))
                     .take(delimiter.chars().count())
