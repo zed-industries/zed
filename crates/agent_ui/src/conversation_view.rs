@@ -853,6 +853,21 @@ impl ConversationView {
                 }
             }
         }));
+        subscriptions.push(cx.subscribe_in(
+            &project,
+            window,
+            |this, project, event, window, cx| {
+                if let project::Event::WorktreePathsChanged { old_worktree_paths } = event {
+                    let paths_old = old_worktree_paths.folder_path_list();
+                    let paths_new = project.read(cx).worktree_paths(cx);
+                    let paths_new = paths_new.folder_path_list();
+                    if paths_old.paths().len() == paths_new.paths().len() && paths_old != paths_new
+                    {
+                        this.reset(window, cx);
+                    }
+                }
+            },
+        ));
 
         cx.on_release(|this, cx| {
             this.request_elicitation_form_states.clear();
@@ -4612,6 +4627,211 @@ pub(crate) mod tests {
             captured_cwd.lock().as_ref().unwrap(),
             &PathList::new(&[Path::new("/project/subdir")]),
             "Should use session cwd when it's inside the project"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_acp_session_not_reloaded_for_subdirectory_rename(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "subdir": { "file.txt": "hello" } }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
+        });
+
+        let connection = StubAgentConnection::new().with_supports_load_session(true);
+        crate::test_support::open_thread_with_connection(&panel, connection, cx);
+
+        let initial_thread_id = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+
+        fs.rename(
+            Path::new("/project/subdir"),
+            Path::new("/project/subdir-renamed"),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let thread_id_after = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+        assert_eq!(
+            thread_id_after, initial_thread_id,
+            "renaming a subdirectory should not reload the ACP session"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_acp_session_not_reloaded_for_worktree_add(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project-a", json!({})).await;
+        fs.insert_tree("/project-b", json!({})).await;
+        let project = Project::test(fs.clone(), [Path::new("/project-a")], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
+        });
+
+        let connection = StubAgentConnection::new().with_supports_load_session(true);
+        crate::test_support::open_thread_with_connection(&panel, connection, cx);
+
+        let initial_thread_id = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree("/project-b", true, cx)
+            })
+            .await
+            .expect("should add worktree");
+        cx.run_until_parked();
+
+        let thread_id_after = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+        assert_eq!(
+            thread_id_after, initial_thread_id,
+            "adding a worktree should not reload the ACP session"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_acp_session_not_reloaded_for_worktree_remove(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project-a", json!({})).await;
+        fs.insert_tree("/project-b", json!({})).await;
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/project-a"), Path::new("/project-b")],
+            cx,
+        )
+        .await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
+        });
+
+        let connection = StubAgentConnection::new().with_supports_load_session(true);
+        crate::test_support::open_thread_with_connection(&panel, connection, cx);
+
+        let initial_thread_id = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project
+                .visible_worktrees(cx)
+                .find(|wt| wt.read(cx).abs_path().as_ref() == Path::new("/project-b"))
+                .map(|wt| wt.read(cx).id())
+                .expect("should find project-b worktree")
+        });
+        project.update(cx, |project, cx| {
+            project.remove_worktree(worktree_id, cx);
+        });
+        cx.run_until_parked();
+
+        let thread_id_after = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+        assert_eq!(
+            thread_id_after, initial_thread_id,
+            "removing a worktree should not reload the ACP session"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_acp_session_reloaded_for_project_rename(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "hello" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
+        });
+
+        let connection = StubAgentConnection::new().with_supports_load_session(true);
+        crate::test_support::open_thread_with_connection(&panel, connection, cx);
+
+        let initial_thread_id = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+
+        fs.rename(
+            Path::new("/project"),
+            Path::new("/project-renamed"),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        let worktree = project.read_with(cx, |project, cx| {
+            project.visible_worktrees(cx).next().unwrap()
+        });
+        cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        cx.run_until_parked();
+
+        let thread_after = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap();
+        assert_ne!(
+            thread_after.entity_id(),
+            initial_thread_id,
+            "renaming the project root should reload the ACP session"
+        );
+        assert_eq!(
+            thread_after.read_with(cx, |thread, _| thread.work_dirs().cloned()),
+            Some(PathList::new(&[Path::new("/project-renamed")])),
+            "the reloaded session should use the renamed root as its cwd"
         );
     }
 
