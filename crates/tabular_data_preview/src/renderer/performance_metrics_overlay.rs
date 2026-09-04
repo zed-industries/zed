@@ -9,9 +9,7 @@ use crate::{PerformanceMetrics, TableView};
 
 impl TableView {
     /// Renders a semi-transparent performance metrics overlay in the bottom-right corner.
-    ///
     /// Shows parsing duration for debugging and performance monitoring.
-    /// The overlay is positioned absolutely and styled with reduced opacity.
     pub(crate) fn render_performance_metrics_overlay(
         &mut self,
         cx: &mut Context<Self>,
