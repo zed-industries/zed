@@ -1152,8 +1152,13 @@
     //
     // Default: true
     "flexible": true,
-    // Where to position the threads sidebar. Can be 'left' or 'right'.
-    "sidebar_side": "left",
+    // Settings for the threads sidebar.
+    "thread_sidebar": {
+      // Where to position the threads sidebar. Can be 'left' or 'right'.
+      "position": "left",
+      // Default width of the threads sidebar in pixels.
+      "default_width": 300,
+    },
     // Default fixed width when the agent panel is docked to the left or right and
     // `flexible` is false.
     "default_width": 640,

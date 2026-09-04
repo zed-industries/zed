@@ -103,7 +103,6 @@ gpui::actions!(
     ]
 );
 
-const DEFAULT_WIDTH: Pixels = px(300.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
 
@@ -917,7 +916,10 @@ impl Sidebar {
 
         Self {
             multi_workspace: multi_workspace.downgrade(),
-            width: DEFAULT_WIDTH,
+            width: AgentSettings::get_global(cx)
+                .thread_sidebar
+                .default_width
+                .clamp(MIN_WIDTH, MAX_WIDTH),
             focus_handle,
             filter_editor,
             rename_editor,
@@ -7792,7 +7794,9 @@ impl WorkspaceSidebar for Sidebar {
     }
 
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) {
-        self.width = width.unwrap_or(DEFAULT_WIDTH).clamp(MIN_WIDTH, MAX_WIDTH);
+        self.width = width
+            .unwrap_or_else(|| AgentSettings::get_global(cx).thread_sidebar.default_width)
+            .clamp(MIN_WIDTH, MAX_WIDTH);
         cx.notify();
     }
 
