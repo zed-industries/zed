@@ -172,8 +172,8 @@ impl DirectXRenderer {
             .context("Creating DirectX global elements")?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)
             .context("Creating DirectX render pipelines")?;
-        let effects =
-            DirectXEffects::new(&devices.device).context("Creating DirectX effect layers")?;
+        let effects = DirectXEffects::new(&devices.device, &devices.device_context)
+            .context("Creating DirectX effect layers")?;
 
         let direct_composition = if disable_direct_composition {
             None
@@ -305,8 +305,8 @@ impl DirectXRenderer {
             .context("Creating DirectXGlobalElements")?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)
             .context("Creating DirectXRenderPipelines")?;
-        let effects =
-            DirectXEffects::new(&devices.device).context("Creating DirectX effect layers")?;
+        let effects = DirectXEffects::new(&devices.device, &devices.device_context)
+            .context("Creating DirectX effect layers")?;
 
         let direct_composition = if disable_direct_composition {
             None
@@ -363,6 +363,7 @@ impl DirectXRenderer {
             WindowBackgroundAppearance::Opaque => [1.0f32; 4],
             _ => [0.0f32; 4],
         })?;
+        self.effects.begin_frame();
         self.upload_scene_buffers(scene)?;
 
         let annotation = self
@@ -496,12 +497,12 @@ impl DirectXRenderer {
     }
 
     fn begin_layer(&mut self, layer: &EffectLayer) -> Result<()> {
-        let frame = effect_frame(&self.devices, &self.resources, self.width, self.height)?;
+        let frame = effect_frame(&self.resources, self.width, self.height)?;
         self.effects.begin_layer(&frame, layer)
     }
 
     fn end_layer(&mut self, layer: &EffectLayer) -> Result<()> {
-        let frame = effect_frame(&self.devices, &self.resources, self.width, self.height)?;
+        let frame = effect_frame(&self.resources, self.width, self.height)?;
         self.effects.end_layer(&frame, layer)
     }
 
@@ -1688,16 +1689,12 @@ fn update_batch_start(
 
 /// Bundles the renderer state that effect layers need for one frame.
 fn effect_frame<'a>(
-    devices: &'a Option<DirectXRendererDevices>,
     resources: &'a Option<DirectXResources>,
     width: u32,
     height: u32,
 ) -> Result<EffectFrame<'a>> {
-    let devices = devices.as_ref().context("devices missing")?;
     let resources = resources.as_ref().context("resources missing")?;
     Ok(EffectFrame {
-        device: &devices.device,
-        device_context: &devices.device_context,
         texture: resources
             .render_target
             .as_ref()

@@ -46,10 +46,14 @@ struct LayerComposite {
     region: Bounds<ScaledPixels>,
 }
 
-/// Everything from the renderer that one frame of layer work needs.
+// A structured buffer packs its members at 4 bytes. The Rust structs match
+// the HLSL ones field by field only while no member asks for more.
+const _: () = assert!(std::mem::align_of::<BlurParams>() == 4);
+const _: () = assert!(std::mem::size_of::<BlurParams>() == 16);
+const _: () = assert!(std::mem::align_of::<LayerComposite>() == 4);
+
+/// What one frame of layer work reads from the renderer.
 pub(crate) struct EffectFrame<'a> {
-    pub device: &'a ID3D11Device,
-    pub device_context: &'a ID3D11DeviceContext,
     pub texture: &'a ID3D11Texture2D,
     pub view: &'a Option<ID3D11RenderTargetView>,
     pub viewport: D3D11_VIEWPORT,
@@ -63,6 +67,19 @@ struct LayerTexture {
     width: u32,
     height: u32,
     format: DXGI_FORMAT,
+}
+
+impl LayerTexture {
+    fn viewport(&self) -> D3D11_VIEWPORT {
+        D3D11_VIEWPORT {
+            TopLeftX: 0.0,
+            TopLeftY: 0.0,
+            Width: self.width as f32,
+            Height: self.height as f32,
+            MinDepth: 0.0,
+            MaxDepth: 1.0,
+        }
+    }
 }
 
 /// A layer between its begin and end marks. `texture` is `None` when the
@@ -79,6 +96,8 @@ struct OpenLayer {
 const MASKED_FORMAT: DXGI_FORMAT = DXGI_FORMAT_R16G16B16A16_FLOAT;
 
 pub(crate) struct DirectXEffects {
+    device: ID3D11Device,
+    context: ID3D11DeviceContext,
     blur: PipelineState<BlurParams>,
     premask: PipelineState<LayerComposite>,
     composite: PipelineState<LayerComposite>,
@@ -89,7 +108,7 @@ pub(crate) struct DirectXEffects {
 }
 
 impl DirectXEffects {
-    pub fn new(device: &ID3D11Device) -> Result<Self> {
+    pub fn new(device: &ID3D11Device, context: &ID3D11DeviceContext) -> Result<Self> {
         let blur = PipelineState::new(
             device,
             "layer_blur_pipeline",
@@ -112,6 +131,8 @@ impl DirectXEffects {
             create_blend_state_without_blending(device)?,
         )?;
         Ok(Self {
+            device: device.clone(),
+            context: context.clone(),
             blur,
             premask,
             composite,
@@ -120,6 +141,12 @@ impl DirectXEffects {
             pool: Vec::new(),
             open: Vec::new(),
         })
+    }
+
+    /// Call once per frame before the first layer. A frame that stopped on
+    /// an error leaves its layers open.
+    pub fn begin_frame(&mut self) {
+        self.open.clear();
     }
 
     /// Drop every pooled texture, for example after a resize.
@@ -160,17 +187,15 @@ impl DirectXEffects {
             None
         } else {
             let texture = self.take_texture(
-                frame,
                 LayerRegion::of_viewport(frame.viewport_size),
                 RENDER_TARGET_FORMAT,
             )?;
             unsafe {
-                frame.device_context.ClearRenderTargetView(
+                self.context.ClearRenderTargetView(
                     texture.view.as_ref().context("missing layer view")?,
                     &[0.0; 4],
                 );
-                frame
-                    .device_context
+                self.context
                     .OMSetRenderTargets(Some(slice::from_ref(&texture.view)), None);
             }
             Some(texture)
@@ -189,17 +214,17 @@ impl DirectXEffects {
             return Ok(());
         };
         let region = open.region;
-        let context = frame.device_context;
+        let context = self.context.clone();
         // Nothing may be a render target and a copy source at once.
         unsafe { context.OMSetRenderTargets(None, None) };
 
-        let content = self.take_texture(frame, region, RENDER_TARGET_FORMAT)?;
-        copy_region(context, &full.texture, &content.texture, region);
+        let content = self.take_texture(region, RENDER_TARGET_FORMAT)?;
+        copy_region(&context, &full.texture, &content.texture, region);
         self.give_back(full);
 
-        let under = self.take_texture(frame, region, RENDER_TARGET_FORMAT)?;
+        let under = self.take_texture(region, RENDER_TARGET_FORMAT)?;
         let (parent_texture, _) = self.target(frame);
-        copy_region(context, parent_texture, &under.texture, region);
+        copy_region(&context, parent_texture, &under.texture, region);
 
         let composite_params = LayerComposite {
             layer: *layer,
@@ -207,7 +232,7 @@ impl DirectXEffects {
         };
 
         let blurred_content = if layer.blur > 0.0 {
-            Some(self.blur(frame, &content, region, layer.blur)?)
+            Some(self.blur(&content, region, layer.blur)?)
         } else {
             None
         };
@@ -220,27 +245,27 @@ impl DirectXEffects {
         // composite can divide it back out.
         let progressive = backdrop_blurs && layer.has_mask != 0;
         let masked = if progressive {
-            let masked = self.take_texture(frame, region, MASKED_FORMAT)?;
-            self.premask_pass(frame, &under, &masked, composite_params)?;
+            let masked = self.take_texture(region, MASKED_FORMAT)?;
+            self.premask_pass(&under, &masked, composite_params)?;
             Some(masked)
         } else {
             None
         };
         let backdrop_source = masked.as_ref().unwrap_or(&under);
         let blurred_under = if backdrop_blurs {
-            Some(self.blur(frame, backdrop_source, region, layer.backdrop_blur)?)
+            Some(self.blur(backdrop_source, region, layer.backdrop_blur)?)
         } else {
             None
         };
         // Two much weaker blurs give the shader levels to mix, so the blur
         // amount can ramp over a wide range of the mask.
         let blurred_mid = if progressive {
-            Some(self.blur(frame, backdrop_source, region, layer.backdrop_blur * 0.25)?)
+            Some(self.blur(backdrop_source, region, layer.backdrop_blur * 0.25)?)
         } else {
             None
         };
         let blurred_low = if progressive {
-            Some(self.blur(frame, backdrop_source, region, layer.backdrop_blur * 0.0625)?)
+            Some(self.blur(backdrop_source, region, layer.backdrop_blur * 0.0625)?)
         } else {
             None
         };
@@ -250,7 +275,7 @@ impl DirectXEffects {
 
         let parent_view = self.target_view(frame.view).clone();
         self.composite
-            .update_buffer(frame.device, context, &[composite_params])?;
+            .update_buffer(&self.device, &context, &[composite_params])?;
         unsafe {
             context.OMSetRenderTargets(Some(slice::from_ref(&parent_view)), None);
             context.RSSetViewports(Some(slice::from_ref(&frame.viewport)));
@@ -267,12 +292,12 @@ impl DirectXEffects {
             context.PSSetSamplers(1, Some(slice::from_ref(&self.exact_sampler)));
         }
         self.composite.draw_with_texture(
-            context,
+            &context,
             slice::from_ref(&blurred_content.as_ref().unwrap_or(&content).resource),
             slice::from_ref(&self.smooth_sampler),
             1,
         )?;
-        unbind_textures(context);
+        unbind_textures(&context);
 
         self.give_back(content);
         self.give_back(under);
@@ -293,7 +318,6 @@ impl DirectXEffects {
     /// composite samples with the linear sampler to scale it back up.
     fn blur(
         &mut self,
-        frame: &EffectFrame,
         source: &LayerTexture,
         region: LayerRegion,
         sigma: f32,
@@ -308,9 +332,8 @@ impl DirectXEffects {
         let mut shrunk: Option<LayerTexture> = None;
         for _ in 0..plan.shrink_steps() {
             let next_size = size.halved();
-            let next = self.take_texture(frame, next_size, format)?;
+            let next = self.take_texture(next_size, format)?;
             self.blur_pass(
-                frame,
                 shrunk.as_ref().unwrap_or(source),
                 &next,
                 BlurParams {
@@ -326,9 +349,8 @@ impl DirectXEffects {
             size = next_size;
         }
 
-        let first = self.take_texture(frame, size, format)?;
+        let first = self.take_texture(size, format)?;
         self.blur_pass(
-            frame,
             shrunk.as_ref().unwrap_or(source),
             &first,
             BlurParams {
@@ -340,9 +362,8 @@ impl DirectXEffects {
         if let Some(texture) = shrunk {
             self.give_back(texture);
         }
-        let second = self.take_texture(frame, size, format)?;
+        let second = self.take_texture(size, format)?;
         self.blur_pass(
-            frame,
             &first,
             &second,
             BlurParams {
@@ -357,23 +378,15 @@ impl DirectXEffects {
 
     fn blur_pass(
         &mut self,
-        frame: &EffectFrame,
         source: &LayerTexture,
         target: &LayerTexture,
         params: BlurParams,
     ) -> Result<()> {
-        let context = frame.device_context;
-        self.blur.update_buffer(frame.device, context, &[params])?;
+        let context = &self.context;
+        self.blur.update_buffer(&self.device, context, &[params])?;
         unsafe {
             context.OMSetRenderTargets(Some(slice::from_ref(&target.view)), None);
-            context.RSSetViewports(Some(&[D3D11_VIEWPORT {
-                TopLeftX: 0.0,
-                TopLeftY: 0.0,
-                Width: target.width as f32,
-                Height: target.height as f32,
-                MinDepth: 0.0,
-                MaxDepth: 1.0,
-            }]));
+            context.RSSetViewports(Some(&[target.viewport()]));
         }
         self.blur.draw_with_texture(
             context,
@@ -390,31 +403,24 @@ impl DirectXEffects {
     /// the blur average only counts pixels the mask covers.
     fn premask_pass(
         &mut self,
-        frame: &EffectFrame,
         under: &LayerTexture,
         target: &LayerTexture,
         params: LayerComposite,
     ) -> Result<()> {
-        let context = frame.device_context;
+        let context = &self.context;
         self.premask
-            .update_buffer(frame.device, context, &[params])?;
+            .update_buffer(&self.device, context, &[params])?;
         unsafe {
             context.OMSetRenderTargets(Some(slice::from_ref(&target.view)), None);
-            context.RSSetViewports(Some(&[D3D11_VIEWPORT {
-                TopLeftX: 0.0,
-                TopLeftY: 0.0,
-                Width: target.width as f32,
-                Height: target.height as f32,
-                MinDepth: 0.0,
-                MaxDepth: 1.0,
-            }]));
+            context.RSSetViewports(Some(&[target.viewport()]));
             context.PSSetShaderResources(2, Some(&[under.resource.clone()]));
             context.PSSetSamplers(1, Some(slice::from_ref(&self.exact_sampler)));
         }
+        // The shader reads the backdrop from t2 alone, so t0 stays empty.
         self.premask.draw_with_texture(
             context,
-            slice::from_ref(&under.resource),
-            slice::from_ref(&self.smooth_sampler),
+            &[None],
+            slice::from_ref(&self.exact_sampler),
             1,
         )?;
         unbind_textures(context);
@@ -422,12 +428,7 @@ impl DirectXEffects {
         Ok(())
     }
 
-    fn take_texture(
-        &mut self,
-        frame: &EffectFrame,
-        region: LayerRegion,
-        format: DXGI_FORMAT,
-    ) -> Result<LayerTexture> {
+    fn take_texture(&mut self, region: LayerRegion, format: DXGI_FORMAT) -> Result<LayerTexture> {
         let width = region.width.max(1) as u32;
         let height = region.height.max(1) as u32;
         if let Some(index) = self
@@ -454,21 +455,18 @@ impl DirectXEffects {
         };
         let mut texture = None;
         unsafe {
-            frame
-                .device
+            self.device
                 .CreateTexture2D(&desc, None, Some(&mut texture))?
         };
         let texture = texture.context("layer texture was not created")?;
         let mut view = None;
         unsafe {
-            frame
-                .device
+            self.device
                 .CreateRenderTargetView(&texture, None, Some(&mut view))?
         };
         let mut resource = None;
         unsafe {
-            frame
-                .device
+            self.device
                 .CreateShaderResourceView(&texture, None, Some(&mut resource))?
         };
         Ok(LayerTexture {
@@ -508,9 +506,11 @@ fn copy_region(
     }
 }
 
-/// Clears t0, t2 and t3 so a texture can become a render target again.
+/// Clears t0 on both stages and t2 to t5, so a texture can become a render
+/// target again.
 fn unbind_textures(context: &ID3D11DeviceContext) {
     unsafe {
+        context.VSSetShaderResources(0, Some(&[None]));
         context.PSSetShaderResources(0, Some(&[None]));
         context.PSSetShaderResources(2, Some(&[None, None, None, None]));
     }
@@ -544,15 +544,4 @@ fn create_blend_state_without_blending(device: &ID3D11Device) -> Result<ID3D11Bl
     let mut state = None;
     unsafe { device.CreateBlendState(&desc, Some(&mut state))? };
     state.context("blend state was not created")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn params_match_the_shader_layout() {
-        assert_eq!(std::mem::size_of::<BlurParams>(), 16);
-        assert_eq!(std::mem::size_of::<LayerComposite>(), 620);
-    }
 }
