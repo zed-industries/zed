@@ -480,12 +480,11 @@ impl Model {
             | Self::Gemini3_7Flash
             | Self::Gemini3_8Flash => ApiProtocol::Google,
 
-            Self::Qwen3_8Max
-            | Self::Qwen3_8Flash
-            | Self::Qwen3_7Max
-            | Self::Qwen3_7Plus
-            | Self::Qwen3_6Plus
-            | Self::Qwen3_5Plus => ApiProtocol::Anthropic,
+            Self::Qwen3_8Max | Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus => {
+                ApiProtocol::OpenAiChat
+            }
+
+            Self::Qwen3_8Flash | Self::Qwen3_5Plus => ApiProtocol::Anthropic,
 
             Self::Glm5
             | Self::Glm5_1
