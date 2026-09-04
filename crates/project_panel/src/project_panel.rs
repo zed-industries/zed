@@ -52,7 +52,7 @@ use std::{
     cell::OnceCell,
     cmp,
     collections::HashSet,
-    ops::{Neg, Not, Range},
+    ops::{Neg, Range},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
