@@ -147,11 +147,16 @@ impl BufferInlayHints {
         self.work_end_refreshes.insert(server_id);
     }
 
+    fn mark_refresh_pending_during_work(&mut self, server_id: LanguageServerId) {
+        self.pending_refreshes.insert(server_id);
+        self.work_end_refreshes.remove(&server_id);
+    }
+
     /// A server finishing a long-running operation may have produced new hints without
     /// requesting an explicit refresh, but servers like rust-analyzer report work (e.g.
     /// flycheck) after every save: refresh at most once per server until the buffer
-    /// changes. Explicit refresh requests also count against this limit, as they make a
-    /// subsequent work-end refresh redundant.
+    /// changes. Explicit refresh requests also count against this limit, unless they
+    /// arrive while work is active and need a retry after that work completes.
     fn mark_refresh_pending_on_work_end(&mut self, server_id: LanguageServerId) -> bool {
         if self.work_end_refreshes.insert(server_id) {
             self.pending_refreshes.insert(server_id);
@@ -221,7 +226,6 @@ impl BufferInlayHints {
         if !self.pending_refreshes.remove(&for_server) {
             return false;
         }
-        self.work_end_refreshes.remove(&for_server);
 
         for (chunk_id, chunk_data) in self.hints_by_chunks.iter_mut().enumerate() {
             if let Some(removed_hints) = chunk_data
@@ -329,7 +333,20 @@ impl LspStore {
         server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) {
-        self.mark_inlay_hints_refresh_pending(server_id, cx);
+        let during_work = self
+            .language_server_statuses
+            .get(&server_id)
+            .is_some_and(|status| !status.pending_work.is_empty());
+        if during_work {
+            for lsp_data in self.lsp_data.values_mut() {
+                lsp_data
+                    .inlay_hints
+                    .mark_refresh_pending_during_work(server_id);
+            }
+            cx.emit(LspStoreEvent::RefreshInlayHints { server_id });
+        } else {
+            self.mark_inlay_hints_refresh_pending(server_id, cx);
+        }
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client
                 .send(proto::RefreshInlayHints {
