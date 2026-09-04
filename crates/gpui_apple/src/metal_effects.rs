@@ -11,6 +11,7 @@
 //! gradient in the wrong place. The blur and composite steps then work on a
 //! copy of just the region the layer covers.
 
+use crate::metal_renderer::new_command_encoder_for_texture;
 use gpui::{BlurPlan, Bounds, DevicePixels, EffectLayer, LayerRegion, ScaledPixels, Size};
 use metal::MTLPixelFormat;
 use std::mem;
@@ -31,7 +32,6 @@ pub(crate) struct Frame<'a> {
     /// The texture of the frame itself.
     pub texture: &'a metal::TextureRef,
     pub viewport_size: Size<DevicePixels>,
-    pub unit_vertices: &'a metal::BufferRef,
 }
 
 /// An effect layer whose content is drawing now.
@@ -43,6 +43,8 @@ struct OpenLayer {
 }
 
 pub(crate) struct Effects {
+    device: metal::Device,
+    unit_vertices: metal::Buffer,
     blur_pipeline_state: metal::RenderPipelineState,
     /// The blur again, drawing into a float texture. The mask-weighted
     /// backdrop needs the precision: its values divide back out in the
@@ -56,8 +58,14 @@ pub(crate) struct Effects {
 }
 
 impl Effects {
-    pub fn new(device: &metal::DeviceRef, library: &metal::LibraryRef) -> Self {
+    pub fn new(
+        device: &metal::DeviceRef,
+        library: &metal::LibraryRef,
+        unit_vertices: metal::Buffer,
+    ) -> Self {
         Self {
+            device: device.to_owned(),
+            unit_vertices,
             blur_pipeline_state: build_copy_pipeline_state(
                 device,
                 library,
@@ -100,6 +108,12 @@ impl Effects {
         self.pool.clear();
     }
 
+    /// Forgets the layers of a frame that never closed them. A frame that
+    /// stops on an error leaves them open.
+    pub fn begin_frame(&mut self) {
+        self.open.clear();
+    }
+
     /// The texture and offset the scene draws into now.
     pub fn target<'a>(&'a self, frame: &Frame<'a>) -> Target<'a> {
         for layer in self.open.iter().rev() {
@@ -118,13 +132,17 @@ impl Effects {
 
     /// A new encoder on the current target that keeps what is there.
     pub fn resume<'a>(&self, frame: &Frame<'a>) -> &'a metal::RenderCommandEncoderRef {
-        encoder_on(frame, self.target(frame).texture, None)
+        new_command_encoder_for_texture(
+            frame.command_buffer,
+            self.target(frame).texture,
+            frame.viewport_size,
+            None,
+        )
     }
 
     /// Opens `layer`. The returned encoder draws the content of the layer.
     pub fn begin_layer<'a>(
         &mut self,
-        device: &metal::DeviceRef,
         frame: &Frame<'a>,
         layer: &EffectLayer,
     ) -> &'a metal::RenderCommandEncoderRef {
@@ -137,13 +155,13 @@ impl Effects {
             return self.resume(frame);
         }
         let texture = self.take_texture(
-            device,
             LayerRegion::of_viewport(frame.viewport_size),
             MTLPixelFormat::BGRA8Unorm,
         );
-        let encoder = encoder_on(
-            frame,
+        let encoder = new_command_encoder_for_texture(
+            frame.command_buffer,
             &texture,
+            frame.viewport_size,
             Some(metal::MTLClearColor::new(0., 0., 0., 0.)),
         );
         self.open.push(OpenLayer {
@@ -157,7 +175,6 @@ impl Effects {
     /// returned encoder continues the parent.
     pub fn end_layer<'a>(
         &mut self,
-        device: &metal::DeviceRef,
         frame: &Frame<'a>,
         layer: &EffectLayer,
     ) -> &'a metal::RenderCommandEncoderRef {
@@ -172,10 +189,10 @@ impl Effects {
 
         // The region of the content, and what is under the layer there, so
         // the shader can read it while it writes the same pixels.
-        let content = self.take_texture(device, region, MTLPixelFormat::BGRA8Unorm);
+        let content = self.take_texture(region, MTLPixelFormat::BGRA8Unorm);
         copy_region(frame.command_buffer, &content_frame, &content, region);
         self.give_back(content_frame);
-        let under = self.take_texture(device, region, MTLPixelFormat::BGRA8Unorm);
+        let under = self.take_texture(region, MTLPixelFormat::BGRA8Unorm);
         copy_region(frame.command_buffer, &parent_texture, &under, region);
 
         let composite = LayerComposite {
@@ -185,7 +202,6 @@ impl Effects {
 
         let blurred_content = (layer.blur > 0.0).then(|| {
             self.blur(
-                device,
                 frame,
                 &content,
                 region,
@@ -199,7 +215,7 @@ impl Effects {
         // average of what the mask keeps and nothing else.
         let progressive = layer.has_mask != 0 && layer.backdrop_blur > 0.0;
         let masked = progressive.then(|| {
-            let texture = self.take_texture(device, region, MTLPixelFormat::RGBA16Float);
+            let texture = self.take_texture(region, MTLPixelFormat::RGBA16Float);
             self.premask_pass(frame, &under, &texture, region, &composite);
             texture
         });
@@ -211,7 +227,6 @@ impl Effects {
         let backdrop_source = masked.as_deref().unwrap_or(&under);
         let blurred_under = (layer.backdrop_blur > 0.0).then(|| {
             self.blur(
-                device,
                 frame,
                 backdrop_source,
                 region,
@@ -221,7 +236,6 @@ impl Effects {
         });
         let blurred_mid = progressive.then(|| {
             self.blur(
-                device,
                 frame,
                 backdrop_source,
                 region,
@@ -231,7 +245,6 @@ impl Effects {
         });
         let blurred_low = progressive.then(|| {
             self.blur(
-                device,
                 frame,
                 backdrop_source,
                 region,
@@ -243,11 +256,16 @@ impl Effects {
             self.give_back(texture);
         }
 
-        let encoder = encoder_on(frame, &parent_texture, None);
+        let encoder = new_command_encoder_for_texture(
+            frame.command_buffer,
+            &parent_texture,
+            frame.viewport_size,
+            None,
+        );
         encoder.set_render_pipeline_state(&self.composite_pipeline_state);
         encoder.set_vertex_buffer(
             LayerInputIndex::Vertices as u64,
-            Some(frame.unit_vertices),
+            Some(&self.unit_vertices),
             0,
         );
         encoder.set_vertex_bytes(
@@ -308,7 +326,6 @@ impl Effects {
     /// `scale`, so a wide blur costs the same as a narrow one.
     fn blur(
         &mut self,
-        device: &metal::DeviceRef,
         frame: &Frame,
         source: &metal::TextureRef,
         region: LayerRegion,
@@ -324,7 +341,7 @@ impl Effects {
         let mut shrunk: Option<metal::Texture> = None;
         for _ in 0..plan.shrink_steps() {
             let next_size = size.halved();
-            let next = self.take_texture(device, next_size, pixel_format);
+            let next = self.take_texture(next_size, pixel_format);
             self.blur_pass(
                 frame,
                 shrunk.as_deref().unwrap_or(source),
@@ -344,7 +361,7 @@ impl Effects {
             size = next_size;
         }
 
-        let first = self.take_texture(device, size, pixel_format);
+        let first = self.take_texture(size, pixel_format);
         self.blur_pass(
             frame,
             shrunk.as_deref().unwrap_or(source),
@@ -360,7 +377,7 @@ impl Effects {
         if let Some(texture) = shrunk {
             self.give_back(texture);
         }
-        let second = self.take_texture(device, size, pixel_format);
+        let second = self.take_texture(size, pixel_format);
         self.blur_pass(
             frame,
             &first,
@@ -405,7 +422,7 @@ impl Effects {
         encoder.set_render_pipeline_state(&self.premask_pipeline_state);
         encoder.set_vertex_buffer(
             LayerInputIndex::Vertices as u64,
-            Some(frame.unit_vertices),
+            Some(&self.unit_vertices),
             0,
         );
         encoder.set_vertex_bytes(
@@ -453,7 +470,7 @@ impl Effects {
         });
         encoder.set_vertex_buffer(
             BlurInputIndex::Vertices as u64,
-            Some(frame.unit_vertices),
+            Some(&self.unit_vertices),
             0,
         );
         encoder.set_fragment_bytes(
@@ -469,7 +486,6 @@ impl Effects {
     /// A texture of exactly the size of `region`, from the pool when one fits.
     fn take_texture(
         &mut self,
-        device: &metal::DeviceRef,
         region: LayerRegion,
         pixel_format: MTLPixelFormat,
     ) -> metal::Texture {
@@ -489,7 +505,7 @@ impl Effects {
         descriptor.set_storage_mode(metal::MTLStorageMode::Private);
         descriptor
             .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
-        device.new_texture(&descriptor)
+        self.device.new_texture(&descriptor)
     }
 
     fn give_back(&mut self, texture: metal::Texture) {
@@ -498,34 +514,6 @@ impl Effects {
         }
         self.pool.push(texture);
     }
-}
-
-/// A render encoder on `texture`, a texture the size of the frame.
-pub(crate) fn encoder_on<'a>(
-    frame: &Frame<'a>,
-    texture: &metal::TextureRef,
-    clear_color: Option<metal::MTLClearColor>,
-) -> &'a metal::RenderCommandEncoderRef {
-    let descriptor = metal::RenderPassDescriptor::new();
-    let attachment = descriptor.color_attachments().object_at(0).unwrap();
-    attachment.set_texture(Some(texture));
-    attachment.set_store_action(metal::MTLStoreAction::Store);
-    if let Some(clear_color) = clear_color {
-        attachment.set_load_action(metal::MTLLoadAction::Clear);
-        attachment.set_clear_color(clear_color);
-    } else {
-        attachment.set_load_action(metal::MTLLoadAction::Load);
-    }
-    let encoder = frame.command_buffer.new_render_command_encoder(descriptor);
-    encoder.set_viewport(metal::MTLViewport {
-        originX: 0.0,
-        originY: 0.0,
-        width: frame.viewport_size.width.0 as f64,
-        height: frame.viewport_size.height.0 as f64,
-        znear: 0.0,
-        zfar: 1.0,
-    });
-    encoder
 }
 
 /// Copies the pixels of `region` from `source`, a texture the size of the

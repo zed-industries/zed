@@ -326,7 +326,7 @@ impl MetalRenderer {
             MTLPixelFormat::BGRA8Unorm,
         );
 
-        let effects = Effects::new(&device, &library);
+        let effects = Effects::new(&device, &library, unit_vertices.clone());
 
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), is_apple_gpu));
@@ -666,33 +666,30 @@ impl MetalRenderer {
         let command_buffer = command_queue.new_command_buffer();
         let alpha = if self.opaque { 1. } else { 0. };
 
+        self.effects.begin_frame();
         let mut command_encoder = new_command_encoder_for_texture(
             command_buffer,
             texture,
             viewport_size,
             Some(metal::MTLClearColor::new(0., 0., 0., alpha)),
         );
-        let unit_vertices = self.unit_vertices.clone();
         let frame = Frame {
             command_buffer,
             texture,
             viewport_size,
-            unit_vertices: &unit_vertices,
         };
 
         for batch in scene.batches() {
             match batch {
                 PrimitiveBatch::LayerBegin(index) => {
                     command_encoder.end_encoding();
-                    command_encoder =
-                        self.effects
-                            .begin_layer(&self.device, &frame, &scene.effect_layers[index]);
+                    command_encoder = self
+                        .effects
+                        .begin_layer(&frame, &scene.effect_layers[index]);
                 }
                 PrimitiveBatch::LayerEnd(index) => {
                     command_encoder.end_encoding();
-                    command_encoder =
-                        self.effects
-                            .end_layer(&self.device, &frame, &scene.effect_layers[index]);
+                    command_encoder = self.effects.end_layer(&frame, &scene.effect_layers[index]);
                 }
                 PrimitiveBatch::Shadows(range) => {
                     self.draw_shadows(range, instance_bindings, viewport_size, command_encoder)
@@ -1228,9 +1225,9 @@ impl MetalRenderer {
     }
 }
 
-fn new_command_encoder_for_texture<'a>(
+pub(crate) fn new_command_encoder_for_texture<'a>(
     command_buffer: &'a metal::CommandBufferRef,
-    texture: &'a metal::TextureRef,
+    texture: &metal::TextureRef,
     viewport_size: Size<DevicePixels>,
     clear_color: Option<metal::MTLClearColor>,
 ) -> &'a metal::RenderCommandEncoderRef {
