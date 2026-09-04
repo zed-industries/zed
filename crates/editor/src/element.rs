@@ -1057,9 +1057,14 @@ impl EditorElement {
             });
 
             if animation_enabled {
-                let newest_animation_selection_id = (editor.leader_id.is_none()
-                    && supports_cursor_animation(editor.cursor_shape))
-                .then(|| editor.selections.newest_anchor().id);
+                let newest_animation_selection_id = if editor.leader_id.is_none()
+                    && cursor_shape_supports_cursor_animation(editor.cursor_shape)
+                {
+                    Some(editor.selections.newest_anchor().id)
+                } else {
+                    None
+                };
+
                 editor
                     .cursor_animations
                     .reconcile_newest_selection(newest_animation_selection_id);
@@ -1213,7 +1218,9 @@ impl EditorElement {
                         is_top_row: cursor_position.row().0 == 0,
                     });
                     cursor.layout(content_origin, cursor_name, window, cx);
-                    if selection.is_local && supports_cursor_animation(selection.cursor_shape) {
+                    if selection.is_local
+                        && cursor_shape_supports_cursor_animation(selection.cursor_shape)
+                    {
                         if let Some((cursor_viewport, animation_now)) = animation_context {
                             handled_animation_cursors.insert(selection.id);
                             let target_bounds =
@@ -10607,7 +10614,7 @@ impl CursorLayout {
     }
 }
 
-fn supports_cursor_animation(shape: CursorShape) -> bool {
+fn cursor_shape_supports_cursor_animation(shape: CursorShape) -> bool {
     matches!(shape, CursorShape::Bar | CursorShape::Block)
 }
 
@@ -12619,10 +12626,12 @@ mod tests {
 
     #[test]
     fn cursor_animation_supports_bar_and_block_shapes() {
-        assert!(supports_cursor_animation(CursorShape::Bar));
-        assert!(supports_cursor_animation(CursorShape::Block));
-        assert!(!supports_cursor_animation(CursorShape::Underline));
-        assert!(!supports_cursor_animation(CursorShape::Hollow));
+        assert!(cursor_shape_supports_cursor_animation(CursorShape::Bar));
+        assert!(cursor_shape_supports_cursor_animation(CursorShape::Block));
+        assert!(!cursor_shape_supports_cursor_animation(
+            CursorShape::Underline
+        ));
+        assert!(!cursor_shape_supports_cursor_animation(CursorShape::Hollow));
     }
 
     #[gpui::test(iterations = 100)]
