@@ -835,6 +835,10 @@ impl Model {
                 ReasoningEffort::High,
             ]),
 
+            Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4 | Self::ClaudeHaiku4_5 => {
+                Some(vec![ReasoningEffort::High, ReasoningEffort::Max])
+            }
+
             // OpenAI models
             Self::Gpt5_5
             | Self::Gpt5_4
@@ -909,8 +913,13 @@ impl Model {
             ]),
 
             // DeepSeek models
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(vec![
+            Self::DeepSeekV4Pro => Some(vec![
                 // OpenCode also supports Low&Medium but as per DeepSeek those are mapped to High
+                ReasoningEffort::High,
+                ReasoningEffort::Max,
+            ]),
+            Self::DeepSeekV4Flash => Some(vec![
+                ReasoningEffort::Low,
                 ReasoningEffort::High,
                 ReasoningEffort::Max,
             ]),
@@ -943,7 +952,11 @@ impl Model {
                 ReasoningEffort::Max,
             ]),
 
-            Self::LongCat2_0 => Some(vec![ReasoningEffort::None, ReasoningEffort::Max]),
+            Self::LongCat2_0 => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ]),
 
             // Alibaba models
             Self::Qwen3_8Max | Self::Qwen3_8Flash => Some(vec![
@@ -952,12 +965,14 @@ impl Model {
                 ReasoningEffort::XHigh,
             ]),
 
-            Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
-                Some(vec![
-                    ReasoningEffort::None,
-                    ReasoningEffort::High,
-                    ReasoningEffort::Max,
-                ])
+            Self::Qwen3_7Max | Self::Qwen3_7Plus => Some(vec![
+                ReasoningEffort::None,
+                ReasoningEffort::High,
+                ReasoningEffort::Max,
+            ]),
+
+            Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
+                Some(vec![ReasoningEffort::High, ReasoningEffort::Max])
             }
 
             // Tencent models
