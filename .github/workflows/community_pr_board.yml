@@ -1,11 +1,11 @@
 # Community PR Board — route labeled community PRs to a GitHub Project board
 #
-# When an area/platform label is added to a community PR (not staff, not bot),
-# the PR is added to the project board with a Track field set to the matching
-# review area group. Status transitions for assignment, re-request, and
-# comment events are handled here. Review-based status changes (approved →
-# "In Progress (us)", changes requested → "In Progress (author)") are handled
-# by built-in board automations.
+# When an area/platform label is added to or already present when reopening a
+# community PR (not staff, not bot), the PR is added to the project board with a
+# Track field set to the matching review area group. Status transitions for
+# assignment, re-request, and comment events are handled here. Review-based
+# status changes (approved → "In Progress (us)", changes requested → "In
+# Progress (author)") are handled by built-in board automations.
 #
 # See script/community-pr-track-mapping.json for the label→track mapping.
 
@@ -16,7 +16,7 @@ on:
   # Fork PRs must be supported, but this workflow only reads event metadata and
   # checks out scripts from the trusted default branch; it never executes PR code.
   pull_request_target:
-    types: [labeled, unlabeled, assigned, review_requested, edited]
+    types: [labeled, unlabeled, reopened, assigned, review_requested, edited]
   issue_comment:
     types: [created]
   workflow_dispatch:

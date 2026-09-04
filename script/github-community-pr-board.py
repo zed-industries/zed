@@ -5,8 +5,8 @@ and surface signal fields (Size, Issue Linked, Contributor, Upvotes) that the
 board's views can filter and sort on.
 
 Reads the event payload dispatched by the GitHub Actions workflow and:
-- On `labeled`: adds the PR to the board (idempotent), sets the Track
-  field to the most specific matching track, and recomputes signal fields.
+- On `labeled` or `reopened`: adds the PR to the board (idempotent), sets the
+  Track field to the most specific matching track, and recomputes signal fields.
 - On `unlabeled`: re-resolves Track from remaining labels, or clears it
   if no area/platform labels remain (PR stays on the board for visibility).
   Signals are recomputed if the PR is on the board.
@@ -681,7 +681,7 @@ if __name__ == "__main__":
 
     print(f"Processing PR #{pr['number']}: action={action}")
 
-    if action in ("labeled", "unlabeled"):
+    if action in ("labeled", "unlabeled", "reopened"):
         project, project_item = sync_track_from_labels(pr, project_number)
         if project_item:
             recompute_signals(pr, project, project_item)
