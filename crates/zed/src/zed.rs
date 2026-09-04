@@ -8154,22 +8154,11 @@ mod tests {
         window
     }
 
-    fn has_view_item(cx: &mut App, item_name: &str) -> bool {
-        cx.get_menus()
-            .expect("reload_keymaps should populate the menu bar")
-            .iter()
-            .find(|menu| menu.name == "View")
-            .expect("expected a View menu")
-            .items
-            .iter()
-            .any(|item| matches!(item, OwnedMenuItem::Action { name, .. } if name == item_name))
-    }
-
     #[gpui::test]
     fn test_reload_keymaps_rebuilds_menus(cx: &mut TestAppContext) {
         init_keymap_test(cx);
 
-        cx.update(|cx| reload_keymaps(cx, vec![]));
+        cx.update(|cx| reload_keymaps(cx, Vec::new()));
         cx.update(|cx| {
             assert!(
                 has_view_item(cx, "Agent Panel"),
@@ -8189,7 +8178,7 @@ mod tests {
             })
         });
         cx.update(|cx| {
-            reload_keymaps(cx, vec![]);
+            reload_keymaps(cx, Vec::new());
         });
         cx.update(|cx| {
             assert!(
@@ -8209,7 +8198,7 @@ mod tests {
                 });
             });
         });
-        cx.update(|cx| reload_keymaps(cx, vec![]));
+        cx.update(|cx| reload_keymaps(cx, Vec::new()));
         cx.update(|cx| {
             assert!(
                 has_view_item(cx, "Agent Panel"),
@@ -8226,7 +8215,7 @@ mod tests {
     async fn test_disable_ai_menu_update_with_malformed_keymap(cx: &mut TestAppContext) {
         let executor = cx.executor();
         let app_state = init_keymap_test(cx);
-        cx.update(|cx| reload_keymaps(cx, vec![]));
+        cx.update(|cx| reload_keymaps(cx, Vec::new()));
         cx.update(|cx| {
             assert!(
                 has_view_item(cx, "Agent Panel"),
@@ -8303,5 +8292,16 @@ mod tests {
                 "expected Diagnostics to remain in the View menu"
             );
         });
+    }
+
+    fn has_view_item(cx: &mut App, item_name: &str) -> bool {
+        cx.get_menus()
+            .expect("reload_keymaps should populate the menu bar")
+            .iter()
+            .find(|menu| menu.name == "View")
+            .expect("expected a View menu")
+            .items
+            .iter()
+            .any(|item| matches!(item, OwnedMenuItem::Action { name, .. } if name == item_name))
     }
 }

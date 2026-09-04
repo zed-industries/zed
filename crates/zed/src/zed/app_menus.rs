@@ -48,7 +48,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     ];
 
     if !DisableAiSettings::get_global(cx).disable_ai {
-        view_items.push(MenuItem::action("Agent Panel", assistant::ToggleFocus))
+        view_items.push(MenuItem::action("Agent Panel", assistant::ToggleFocus));
     }
 
     view_items.extend([
