@@ -1331,11 +1331,7 @@ impl TitleBar {
                         )
                         .separator()
                     })
-                    .map(|this| {
-                        if !is_signed_in {
-                            return this;
-                        }
-
+                    .when(is_signed_in, |this| {
                         let mut this = this.header("Organization");
 
                         for (organization, plan) in &organizations {
