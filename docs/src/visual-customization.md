@@ -521,7 +521,8 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "enabled": true, // Enable/disable the agent
     "button": true, // Show/hide the icon in the status bar
     "dock": "right", // Where to dock: left, right, bottom
-    "default_width": 640, // Default width (left/right docked)
+    "flexible": true, // Use proportional sizing (left/right docked)
+    "default_width": 640, // Fixed width when flexible is false
     "default_height": 320 // Default height (bottom docked)
   },
   // Controls the font family and size for agent responses in the agent panel.
@@ -535,6 +536,8 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
   "agent_buffer_font_size": 12
 }
 ```
+
+When `agent.flexible` is enabled, `agent.default_width` does not control the panel width. Double-clicking the panel’s outer resize handle restores the default proportion. Set `agent.flexible` to `false` to use `agent.default_width` as the reset width.
 
 See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settings.
 

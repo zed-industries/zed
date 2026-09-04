@@ -1119,13 +1119,16 @@
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "left",
-    // Whether the agent panel should use flexible (proportional) sizing.
+    // Whether the agent panel should use flexible (proportional) sizing when docked
+    // to the left or right. When enabled, `default_width` does not control the panel
+    // width, and resetting the panel restores the default proportion.
     //
     // Default: true
     "flexible": true,
     // Where to position the threads sidebar. Can be 'left' or 'right'.
     "sidebar_side": "left",
-    // Default width when the agent panel is docked to the left or right.
+    // Default fixed width when the agent panel is docked to the left or right and
+    // `flexible` is false.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
