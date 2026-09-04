@@ -1772,16 +1772,11 @@ impl SshConnectionOptions {
     }
 
     pub fn ssh_destination(&self) -> String {
-        let mut result = String::default();
         if let Some(username) = &self.username {
-            // Username might be: username1@username2@ip2
-            let username = urlencoding::encode(username);
-            result.push_str(&username);
-            result.push('@');
+            format!("{}@{}", username, self.host.to_string())
+        } else {
+            self.host.to_string()
         }
-
-        result.push_str(&self.host.to_string());
-        result
     }
 
     pub fn additional_args_for_scp(&self) -> Vec<String> {
@@ -2404,5 +2399,30 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_ssh_destination_preserves_special_characters_in_username() {
+        let options = SshConnectionOptions {
+            host: "192.168.18.50".into(),
+            username: Some(r"DOMAIN\user".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(options.ssh_destination(), r"DOMAIN\user@192.168.18.50");
+
+        let options_slash = SshConnectionOptions {
+            host: "192.168.18.50".into(),
+            username: Some("DOMAIN/user".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(options_slash.ssh_destination(), "DOMAIN/user@192.168.18.50");
+
+        // Chained host / proxy jump format, for multiple '@' signs in the username
+        let options_at = SshConnectionOptions {
+            host: "target-server".into(),
+            username: Some("user@jumphost".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(options_at.ssh_destination(), "user@jumphost@target-server");
     }
 }
