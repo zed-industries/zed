@@ -391,10 +391,12 @@ mod test {
         state::{Mode, Register},
         test::{NeovimBackedTestContext, VimTestContext},
     };
+    use editor::ClipboardSelection;
     use gpui::ClipboardItem;
     use indoc::indoc;
     use language::{LanguageName, language_settings::LanguageSettingsContent};
     use settings::{SettingsStore, UseSystemClipboard};
+    use util::path;
 
     #[gpui::test]
     async fn test_paste(cx: &mut gpui::TestAppContext) {
@@ -551,6 +553,23 @@ mod test {
             cx.read_from_clipboard().map(|item| item.text().unwrap()),
             Some("jumps".into())
         );
+        let source_locations = cx.read_from_clipboard().and_then(|item| {
+            item.entries().first().and_then(|entry| match entry {
+                gpui::ClipboardEntry::String(text) => text
+                    .metadata_json::<Vec<ClipboardSelection>>()
+                    .map(|selections| {
+                        selections
+                            .into_iter()
+                            .map(|selection| (selection.file_path, selection.line_range))
+                            .collect::<Vec<_>>()
+                    }),
+                _ => None,
+            })
+        });
+        assert_eq!(
+            source_locations,
+            Some(vec![(Some(path!("/root/dir/file.rs").into()), Some(1..=1))])
+        );
         cx.simulate_keystrokes("d d p");
         cx.assert_state(
             indoc! {"
@@ -572,6 +591,36 @@ mod test {
                 test-copˇyfox jjumpsumps over"},
             Mode::Normal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_delete_system_clipboard_omits_source_location(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.vim.get_or_insert_default().use_system_clipboard =
+                    Some(UseSystemClipboard::Always)
+            });
+        });
+
+        cx.set_state("one\ntˇwo\nthree", Mode::Normal);
+        cx.simulate_keystrokes("d d");
+
+        let source_locations = cx.read_from_clipboard().and_then(|item| {
+            item.entries().first().and_then(|entry| match entry {
+                gpui::ClipboardEntry::String(text) => text
+                    .metadata_json::<Vec<ClipboardSelection>>()
+                    .map(|selections| {
+                        selections
+                            .into_iter()
+                            .map(|selection| (selection.file_path, selection.line_range))
+                            .collect::<Vec<_>>()
+                    }),
+                _ => None,
+            })
+        });
+        assert_eq!(source_locations, Some(vec![(None, None)]));
     }
 
     #[gpui::test]

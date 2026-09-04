@@ -1,6 +1,13 @@
 use super::*;
 use util::rel_path::RelPath;
 
+pub enum ClipboardTextSource<'a> {
+    Existing {
+        project: Option<&'a Entity<Project>>,
+    },
+    Removed,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ClipboardSelection {
     /// The number of bytes in this selection.
@@ -21,27 +28,30 @@ impl ClipboardSelection {
         is_entire_line: bool,
         range: Range<Point>,
         buffer: &MultiBufferSnapshot,
-        project: Option<&Entity<Project>>,
+        text_source: ClipboardTextSource<'_>,
         cx: &App,
     ) -> Self {
         let first_line_indent = buffer
             .indent_size_for_line(MultiBufferRow(range.start.row))
             .len;
 
-        let file_path = util::maybe!({
-            let project = project?.read(cx);
-            let file = buffer.file_at(range.start)?;
-            let project_path = ProjectPath {
-                worktree_id: file.worktree_id(cx),
-                path: file.path().clone(),
-            };
-            project.absolute_path(&project_path, cx)
-        });
+        let file_path = match text_source {
+            ClipboardTextSource::Existing { project } => util::maybe!({
+                let project = project?.read(cx);
+                let file = buffer.file_at(range.start)?;
+                let project_path = ProjectPath {
+                    worktree_id: file.worktree_id(cx),
+                    path: file.path().clone(),
+                };
+                project.absolute_path(&project_path, cx)
+            }),
+            ClipboardTextSource::Removed => None,
+        };
 
         let line_range = if file_path.is_some() {
             buffer
                 .range_to_buffer_range(range)
-                .map(|(_, buffer_range)| buffer_range.start.row..=buffer_range.end.row)
+                .map(|(_, buffer_range)| line_range_for_selection(buffer_range))
         } else {
             None
         };
@@ -400,7 +410,7 @@ impl Editor {
                     is_entire_line,
                     selection.range(),
                     &buffer,
-                    self.project.as_ref(),
+                    ClipboardTextSource::Removed,
                     cx,
                 ));
             }
@@ -668,7 +678,9 @@ impl Editor {
                 is_entire_line,
                 start..end,
                 &buffer,
-                self.project.as_ref(),
+                ClipboardTextSource::Existing {
+                    project: self.project.as_ref(),
+                },
                 cx,
             ));
         }

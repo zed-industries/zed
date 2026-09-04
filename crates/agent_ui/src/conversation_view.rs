@@ -8864,8 +8864,10 @@ pub(crate) mod tests {
                 conversation_view.project.clone(),
             )
         });
+        let buffer_text = "line one\nline two\nline three";
+        let selection_end = "line one\nline two\n".len();
         let buffer = project.update(cx, |project, cx| {
-            project.create_local_buffer("let a = 10 + 10;", None, false, cx)
+            project.create_local_buffer(buffer_text, None, false, cx)
         });
 
         workspace
@@ -8875,7 +8877,9 @@ pub(crate) mod tests {
                         Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
 
                     editor.change_selections(Default::default(), window, cx, |selections| {
-                        selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
+                        selections.select_ranges([
+                            MultiBufferOffset(0)..MultiBufferOffset(selection_end)
+                        ]);
                     });
 
                     editor
@@ -8899,12 +8903,27 @@ pub(crate) mod tests {
                 .unwrap();
             view.insert_selection(selection, window, cx);
         });
+        cx.run_until_parked();
 
         message_editor.read_with(cx, |editor, cx| {
             let text = editor.text(cx);
             let expected_txt = String::from("Can you review this snippet selection ");
 
             assert_eq!(text, expected_txt);
+            let mentions = editor.mention_set().read(cx).mentions();
+            assert_eq!(
+                mentions.len(),
+                1,
+                "expected exactly one mention, got {mentions:?}"
+            );
+            assert!(
+                mentions.contains(&MentionUri::Selection {
+                    abs_path: None,
+                    line_range: 0..=1,
+                    column: None,
+                }),
+                "a selection ending at column zero should exclude that row"
+            );
         })
     }
 

@@ -9,10 +9,10 @@ use editor::{
     ui_scrollbar_settings_from_raw,
 };
 use gpui::{
-    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt,
-    WeakEntity, actions, anchored, deferred, div,
+    Action, AnyElement, App, ClipboardEntry, ClipboardItem, DismissEvent, Entity, EventEmitter,
+    ExternalPaths, FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton,
+    MouseDownEvent, Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription,
+    Task, TaskExt, WeakEntity, actions, anchored, deferred, div,
 };
 use menu;
 use persistence::TerminalDb;
@@ -25,7 +25,7 @@ use settings::{
 use std::{
     any::Any,
     cmp,
-    ops::Range as StdRange,
+    ops::{Range as StdRange, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -76,6 +76,59 @@ fn viewport_line_for_point(point: Point, display_offset: usize) -> Option<usize>
 }
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+
+const KNOWN_TERMINAL_AGENT_COMMANDS: &[&str] = &[
+    "agent", // Cursor CLI and Grok both use this command.
+    "agy",
+    "aider",
+    "amp",
+    "claude",
+    "codex",
+    "copilot",
+    "crush",
+    "devin",
+    "droid",
+    "gemini",
+    "goose",
+    "grok",
+    "openhands",
+    "opencode",
+    "pi",
+    "qwen",
+];
+
+pub fn is_known_terminal_agent_command(command: &str) -> bool {
+    KNOWN_TERMINAL_AGENT_COMMANDS.contains(&command)
+}
+
+pub fn format_terminal_selection_reference(
+    project: &Project,
+    project_path: &project::ProjectPath,
+    line_range: &RangeInclusive<u32>,
+    working_directory: Option<&Path>,
+    cx: &App,
+) -> Option<String> {
+    let path_style = project.path_style(cx);
+    let absolute_path = project.absolute_path(project_path, cx);
+    let path = match (absolute_path, working_directory) {
+        (Some(absolute_path), Some(working_directory)) => path_style
+            .strip_prefix(&absolute_path, working_directory)
+            .map(|relative| relative.display(path_style).into_owned())
+            .unwrap_or_else(|| absolute_path.to_string_lossy().into_owned()),
+        (Some(absolute_path), None) => absolute_path.to_string_lossy().into_owned(),
+        (None, _) => project_path.path.display(path_style).into_owned(),
+    };
+    let start_line = line_range.start() + 1;
+    let end_line = line_range.end() + 1;
+    let reference = if start_line == end_line {
+        format!("{path}:{start_line}")
+    } else {
+        format!("{path}:{start_line}-{end_line}")
+    };
+    shlex::try_quote(&reference)
+        .ok()
+        .map(|reference| reference.into_owned())
+}
 
 /// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -914,6 +967,30 @@ impl TerminalView {
             return;
         };
 
+        let (foreground_process_command, working_directory) = {
+            let terminal = self.terminal.read(cx);
+            (
+                terminal.foreground_process_command_name(),
+                terminal.working_directory(),
+            )
+        };
+        let selection_reference = self.project.upgrade().and_then(|project| {
+            format_clipboard_selection_for_terminal_agent(
+                &clipboard,
+                foreground_process_command.as_deref(),
+                project.read(cx),
+                working_directory.as_deref(),
+                cx,
+            )
+        });
+
+        if let Some(selection_reference) = selection_reference {
+            self.terminal.update(cx, |terminal, _| {
+                terminal.paste(&selection_reference);
+            });
+            return;
+        }
+
         match clipboard.entries().first() {
             Some(ClipboardEntry::Image(image)) if !image.bytes.is_empty() => {
                 self.forward_ctrl_v(cx);
@@ -1103,6 +1180,34 @@ impl TerminalView {
                 }),
         )
     }
+}
+
+fn format_clipboard_selection_for_terminal_agent(
+    clipboard: &ClipboardItem,
+    foreground_process_command: Option<&str>,
+    project: &Project,
+    working_directory: Option<&Path>,
+    cx: &App,
+) -> Option<String> {
+    if !foreground_process_command.is_some_and(is_known_terminal_agent_command) {
+        return None;
+    }
+
+    let selections = clipboard.entries().iter().find_map(|entry| match entry {
+        ClipboardEntry::String(text) => text.metadata_json::<Vec<editor::ClipboardSelection>>(),
+        _ => None,
+    })?;
+    let [selection] = selections.as_slice() else {
+        return None;
+    };
+    let file_path = selection.file_path.as_deref()?;
+    let line_range = selection.line_range.as_ref()?;
+    if line_range.start() == line_range.end() {
+        return None;
+    }
+    let project_path = project.project_path_for_absolute_path(file_path, cx)?;
+    format_terminal_selection_reference(project, &project_path, line_range, working_directory, cx)
+        .map(|reference| format!("{reference} "))
 }
 
 fn terminal_rerun_override(task: &TaskId) -> zed_actions::Rerun {
@@ -2170,7 +2275,7 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{ClipboardItem, TestAppContext, VisualTestContext};
     use project::{Entry, Project, ProjectPath, Worktree};
     use remote::RemoteClient;
     use std::path::{Path, PathBuf};
@@ -2187,6 +2292,183 @@ mod tests {
         }
         text.push(' ');
         text
+    }
+
+    #[test]
+    fn test_is_known_terminal_agent_command() {
+        assert!(is_known_terminal_agent_command("claude"));
+        assert!(is_known_terminal_agent_command("codex"));
+        assert!(is_known_terminal_agent_command("opencode"));
+        assert!(!is_known_terminal_agent_command("cargo"));
+        assert!(!is_known_terminal_agent_command("internal-agent"));
+    }
+
+    #[gpui::test]
+    async fn test_format_clipboard_selection_for_terminal_agent(cx: &mut TestAppContext) {
+        let (project, _workspace) = init_test(cx).await;
+        let (worktree, _) = create_folder_wt(project.clone(), "/project", cx).await;
+        let file_entry = create_file_in_worktree(worktree.clone(), "main.rs", cx).await;
+        let spaced_file_entry = create_file_in_worktree(worktree.clone(), "my file.rs", cx).await;
+        let quoted_file_entry =
+            create_file_in_worktree(worktree.clone(), "reader's notes.rs", cx).await;
+        let shell_file_entry = create_file_in_worktree(worktree.clone(), "$(notes).rs", cx).await;
+        let unicode_file_entry = create_file_in_worktree(worktree.clone(), "日本.rs", cx).await;
+
+        let selection = editor::ClipboardSelection {
+            len: 12,
+            is_entire_line: false,
+            first_line_indent: 0,
+            file_path: Some(PathBuf::from("/project/main.rs")),
+            line_range: Some(9..=41),
+        };
+        let clipboard = ClipboardItem::new_string_with_json_metadata(
+            "selected text".to_string(),
+            vec![selection.clone()],
+        );
+
+        cx.read(|cx| {
+            let project = project.read(cx);
+            let project_path = ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: file_entry.path.clone(),
+            };
+            assert_eq!(
+                format_terminal_selection_reference(
+                    project,
+                    &project_path,
+                    &(4..=4),
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                Some("main.rs:5".to_string())
+            );
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &clipboard,
+                    Some("codex"),
+                    project,
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                Some("main.rs:10-42 ".to_string())
+            );
+
+            let spaced_path_clipboard = ClipboardItem::new_string_with_json_metadata(
+                "selected text".to_string(),
+                vec![editor::ClipboardSelection {
+                    file_path: Some(PathBuf::from("/project/my file.rs")),
+                    ..selection.clone()
+                }],
+            );
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &spaced_path_clipboard,
+                    Some("codex"),
+                    project,
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                Some("'my file.rs:10-42' ".to_string())
+            );
+
+            for (file_entry, expected_reference) in [
+                (&spaced_file_entry, "my file.rs:10-42"),
+                (&quoted_file_entry, "reader's notes.rs:10-42"),
+                (&shell_file_entry, "$(notes).rs:10-42"),
+                (&unicode_file_entry, "日本.rs:10-42"),
+            ] {
+                let project_path = ProjectPath {
+                    worktree_id: worktree.read(cx).id(),
+                    path: file_entry.path.clone(),
+                };
+                let reference = format_terminal_selection_reference(
+                    project,
+                    &project_path,
+                    &(9..=41),
+                    Some(Path::new("/project")),
+                    cx,
+                );
+                assert_eq!(
+                    reference.as_deref().and_then(shlex::split),
+                    Some(vec![expected_reference.to_string()])
+                );
+            }
+            let absolute_reference =
+                format!("{}:10-42", Path::new("/project").join("main.rs").display());
+            let expected_absolute_reference = shlex::try_quote(&absolute_reference)
+                .expect("selection reference should be shell-quotable");
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &clipboard,
+                    Some("codex"),
+                    project,
+                    Some(Path::new("/other")),
+                    cx,
+                ),
+                Some(format!("{expected_absolute_reference} "))
+            );
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &clipboard,
+                    Some("zsh"),
+                    project,
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                None
+            );
+
+            let single_line_clipboard = ClipboardItem::new_string_with_json_metadata(
+                "selected text".to_string(),
+                vec![editor::ClipboardSelection {
+                    line_range: Some(9..=9),
+                    ..selection.clone()
+                }],
+            );
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &single_line_clipboard,
+                    Some("codex"),
+                    project,
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                None
+            );
+
+            let multiple_selection_clipboard = ClipboardItem::new_string_with_json_metadata(
+                "selected text".to_string(),
+                vec![selection.clone(), selection.clone()],
+            );
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &multiple_selection_clipboard,
+                    Some("codex"),
+                    project,
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                None
+            );
+
+            let external_file_clipboard = ClipboardItem::new_string_with_json_metadata(
+                "selected text".to_string(),
+                vec![editor::ClipboardSelection {
+                    file_path: Some(PathBuf::from("/other/main.rs")),
+                    ..selection
+                }],
+            );
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &external_file_clipboard,
+                    Some("codex"),
+                    project,
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                None
+            );
+        });
     }
 
     fn assert_drop_writes_to_terminal(
@@ -2243,6 +2525,69 @@ mod tests {
         cx.update(|_, cx| {
             let input_log = terminal.update(cx, |terminal, _| terminal.take_input_log());
             assert_eq!(input_log, vec![b"foo".to_vec()]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_paste_selection_reference_wiring(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (worktree, _) = create_folder_wt(project.clone(), "/project", cx).await;
+        create_file_in_worktree(worktree, "main.rs", cx).await;
+        let (_pane, terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+
+        let clipboard = ClipboardItem::new_string_with_json_metadata(
+            "selected text".to_string(),
+            vec![editor::ClipboardSelection {
+                len: 12,
+                is_entire_line: false,
+                first_line_indent: 0,
+                file_path: Some(PathBuf::from("/project/main.rs")),
+                line_range: Some(9..=41),
+            }],
+        );
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+            cx.write_to_clipboard(clipboard.clone());
+            terminal.update(cx, |terminal, _| {
+                terminal.set_foreground_process_command_for_test("codex");
+                terminal.take_input_log();
+            });
+            terminal_view.update(cx, |terminal_view, cx| {
+                terminal_view.paste(&Paste, window, cx);
+            });
+            let absolute_reference =
+                format!("{}:10-42", Path::new("/project").join("main.rs").display());
+            let expected_absolute_reference = shlex::try_quote(&absolute_reference)
+                .expect("selection reference should be shell-quotable");
+            assert_eq!(
+                terminal.update(cx, |terminal, _| terminal.take_input_log()),
+                vec![format!("{expected_absolute_reference} ").into_bytes()]
+            );
+
+            terminal.update(cx, |terminal, _| {
+                terminal.set_foreground_process_command_for_test("zsh");
+            });
+            terminal_view.update(cx, |terminal_view, cx| {
+                terminal_view.paste(&Paste, window, cx);
+            });
+            assert_eq!(
+                terminal.update(cx, |terminal, _| terminal.take_input_log()),
+                vec![b"selected text".to_vec()]
+            );
+
+            terminal.update(cx, |terminal, _| {
+                terminal.set_foreground_process_command_for_test("codex");
+            });
+            terminal_view.update(cx, |terminal_view, cx| {
+                terminal_view.paste_text(&PasteText, window, cx);
+            });
+            assert_eq!(
+                terminal.update(cx, |terminal, _| terminal.take_input_log()),
+                vec![b"selected text".to_vec()]
+            );
         });
     }
 

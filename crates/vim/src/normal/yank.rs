@@ -7,7 +7,7 @@ use crate::{
     state::{Mode, Register},
 };
 use collections::HashMap;
-use editor::{ClipboardSelection, Editor, HighlightKey, SelectionEffects};
+use editor::{ClipboardSelection, ClipboardTextSource, Editor, HighlightKey, SelectionEffects};
 use gpui::Context;
 use gpui::Window;
 use language::Point;
@@ -200,7 +200,13 @@ impl Vim {
                     false,
                     start..end,
                     &buffer,
-                    editor.project(),
+                    if is_yank {
+                        ClipboardTextSource::Existing {
+                            project: editor.project(),
+                        }
+                    } else {
+                        ClipboardTextSource::Removed
+                    },
                     cx,
                 ));
             }

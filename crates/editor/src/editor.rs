@@ -75,7 +75,7 @@ mod rewrap;
 mod selection;
 
 pub(crate) use actions::*;
-pub use clipboard::ClipboardSelection;
+pub use clipboard::{ClipboardSelection, ClipboardTextSource};
 pub use code_actions::CodeActionProvider;
 use collections::TypeIdHashMap;
 pub use completions::CompletionProvider;
@@ -1211,6 +1211,16 @@ pub struct Editor {
 struct AccentData {
     colors: AccentColors,
     overrides: Vec<SharedString>,
+}
+
+/// Excludes an end row at column zero because selection ranges use exclusive endpoints.
+pub fn line_range_for_selection(range: Range<Point>) -> RangeInclusive<u32> {
+    let end_row = if range.end.column == 0 && range.end.row > range.start.row {
+        range.end.row - 1
+    } else {
+        range.end.row
+    };
+    range.start.row..=end_row
 }
 
 fn debounce_value(debounce_ms: u64) -> Option<Duration> {
@@ -8991,14 +9001,9 @@ impl Editor {
                     Some((buffer, point..point))
                 })?;
 
-            let start_line = range.start.row + 1;
-            let end_line = range.end.row + 1;
-
-            let end_line = if range.end.column == 0 && end_line > start_line {
-                end_line - 1
-            } else {
-                end_line
-            };
+            let line_range = line_range_for_selection(range);
+            let start_line = line_range.start() + 1;
+            let end_line = line_range.end() + 1;
 
             let project = self.project()?.read(cx);
             let file = buffer.file()?;
