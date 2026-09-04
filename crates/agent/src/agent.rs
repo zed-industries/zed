@@ -3160,6 +3160,7 @@ impl NativeThreadEnvironment {
     pub(crate) fn create_subagent_thread(
         &self,
         label: String,
+        tool_filter: Option<Vec<SharedString>>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         let Some(parent_thread_entity) = self.thread.upgrade() else {
@@ -3176,9 +3177,30 @@ impl NativeThreadEnvironment {
             ));
         }
 
+        // Validate the allowlist before creating anything, so an invalid name
+        // doesn't leave behind an empty subagent thread.
+        let tool_filter = tool_filter
+            .map(|tool_names| {
+                let enabled_tools = parent_thread.enabled_tools(cx);
+                let mut filter = HashSet::default();
+                for tool_name in tool_names {
+                    if enabled_tools.contains_key(tool_name.as_str()) {
+                        filter.insert(tool_name);
+                    } else {
+                        anyhow::bail!(
+                            "Unknown tool `{tool_name}` in `tools`. Available tools: {}",
+                            enabled_tools.keys().join(", ")
+                        );
+                    }
+                }
+                anyhow::Ok(filter)
+            })
+            .transpose()?;
+
         let subagent_thread: Entity<Thread> = cx.new(|cx| {
             let mut thread = Thread::new_subagent(&parent_thread_entity, cx);
             thread.set_title(label.into(), cx);
+            thread.set_tool_filter(tool_filter);
             thread
         });
 
@@ -3359,8 +3381,13 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         })
     }
 
-    fn create_subagent(&self, label: String, cx: &mut App) -> Result<Rc<dyn SubagentHandle>> {
-        self.create_subagent_thread(label, cx)
+    fn create_subagent(
+        &self,
+        label: String,
+        tool_filter: Option<Vec<SharedString>>,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        self.create_subagent_thread(label, tool_filter, cx)
     }
 
     fn resume_subagent(

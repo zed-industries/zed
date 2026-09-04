@@ -86,6 +86,11 @@ pub struct DbThread {
     /// [`crate::sandboxing::ThreadSandboxGrants`].
     #[serde(default)]
     pub sandbox_grants: DbSandboxGrants,
+    /// Tool allowlist the spawner restricted this subagent thread to via the
+    /// `spawn_agent` tool's `tools` parameter. Persisted so a restored
+    /// subagent session keeps its original filter.
+    #[serde(default)]
+    pub tool_filter: Option<Vec<SharedString>>,
 }
 
 /// Serialized form of the sandbox permissions the user granted "for the rest of
@@ -169,6 +174,7 @@ impl SharedThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            tool_filter: None,
         }
     }
 
@@ -355,6 +361,7 @@ impl DbThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            tool_filter: None,
         })
     }
 }
@@ -826,6 +833,7 @@ mod tests {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            tool_filter: None,
         }
     }
 
@@ -1000,6 +1008,48 @@ mod tests {
             .unwrap()
             .expect("thread should exist");
         assert_eq!(loaded.sandbox_grants, grants);
+    }
+
+    #[test]
+    fn test_tool_filter_default_when_absent() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            db_thread.tool_filter.is_none(),
+            "Legacy threads without tool_filter should default to unrestricted"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_filter_roundtrip_through_save_load(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("tool-filter-thread");
+        let mut thread = make_thread(
+            "Tool Filter Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        thread.tool_filter = Some(vec!["grep".into(), "read_file".into()]);
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+        assert_eq!(
+            loaded.tool_filter,
+            Some(vec!["grep".into(), "read_file".into()])
+        );
     }
 
     #[gpui::test]

@@ -782,7 +782,15 @@ pub trait ThreadEnvironment {
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>>;
 
-    fn create_subagent(&self, label: String, cx: &mut App) -> Result<Rc<dyn SubagentHandle>>;
+    /// Creates a subagent thread. When `tool_filter` is `Some`, the subagent
+    /// is restricted to the named tools (validated against the spawner's
+    /// available tools); when `None`, it inherits the spawner's full tool set.
+    fn create_subagent(
+        &self,
+        label: String,
+        tool_filter: Option<Vec<SharedString>>,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>>;
 
     fn resume_subagent(
         &self,
@@ -1318,6 +1326,11 @@ pub struct Thread {
     /// already-granted permissions skip the approval prompt.
     /// Never persisted — lives and dies with this thread.
     sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+    /// Tool allowlist the spawner restricted this subagent to via the
+    /// `spawn_agent` tool's `tools` parameter. `None` means unrestricted.
+    /// Snapshot at creation: it does not follow later changes to the
+    /// spawner's tools. Persisted so restored sessions keep the filter.
+    tool_filter: Option<HashSet<SharedString>>,
 }
 
 impl Thread {
@@ -1454,6 +1467,7 @@ impl Thread {
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            tool_filter: None,
         }
     }
 
@@ -1838,6 +1852,9 @@ impl Thread {
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
                 &db_thread.sandbox_grants,
             ))),
+            tool_filter: db_thread
+                .tool_filter
+                .map(|tools| tools.into_iter().collect()),
         }
     }
 
@@ -1935,6 +1952,11 @@ impl Thread {
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            tool_filter: self.tool_filter.as_ref().map(|tool_filter| {
+                let mut tools = tool_filter.iter().cloned().collect::<Vec<_>>();
+                tools.sort();
+                tools
+            }),
         };
 
         cx.background_spawn(async move {
@@ -4134,7 +4156,7 @@ impl Thread {
         Ok(request)
     }
 
-    fn enabled_tools(&self, cx: &App) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
+    pub(crate) fn enabled_tools(&self, cx: &App) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
         let Some(model) = self.model() else {
             return BTreeMap::new();
         };
@@ -4225,6 +4247,12 @@ impl Thread {
             }
         }
 
+        // A subagent spawned with a `tools` allowlist only ever sees those
+        // tools, regardless of what its profile would otherwise enable.
+        if let Some(tool_filter) = &self.tool_filter {
+            tools.retain(|tool_name, _| tool_filter.contains(tool_name));
+        }
+
         tools
     }
 
@@ -4243,6 +4271,12 @@ impl Thread {
         self.running_turn
             .as_ref()
             .is_some_and(|turn| turn.tools.contains_key(name))
+    }
+
+    /// Restricts this thread to the given tool allowlist (or lifts the
+    /// restriction when `None`). See [`Thread::tool_filter`].
+    pub(crate) fn set_tool_filter(&mut self, tool_filter: Option<HashSet<SharedString>>) {
+        self.tool_filter = tool_filter;
     }
 
     #[cfg(any(test, feature = "test-support"))]
