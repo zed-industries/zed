@@ -46021,3 +46021,40 @@ async fn test_display_row_for_inline_code_action(cx: &mut gpui::TestAppContext) 
     // The code action helper should stay on physical line 0 and render on DisplayRow(1).
     assert_eq!(display_row, Some(DisplayRow(1)));
 }
+
+#[gpui::test]
+async fn test_soft_wrap_indent_updated_on_language_changed(cx: &mut gpui::TestAppContext) {
+    // Configure Rust to have a different continuation indent behavior than the default.
+    init_test(cx, |settings| {
+        settings.defaults.soft_wrap = Some(language::language_settings::SoftWrap::Bounded);
+        settings.defaults.soft_wrap_indent =
+            Some(language::language_settings::SoftWrapIndent::Same);
+        settings.languages.0.insert(
+            "Rust".into(),
+            LanguageSettingsContent {
+                soft_wrap_indent: Some(language::language_settings::SoftWrapIndent::None),
+                ..Default::default()
+            },
+        );
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _window, cx| {
+        assert_eq!(
+            editor.soft_wrap_indent(cx),
+            language::language_settings::SoftWrapIndent::Same
+        );
+    });
+
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(rust_lang()), cx);
+    });
+
+    cx.update_editor(|editor, _window, cx| {
+        assert_eq!(
+            editor.soft_wrap_indent(cx),
+            language::language_settings::SoftWrapIndent::None
+        );
+    });
+}
