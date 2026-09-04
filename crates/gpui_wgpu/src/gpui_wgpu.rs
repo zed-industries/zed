@@ -1,6 +1,7 @@
 mod cosmic_text_system;
 mod wgpu_atlas;
 mod wgpu_context;
+mod wgpu_effects;
 mod wgpu_renderer;
 
 pub use cosmic_text_system::*;
