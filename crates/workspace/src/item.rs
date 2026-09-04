@@ -59,6 +59,7 @@ pub struct ItemSettings {
     pub close_position: ClosePosition,
     pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
+    pub tab_indices: bool,
     pub show_diagnostics: ShowDiagnostics,
     pub show_close_button: ShowCloseButton,
 }
@@ -89,6 +90,7 @@ impl Settings for ItemSettings {
             close_position: tabs.close_position.unwrap(),
             activate_on_close: tabs.activate_on_close.unwrap(),
             file_icons: tabs.file_icons.unwrap(),
+            tab_indices: tabs.tab_indices.unwrap(),
             show_diagnostics: tabs.show_diagnostics.unwrap(),
             show_close_button: tabs.show_close_button.unwrap(),
         }
