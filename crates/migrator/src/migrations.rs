@@ -374,5 +374,7 @@ pub(crate) mod m_2026_08_26 {
 pub(crate) mod m_2026_08_30 {
     mod settings;
 
-    pub(crate) use settings::nest_markdown_preview_settings;
+    pub(crate) use settings::{
+        nest_agent_sidebar_side_under_thread_sidebar_position, nest_markdown_preview_settings,
+    };
 }

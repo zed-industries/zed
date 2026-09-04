@@ -256,6 +256,9 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2026_08_17::make_git_gutter_width_an_enum),
         MigrationType::Json(migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator),
         MigrationType::Json(migrations::m_2026_08_30::nest_markdown_preview_settings),
+        MigrationType::Json(
+            migrations::m_2026_08_30::nest_agent_sidebar_side_under_thread_sidebar_position,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -5731,6 +5734,187 @@ mod tests {
                         "font_family": "Zed Sans",
                         "code_font_family": "Zed Mono",
                         "theme": "One Dark"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_nest_agent_sidebar_side_under_thread_sidebar_position_at_root() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_agent_sidebar_side_under_thread_sidebar_position,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "button": false,
+                    "sidebar_side": "left"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "thread_sidebar": {
+                            "position": "left"
+                        },
+                        "button": false
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_nest_agent_sidebar_side_under_thread_sidebar_position_across_all_scopes() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_agent_sidebar_side_under_thread_sidebar_position,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "sidebar_side": "left"
+                },
+                "macos": {
+                    "agent": {
+                        "sidebar_side": "right"
+                    }
+                },
+                "preview": {
+                    "agent": {
+                        "sidebar_side": "left"
+                    }
+                },
+                "profiles": {
+                    "work": {
+                        "settings": {
+                            "agent": {
+                                "sidebar_side": "right"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "thread_sidebar": {
+                            "position": "left"
+                        }
+                    },
+                    "macos": {
+                        "agent": {
+                            "thread_sidebar": {
+                                "position": "right"
+                            }
+                        }
+                    },
+                    "preview": {
+                        "agent": {
+                            "thread_sidebar": {
+                                "position": "left"
+                            }
+                        }
+                    },
+                    "profiles": {
+                        "work": {
+                            "settings": {
+                                "agent": {
+                                    "thread_sidebar": {
+                                        "position": "right"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_nest_agent_sidebar_side_under_thread_sidebar_position_does_not_clobber() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_agent_sidebar_side_under_thread_sidebar_position,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "sidebar_side": "left",
+                    "thread_sidebar": {
+                        "position": "right"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "thread_sidebar": {
+                            "position": "right"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_nest_agent_sidebar_side_under_thread_sidebar_position_leaves_malformed_object() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_agent_sidebar_side_under_thread_sidebar_position,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "sidebar_side": "left",
+                    "thread_sidebar": false
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_nest_agent_sidebar_side_under_thread_sidebar_position_is_registered() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "agent": {
+                    "sidebar_side": "left"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "thread_sidebar": {
+                            "position": "left"
+                        }
                     }
                 }
                 "#

@@ -207,7 +207,7 @@ pub struct AgentSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub flexible: bool,
-    pub sidebar_side: SidebarDockPosition,
+    pub thread_sidebar: ThreadSidebarSettings,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub max_content_width: Option<Pixels>,
@@ -244,6 +244,12 @@ pub struct AgentSettings {
     pub sandbox_permissions: SandboxPermissions,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ThreadSidebarSettings {
+    pub position: SidebarDockPosition,
+    pub default_width: Pixels,
+}
+
 impl AgentSettings {
     pub fn enabled(&self, cx: &App) -> bool {
         self.enabled && !DisableAiSettings::get_global(cx).disable_ai
@@ -268,7 +274,7 @@ impl AgentSettings {
     }
 
     pub fn sidebar_side(&self) -> SidebarSide {
-        match self.sidebar_side {
+        match self.thread_sidebar.position {
             SidebarDockPosition::Left => SidebarSide::Left,
             SidebarDockPosition::Right => SidebarSide::Right,
         }
@@ -754,11 +760,15 @@ pub fn normalize_path(raw: &str) -> String {
 impl Settings for AgentSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let agent = content.agent.clone().unwrap();
+        let thread_sidebar = agent.thread_sidebar.unwrap();
         Self {
             enabled: agent.enabled.unwrap(),
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
-            sidebar_side: agent.sidebar_side.unwrap(),
+            thread_sidebar: ThreadSidebarSettings {
+                position: thread_sidebar.position.unwrap(),
+                default_width: thread_sidebar.default_width.unwrap().into_gpui(),
+            },
             default_width: agent.default_width.unwrap().into_gpui(),
             default_height: agent.default_height.unwrap().into_gpui(),
             max_content_width: if agent.limit_content_width.unwrap() {
@@ -989,7 +999,7 @@ fn compile_regex_rules(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::{TestAppContext, UpdateGlobal, px};
     use serde_json::json;
     use settings::ToolPermissionMode;
     use settings::ToolPermissionsContent;
@@ -1039,6 +1049,37 @@ mod tests {
         assert!(parse_auto_compact_threshold("150%").is_err());
         assert!(parse_auto_compact_threshold("0.8").is_err());
         assert!(parse_auto_compact_threshold("eighty percent").is_err());
+    }
+
+    #[gpui::test]
+    fn test_thread_sidebar_settings(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        assert_eq!(
+            AgentSettings::get_global(cx).thread_sidebar.position,
+            SidebarDockPosition::Left
+        );
+        assert_eq!(
+            AgentSettings::get_global(cx).thread_sidebar.default_width,
+            px(300.)
+        );
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{ "agent": { "thread_sidebar": { "position": "right", "default_width": 420 } } }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let settings = AgentSettings::get_global(cx);
+        assert_eq!(settings.thread_sidebar.position, SidebarDockPosition::Right);
+        assert_eq!(settings.thread_sidebar.default_width, px(420.));
+        assert_eq!(settings.sidebar_side(), SidebarSide::Right);
     }
 
     #[test]
