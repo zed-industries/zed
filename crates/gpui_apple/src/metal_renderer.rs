@@ -724,6 +724,9 @@ impl MetalRenderer {
                         viewport_size,
                         command_encoder,
                     ),
+                // No Metal support for effect layers yet. Their content
+                // draws straight into the frame.
+                PrimitiveBatch::LayerBegin(_) | PrimitiveBatch::LayerEnd(_) => {}
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
                     &scene.surfaces[range.clone()],
                     range.start,

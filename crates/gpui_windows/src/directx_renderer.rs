@@ -385,6 +385,9 @@ impl DirectXRenderer {
                     self.draw_polychrome_sprites(texture_id, range.start, range.len())
                 }
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
+                // No DirectX support for effect layers yet. Their content
+                // draws straight into the frame.
+                PrimitiveBatch::LayerBegin(_) | PrimitiveBatch::LayerEnd(_) => Ok(()),
             }
             .with_context(|| {
                 format!(

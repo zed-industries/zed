@@ -1529,6 +1529,9 @@ impl WgpuRenderer {
                     // Surfaces are macOS-only for video playback and are not
                     // implemented by the WGPU renderer.
                     PrimitiveBatch::Surfaces(_surfaces) => {}
+                    // No wgpu support for effect layers yet. Their content
+                    // draws straight into the frame.
+                    PrimitiveBatch::LayerBegin(_) | PrimitiveBatch::LayerEnd(_) => {}
                 }
             }
         }

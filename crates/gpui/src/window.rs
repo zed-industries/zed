@@ -9,20 +9,21 @@ use crate::{
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
     Capslock, Context, CornerShape, Corners, CursorHideMode, CursorStyle, Decorations,
     DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
-    Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
-    GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    EffectLayer, Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId,
+    GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    Keystroke, KeystrokeEvent, LayerEffects, LayoutId, LineLayoutIndex, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
+    transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -4148,6 +4149,72 @@ impl Window {
             self.next_frame.scene.pop_layer();
         }
 
+        result
+    }
+
+    /// Draws everything `f` paints into a texture of its own, then paints
+    /// that texture over the frame with `effects`. This is how `filter`,
+    /// `backdrop-filter`, `mask-image` and `mix-blend-mode` reach the GPU.
+    /// The corners clip the backdrop effect the way CSS clips it to the
+    /// border box. When `effects` does nothing, `f` paints straight into the
+    /// frame.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn paint_effect_layer<R>(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        corner_shapes: Corners<CornerShape>,
+        effects: &LayerEffects,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_paint();
+
+        let content_mask = self.content_mask();
+        // A content blur bleeds past the border box, the way a CSS filter
+        // does, so the layer grows by the blur's support of three sigmas.
+        // The backdrop, the mask and the corner clip all map over the
+        // layer's bounds, so the layer only grows when none of them is set.
+        let bounds = if effects.blur > px(0.)
+            && effects.mask.is_none()
+            && !effects.has_backdrop()
+            && !effects.clips
+        {
+            bounds.dilate(px((3.0 * effects.blur.0).ceil()))
+        } else {
+            bounds
+        };
+        let clipped_bounds = bounds.intersect(&content_mask.bounds);
+        if effects.is_none() || clipped_bounds.is_empty() {
+            return f(self);
+        }
+
+        let scale_factor = self.scale_factor();
+        let opacity = self.element_opacity();
+        let layer = EffectLayer {
+            bounds: self.cover_bounds(clipped_bounds),
+            content_mask: self.snapped_content_mask(),
+            corner_radii: corner_radii.scale(scale_factor),
+            corner_shapes: corner_shapes.map(|shape| shape.0),
+            blur: effects.blur.0 * scale_factor,
+            backdrop_blur: effects.backdrop_blur.0 * scale_factor,
+            opacity,
+            blend_mode: effects.blend_mode as u32,
+            has_mask: effects.mask.is_some() as u32,
+            has_backdrop: effects.has_backdrop() as u32,
+            clips_content: effects.clips as u32,
+            color_matrix: effects.color_matrix.0,
+            backdrop_matrix: effects.backdrop_matrix.0,
+            mask: effects.mask.unwrap_or_default(),
+        };
+        self.next_frame.scene.push_effect_layer(layer);
+        // The layer applies the opacity once to its whole picture, so the
+        // content inside paints at full opacity.
+        let saved_opacity = self.element_opacity;
+        self.element_opacity = 1.0;
+        let result = f(self);
+        self.element_opacity = saved_opacity;
+        self.next_frame.scene.pop_effect_layer();
         result
     }
 
