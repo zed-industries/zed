@@ -822,6 +822,8 @@
     "button": true,
     // Whether to hide the gitignore entries in the project panel.
     "hide_gitignore": false,
+    // Delay in milliseconds before tooltips appear for project panel titles.
+    "title_tooltip_delay": "default",
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.

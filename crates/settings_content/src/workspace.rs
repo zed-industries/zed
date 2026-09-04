@@ -770,6 +770,8 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockSide>,
+    // TODO
+    pub title_tooltip_delay: Option<ProjectPanelTitleTooltipDelay>,
     /// Spacing between worktree entries in the project panel.
     ///
     /// Default: comfortable
@@ -853,6 +855,31 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub git_status_indicator: Option<bool>,
+}
+
+/// Controls the width of the git diff hunk indicators in the gutter.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPanelTitleTooltipDelay {
+    /// Default is 1500ms.
+    #[default]
+    Default,
+    /// A custom offset in milliseconds for the tooltip show delay.
+    Custom(crate::DelayMs),
+    /// Disables the tooltip
+    Disabled,
 }
 
 #[derive(
