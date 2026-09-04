@@ -5,9 +5,12 @@ use dap::{
     requests::{Continue, Scopes, SetBreakpoints, StackTrace, Threads, Variables},
 };
 use gpui::{BackgroundExecutor, TestAppContext};
-use project::debugger::agent_api::{
-    AgentDebuggerApi, AgentDebuggerSessionStatus, AgentDebuggerSnapshotLimits,
-    AgentDebuggerThreadStatus, AgentSourceBreakpointInput,
+use project::debugger::{
+    agent_api::{
+        AgentDebuggerApi, AgentDebuggerSessionStatus, AgentDebuggerSnapshotLimits,
+        AgentDebuggerThreadStatus, AgentSourceBreakpointInput,
+    },
+    session::ThreadId,
 };
 use project::{FakeFs, Project, WorktreeId};
 use serde_json::json;
@@ -268,7 +271,7 @@ async fn test_agent_api_snapshot_is_bounded(executor: BackgroundExecutor, cx: &m
         max_source_context_lines: 3,
     };
     let snapshot = cx
-        .update(|cx| api.snapshot(session_id, limits, cx))
+        .update(|cx| api.snapshot(session_id, limits, None, cx))
         .await
         .unwrap();
 
@@ -526,6 +529,7 @@ async fn test_agent_api_snapshot_returns_partial_data_when_nested_requests_fail(
                     max_output_bytes: 1024,
                     max_source_context_lines: 0,
                 },
+                None,
                 cx,
             )
         })
@@ -734,4 +738,120 @@ async fn test_start_debug_session_returns_session_info(
     assert_eq!(sessions[0].session_id.to_proto(), info.session_id);
     assert_eq!(sessions[0].label.as_deref(), Some("agent session"));
     assert_eq!(sessions[0].adapter, "fake-adapter");
+}
+
+#[gpui::test]
+async fn test_agent_api_snapshot_frame_budget_prioritizes_stop_thread(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(path!("/project"), json!({ "main.js": "debugger;\n" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client.on_request::<Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![
+                dap::Thread {
+                    id: 1,
+                    name: "Worker A".into(),
+                },
+                dap::Thread {
+                    id: 2,
+                    name: "Main".into(),
+                },
+                dap::Thread {
+                    id: 3,
+                    name: "Worker B".into(),
+                },
+            ],
+        })
+    });
+
+    let frame = |id: u64| StackFrame {
+        id,
+        name: format!("Frame {id}").into(),
+        source: None,
+        line: 1,
+        column: 1,
+        end_line: None,
+        end_column: None,
+        can_restart: None,
+        instruction_pointer_reference: None,
+        module_id: None,
+        presentation_hint: None,
+    };
+    client.on_request::<StackTrace, _>(move |_, args| {
+        let frames = match args.thread_id {
+            1 => vec![frame(101), frame(102), frame(103)],
+            2 => vec![frame(201)],
+            3 => vec![frame(301)],
+            thread_id => panic!("unexpected thread id {thread_id}"),
+        };
+        Ok(dap::StackTraceResponse {
+            stack_frames: frames,
+            total_frames: None,
+        })
+    });
+
+    client.on_request::<Scopes, _>(move |_, _| Ok(dap::ScopesResponse { scopes: Vec::new() }));
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(2),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: Some(true),
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+    cx.run_until_parked();
+
+    let api = agent_api(&project, cx);
+    let session_id = session.read_with(cx, |session, _| session.session_id());
+    let snapshot = cx
+        .update(|cx| {
+            api.snapshot(
+                session_id,
+                AgentDebuggerSnapshotLimits {
+                    max_frames: 2,
+                    ..Default::default()
+                },
+                Some(ThreadId(2)),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    // The stop-reported thread is listed first and always gets frames; the
+    // remaining budget is spread across the other stopped threads instead of
+    // being consumed entirely by the first worker thread in adapter order.
+    let thread_ids = snapshot
+        .threads
+        .iter()
+        .map(|thread| thread.thread_id.0)
+        .collect::<Vec<_>>();
+    assert_eq!(thread_ids, vec![2, 1, 3]);
+    assert_eq!(snapshot.threads[0].frames.len(), 1);
+    assert_eq!(snapshot.threads[0].frames[0].frame_id, 201);
+    assert_eq!(snapshot.threads[1].frames.len(), 1);
+    assert!(snapshot.threads[2].frames.is_empty());
+    assert!(
+        snapshot
+            .notes
+            .iter()
+            .any(|note| note.contains("max_frames budget exhausted")),
+        "expected a budget-exhausted note, got {:?}",
+        snapshot.notes
+    );
 }

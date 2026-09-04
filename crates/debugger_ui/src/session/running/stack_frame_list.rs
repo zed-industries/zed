@@ -13,6 +13,7 @@ use gpui::{
 use util::{
     debug_panic,
     paths::{PathStyle, is_absolute},
+    rel_path::RelPath,
 };
 
 use crate::ToggleUserFrames;
@@ -405,10 +406,10 @@ impl StackFrameList {
         let stack_frame_id = stack_frame.id;
         self.opened_stack_frame_id = Some(stack_frame_id);
         let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
-            return Task::ready(Err(anyhow!(
-                "no absolute source path in stack frame {stack_frame_id}, source: {:?}",
-                stack_frame.source
-            )));
+            // Disassembly frames and frames without a source path (ntdll
+            // loader frames, `@DbgBreakPoint`) can't be opened. Skip them
+            // quietly instead of erroring on every stop.
+            return Task::ready(Ok(()));
         };
         let row = stack_frame.line.saturating_sub(1) as u32;
         cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
@@ -418,8 +419,40 @@ impl StackFrameList {
             let (worktree, relative_path) = this
                 .update(cx, |this, cx| {
                     this.workspace.update(cx, |workspace, cx| {
-                        workspace.project().update(cx, |this, cx| {
-                            this.find_or_create_worktree(&abs_path, false, cx)
+                        workspace.project().update(cx, |project, cx| {
+                            if let Some((worktree, relative_path)) =
+                                project.find_worktree(abs_path.as_ref(), cx)
+                            {
+                                return Task::ready(anyhow::Ok((worktree, relative_path)));
+                            }
+
+                            // Never create a single-file worktree here: its
+                            // root (a file) would be persisted as a workspace
+                            // folder and language servers would spawn with a
+                            // file as their working directory (os error 267).
+                            // Root the worktree at the file's parent directory
+                            // instead.
+                            let parent_dir = abs_path
+                                .parent()
+                                .map(|parent| parent.to_path_buf())
+                                .unwrap_or_else(|| abs_path.to_path_buf());
+                            let Some(file_name) =
+                                abs_path.file_name().and_then(|name| name.to_str())
+                            else {
+                                return Task::ready(Err(anyhow!(
+                                    "frame path has no unicode file name: {abs_path:?}"
+                                )));
+                            };
+                            let relative_path = match RelPath::from_unix_str(file_name) {
+                                Ok(relative_path) => Arc::from(relative_path),
+                                Err(error) => return Task::ready(Err(error)),
+                            };
+                            let worktree_task =
+                                project.find_or_create_worktree(parent_dir, false, cx);
+                            cx.spawn(async move |_project, _cx| {
+                                let (worktree, _) = worktree_task.await?;
+                                Ok((worktree, relative_path))
+                            })
                         })
                     })
                 })??

@@ -376,7 +376,7 @@ impl DebuggerTool {
                     let session_id = resolve_session_id(&self.project, &api, session_id, cx)?;
                     anyhow::Ok((api, session_id))
                 })?;
-                let snapshot_task = cx.update(|cx| api.snapshot(session_id, limits, cx));
+                let snapshot_task = cx.update(|cx| api.snapshot(session_id, limits, None, cx));
                 let snapshot = snapshot_task.await?;
                 Ok(success(
                     operation,
@@ -488,8 +488,11 @@ impl DebuggerTool {
                 .await?;
 
                 let (session_id, control_result) = self.run_control(resolved_input, cx).await?;
+                let preferred_thread_id = control_result.stopped_thread_id;
                 let api = cx.update(|cx| self.api(cx));
-                let snapshot_task = cx.update(|cx| api.snapshot(session_id, snapshot_limits, cx));
+                let snapshot_task = cx.update(|cx| {
+                    api.snapshot(session_id, snapshot_limits, preferred_thread_id, cx)
+                });
                 let snapshot = snapshot_task.await?;
                 Ok(success(
                     operation,
@@ -1284,7 +1287,8 @@ async fn choose_thread_for_action(
     let grace_attempts = 5;
     let poll_interval = std::time::Duration::from_millis(100);
     loop {
-        let snapshot_task = cx.update(|cx| api.snapshot(session_id, thread_picker_limits(), cx));
+        let snapshot_task =
+            cx.update(|cx| api.snapshot(session_id, thread_picker_limits(), None, cx));
         let snapshot = snapshot_task.await?;
 
         if let Some(thread) = snapshot
@@ -1384,6 +1388,7 @@ fn control_result_to_json(result: AgentDebuggerControlResult) -> Value {
     json!({
         "status": format!("{:?}", result.status).to_lowercase(),
         "stopped_thread_id": result.stopped_thread_id.map(|thread_id| thread_id.0),
+        "notes": result.notes,
     })
 }
 
