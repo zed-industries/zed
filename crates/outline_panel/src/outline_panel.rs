@@ -31,7 +31,7 @@ use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use std::{
     cmp,
     collections::BTreeMap,
-    hash::{Hash, Hasher},
+    hash::Hash,
     ops::Range,
     path::{Path, PathBuf},
     sync::{
@@ -129,6 +129,7 @@ pub struct OutlinePanel {
     fs_children_count: HashMap<WorktreeId, HashMap<Arc<RelPath>, FsChildren>>,
     collapsed_entries: HashSet<CollapsedEntry>,
     unfolded_dirs: HashMap<WorktreeId, BTreeSet<ProjectEntryId>>,
+    synthetic_entry_ids: SyntheticEntryIds,
     selected_entry: SelectedEntry,
     active_item: Option<ActiveItem>,
     _subscriptions: Vec<Subscription>,
@@ -389,8 +390,8 @@ struct FoldedDirsEntry {
     worktree_id: WorktreeId,
     entries: Vec<GitEntry>,
     /// `GitEntry` carries no deleted-ness of its own, so this is tracked alongside the
-    /// folded chain: true when any directory folded into `entries` was synthesized for a
-    /// deleted file (see `FsEntryDirectory::is_deleted`).
+    /// folded chain. A chain never mixes deletion states, so this holds for every directory
+    /// in `entries` (see `FsEntryDirectory::is_deleted`).
     is_deleted: bool,
 }
 
@@ -646,19 +647,55 @@ enum FsEntry {
     File(FsEntryFile),
 }
 
-/// Deleted files have no worktree entry — `File::project_entry_id` returns `None` for
-/// `DiskState::Deleted` — but the panel's tree is keyed entirely by `ProjectEntryId`.
-/// Derive a stable id from the path so collapse state survives panel updates, and take it
-/// from the top of the id space: real ids are handed out by a counter that starts at 0 and
-/// increments, so the two ranges cannot meet.
+/// Ids for the entries the panel synthesizes for deleted paths. Deleted files have no
+/// worktree entry — `File::project_entry_id` returns `None` for them — but the panel's tree
+/// is keyed entirely by `ProjectEntryId`, and collapse state has to survive panel updates,
+/// so each `(worktree, path)` keeps one id for the panel's lifetime.
 ///
-/// Two synthesized paths could in principle hash to the same id; the consequence is two
-/// rows sharing collapse state, not a panic.
-fn synthetic_entry_id(worktree_id: WorktreeId, path: &RelPath) -> ProjectEntryId {
-    let mut hasher = collections::FxHasher::default();
-    worktree_id.hash(&mut hasher);
-    path.hash(&mut hasher);
-    ProjectEntryId::from_usize(usize::MAX - (hasher.finish() as usize >> 1))
+/// Ids are handed out sequentially downwards from just below `ProjectEntryId::MAX`, which
+/// the project panel uses as a sentinel: real ids come from a counter that starts at 0, so
+/// the two ranges cannot meet, and sequential allocation means two paths can never share an
+/// id. That matters because the entry maps are keyed by id alone, so a shared id would make
+/// one row overwrite the other.
+#[derive(Clone, Debug)]
+struct SyntheticEntryIds {
+    ids: HashMap<WorktreeId, HashMap<Arc<RelPath>, ProjectEntryId>>,
+    next: usize,
+}
+
+impl Default for SyntheticEntryIds {
+    fn default() -> Self {
+        Self {
+            ids: HashMap::default(),
+            next: usize::MAX - 1,
+        }
+    }
+}
+
+impl SyntheticEntryIds {
+    fn get(&self, worktree_id: WorktreeId, path: &RelPath) -> Option<ProjectEntryId> {
+        self.ids.get(&worktree_id)?.get(path).copied()
+    }
+
+    fn get_or_allocate(&mut self, worktree_id: WorktreeId, path: &RelPath) -> ProjectEntryId {
+        if let Some(id) = self.get(worktree_id, path) {
+            return id;
+        }
+        let id = ProjectEntryId::from_usize(self.next);
+        self.next -= 1;
+        self.ids
+            .entry(worktree_id)
+            .or_default()
+            .insert(Arc::from(path), id);
+        id
+    }
+}
+
+/// The real worktree entry that can stand in for `path` as a deleted row's ancestor. Only a
+/// directory qualifies, since only directories nest rows beneath them: a path that is a file
+/// now but was a directory when the deleted file existed has to be synthesized instead.
+fn real_directory_entry<'a>(worktree: &'a worktree::Snapshot, path: &RelPath) -> Option<&'a Entry> {
+    worktree.entry_for_path(path).filter(|entry| entry.is_dir())
 }
 
 /// Builds a placeholder worktree `Entry` for a path that no longer exists on disk. Only the
@@ -987,6 +1024,7 @@ impl OutlinePanel {
                 fs_children_count: HashMap::default(),
                 collapsed_entries: HashSet::default(),
                 unfolded_dirs: HashMap::default(),
+                synthetic_entry_ids: SyntheticEntryIds::default(),
                 selected_entry: SelectedEntry::None,
                 context_menu: None,
                 active_item: None,
@@ -1635,6 +1673,25 @@ impl OutlinePanel {
         children.may_be_fold_part() && children.dirs > 0
     }
 
+    /// Loads a directory's children in the worktree so its rows can be shown. Synthesized
+    /// directories are skipped: the worktree does not know their ids, and on a remote worktree
+    /// the request would go out to the host as `ExpandProjectEntry` and be rejected.
+    fn expand_worktree_directory(
+        &self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        cx: &mut Context<Self>,
+    ) {
+        let task = self.project.update(cx, |project, cx| {
+            let worktree = project.worktree_for_id(worktree_id, cx)?;
+            worktree.read(cx).entry_for_id(entry_id)?;
+            project.expand_entry(worktree_id, entry_id, cx)
+        });
+        if let Some(task) = task {
+            task.detach_and_log_err(cx);
+        }
+    }
+
     fn expand_selected_entry(
         &mut self,
         _: &ExpandSelectedEntry,
@@ -1689,12 +1746,7 @@ impl OutlinePanel {
         let expanded = self.collapsed_entries.remove(&collapsed_entry);
         if expanded {
             if let CollapsedEntry::Dir(worktree_id, dir_entry_id) = collapsed_entry {
-                let task = self.project.update(cx, |project, cx| {
-                    project.expand_entry(worktree_id, dir_entry_id, cx)
-                });
-                if let Some(task) = task {
-                    task.detach_and_log_err(cx);
-                }
+                self.expand_worktree_directory(worktree_id, dir_entry_id, cx);
             };
 
             active_editor.update(cx, |editor, cx| {
@@ -1961,12 +2013,7 @@ impl OutlinePanel {
                 let collapsed_entry = CollapsedEntry::Dir(*worktree_id, entry_id);
                 buffers_to_toggle.extend(self.buffers_inside_directory(*worktree_id, dir_entry));
                 if self.collapsed_entries.remove(&collapsed_entry) {
-                    self.project
-                        .update(cx, |project, cx| {
-                            project.expand_entry(*worktree_id, entry_id, cx)
-                        })
-                        .unwrap_or_else(|| Task::ready(Ok(())))
-                        .detach_and_log_err(cx);
+                    self.expand_worktree_directory(*worktree_id, entry_id, cx);
                 } else {
                     self.collapsed_entries.insert(collapsed_entry);
                     fold = true;
@@ -2003,12 +2050,7 @@ impl OutlinePanel {
                     buffers_to_toggle
                         .extend(self.buffers_inside_directory(*worktree_id, dir_entry));
                     if self.collapsed_entries.remove(&collapsed_entry) {
-                        self.project
-                            .update(cx, |project, cx| {
-                                project.expand_entry(*worktree_id, entry_id, cx)
-                            })
-                            .unwrap_or_else(|| Task::ready(Ok(())))
-                            .detach_and_log_err(cx);
+                        self.expand_worktree_directory(*worktree_id, entry_id, cx);
                     } else {
                         self.collapsed_entries.insert(collapsed_entry);
                         fold = true;
@@ -2323,38 +2365,38 @@ impl OutlinePanel {
                 outline_panel.update(cx, |outline_panel, cx| {
                     let worktree_id = worktree.read(cx).id();
                     let mut dirs_to_expand = Vec::new();
-                    {
-                        let worktree = worktree.read(cx);
-                        // Walk ancestors by path rather than via `Traversal::back_to_parent`:
-                        // for a deleted file, `buffer_entry` is a synthesized entry that isn't
-                        // actually present in the worktree, so a traversal seeded from its path
-                        // would land on whatever real entry sorts nearest it instead. Ancestor
-                        // directories may themselves be synthetic (a wholly deleted directory),
-                        // so fall back to the same deterministic id used when the tree was built.
-                        for ancestor in buffer_entry.path.ancestors().skip(1) {
-                            let real_ancestor_id =
-                                worktree.entry_for_path(ancestor).map(|entry| entry.id);
-                            let ancestor_id = real_ancestor_id
-                                .unwrap_or_else(|| synthetic_entry_id(worktree_id, ancestor));
-                            // Only a real directory can be expanded in the worktree. On a
-                            // remote worktree a synthesized id would go out as an
-                            // `ExpandProjectEntry` request the host rejects.
-                            if outline_panel
-                                .collapsed_entries
-                                .remove(&CollapsedEntry::Dir(worktree_id, ancestor_id))
-                                && let Some(real_ancestor_id) = real_ancestor_id
-                            {
-                                dirs_to_expand.push(real_ancestor_id);
-                            }
+                    // Resolve ancestors against the tree the panel built rather than the
+                    // worktree: a deleted file's ancestors may be synthesized (a wholly deleted
+                    // directory) or may share a path with a real *file* that was a directory
+                    // when the deleted file existed, and `fs_entries` already holds the one
+                    // directory row the panel rendered for each ancestor path. A path with no
+                    // row was never rendered and has nothing to expand.
+                    for ancestor in buffer_entry.path.ancestors().skip(1) {
+                        let Some(ancestor_id) =
+                            outline_panel
+                                .fs_entries
+                                .iter()
+                                .find_map(|entry| match entry {
+                                    FsEntry::Directory(directory)
+                                        if directory.worktree_id == worktree_id
+                                            && directory.entry.path.as_ref() == ancestor =>
+                                    {
+                                        Some(directory.entry.id)
+                                    }
+                                    _ => None,
+                                })
+                        else {
+                            continue;
+                        };
+                        if outline_panel
+                            .collapsed_entries
+                            .remove(&CollapsedEntry::Dir(worktree_id, ancestor_id))
+                        {
+                            dirs_to_expand.push(ancestor_id);
                         }
                     }
                     for dir_to_expand in dirs_to_expand {
-                        project
-                            .update(cx, |project, cx| {
-                                project.expand_entry(worktree_id, dir_to_expand, cx)
-                            })
-                            .unwrap_or_else(|| Task::ready(Ok(())))
-                            .detach_and_log_err(cx)
+                        outline_panel.expand_worktree_directory(worktree_id, dir_to_expand, cx);
                     }
                 })?
             }
@@ -2932,7 +2974,7 @@ impl OutlinePanel {
             let mut new_unfolded_dirs = HashMap::default();
             let mut root_entries = HashSet::default();
             let mut new_buffers = HashMap::<BufferId, BufferOutlines>::default();
-            let Ok((buffer_excerpts, auto_fold_dirs, repo_snapshots)) =
+            let Ok((buffer_excerpts, auto_fold_dirs, repo_snapshots, synthetic_entry_ids)) =
                 outline_panel.update(cx, |outline_panel, cx| {
                     outline_panel.fs_entries_update_pending = false;
                     let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
@@ -3021,7 +3063,12 @@ impl OutlinePanel {
                             buffer_excerpts
                         },
                     );
-                    (buffer_excerpts, auto_fold_dirs, repo_snapshots)
+                    (
+                        buffer_excerpts,
+                        auto_fold_dirs,
+                        repo_snapshots,
+                        outline_panel.synthetic_entry_ids.clone(),
+                    )
                 })
             else {
                 return;
@@ -3033,8 +3080,10 @@ impl OutlinePanel {
                 new_fs_entries,
                 new_depth_map,
                 new_children_count,
+                new_synthetic_entry_ids,
             )) = cx
                 .background_spawn(async move {
+                    let mut synthetic_entry_ids = synthetic_entry_ids;
                     let mut processed_external_buffers = HashSet::default();
                     let mut new_worktree_entries =
                         BTreeMap::<WorktreeId, HashMap<ProjectEntryId, GitEntry>>::default();
@@ -3153,7 +3202,8 @@ impl OutlinePanel {
                                     // for it and its ancestor chain so it renders nested in the
                                     // tree instead of falling back to a flat external file.
                                     Some(path) => {
-                                        let file_id = synthetic_entry_id(worktree_id, &path);
+                                        let file_id =
+                                            synthetic_entry_ids.get_or_allocate(worktree_id, &path);
                                         deleted_entries.insert(file_id);
                                         worktree_excerpts
                                             .entry(worktree_id)
@@ -3176,75 +3226,69 @@ impl OutlinePanel {
                                         );
 
                                         for ancestor in path.ancestors().skip(1) {
-                                            // A real entry only stands in for the deleted path's
-                                            // ancestor if it is a directory. A path that is a file
-                                            // now but was a directory when the deleted file existed
-                                            // must still be synthesized, since only directories
-                                            // nest other entries beneath them.
-                                            let (ancestor_id, ancestor_entry) = match worktree
-                                                .entry_for_path(ancestor)
-                                                .filter(|real_entry| real_entry.is_dir())
-                                            {
-                                                Some(real_entry) => {
-                                                    let is_root =
-                                                        worktree.root_entry().map(|entry| entry.id)
+                                            let (ancestor_id, ancestor_entry) =
+                                                match real_directory_entry(&worktree, ancestor) {
+                                                    Some(real_entry) => {
+                                                        let is_root = worktree
+                                                            .root_entry()
+                                                            .map(|entry| entry.id)
                                                             == Some(real_entry.id);
-                                                    if is_root {
-                                                        root_entries.insert(real_entry.id);
-                                                        if auto_fold_dirs {
-                                                            unfolded_dirs.insert(real_entry.id);
+                                                        if is_root {
+                                                            root_entries.insert(real_entry.id);
+                                                            if auto_fold_dirs {
+                                                                unfolded_dirs.insert(real_entry.id);
+                                                            }
                                                         }
-                                                    }
-                                                    if is_new {
-                                                        new_collapsed_entries.remove(
-                                                            &CollapsedEntry::Dir(
-                                                                worktree_id,
-                                                                real_entry.id,
+                                                        if is_new {
+                                                            new_collapsed_entries.remove(
+                                                                &CollapsedEntry::Dir(
+                                                                    worktree_id,
+                                                                    real_entry.id,
+                                                                ),
+                                                            );
+                                                        }
+                                                        let git_summary = GitTraversal::new(
+                                                            &repo_snapshots,
+                                                            worktree.traverse_from_path(
+                                                                true, true, true, ancestor,
                                                             ),
-                                                        );
+                                                        )
+                                                        .entry()
+                                                        .map(|entry| entry.git_summary)
+                                                        .unwrap_or_default();
+                                                        (
+                                                            real_entry.id,
+                                                            GitEntry {
+                                                                git_summary,
+                                                                entry: real_entry.clone(),
+                                                            },
+                                                        )
                                                     }
-                                                    let git_summary = GitTraversal::new(
-                                                        &repo_snapshots,
-                                                        worktree.traverse_from_path(
-                                                            true, true, true, ancestor,
-                                                        ),
-                                                    )
-                                                    .entry()
-                                                    .map(|entry| entry.git_summary)
-                                                    .unwrap_or_default();
-                                                    (
-                                                        real_entry.id,
-                                                        GitEntry {
-                                                            git_summary,
-                                                            entry: real_entry.clone(),
-                                                        },
-                                                    )
-                                                }
-                                                None => {
-                                                    let dir_id =
-                                                        synthetic_entry_id(worktree_id, ancestor);
-                                                    deleted_entries.insert(dir_id);
-                                                    if is_new {
-                                                        new_collapsed_entries.remove(
-                                                            &CollapsedEntry::Dir(
-                                                                worktree_id,
-                                                                dir_id,
-                                                            ),
-                                                        );
+                                                    None => {
+                                                        let dir_id = synthetic_entry_ids
+                                                            .get_or_allocate(worktree_id, ancestor);
+                                                        deleted_entries.insert(dir_id);
+                                                        if is_new {
+                                                            new_collapsed_entries.remove(
+                                                                &CollapsedEntry::Dir(
+                                                                    worktree_id,
+                                                                    dir_id,
+                                                                ),
+                                                            );
+                                                        }
+                                                        (
+                                                            dir_id,
+                                                            GitEntry {
+                                                                git_summary: GitSummary::default(),
+                                                                entry: synthetic_entry(
+                                                                    dir_id,
+                                                                    EntryKind::Dir,
+                                                                    ancestor.into(),
+                                                                ),
+                                                            },
+                                                        )
                                                     }
-                                                    (
-                                                        dir_id,
-                                                        GitEntry {
-                                                            git_summary: GitSummary::default(),
-                                                            entry: synthetic_entry(
-                                                                dir_id,
-                                                                EntryKind::Dir,
-                                                                ancestor.into(),
-                                                            ),
-                                                        },
-                                                    )
-                                                }
-                                            };
+                                                };
                                             entries_to_add.insert(ancestor_id, ancestor_entry);
                                         }
 
@@ -3440,6 +3484,7 @@ impl OutlinePanel {
                         new_visible_entries,
                         new_depth_map,
                         new_children_count,
+                        synthetic_entry_ids,
                     ))
                 })
                 .await
@@ -3457,6 +3502,7 @@ impl OutlinePanel {
                     outline_panel.fs_entries = new_fs_entries;
                     outline_panel.fs_entries_depth = new_depth_map;
                     outline_panel.fs_children_count = new_children_count;
+                    outline_panel.synthetic_entry_ids = new_synthetic_entry_ids;
                     outline_panel.update_non_fs_items(window, cx);
 
                     // Only update cached entries if we don't have outlines to fetch
@@ -6968,95 +7014,6 @@ two/  <==== selected
     }
 
     #[gpui::test]
-    async fn test_folded_single_deleted_directory_keeps_is_deleted(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        // `push_entry` converts a `FoldedDirsEntry` with exactly one directory back into a
-        // plain `FsEntry::Directory` (the `1 =>` arm of its `match folded_dirs_entry.entries.len()`).
-        // Auto-fold's chain-building always sweeps a directory's only child into its parent's
-        // `FoldedDirsEntry` (either as a continuing link or as the chain's final label
-        // segment), so a natural fs tree can't be shaped to make `generate_cached_entries`
-        // hand `push_entry` a length-1 chain — that would require a directory whose sole
-        // subdirectory never gets visited at all. Exercise `push_entry` directly instead,
-        // using a real directory entry from the panel's own worktree so the conversion is
-        // tested against realistic data, only the `is_deleted` marking is injected by hand.
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/root"),
-            json!({
-                "dir": {
-                    "a.txt": "hello world"
-                }
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
-        let (window, workspace) = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.set_active(true, window, cx)
-        });
-
-        let buffer_a = open_buffer(&project, path!("/root/dir/a.txt"), cx).await;
-        add_multi_buffer_editor(&workspace, &project, &[(&buffer_a, Vec::new())], cx);
-        settle_outline_panel(&outline_panel, cx);
-
-        let (worktree_id, dir_entry) = outline_panel.read_with(cx, |outline_panel, _cx| {
-            outline_panel
-                .fs_entries
-                .iter()
-                .find_map(|entry| match entry {
-                    FsEntry::Directory(FsEntryDirectory {
-                        worktree_id, entry, ..
-                    }) if entry.path.file_name() == Some("dir") => {
-                        Some((*worktree_id, entry.clone()))
-                    }
-                    _ => None,
-                })
-                .expect("`dir` should have a real worktree entry")
-        });
-
-        let folded_dirs = FoldedDirsEntry {
-            worktree_id,
-            entries: vec![dir_entry],
-            is_deleted: true,
-        };
-
-        let mut generation_state = GenerationState::default();
-        outline_panel.update(cx, |outline_panel, cx| {
-            outline_panel.push_entry(
-                &mut generation_state,
-                false,
-                PanelEntry::FoldedDirs(folded_dirs),
-                0,
-                cx,
-            );
-        });
-
-        assert_eq!(
-            generation_state.entries.len(),
-            1,
-            "push_entry should emit exactly one row for a single-entry FoldedDirsEntry, got \
-             {:#?}",
-            generation_state.entries
-        );
-        match &generation_state.entries[0].entry {
-            PanelEntry::Fs(FsEntry::Directory(directory)) => {
-                assert!(
-                    directory.is_deleted,
-                    "a single-entry FoldedDirsEntry marked deleted should convert into a \
-                     Directory row that keeps that marking, got {directory:#?}"
-                );
-            }
-            other => panic!(
-                "expected push_entry to convert the length-1 FoldedDirsEntry into a plain \
-                 Fs::Directory, got {other:#?}"
-            ),
-        }
-    }
-
-    #[gpui::test]
     async fn test_open_deleted_file_entry_navigates_editor(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -7214,12 +7171,13 @@ two/  <==== selected
             json!({
                 "keep.txt": "hello there",
                 "foo": {
-                    "a.txt": "hello world"
+                    "a.rs": "pub fn foo() {\n    let x = 1;\n}\n"
                 }
             }),
         )
         .await;
         let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let (window, workspace) = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(window.into(), cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -7233,7 +7191,7 @@ two/  <==== selected
         // Plain multi-buffer, not a project search — see comment in
         // `test_deleted_file_nests_under_existing_parent` for why.
         let buffer_keep = open_buffer(&project, path!("/root/keep.txt"), cx).await;
-        let buffer_a = open_buffer(&project, path!("/root/foo/a.txt"), cx).await;
+        let buffer_a = open_buffer(&project, path!("/root/foo/a.rs"), cx).await;
         add_multi_buffer_editor(
             &workspace,
             &project,
@@ -7269,7 +7227,7 @@ two/  <==== selected
                     None,
                     cx,
                 ),
-                "root/\n  foo/\n    a.txt\n  keep.txt",
+                "root/\n  foo/\n    a.rs\n        outline: pub fn foo\n  keep.txt",
                 "the deleted file should nest under a synthesized `foo/` directory rather \
                  than adopting the same-path file as its parent and falling back to root depth"
             );
@@ -7280,7 +7238,7 @@ two/  <==== selected
         // directory chain, and meeting the file after `foo/` would pop that directory before
         // `foo/a.txt` arrives, leaving it at root depth.
         let buffer_foo = open_buffer(&project, path!("/root/foo"), cx).await;
-        add_multi_buffer_editor(
+        let editor = add_multi_buffer_editor(
             &workspace,
             &project,
             &[
@@ -7301,9 +7259,77 @@ two/  <==== selected
                     None,
                     cx,
                 ),
-                "root/\n  foo\n  foo/\n    a.txt\n  keep.txt",
+                "root/\n  foo\n  foo/\n    a.rs\n        outline: pub fn foo\n  keep.txt",
                 "with the same-path file open as well, the deleted file must still nest \
                  under the synthesized directory"
+            );
+        });
+
+        // Auto-reveal has to resolve the same ancestor as the tree did. Collapse the
+        // synthesized `foo/` and move the cursor into the deleted file: taking the same-path
+        // *file* `foo` as the ancestor would look for the wrong collapsed entry and leave the
+        // row hidden.
+        let (worktree_id, foo_dir_id) = outline_panel.read_with(cx, |outline_panel, _cx| {
+            outline_panel
+                .fs_entries
+                .iter()
+                .find_map(|entry| match entry {
+                    FsEntry::Directory(FsEntryDirectory {
+                        worktree_id, entry, ..
+                    }) if entry.path.file_name() == Some("foo") => Some((*worktree_id, entry.id)),
+                    _ => None,
+                })
+                .expect("the synthesized `foo/` directory should be in the tree")
+        });
+        let buffer_a_id = buffer_a.read_with(cx, |buffer, _cx| buffer.remote_id());
+        let outline_start = outline_panel.read_with(cx, |outline_panel, _cx| {
+            outline_panel
+                .cached_entries
+                .iter()
+                .find_map(|cached_entry| match &cached_entry.entry {
+                    PanelEntry::Outline(OutlineEntry::Outline(outline))
+                        if outline.range.start.buffer_id == buffer_a_id =>
+                    {
+                        Some(outline.range.start)
+                    }
+                    _ => None,
+                })
+                .expect("the deleted file should still contribute an outline entry")
+        });
+        outline_panel.update(cx, |outline_panel, _cx| {
+            outline_panel
+                .collapsed_entries
+                .insert(CollapsedEntry::Dir(worktree_id, foo_dir_id));
+        });
+
+        let multibuffer_anchor = editor.read_with(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .anchor_in_excerpt(outline_start)
+        });
+        let multibuffer_anchor =
+            multibuffer_anchor.expect("the deleted file's excerpt should be present");
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges(Some(multibuffer_anchor..multibuffer_anchor))
+                });
+            });
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        outline_panel.read_with(cx, |outline_panel, _cx| {
+            assert!(
+                !outline_panel
+                    .collapsed_entries
+                    .contains(&CollapsedEntry::Dir(worktree_id, foo_dir_id)),
+                "auto-reveal should expand the synthesized `foo/` above the deleted file, got \
+                 {:#?}",
+                outline_panel.collapsed_entries
             );
         });
     }
@@ -7661,6 +7687,36 @@ two/  <==== selected
                 outline_panel.collapsed_entries
             );
         });
+    }
+
+    #[test]
+    fn test_synthetic_entry_ids_are_distinct_and_stable() {
+        use util::rel_path::rel_path;
+
+        let mut ids = SyntheticEntryIds::default();
+        let worktree_a = WorktreeId::from_usize(1);
+        let worktree_b = WorktreeId::from_usize(2);
+
+        let first = ids.get_or_allocate(worktree_a, rel_path("dir/a.txt"));
+        let second = ids.get_or_allocate(worktree_a, rel_path("dir/b.txt"));
+        let same_path_other_worktree = ids.get_or_allocate(worktree_b, rel_path("dir/a.txt"));
+        assert_ne!(first, second, "different paths must never share an id");
+        assert_ne!(
+            first, same_path_other_worktree,
+            "the same path in different worktrees must not share an id"
+        );
+
+        assert_eq!(
+            ids.get_or_allocate(worktree_a, rel_path("dir/a.txt")),
+            first,
+            "a path keeps its id across allocations"
+        );
+        assert_eq!(ids.get(worktree_a, rel_path("dir/a.txt")), Some(first));
+        assert_eq!(
+            ids.get(worktree_a, rel_path("dir/c.txt")),
+            None,
+            "lookups never allocate"
+        );
     }
 
     #[gpui::test]

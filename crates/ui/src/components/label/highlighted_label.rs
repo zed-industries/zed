@@ -389,4 +389,43 @@ mod tests {
         let label = HighlightedLabel::new("a\nb", vec![0]);
         assert_eq!(label.text(), "a\nb");
     }
+
+    struct HighlightedLabelView {
+        strikethrough: bool,
+    }
+
+    impl Render for HighlightedLabelView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            HighlightedLabel::new("main.rs", vec![0, 1])
+                .when(self.strikethrough, |label| label.strikethrough())
+        }
+    }
+
+    // Strikethroughs are painted as underline primitives, and nothing else in this view
+    // paints one, so the frame's underline count tells whether the decoration reached the
+    // text runs that `HighlightedLabel::render` builds.
+    fn painted_underline_count(strikethrough: bool, cx: &mut gpui::TestAppContext) -> usize {
+        let (_view, cx) = cx.add_window_view(move |_, _| HighlightedLabelView { strikethrough });
+        cx.run_until_parked();
+        cx.update(|window, _| window.painted_underlines().len())
+    }
+
+    #[gpui::test]
+    fn test_strikethrough_is_painted_through_render(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        assert_eq!(
+            painted_underline_count(false, cx),
+            0,
+            "a plain highlighted label should paint no strikethrough"
+        );
+        assert!(
+            painted_underline_count(true, cx) > 0,
+            "`strikethrough()` should reach the runs built in `HighlightedLabel::render`"
+        );
+    }
 }
