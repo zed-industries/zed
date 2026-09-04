@@ -5034,6 +5034,81 @@ let c = 3;"#
             .unwrap();
     }
 
+    #[gpui::test]
+    async fn test_hints_cleared_when_language_changes_and_no_server_attaches(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
+                toggle_on_modifiers_press: None,
+            })
+        });
+
+        let (_, editor, _fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
+            fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                move |params, _| async move {
+                    assert_eq!(
+                        params.text_document.uri,
+                        lsp::Uri::from_file_path(file_with_hints).unwrap(),
+                    );
+                    Ok(Some(vec![lsp::InlayHint {
+                        position: lsp::Position::new(0, 1),
+                        label: lsp::InlayHintLabel::String("stale hint".to_string()),
+                        kind: None,
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: None,
+                        padding_right: None,
+                        data: None,
+                    }]))
+                },
+            );
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                let expected_hints = vec!["stale hint".to_string()];
+                assert_eq!(expected_hints, cached_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+
+        let plain_text = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Plain Text".into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        editor
+            .update(cx, |editor, _, cx| {
+                let project = editor.project().unwrap().clone();
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+                project.update(cx, |project, cx| {
+                    project.set_language_for_buffer(&buffer, plain_text, cx);
+                });
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(Vec::<String>::new(), cached_hint_labels(editor, cx));
+                assert_eq!(Vec::<String>::new(), visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+    }
+
     pub(crate) fn init_test(cx: &mut TestAppContext, f: &dyn Fn(&mut AllLanguageSettingsContent)) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);

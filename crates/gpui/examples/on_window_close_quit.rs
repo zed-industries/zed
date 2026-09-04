@@ -1,5 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use gpui::{
     App, Bounds, Context, FocusHandle, KeyBinding, Window, WindowBounds, WindowOptions, actions,
     div, prelude::*, px, rgb, size,
@@ -39,6 +42,9 @@ impl Render for ExampleWindow {
 
 fn run_example() {
     application().run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         let mut bounds = Bounds::centered(None, size(px(500.), px(500.0)), cx);
 
         cx.bind_keys([KeyBinding::new("cmd-w", CloseWindow, None)]);
