@@ -771,11 +771,19 @@ impl Style {
             .to_pixels(rem_size)
             .clamp_radii_for_quad_size(bounds.size);
 
+        // A rectangular content mask clips the children of a box that
+        // hides or scrolls its overflow, but it cannot follow the corner
+        // arcs. A layer can, so a rounded clipping box gets one.
+        let clips = self.overflow.x != Overflow::Visible
+            && self.overflow.y != Overflow::Visible
+            && corner_radii != Corners::default();
+        let mut effects = self.effects.clone();
+        effects.clips = effects.clips || clips;
         window.paint_effect_layer(
             bounds,
             corner_radii,
             self.corner_shapes,
-            &self.effects,
+            &effects,
             |window| self.paint_box(bounds, corner_radii, window, cx, continuation),
         );
     }
