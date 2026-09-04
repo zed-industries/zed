@@ -28,6 +28,7 @@ struct EffectLayer {
     color_matrix: array<f32, 20>,
     backdrop_matrix: array<f32, 20>,
     mask: Background,
+    pad: u32,
 }
 
 struct LayerComposite {
