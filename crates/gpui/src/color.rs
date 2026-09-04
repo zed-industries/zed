@@ -957,6 +957,11 @@ pub struct LinearColorStop {
     ///
     /// <https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#color-hint>
     pub hint: f32,
+    /// An easing between this stop and the next, as the two control points of
+    /// a cubic bezier: `[x1, y1, x2, y2]`. All zero means none, which mixes
+    /// in a straight line. CSS gradients have no easing yet; this follows the
+    /// CSSWG proposal in csswg-drafts issue 1332.
+    pub easing: [f32; 4],
 }
 
 /// Creates a new linear color stop.
@@ -967,6 +972,7 @@ pub fn linear_color_stop(color: impl Into<Hsla>, percentage: f32) -> LinearColor
         color: color.into(),
         percentage,
         hint: 0.0,
+        easing: [0.0; 4],
     }
 }
 

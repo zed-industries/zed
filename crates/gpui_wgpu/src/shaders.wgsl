@@ -130,6 +130,12 @@ struct LinearColorStop {
     percentage: f32,
     // Where between this stop and the next the mix is half way. 0 = none.
     hint: f32,
+    // Cubic bezier control points that ease the mix to the next stop. All
+    // zero = none.
+    ease_x1: f32,
+    ease_y1: f32,
+    ease_x2: f32,
+    ease_y2: f32,
 }
 
 struct Background {
@@ -552,6 +558,27 @@ fn prepare_fill_color(background: Background) -> vec4<f32> {
     return hsla_to_rgba(background.solid);
 }
 
+// The eased fraction for `x` along a cubic bezier with control points `e`,
+// from (0, 0) to (1, 1). Newton's method solves the x curve for t, then the
+// y curve reads the eased value. Zero control points mean no easing.
+fn bezier_ease(x: f32, e: vec4<f32>) -> f32 {
+    if (all(e == vec4<f32>(0.0))) {
+        return x;
+    }
+    var t = x;
+    for (var i = 0; i < 8; i++) {
+        let u = 1.0 - t;
+        let fx = 3.0 * u * u * t * e.x + 3.0 * u * t * t * e.z + t * t * t - x;
+        let dx = 3.0 * u * u * e.x + 6.0 * u * t * (e.z - e.x) + 3.0 * t * t * (1.0 - e.z);
+        if (abs(dx) < 1e-6) {
+            break;
+        }
+        t = clamp(t - fx / dx, 0.0, 1.0);
+    }
+    let u = 1.0 - t;
+    return 3.0 * u * u * t * e.y + 3.0 * u * t * t * e.w + t * t * t;
+}
+
 // One gradient stop in the space the gradient mixes in.
 fn gradient_stop_color(background: Background, index: u32) -> vec4<f32> {
     // hsla_to_rgba returns linear sRGB.
@@ -612,6 +639,9 @@ fn linear_gradient_color(background: Background, position: vec2<f32>, bounds: Bo
         if (hint > 0.0 && hint < 1.0) {
             p = pow(p, log(0.5) / log(hint));
         }
+        // An easing bends the mix between two stops.
+        let stop = background.colors[i];
+        p = bezier_ease(p, vec4<f32>(stop.ease_x1, stop.ease_y1, stop.ease_x2, stop.ease_y2));
         color = mix(gradient_stop_color(background, i),
                     gradient_stop_color(background, i + 1u), p);
     }

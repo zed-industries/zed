@@ -53,6 +53,12 @@ struct LinearColorStop {
     float percentage;
     // Where between this stop and the next the mix is half way. 0 = none.
     float hint;
+    // Cubic bezier control points that ease the mix to the next stop. All
+    // zero = none.
+    float ease_x1;
+    float ease_y1;
+    float ease_x2;
+    float ease_y2;
 };
 
 struct Background {
@@ -459,6 +465,27 @@ float4 prepare_fill_color(Background background) {
     return hsla_to_rgba(background.solid);
 }
 
+// The eased fraction for `x` along a cubic bezier with control points `e`,
+// from (0, 0) to (1, 1). Newton's method solves the x curve for t, then the
+// y curve reads the eased value. Zero control points mean no easing.
+float bezier_ease(float x, float4 e) {
+    if (all(e == float4(0.0, 0.0, 0.0, 0.0))) {
+        return x;
+    }
+    float t = x;
+    for (int i = 0; i < 8; i++) {
+        float u = 1.0 - t;
+        float fx = 3.0 * u * u * t * e.x + 3.0 * u * t * t * e.z + t * t * t - x;
+        float dx = 3.0 * u * u * e.x + 6.0 * u * t * (e.z - e.x) + 3.0 * t * t * (1.0 - e.z);
+        if (abs(dx) < 1e-6) {
+            break;
+        }
+        t = clamp(t - fx / dx, 0.0, 1.0);
+    }
+    float u = 1.0 - t;
+    return 3.0 * u * u * t * e.y + 3.0 * u * t * t * e.w + t * t * t;
+}
+
 // One gradient stop in the space the gradient mixes in.
 float4 gradient_stop_color(Background background, uint index) {
     float4 color = hsla_to_rgba(background.colors[index].color);
@@ -515,6 +542,9 @@ float4 linear_gradient_color(Background background, float2 position, Bounds boun
         if (hint > 0.0 && hint < 1.0) {
             p = pow(p, log(0.5) / log(hint));
         }
+        // An easing bends the mix between two stops.
+        LinearColorStop stop = background.colors[i];
+        p = bezier_ease(p, float4(stop.ease_x1, stop.ease_y1, stop.ease_x2, stop.ease_y2));
         color = lerp(gradient_stop_color(background, i),
                      gradient_stop_color(background, i + 1), p);
     }
