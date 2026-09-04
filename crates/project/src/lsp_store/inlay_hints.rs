@@ -57,7 +57,6 @@ pub struct BufferInlayHints {
     fetches_by_chunks: Vec<Option<CacheInlayHintsTask>>,
     hints_by_id: HashMap<InlayId, HintForId>,
     pending_refreshes: HashSet<LanguageServerId>,
-    work_end_refreshes: HashSet<LanguageServerId>,
     pub(super) fetched_servers: HashSet<LanguageServerId>,
     pub(super) hint_resolves: HashMap<InlayId, Shared<Task<()>>>,
 }
@@ -90,7 +89,6 @@ impl BufferInlayHints {
             hints_by_chunks: vec![None; chunks.len()],
             fetches_by_chunks: vec![None; chunks.len()],
             pending_refreshes: HashSet::default(),
-            work_end_refreshes: HashSet::default(),
             fetched_servers: HashSet::default(),
             hints_by_id: HashMap::default(),
             hint_resolves: HashMap::default(),
@@ -138,27 +136,11 @@ impl BufferInlayHints {
             }
         }
         self.pending_refreshes.remove(&for_server);
-        self.work_end_refreshes.remove(&for_server);
         self.fetched_servers.remove(&for_server);
     }
 
     fn mark_refresh_pending(&mut self, server_id: LanguageServerId) {
         self.pending_refreshes.insert(server_id);
-        self.work_end_refreshes.insert(server_id);
-    }
-
-    /// A server finishing a long-running operation may have produced new hints without
-    /// requesting an explicit refresh, but servers like rust-analyzer report work (e.g.
-    /// flycheck) after every save: refresh at most once per server until the buffer
-    /// changes. Explicit refresh requests also count against this limit, as they make a
-    /// subsequent work-end refresh redundant.
-    fn mark_refresh_pending_on_work_end(&mut self, server_id: LanguageServerId) -> bool {
-        if self.work_end_refreshes.insert(server_id) {
-            self.pending_refreshes.insert(server_id);
-            true
-        } else {
-            false
-        }
     }
 
     pub fn clear(&mut self) {
@@ -167,7 +149,6 @@ impl BufferInlayHints {
         self.hints_by_id.clear();
         self.hint_resolves.clear();
         self.pending_refreshes.clear();
-        self.work_end_refreshes.clear();
         self.fetched_servers.clear();
     }
 
@@ -350,24 +331,6 @@ impl LspStore {
             lsp_data.inlay_hints.mark_refresh_pending(server_id);
         }
         cx.emit(LspStoreEvent::RefreshInlayHints { server_id });
-    }
-
-    /// Same as [`Self::mark_inlay_hints_refresh_pending`], but rate-limited per server
-    /// via [`BufferInlayHints::mark_refresh_pending_on_work_end`].
-    pub(super) fn refresh_inlay_hints_on_work_end(
-        &mut self,
-        server_id: LanguageServerId,
-        cx: &mut Context<Self>,
-    ) {
-        let mut marked = false;
-        for lsp_data in self.lsp_data.values_mut() {
-            marked |= lsp_data
-                .inlay_hints
-                .mark_refresh_pending_on_work_end(server_id);
-        }
-        if marked {
-            cx.emit(LspStoreEvent::RefreshInlayHints { server_id });
-        }
     }
 
     pub(super) async fn handle_refresh_inlay_hints(

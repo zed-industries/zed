@@ -61,6 +61,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 use unindent::Unindent as _;
 use util::{path, path_list::PathList, paths::PathMatcher, rel_path::rel_path};
@@ -2054,6 +2055,64 @@ async fn test_remote_per_server_refresh_queries_only_the_refreshed_server(
         ),
         (2, 1),
         "Expected the refetch after a per-server refresh to query the refreshed server only",
+    );
+
+    for (progress_token, expected_lens_requests_a) in [(42, 3), (43, 4)] {
+        fake_lsp_a
+            .request::<lsp::request::WorkDoneProgressCreate>(
+                lsp::WorkDoneProgressCreateParams {
+                    token: lsp::ProgressToken::Number(progress_token),
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .unwrap();
+        cx.run_until_parked();
+        fake_lsp_a.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+            token: lsp::ProgressToken::Number(progress_token),
+            value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
+                lsp::WorkDoneProgressBegin::default(),
+            )),
+        });
+        cx.run_until_parked();
+        fake_lsp_a.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+            token: lsp::ProgressToken::Number(progress_token),
+            value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
+                lsp::WorkDoneProgressEnd::default(),
+            )),
+        });
+        cx.run_until_parked();
+        server_cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+
+        lsp_store
+            .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                lens_requests_a.load(Ordering::Acquire),
+                lens_requests_b.load(Ordering::Acquire),
+            ),
+            (expected_lens_requests_a, 1),
+        );
+    }
+
+    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, " ")], None, cx));
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+
+    lsp_store
+        .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            lens_requests_a.load(Ordering::Acquire),
+            lens_requests_b.load(Ordering::Acquire),
+        ),
+        (5, 2),
     );
 }
 

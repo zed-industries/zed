@@ -22,7 +22,7 @@ use project::{
     ProjectPath,
     debugger::session::ThreadId,
     lsp_store::{
-        FormatTrigger, LspFormatTarget,
+        FormatTrigger, LspFormatTarget, LspStoreEvent,
         log_store::{self, GlobalLogStore},
     },
     trusted_worktrees::{PathTrust, TrustedWorktrees},
@@ -39,7 +39,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -95,7 +95,7 @@ async fn test_sharing_an_ssh_remote_project(
     let node = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     languages.add(rust_lang());
-    let _headless_project = server_cx.new(|cx| {
+    let headless_project = server_cx.new(|cx| {
         HeadlessProject::new(
             HeadlessAppState {
                 session: server_ssh,
@@ -135,6 +135,43 @@ async fn test_sharing_an_ssh_remote_project(
         .unwrap();
 
     executor.run_until_parked();
+
+    let lsp_store_b = project_b.read_with(cx_b, |project, _| project.lsp_store());
+    let work_end_relayed = Arc::new(AtomicBool::new(false));
+    cx_b.update({
+        let work_end_relayed = work_end_relayed.clone();
+        |cx| {
+            cx.subscribe(&lsp_store_b, move |_, event, _| {
+                if let LspStoreEvent::LanguageServerUpdate {
+                    message: proto::update_language_server::Variant::WorkEnd(_),
+                    ..
+                } = event
+                {
+                    work_end_relayed.store(true, Ordering::Release);
+                }
+            })
+            .detach();
+        }
+    });
+    let remote_session = headless_project.read_with(server_cx, |headless_project, _| {
+        headless_project.session.clone()
+    });
+    remote_session
+        .send(proto::UpdateLanguageServer {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            server_name: None,
+            language_server_id: 1,
+            variant: Some(proto::update_language_server::Variant::WorkEnd(
+                proto::LspWorkEnd {
+                    token: Some(proto::ProgressToken {
+                        value: Some(proto::progress_token::Value::Number(1)),
+                    }),
+                },
+            )),
+        })
+        .unwrap();
+    executor.run_until_parked();
+    assert!(work_end_relayed.load(Ordering::Acquire));
 
     worktree_a.update(cx_a, |worktree, _cx| {
         assert_eq!(

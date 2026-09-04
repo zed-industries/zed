@@ -1994,6 +1994,10 @@ impl FakeLanguageServer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServer {
+    pub fn next_request_id(&self) -> i32 {
+        self.next_id.load(SeqCst)
+    }
+
     pub fn full_capabilities() -> ServerCapabilities {
         ServerCapabilities {
             document_highlight_provider: Some(OneOf::Left(true)),

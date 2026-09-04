@@ -1002,7 +1002,7 @@ fn spawn_editor_hints_refresh(
 
 #[cfg(test)]
 pub mod tests {
-    use crate::editor_tests::update_test_language_settings;
+    use crate::editor_tests::{update_test_editor_settings, update_test_language_settings};
     use crate::inlays::inlay_hints::InlayHintRefreshReason;
     use crate::scroll::Autoscroll;
     use crate::scroll::ScrollAmount;
@@ -1014,7 +1014,7 @@ pub mod tests {
     use itertools::Itertools as _;
     use language::language_settings::InlayHintKind;
     use language::{Capability, FakeLspAdapter};
-    use language::{Language, LanguageConfig, LanguageMatcher};
+    use language::{Language, LanguageConfig, LanguageMatcher, PointUtf16};
     use languages::rust_lang;
     use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, FakeLanguageServer};
     use multi_buffer::{MultiBuffer, MultiBufferOffset, PathKey};
@@ -1022,7 +1022,10 @@ pub mod tests {
     use pretty_assertions::assert_eq;
     use project::{FakeFs, InvalidationStrategy, Project};
     use serde_json::json;
-    use settings::{AllLanguageSettingsContent, InlayHintSettingsContent, SettingsStore};
+    use settings::{
+        AllLanguageSettingsContent, CodeLens, DocumentFoldingRanges, DocumentSymbols,
+        InlayHintSettingsContent, LanguageSettingsContent, SemanticTokens, SettingsStore,
+    };
     use std::ops::Range;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -1408,6 +1411,21 @@ pub mod tests {
 
         editor
             .update(cx, |editor, _, cx| {
+                let expected_hints = vec!["0".to_string()];
+                assert_eq!(
+                    expected_hints,
+                    cached_hint_labels(editor, cx),
+                    "Hints should not be re-queried until the work has settled"
+                );
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _, cx| {
                 let expected_hints = vec!["1".to_string()];
                 assert_eq!(
                     expected_hints,
@@ -1419,14 +1437,16 @@ pub mod tests {
             .unwrap();
 
         run_work_cycle(&fake_server, progress_token + 1, cx).await;
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
 
         editor
             .update(cx, |editor, _, cx| {
-                let expected_hints = vec!["1".to_string()];
+                let expected_hints = vec!["2".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor, cx),
-                    "Repeated work cycles without buffer changes should not invalidate hints again"
+                    "Every completed work cycle should re-query the hints, even without buffer changes"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             })
@@ -1440,7 +1460,7 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _, cx| {
-                let expected_hints = vec!["2".to_string()];
+                let expected_hints = vec!["3".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor, cx),
@@ -1451,18 +1471,308 @@ pub mod tests {
             .unwrap();
 
         run_work_cycle(&fake_server, progress_token + 2, cx).await;
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
 
         editor
             .update(cx, |editor, _, cx| {
-                let expected_hints = vec!["3".to_string()];
+                let expected_hints = vec!["4".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor, cx),
-                    "A buffer edit should re-allow the work-end hint refresh"
+                    "A work cycle after a buffer edit should re-query the hints"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_lsp_data_refreshes_after_work_completion(cx: &mut gpui::TestAppContext) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                ..InlayHintSettingsContent::default()
+            });
+            settings.defaults.document_symbols = Some(DocumentSymbols::On);
+            settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
+            settings.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..LanguageSettingsContent::default()
+                },
+            );
+        });
+        update_test_editor_settings(cx, &|settings| {
+            settings.code_lens = Some(CodeLens::On);
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() { let value = 1; }",
+                "other.rs": "fn other() { let value = 2; }",
+                "third.rs": "fn third() { let value = 3; }",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        let request_counts = Arc::new(LspDataRequestCounts::default());
+        let (references_unblock, references_gate) = oneshot::channel::<()>();
+        let references_gate = Arc::new(Mutex::new(Some(references_gate)));
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                disk_based_diagnostics_progress_token: Some("disk:".to_string()),
+                capabilities: lsp::ServerCapabilities {
+                    semantic_tokens_provider: Some(
+                        lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                            lsp::SemanticTokensOptions {
+                                legend: lsp::SemanticTokensLegend {
+                                    token_types: vec!["function".into()],
+                                    token_modifiers: Vec::new(),
+                                },
+                                full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                                ..lsp::SemanticTokensOptions::default()
+                            },
+                        ),
+                    ),
+                    code_lens_provider: Some(lsp::CodeLensOptions {
+                        resolve_provider: None,
+                    }),
+                    color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
+                    document_link_provider: Some(lsp::DocumentLinkOptions {
+                        resolve_provider: Some(false),
+                        work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
+                    }),
+                    folding_range_provider: Some(lsp::FoldingRangeProviderCapability::Simple(true)),
+                    document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                    references_provider: Some(lsp::OneOf::Left(true)),
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new({
+                    let request_counts = request_counts.clone();
+                    let references_gate = references_gate.clone();
+                    move |fake_server| {
+                        fake_server
+                            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                                {
+                                    let request_counts = request_counts.clone();
+                                    move |_, _| {
+                                        request_counts
+                                            .semantic_tokens
+                                            .fetch_add(1, Ordering::Release);
+                                        async move {
+                                            Ok(Some(lsp::SemanticTokensResult::Tokens(
+                                                lsp::SemanticTokens {
+                                                    result_id: None,
+                                                    data: Vec::new(),
+                                                },
+                                            )))
+                                        }
+                                    }
+                                },
+                            );
+                        fake_server.set_request_handler::<lsp::request::CodeLensRequest, _, _>({
+                            let request_counts = request_counts.clone();
+                            move |_, _| {
+                                request_counts.code_lenses.fetch_add(1, Ordering::Release);
+                                async move { Ok(Some(Vec::new())) }
+                            }
+                        });
+                        fake_server.set_request_handler::<lsp::request::DocumentColor, _, _>({
+                            let request_counts = request_counts.clone();
+                            move |_, _| {
+                                request_counts
+                                    .document_colors
+                                    .fetch_add(1, Ordering::Release);
+                                async move { Ok(Vec::new()) }
+                            }
+                        });
+                        fake_server.set_request_handler::<lsp::request::DocumentLinkRequest, _, _>(
+                            {
+                                let request_counts = request_counts.clone();
+                                move |_, _| {
+                                    request_counts
+                                        .document_links
+                                        .fetch_add(1, Ordering::Release);
+                                    async move { Ok(Some(Vec::new())) }
+                                }
+                            },
+                        );
+                        fake_server.set_request_handler::<lsp::request::FoldingRangeRequest, _, _>(
+                            {
+                                let request_counts = request_counts.clone();
+                                move |_, _| {
+                                    request_counts
+                                        .folding_ranges
+                                        .fetch_add(1, Ordering::Release);
+                                    async move { Ok(Some(Vec::new())) }
+                                }
+                            },
+                        );
+                        fake_server
+                            .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>({
+                                let request_counts = request_counts.clone();
+                                move |_, _| {
+                                    request_counts
+                                        .document_symbols
+                                        .fetch_add(1, Ordering::Release);
+                                    async move {
+                                        Ok(Some(lsp::DocumentSymbolResponse::Nested(Vec::new())))
+                                    }
+                                }
+                            });
+                        fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>({
+                            let request_counts = request_counts.clone();
+                            move |_, _| {
+                                request_counts.inlay_hints.fetch_add(1, Ordering::Release);
+                                async move { Ok(Some(Vec::new())) }
+                            }
+                        });
+                        fake_server.set_request_handler::<lsp::request::References, _, _>({
+                            let references_gate = references_gate.clone();
+                            move |_, _| {
+                                let references_gate = references_gate.lock().take();
+                                async move {
+                                    if let Some(references_gate) = references_gate {
+                                        references_gate.await.ok();
+                                    }
+                                    Ok(Some(Vec::new()))
+                                }
+                            }
+                        });
+                    }
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let main_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let other_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/other.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let main_editor = cx.add_window({
+            let project = project.clone();
+            |window, cx| Editor::for_buffer(main_buffer.clone(), Some(project), window, cx)
+        });
+        let other_editor = cx.add_window({
+            let project = project.clone();
+            |window, cx| Editor::for_buffer(other_buffer, Some(project), window, cx)
+        });
+        cx.executor().run_until_parked();
+        let fake_server = fake_servers.next().await.unwrap();
+        for editor in [&main_editor, &other_editor] {
+            editor
+                .update(cx, |editor, window, cx| {
+                    editor.set_visible_line_count(50.0, window, cx);
+                    editor.set_visible_column_count(120.0);
+                    editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                })
+                .unwrap();
+        }
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+
+        assert_eq!([2, 2, 2, 2, 2, 2, 2], request_counts.snapshot());
+
+        fake_server
+            .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+            .await
+            .into_response()
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!([2, 2, 2, 2, 2, 2, 4], request_counts.snapshot());
+
+        run_work_cycle_with_token(
+            &fake_server,
+            lsp::ProgressToken::String("disk:check".to_string()),
+            cx,
+        )
+        .await;
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!([2, 2, 2, 2, 2, 2, 4], request_counts.snapshot());
+
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        let colliding_request_id = lsp_store.read_with(cx, |lsp_store, _| {
+            let server_id = lsp_store.language_server_statuses().next().unwrap().0;
+            lsp_store
+                .language_server_for_id(server_id)
+                .unwrap()
+                .next_request_id()
+        });
+        let colliding_token = lsp::ProgressToken::Number(colliding_request_id);
+        let overlapping_token = lsp::ProgressToken::String("overlapping-work".to_string());
+        start_work(&fake_server, colliding_token.clone(), cx).await;
+        start_work(&fake_server, overlapping_token.clone(), cx).await;
+        let references = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.references(&main_buffer, PointUtf16::new(0, 0), cx)
+        });
+        cx.executor().run_until_parked();
+
+        end_work(&fake_server, overlapping_token, cx);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!([2, 2, 2, 2, 2, 2, 4], request_counts.snapshot());
+
+        references_unblock.send(()).unwrap();
+        references.await.unwrap();
+        cx.executor().run_until_parked();
+        assert_eq!([2, 2, 2, 2, 2, 2, 4], request_counts.snapshot());
+
+        end_work(&fake_server, colliding_token, cx);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!([4, 4, 4, 4, 4, 4, 6], request_counts.snapshot());
+
+        let third_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/third.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let third_editor = cx.add_window({
+            let project = project.clone();
+            |window, cx| Editor::for_buffer(third_buffer, Some(project), window, cx)
+        });
+        third_editor
+            .update(cx, |editor, window, cx| {
+                editor.set_visible_line_count(50.0, window, cx);
+                editor.set_visible_column_count(120.0);
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!([5, 5, 5, 5, 5, 5, 7], request_counts.snapshot());
+
+        run_work_cycle(&fake_server, 44, cx).await;
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!([8, 8, 8, 8, 8, 8, 10], request_counts.snapshot());
+
+        run_work_cycle(&fake_server, 45, cx).await;
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!([11, 11, 11, 11, 11, 11, 13], request_counts.snapshot());
     }
 
     #[gpui::test]
@@ -4820,6 +5130,33 @@ let c = 3;"#
                 );
             })
             .unwrap();
+
+        let server_a_requests_before_work = server_a_request_count.load(Ordering::Acquire);
+        let server_b_requests_before_work = server_b_request_count.load(Ordering::Acquire);
+
+        run_work_cycle(&fake_server_a, 42, cx).await;
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            server_a_requests_before_work + 1,
+            server_a_request_count.load(Ordering::Acquire),
+        );
+        assert_eq!(
+            server_b_requests_before_work,
+            server_b_request_count.load(Ordering::Acquire),
+        );
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(
+                    vec![
+                        format!("server_a_{}", server_a_requests_before_work + 1),
+                        format!("server_b_{server_b_requests_before_work}"),
+                    ],
+                    visible_hint_labels(editor, cx),
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]
@@ -5237,10 +5574,28 @@ let c = 3;"#
         progress_token: i32,
         cx: &mut gpui::TestAppContext,
     ) {
+        run_work_cycle_with_token(fake_server, lsp::ProgressToken::Number(progress_token), cx)
+            .await;
+    }
+
+    async fn run_work_cycle_with_token(
+        fake_server: &FakeLanguageServer,
+        progress_token: lsp::ProgressToken,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        start_work(fake_server, progress_token.clone(), cx).await;
+        end_work(fake_server, progress_token, cx);
+    }
+
+    async fn start_work(
+        fake_server: &FakeLanguageServer,
+        progress_token: lsp::ProgressToken,
+        cx: &mut gpui::TestAppContext,
+    ) {
         fake_server
             .request::<lsp::request::WorkDoneProgressCreate>(
                 lsp::WorkDoneProgressCreateParams {
-                    token: lsp::ProgressToken::Number(progress_token),
+                    token: progress_token.clone(),
                 },
                 DEFAULT_LSP_REQUEST_TIMEOUT,
             )
@@ -5249,18 +5604,50 @@ let c = 3;"#
             .expect("work done progress create request failed");
         cx.executor().run_until_parked();
         fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
-            token: lsp::ProgressToken::Number(progress_token),
+            token: progress_token,
             value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
                 lsp::WorkDoneProgressBegin::default(),
             )),
         });
         cx.executor().run_until_parked();
+    }
+
+    fn end_work(
+        fake_server: &FakeLanguageServer,
+        progress_token: lsp::ProgressToken,
+        cx: &mut gpui::TestAppContext,
+    ) {
         fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
-            token: lsp::ProgressToken::Number(progress_token),
+            token: progress_token,
             value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
                 lsp::WorkDoneProgressEnd::default(),
             )),
         });
         cx.executor().run_until_parked();
+    }
+
+    #[derive(Default)]
+    struct LspDataRequestCounts {
+        semantic_tokens: AtomicUsize,
+        code_lenses: AtomicUsize,
+        document_colors: AtomicUsize,
+        document_links: AtomicUsize,
+        folding_ranges: AtomicUsize,
+        document_symbols: AtomicUsize,
+        inlay_hints: AtomicUsize,
+    }
+
+    impl LspDataRequestCounts {
+        fn snapshot(&self) -> [usize; 7] {
+            [
+                self.semantic_tokens.load(Ordering::Acquire),
+                self.code_lenses.load(Ordering::Acquire),
+                self.document_colors.load(Ordering::Acquire),
+                self.document_links.load(Ordering::Acquire),
+                self.folding_ranges.load(Ordering::Acquire),
+                self.document_symbols.load(Ordering::Acquire),
+                self.inlay_hints.load(Ordering::Acquire),
+            ]
+        }
     }
 }

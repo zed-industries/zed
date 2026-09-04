@@ -3771,7 +3771,7 @@ impl Project {
                 name,
                 message,
             } => {
-                if self.is_local() {
+                if !self.is_via_collab() {
                     self.enqueue_buffer_ordered_message(
                         BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id: *language_server_id,

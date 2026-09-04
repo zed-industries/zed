@@ -176,6 +176,7 @@ pub use worktree::{
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
 const WORKSPACE_DIAGNOSTICS_TOKEN_START: &str = "id:";
+const LSP_DATA_REFRESH_ON_WORK_END_DEBOUNCE: Duration = Duration::from_millis(100);
 const WORKSPACE_DIAGNOSTICS_REPULL_DELAY: Duration = Duration::from_secs(2);
 const CROSS_BUFFER_DIAGNOSTICS_PULL_DELAY: Duration = Duration::from_millis(100);
 const DOCUMENT_DIAGNOSTICS_RETRIGGER_LIMIT: usize = 3;
@@ -320,6 +321,7 @@ pub struct LocalLspStore {
     language_server_ids: HashMap<LanguageServerSeed, UnifiedLanguageServer>,
     yarn: Entity<YarnPathStore>,
     pub language_servers: HashMap<LanguageServerId, LanguageServerState>,
+    lsp_data_refreshes_on_work_end: HashMap<LanguageServerId, Task<()>>,
     buffers_being_formatted: HashSet<BufferId>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
     language_server_watched_paths: HashMap<LanguageServerId, LanguageServerWatchedPaths>,
@@ -4850,6 +4852,7 @@ impl LspStore {
                 languages: languages.clone(),
                 language_server_ids: Default::default(),
                 language_servers: Default::default(),
+                lsp_data_refreshes_on_work_end: Default::default(),
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: Default::default(),
                 language_server_paths_watched_for_rename: Default::default(),
@@ -11807,14 +11810,11 @@ impl LspStore {
         token: ProgressToken,
         cx: &mut Context<Self>,
     ) {
-        let language_server_status =
-            if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-                status
-            } else {
-                return;
-            };
-
-        if !language_server_status.progress_tokens.contains(&token) {
+        if !self
+            .language_server_statuses
+            .get(&language_server_id)
+            .is_some_and(|status| status.progress_tokens.contains(&token))
+        {
             return;
         }
 
@@ -11834,7 +11834,7 @@ impl LspStore {
                 }
                 self.on_lsp_work_start(
                     language_server_id,
-                    token.clone(),
+                    token,
                     LanguageServerProgress {
                         title: Some(report.title),
                         is_disk_based_diagnostics_progress,
@@ -11860,10 +11860,14 @@ impl LspStore {
                 cx,
             ),
             lsp::WorkDoneProgress::End(_) => {
-                language_server_status.progress_tokens.remove(&token);
-                self.on_lsp_work_end(language_server_id, token.clone(), cx);
+                if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
+                    status.progress_tokens.remove(&token);
+                }
+                self.on_lsp_work_end(language_server_id, token, cx);
                 if is_disk_based_diagnostics_progress {
                     self.disk_based_diagnostics_finished(language_server_id, cx);
+                } else {
+                    self.refresh_lsp_data_when_work_settles(language_server_id, cx);
                 }
             }
         }
@@ -11954,14 +11958,9 @@ impl LspStore {
         token: ProgressToken,
         cx: &mut Context<Self>,
     ) {
-        if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            let refresh_inlay_hints = status
-                .pending_work
-                .remove(&token)
-                .is_some_and(|work| !work.is_disk_based_diagnostics_progress);
-            if refresh_inlay_hints {
-                self.refresh_inlay_hints_on_work_end(language_server_id, cx);
-            }
+        if let Some(status) = self.language_server_statuses.get_mut(&language_server_id)
+            && status.pending_work.remove(&token).is_some()
+        {
             cx.notify();
         }
 
@@ -11974,6 +11973,57 @@ impl LspStore {
                 token: Some(token.to_proto()),
             }),
         })
+    }
+
+    fn refresh_lsp_data_when_work_settles(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(local) = self.as_local_mut() else {
+            return;
+        };
+        let refresh = cx.spawn(async move |lsp_store, cx| {
+            cx.background_executor()
+                .timer(LSP_DATA_REFRESH_ON_WORK_END_DEBOUNCE)
+                .await;
+            lsp_store
+                .update(cx, |lsp_store, cx| {
+                    if let Some(local) = lsp_store.as_local_mut() {
+                        local.lsp_data_refreshes_on_work_end.remove(&server_id);
+                    }
+                    let work_settled = lsp_store
+                        .language_server_statuses
+                        .get(&server_id)
+                        .is_some_and(|status| {
+                            !status.pending_work.iter().any(|(token, work)| {
+                                !work.is_disk_based_diagnostics_progress
+                                    && status.progress_tokens.contains(token)
+                            })
+                        });
+                    if work_settled {
+                        lsp_store.refresh_lsp_data_on_work_end(server_id, cx);
+                    }
+                })
+                .ok();
+        });
+        local
+            .lsp_data_refreshes_on_work_end
+            .insert(server_id, refresh);
+    }
+
+    fn refresh_lsp_data_on_work_end(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_semantic_tokens(server_id, cx);
+        self.refresh_code_lens(Some(server_id), cx);
+        self.refresh_document_colors(Some(server_id), cx);
+        self.refresh_document_links(Some(server_id), cx);
+        self.refresh_folding_ranges(Some(server_id), cx);
+        self.refresh_document_symbols(Some(server_id), cx);
+        self.refresh_inlay_hints(server_id, cx);
     }
 
     pub async fn handle_resolve_completion_documentation(
@@ -14010,6 +14060,7 @@ impl LspStore {
             lsp_data.remove_server_data(for_server);
         }
         if let Some(local) = self.as_local_mut() {
+            local.lsp_data_refreshes_on_work_end.remove(&for_server);
             local.buffer_pull_diagnostics_result_ids.remove(&for_server);
             local
                 .workspace_pull_diagnostics_result_ids
