@@ -204,6 +204,8 @@ pub enum Model {
     Hy3,
     #[serde(rename = "hy4-preview")]
     Hy4Preview,
+    #[serde(rename = "omen-alpha")]
+    OmenAlpha,
 
     // -- Custom model --
     #[serde(rename = "custom")]
@@ -262,7 +264,8 @@ impl Model {
             | Self::Hy4Preview
             | Self::DeepSeekV4FlashVisionExp
             | Self::MuseSpark1_2Contributor
-            | Self::MuseSpark1_3Contributor => &[OpenCodeSubscription::Go],
+            | Self::MuseSpark1_3Contributor
+            | Self::OmenAlpha => &[OpenCodeSubscription::Go],
 
             // Deprecated on Go (per models.dev); still offered on Zen
             Self::Glm5 | Self::Grok4_5 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus => {
@@ -353,6 +356,7 @@ impl Model {
             Self::Qwen3_8Flash => "qwen3.8-flash",
             Self::Hy3 => "hy3",
             Self::Hy4Preview => "hy4-preview",
+            Self::OmenAlpha => "omen-alpha",
 
             Self::Custom { name, .. } => name,
         }
@@ -434,6 +438,7 @@ impl Model {
             Self::Qwen3_8Flash => "Qwen3.8 Flash",
             Self::Hy3 => "Hy3",
             Self::Hy4Preview => "Hy4 (Preview)",
+            Self::OmenAlpha => "Omen Alpha",
 
             Self::Custom {
                 name, display_name, ..
@@ -443,8 +448,7 @@ impl Model {
 
     pub fn protocol(&self, subscription: OpenCodeSubscription) -> ApiProtocol {
         match self {
-
-           // Anthropic protocol
+            // Anthropic protocol
             Self::ClaudeFable5
             | Self::ClaudeFable5_1
             | Self::ClaudeOpus5
@@ -460,7 +464,7 @@ impl Model {
 
             Self::Qwen3_8Flash | Self::Qwen3_5Plus => ApiProtocol::Anthropic,
 
-           // Google protocol
+            // Google protocol
             Self::Gemini3_1Pro
             | Self::Gemini3Flash
             | Self::Gemini3_5FlashLite
@@ -469,7 +473,7 @@ impl Model {
             | Self::Gemini3_7Flash
             | Self::Gemini3_8Flash => ApiProtocol::Google,
 
-           // OpenAI responses protocol
+            // OpenAI responses protocol
             Self::Gpt5_6Sol
             | Self::Gpt5_6Terra
             | Self::Gpt5_6Luna
@@ -498,12 +502,10 @@ impl Model {
             | Self::MuseSpark1_2Contributor
             | Self::MuseSpark1_3Contributor => ApiProtocol::OpenAiResponses,
 
-           // OpenAI chat protocol
-            Self::Glm5
-            | Self::Glm5_1
-            | Self::Glm5_2
-            | Self::Glm5_3
-            | Self::Glm5_3Flash => ApiProtocol::OpenAiChat,
+            // OpenAI chat protocol
+            Self::Glm5 | Self::Glm5_1 | Self::Glm5_2 | Self::Glm5_3 | Self::Glm5_3Flash => {
+                ApiProtocol::OpenAiChat
+            }
 
             Self::KimiK2_5
             | Self::KimiK2_6
@@ -519,7 +521,8 @@ impl Model {
             | Self::Qwen3_7Plus
             | Self::Hy3
             | Self::Hy4Preview
-            | Self::LongCat2_0 => ApiProtocol::OpenAiChat,
+            | Self::LongCat2_0
+            | Self::OmenAlpha => ApiProtocol::OpenAiChat,
 
             // Models offered by OpenCode have the same configuration
             // across subscriptions, with some outliers:
@@ -562,7 +565,8 @@ impl Model {
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4_6
             | Self::LongCat2_0
-            | Self::MiniMaxM2_5 => true,
+            | Self::MiniMaxM2_5
+            | Self::OmenAlpha => true,
 
             Self::MiniMaxM2_7 | Self::MiniMaxM3 => {
                 if subscription == OpenCodeSubscription::Zen {
@@ -655,6 +659,7 @@ impl Model {
             }
             Self::Hy3 => 256_000,
             Self::Hy4Preview => 1_024_000,
+            Self::OmenAlpha => 500_000,
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash | Self::DeepSeekV4FlashVisionExp => {
                 1_000_000
             }
@@ -751,6 +756,7 @@ impl Model {
             Self::MimoV2_5Pro | Self::MimoV2_5 => Some(128_000),
             Self::Hy3 => Some(128_000),
             Self::Hy4Preview => Some(64_000),
+            Self::OmenAlpha => Some(128_000),
 
             Self::Custom {
                 max_output_tokens, ..
@@ -830,7 +836,8 @@ impl Model {
             | Self::Qwen3_8Max
             | Self::Qwen3_8Flash
             | Self::Glm5_3Flash
-            | Self::MiniMaxM3 => true,
+            | Self::MiniMaxM3
+            | Self::OmenAlpha => true,
 
             // OpenAI-compatible models without image support
             Self::MiniMaxM2_5
@@ -1059,6 +1066,9 @@ impl Model {
                     None
                 }
             }
+
+            // Omen models
+            Self::OmenAlpha => Some(vec![ReasoningEffort::Low, ReasoningEffort::High]),
 
             Self::Custom {
                 reasoning_effort_levels,
