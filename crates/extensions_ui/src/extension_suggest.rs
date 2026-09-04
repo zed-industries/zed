@@ -4,16 +4,17 @@ use std::sync::{Arc, OnceLock};
 use db::kvp::KeyValueStore;
 use editor::Editor;
 use extension_host::ExtensionStore;
-use gpui::{AppContext as _, Context, Entity, Global, SharedString, Window};
+use gpui::{App, AppContext as _, Context, Entity, SharedString, Window};
 use language::Buffer;
 use markdown::{Markdown, MarkdownElement};
+use project::lsp_store::LspStoreEvent;
 use ui::prelude::*;
 use util::ResultExt;
 use util::rel_path::RelPath;
-use workspace::Workspace;
 use workspace::notifications::{
     NotificationId, markdown_style, simple_message_notification::MessageNotification,
 };
+use workspace::{Event as WorkspaceEvent, Workspace};
 
 const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("astro", &["astro"]),
@@ -107,13 +108,6 @@ const EMMET_SUPPORTED_LANGUAGES: &[&str] = &[
     "Twig",
     "Vue.js",
 ];
-
-#[derive(Default)]
-struct EmmetSuggestionState {
-    dismissed: bool,
-}
-
-impl Global for EmmetSuggestionState {}
 
 struct EmmetSuggestionNotification;
 
@@ -243,11 +237,65 @@ pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Cont
     })
 }
 
-pub(crate) fn suggest_emmet(
-    workspace: &mut Workspace,
-    buffer: Entity<Buffer>,
+pub(crate) fn init(cx: &mut App) {
+    cx.subscribe(&ExtensionStore::global(cx), |_, event, cx| {
+        if let extension_host::Event::ExtensionInstalled(extension_id) = event
+            && extension_id.as_ref() == EMMET_EXTENSION_ID
+        {
+            dismiss_emmet_suggestion(cx);
+        }
+    })
+    .detach();
+}
+
+pub(crate) fn observe_emmet_candidates(
+    workspace: &Workspace,
+    window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    if emmet_suggestion_dismissed(cx) {
+        return;
+    }
+
+    let lsp_store = workspace.project().read(cx).lsp_store();
+    cx.subscribe_in(&lsp_store, window, |workspace, _, event, _window, cx| {
+        if let LspStoreEvent::LanguageDetected {
+            buffer,
+            new_language: Some(_),
+        } = event
+        {
+            suggest_emmet(workspace, buffer.clone(), cx);
+        }
+    })
+    .detach();
+
+    cx.subscribe_in(&cx.entity(), window, |workspace, _, event, _window, cx| {
+        if let WorkspaceEvent::ItemAdded { item } = event
+            && let Some(editor) = item.downcast::<Editor>()
+            && let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton()
+        {
+            suggest_emmet(workspace, buffer, cx);
+        }
+    })
+    .detach();
+}
+
+fn emmet_suggestion_dismissed(cx: &App) -> bool {
+    let key = language_extension_key(EMMET_EXTENSION_ID);
+    match KeyValueStore::global(cx).read_kvp(&key).log_err() {
+        Some(dismissal) => dismissal.is_some(),
+        None => true,
+    }
+}
+
+fn dismiss_emmet_suggestion(cx: &mut App) {
+    let key = language_extension_key(EMMET_EXTENSION_ID);
+    let kvp = KeyValueStore::global(cx);
+    cx.background_spawn(async move { kvp.write_kvp(key, "dismissed".to_string()).await.log_err() })
+        .detach();
+}
+
+fn suggest_emmet(workspace: &mut Workspace, buffer: Entity<Buffer>, cx: &mut Context<Workspace>) {
     let supported = buffer
         .read(cx)
         .language()
@@ -275,17 +323,7 @@ pub(crate) fn suggest_emmet(
         return;
     }
 
-    if cx.default_global::<EmmetSuggestionState>().dismissed {
-        return;
-    }
-
-    let key = language_extension_key(EMMET_EXTENSION_ID);
-    let kvp = KeyValueStore::global(cx);
-    let Some(dismissal) = kvp.read_kvp(&key).log_err() else {
-        return;
-    };
-    if dismissal.is_some() {
-        cx.default_global::<EmmetSuggestionState>().dismissed = true;
+    if emmet_suggestion_dismissed(cx) {
         return;
     }
 
@@ -323,15 +361,7 @@ pub(crate) fn suggest_emmet(
                 .secondary_message("Don't show again")
                 .secondary_icon(IconName::Close)
                 .secondary_icon_color(Color::Error)
-                .secondary_on_click(|_window, cx| {
-                    cx.default_global::<EmmetSuggestionState>().dismissed = true;
-                    let key = language_extension_key(EMMET_EXTENSION_ID);
-                    let kvp = KeyValueStore::global(cx);
-                    cx.background_spawn(async move {
-                        kvp.write_kvp(key, "dismissed".to_string()).await.log_err()
-                    })
-                    .detach();
-                })
+                .secondary_on_click(|_window, cx| dismiss_emmet_suggestion(cx))
             })
         },
     );
@@ -464,31 +494,69 @@ mod tests {
         open_file(&workspace, "index.html", cx).await;
 
         assert_eq!(notification_ids(&workspace, cx), Vec::new());
-        assert!(cx.update(|_, cx| cx.default_global::<EmmetSuggestionState>().dismissed));
     }
 
     #[gpui::test]
-    async fn test_emmet_is_not_suggested_from_cached_dismissal(cx: &mut TestAppContext) {
+    async fn test_emmet_dismissal_applies_to_already_open_workspace(cx: &mut TestAppContext) {
         let fs = init_test(cx);
-        cx.update(|cx| {
-            cx.default_global::<EmmetSuggestionState>().dismissed = true;
-        });
         let (workspace, cx) = open_test_workspace(fs, cx).await;
+        let notification_id = NotificationId::unique::<EmmetSuggestionNotification>();
 
         open_file(&workspace, "index.html", cx).await;
+        assert_eq!(
+            notification_ids(&workspace, cx),
+            vec![notification_id.clone()]
+        );
+
+        let kvp = cx.update(|_, cx| KeyValueStore::global(cx));
+        kvp.write_kvp(
+            language_extension_key(EMMET_EXTENSION_ID),
+            "dismissed".to_string(),
+        )
+        .await
+        .unwrap();
+        workspace.update(cx, |workspace, cx| {
+            workspace.dismiss_notification(&notification_id, cx)
+        });
+
+        open_file(&workspace, "other.html", cx).await;
 
         assert_eq!(notification_ids(&workspace, cx), Vec::new());
     }
 
     #[gpui::test]
-    fn test_emmet_dismissal_cache_is_scoped_to_app(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            cx.default_global::<EmmetSuggestionState>().dismissed = true;
+    async fn test_emmet_install_dismisses_suggestion_permanently(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+        let (workspace, cx) = open_test_workspace(fs, cx).await;
+        let notification_id = NotificationId::unique::<EmmetSuggestionNotification>();
+
+        open_file(&workspace, "index.html", cx).await;
+        assert_eq!(
+            notification_ids(&workspace, cx),
+            vec![notification_id.clone()]
+        );
+
+        cx.update(|_, cx| {
+            ExtensionStore::global(cx).update(cx, |_, cx| {
+                cx.emit(extension_host::Event::ExtensionInstalled(Arc::from(
+                    EMMET_EXTENSION_ID,
+                )))
+            });
         });
+        cx.run_until_parked();
+        let kvp = cx.update(|_, cx| KeyValueStore::global(cx));
+        assert_eq!(
+            kvp.read_kvp(&language_extension_key(EMMET_EXTENSION_ID))
+                .unwrap(),
+            Some("dismissed".to_string())
+        );
 
-        let other_app = cx.new_app();
+        workspace.update(cx, |workspace, cx| {
+            workspace.dismiss_notification(&notification_id, cx)
+        });
+        open_file(&workspace, "other.html", cx).await;
 
-        assert!(!other_app.update(|cx| cx.default_global::<EmmetSuggestionState>().dismissed));
+        assert_eq!(notification_ids(&workspace, cx), Vec::new());
     }
 
     #[gpui::test]
@@ -562,6 +630,7 @@ mod tests {
             path!("/root"),
             json!({
                 "index.html": "<div></div>",
+                "other.html": "<span></span>",
                 "main.rs": "fn main() {}",
             }),
         )
