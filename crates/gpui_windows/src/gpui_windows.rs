@@ -6,6 +6,7 @@ mod direct_manipulation;
 mod direct_write;
 mod directx_atlas;
 mod directx_devices;
+mod directx_effects;
 mod directx_renderer;
 mod dispatcher;
 mod display;
