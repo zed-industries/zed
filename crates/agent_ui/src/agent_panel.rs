@@ -50,9 +50,9 @@ use crate::{
 };
 use crate::{
     AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow, LoadThreadFromClipboard,
-    NewTerminalThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, ResetFastModeWarnings,
-    ResetTrialEndUpsell, ResetTrialUpsell, ShowAllSidebarThreadMetadata, ShowThreadMetadata,
-    ToggleNewThreadMenu, ToggleOptionsMenu,
+    NewTerminalThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, RenameSelectedThread,
+    ResetFastModeWarnings, ResetTrialEndUpsell, ResetTrialUpsell, ShowAllSidebarThreadMetadata,
+    ShowThreadMetadata, ToggleNewThreadMenu, ToggleOptionsMenu,
     conversation_view::{
         AcpThreadViewEvent, RootThreadUpdated, ThreadView, reset_fast_mode_warnings,
     },
@@ -6519,6 +6519,16 @@ impl Render for AgentPanel {
                 cx.stop_propagation();
                 this.new_terminal(None, AgentThreadSource::AgentPanel, window, cx);
             }))
+            .on_action(cx.listener(|this, _: &RenameSelectedThread, window, cx| {
+                let VisibleSurface::Terminal(_) = this.visible_surface() else {
+                    return;
+                };
+                let Some(terminal_id) = this.active_terminal_id() else {
+                    return;
+                };
+                cx.stop_propagation();
+                this.edit_terminal_title(terminal_id, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.open_configuration(window, cx);
             }))
@@ -9803,6 +9813,131 @@ mod tests {
 
             panel.edit_terminal_title(terminal_id, window, cx);
             assert!(!panel.should_show_title_edit(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_rename_selected_thread_action_opens_and_focuses_terminal_title_editor(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_visible_panel(cx).await;
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Dev Server", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        cx.dispatch_action(RenameSelectedThread);
+        cx.run_until_parked();
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert_eq!(panel.active_terminal_id(), Some(terminal_id));
+            assert!(panel.is_title_editor_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_rename_selected_thread_action_does_not_edit_terminal_from_agent_thread(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_visible_panel(cx).await;
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Dev Server", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.dispatch_action(RenameSelectedThread);
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(matches!(
+                panel.visible_surface(),
+                VisibleSurface::AgentThread(_)
+            ));
+            assert!(
+                panel
+                    .terminals
+                    .get(&terminal_id)
+                    .is_some_and(|terminal| terminal.title_editor.is_none())
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_rename_selected_thread_action_reuses_terminal_title_editor(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_visible_panel(cx).await;
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Dev Server", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        cx.dispatch_action(RenameSelectedThread);
+        cx.run_until_parked();
+        let first_editor_id = panel.read_with(&cx, |panel, _cx| {
+            panel
+                .terminals
+                .get(&terminal_id)
+                .and_then(|terminal| terminal.title_editor.as_ref())
+                .expect("terminal title editor should be active")
+                .entity_id()
+        });
+
+        cx.dispatch_action(RenameSelectedThread);
+        cx.run_until_parked();
+        panel.read_with(&cx, |panel, _cx| {
+            let editor = panel
+                .terminals
+                .get(&terminal_id)
+                .and_then(|terminal| terminal.title_editor.as_ref())
+                .expect("terminal title editor should remain active");
+            assert_eq!(editor.entity_id(), first_editor_id);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_rename_selected_thread_action_edits_only_active_terminal(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_visible_panel(cx).await;
+        let first_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .expect("first test terminal should be inserted");
+        let second_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Server", true, window, cx)
+            })
+            .expect("second test terminal should be inserted");
+        cx.run_until_parked();
+
+        cx.dispatch_action(RenameSelectedThread);
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert_eq!(panel.active_terminal_id(), Some(second_terminal_id));
+            assert!(
+                panel
+                    .terminals
+                    .get(&first_terminal_id)
+                    .is_some_and(|terminal| terminal.title_editor.is_none())
+            );
+            assert!(
+                panel
+                    .terminals
+                    .get(&second_terminal_id)
+                    .is_some_and(|terminal| terminal.title_editor.is_some())
+            );
         });
     }
 
