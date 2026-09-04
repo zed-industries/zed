@@ -4238,30 +4238,34 @@ impl Window {
         let radii = &quad.corner_radii;
         let widths = &quad.border_widths;
         let shapes = &quad.corner_shapes;
-        let reach = |radius: ScaledPixels, shape: f32, width: ScaledPixels| {
-            radius + width * crate::CornerShape(shape).inner_edge_reach()
-        };
+        let ends =
+            |radius: ScaledPixels,
+             shape: f32,
+             horizontal_width: ScaledPixels,
+             vertical_width: ScaledPixels| {
+                let (along_horizontal, along_vertical) = crate::CornerShape(shape)
+                    .inner_curve_ends(radius.0, horizontal_width.0, vertical_width.0);
+                (ScaledPixels(along_horizontal), ScaledPixels(along_vertical))
+            };
+        let top_left = ends(radii.top_left, shapes.top_left, widths.top, widths.left);
+        let top_right = ends(radii.top_right, shapes.top_right, widths.top, widths.right);
+        let bottom_left = ends(
+            radii.bottom_left,
+            shapes.bottom_left,
+            widths.bottom,
+            widths.left,
+        );
+        let bottom_right = ends(
+            radii.bottom_right,
+            shapes.bottom_right,
+            widths.bottom,
+            widths.right,
+        );
         let edge_radii = Edges {
-            top: reach(radii.top_left, shapes.top_left, widths.top).max(reach(
-                radii.top_right,
-                shapes.top_right,
-                widths.top,
-            )),
-            right: reach(radii.top_right, shapes.top_right, widths.right).max(reach(
-                radii.bottom_right,
-                shapes.bottom_right,
-                widths.right,
-            )),
-            bottom: reach(radii.bottom_left, shapes.bottom_left, widths.bottom).max(reach(
-                radii.bottom_right,
-                shapes.bottom_right,
-                widths.bottom,
-            )),
-            left: reach(radii.top_left, shapes.top_left, widths.left).max(reach(
-                radii.bottom_left,
-                shapes.bottom_left,
-                widths.left,
-            )),
+            top: top_left.1.max(top_right.1),
+            right: top_right.0.max(bottom_right.0),
+            bottom: bottom_left.1.max(bottom_right.1),
+            left: top_left.0.max(bottom_left.0),
         };
 
         let antialias_inset = point(ScaledPixels(1.0), ScaledPixels(1.0));
@@ -7463,18 +7467,27 @@ mod tests {
     }
 
     fn border_only_quad(shape: crate::CornerShape) -> crate::Quad {
+        border_only_quad_with(
+            shape,
+            crate::Edges::all(ScaledPixels(8.)),
+            size(ScaledPixels(120.), ScaledPixels(120.)),
+        )
+    }
+
+    fn border_only_quad_with(
+        shape: crate::CornerShape,
+        border_widths: crate::Edges<ScaledPixels>,
+        size: crate::Size<ScaledPixels>,
+    ) -> crate::Quad {
         crate::Quad {
             order: 0,
             border_style: Default::default(),
-            bounds: Bounds::new(
-                point(ScaledPixels(0.), ScaledPixels(0.)),
-                size(ScaledPixels(120.), ScaledPixels(120.)),
-            ),
+            bounds: Bounds::new(point(ScaledPixels(0.), ScaledPixels(0.)), size),
             content_mask: Default::default(),
             background: Default::default(),
             border_color: Default::default(),
             corner_radii: crate::Corners::all(ScaledPixels(40.)),
-            border_widths: crate::Edges::all(ScaledPixels(8.)),
+            border_widths,
             corner_shapes: crate::Corners::all(shape.0),
         }
     }
@@ -7493,6 +7506,36 @@ mod tests {
         let bevel = Window::largest_border_interior(&border_only_quad(crate::CornerShape::BEVEL));
         assert!((bevel.top().0 - (41. + 8. / std::f32::consts::SQRT_2)).abs() < 1e-3);
         assert_eq!(bevel.left(), ScaledPixels(9.));
+    }
+
+    #[test]
+    fn test_border_interior_with_two_border_widths_at_a_corner() {
+        let widths = crate::Edges {
+            top: ScaledPixels(4.),
+            bottom: ScaledPixels(4.),
+            left: ScaledPixels(12.),
+            right: ScaledPixels(12.),
+        };
+        // The tall quad keeps the band between the top and bottom corners, the
+        // wide one the band between the left and right corners.
+        let tall = size(ScaledPixels(120.), ScaledPixels(400.));
+        let wide = size(ScaledPixels(400.), ScaledPixels(120.));
+
+        // A bite moves each end of the curve by the width of the other edge.
+        let notch = crate::CornerShape::NOTCH;
+        let interior = Window::largest_border_interior(&border_only_quad_with(notch, widths, tall));
+        assert_eq!(interior.top(), ScaledPixels(53.));
+        let interior = Window::largest_border_interior(&border_only_quad_with(notch, widths, wide));
+        assert_eq!(interior.left(), ScaledPixels(45.));
+
+        // The bevel's inner line tilts so the border grows from 4 to 12. Its
+        // ends land at 0.8 of the top width along the top edge and 0.6 of the
+        // left width down the left edge.
+        let bevel = crate::CornerShape::BEVEL;
+        let interior = Window::largest_border_interior(&border_only_quad_with(bevel, widths, tall));
+        assert!((interior.top().0 - (41. + 12. * 0.6)).abs() < 1e-3);
+        let interior = Window::largest_border_interior(&border_only_quad_with(bevel, widths, wide));
+        assert!((interior.left().0 - (41. + 4. * 0.8)).abs() < 1e-3);
     }
 
     /// Opening a window synchronously draws it and requests an element arena

@@ -308,64 +308,119 @@ float superellipse_sdf(float2 pt, float2 radii, float n) {
     return (rho - 1.0) / max(length(gradient), 1e-6);
 }
 
-// The normal at the end of a convex corner curve with exponent `n`, as
-// (along the straight edge, into the box). Chrome moves the inner edge of the
-// border along this normal by the border width instead of shrinking the
-// curve, so a bevel keeps its width. A round or squarer corner gives (0, 1).
-float2 inner_curve_normal(float n) {
-    float half_corner = pow(0.5, 1.0 / n);
-    float control =
-        clamp(half_corner / (sqrt(2.0) - 1.0) - 1.0 / sqrt(2.0), 0.0, 1.0);
-    return normalize(float2(1.0 - control, control));
+// One corner curve as css-borders-4 "Rendering corner-shape" builds it. The
+// curve runs from `start` on the horizontal edge to `end` on the vertical
+// edge. Positions are distances from the corner along the horizontal edge (x)
+// and along the vertical edge (y). A border moves each end inward along its
+// normal by the width of that end's edge. Two different widths tilt both
+// normals so the border grows evenly from one end to the other.
+struct CornerCurve {
+    float2 start;
+    float2 end;
+    float2 start_normal;
+    float2 end_normal;
+};
+
+// Past 2^64 every superellipse is a box to the pixel, so cap the exponent
+// there.
+float superellipse_exponent(float shape) {
+    return abs(shape) < 64.0 ? exp2(abs(shape)) : 1e31;
 }
 
-// How far past the corner box the inner edge of the border reaches along the
-// straight edges, in border widths.
-float inner_edge_reach(float shape) {
+// `inset.x` is the width of the vertical edge and moves `end`. `inset.y` is
+// the width of the horizontal edge and moves `start`.
+CornerCurve corner_curve(float corner_radius, float shape, float2 inset) {
+    float half_corner = pow(0.5, 1.0 / superellipse_exponent(shape));
     if (shape < 0.0) {
-        return 1.0;
+        half_corner = 1.0 - half_corner;
     }
-    if (shape >= 1.0) {
-        return 0.0;
+    float control =
+        clamp(half_corner / (sqrt(2.0) - 1.0) - 1.0 / sqrt(2.0), 0.0, 1.0);
+    float start_control = control;
+    float inset_diff = clamp(inset.x - inset.y, -corner_radius, corner_radius);
+    if (inset_diff != 0.0) {
+        float s = sqrt(2.0 * corner_radius * corner_radius - inset_diff * inset_diff);
+        float bevel_control = (s - inset_diff) / (2.0 * s);
+        start_control = shape < 0.0
+            ? bevel_control * 2.0 * control
+            : 1.0 - (1.0 - bevel_control) * 2.0 * (1.0 - control);
     }
-    return inner_curve_normal(exp2(shape)).x;
+    float end_control = 2.0 * control - start_control;
+    CornerCurve curve;
+    curve.start_normal = normalize(float2(1.0 - start_control, start_control));
+    curve.end_normal = normalize(float2(end_control, 1.0 - end_control));
+    curve.start = float2(corner_radius, 0.0) + inset.y * curve.start_normal;
+    curve.end = float2(0.0, corner_radius) + inset.x * curve.end_normal;
+    return curve;
+}
+
+// Signed distance from a point, given as distances from the corner along the
+// two edges, to the curve. Positive on the corner side, which is outside the
+// box. `straight` is the distance to the two straight edges and wins where
+// the curve does not reach.
+float corner_curve_sdf(float2 from_corner, CornerCurve curve, float shape,
+                       float straight) {
+    float n = superellipse_exponent(shape);
+    if (shape >= 0.0) {
+        float2 center = float2(curve.start.x, curve.end.y);
+        float2 radii = float2(center.x - curve.end.x, center.y - curve.start.y);
+        float2 center_to_point = center - from_corner;
+        if (center_to_point.x < 0.0 || center_to_point.y < 0.0 ||
+            radii.x <= 0.0 || radii.y <= 0.0) {
+            return straight;
+        }
+        return max(straight, superellipse_sdf(center_to_point, radii, n));
+    }
+    if (shape <= -1.0) {
+        float2 origin = float2(curve.end.x, curve.start.y);
+        float2 radii = float2(curve.start.x - origin.x, curve.end.y - origin.y);
+        float2 origin_to_point = max(from_corner - origin, float2(0.0, 0.0));
+        return max(straight, -superellipse_sdf(origin_to_point, radii, n));
+    }
+    // Between a bevel and a scoop the spec draws a quarter circle mapped into
+    // the frame of the two ends and the point where their tangents meet.
+    float2 start_tangent = float2(-curve.start_normal.y, curve.start_normal.x);
+    float2 end_tangent = float2(-curve.end_normal.y, curve.end_normal.x);
+    float2 start_to_end = curve.end - curve.start;
+    float tangents_cross =
+        start_tangent.x * end_tangent.y - start_tangent.y * end_tangent.x;
+    float2 meet = curve.start;
+    if (abs(tangents_cross) > 1e-6) {
+        float t = (start_to_end.x * end_tangent.y - start_to_end.y * end_tangent.x) /
+                  tangents_cross;
+        meet = curve.start + t * start_tangent;
+    }
+    float2 to_end = curve.end - meet;
+    float2 to_start = curve.start - meet;
+    float det = to_end.x * to_start.y - to_end.y * to_start.x;
+    if (abs(det) < 1e-6) {
+        return straight;
+    }
+    float2 d = from_corner - meet;
+    float x = (d.x * to_start.y - d.y * to_start.x) / det;
+    float y = (to_end.x * d.y - to_end.y * d.x) / det;
+    float2 unit = 1.0 - float2(x, y);
+    float f = dot(unit, unit) - 1.0;
+    float2 g = -2.0 * unit;
+    float2 gradient = float2(to_start.y * g.x - to_end.y * g.y,
+                             to_end.x * g.y - to_start.x * g.x) / det;
+    return max(straight, -f / max(length(gradient), 1e-6));
 }
 
 // The outer and inner signed distances for one corner whose shape is not a
-// plain quarter circle. `shape` is the CSS superellipse curvature: the curve
-// is a superellipse with exponent 2^|shape|, centered on the corner circle's
-// center when the shape is convex and on the outer corner when it is
-// concave.
-float2 shaped_corner_sdf(float2 corner_to_point, float2 corner_center_to_point,
-                         float corner_radius, float shape, float2 reduced_border,
+// plain quarter circle. `shape` is the CSS superellipse curvature.
+float2 shaped_corner_sdf(float2 corner_to_point, float corner_radius, float shape,
+                         float2 reduced_border,
                          float2 straight_border_inner_corner_to_point) {
-    float n = abs(shape) < 64.0 ? exp2(abs(shape)) : 1e31;
+    float2 from_corner = -corner_to_point;
+    CornerCurve outer_curve = corner_curve(corner_radius, shape, float2(0.0, 0.0));
+    CornerCurve inner_curve = corner_curve(corner_radius, shape, reduced_border);
     float straight_outer = max(corner_to_point.x, corner_to_point.y);
-    float straight_inner = -max(straight_border_inner_corner_to_point.x,
-                                straight_border_inner_corner_to_point.y);
-    float2 radii = float2(corner_radius, corner_radius);
-    if (shape < 0.0) {
-        // The bite sits at the outer corner and reaches the whole corner box,
-        // and its inner edge reaches further, so measure everywhere.
-        float2 from_corner = max(-corner_to_point, float2(0.0, 0.0));
-        float bite = superellipse_sdf(from_corner, radii, n);
-        float inner_bite = superellipse_sdf(from_corner, radii + reduced_border, n);
-        return float2(max(straight_outer, -bite), min(straight_inner, inner_bite));
-    }
-    float outer = straight_outer;
-    if (corner_center_to_point.x >= 0.0 && corner_center_to_point.y >= 0.0) {
-        outer = superellipse_sdf(corner_center_to_point, radii, n);
-    }
-    float2 normal = inner_curve_normal(n);
-    float2 inner_center_to_point = corner_center_to_point + normal.x * reduced_border;
-    float2 inner_radii = radii - (normal.y - normal.x) * reduced_border;
-    float inner = straight_inner;
-    if (inner_center_to_point.x >= 0.0 && inner_center_to_point.y >= 0.0 &&
-        inner_radii.x > 0.0 && inner_radii.y > 0.0) {
-        inner = min(straight_inner,
-                    -superellipse_sdf(inner_center_to_point, inner_radii, n));
-    }
-    return float2(outer, inner);
+    float straight_inner = max(straight_border_inner_corner_to_point.x,
+                               straight_border_inner_corner_to_point.y);
+    return float2(
+        corner_curve_sdf(from_corner, outer_curve, shape, straight_outer),
+        -corner_curve_sdf(from_corner, inner_curve, shape, straight_inner));
 }
 
 float quad_sdf_impl(float2 corner_center_to_point, float corner_radius) {
@@ -692,8 +747,11 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
 
     // Whether the nearest point on the border is rounded. The inner edge of a
     // concave or a bevelled corner reaches past the corner box.
-    float2 corner_reach =
-        corner_center_to_point + inner_edge_reach(corner_shape) * border;
+    float2 corner_reach = corner_center_to_point;
+    if (corner_shape != 1.0) {
+        CornerCurve inner_curve = corner_curve(corner_radius, corner_shape, border);
+        corner_reach += float2(inner_curve.start.x, inner_curve.end.y) - corner_radius;
+    }
     bool is_near_rounded_corner =
         corner_reach.x >= 0.0 &&
         corner_reach.y >= 0.0;
@@ -751,8 +809,8 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
         }
     } else {
         // Any other corner shape: a superellipse, or a bite out of the corner.
-        float2 sdfs = shaped_corner_sdf(corner_to_point, corner_center_to_point,
-                                        corner_radius, corner_shape, reduced_border,
+        float2 sdfs = shaped_corner_sdf(corner_to_point, corner_radius, corner_shape,
+                                        reduced_border,
                                         straight_border_inner_corner_to_point);
         outer_sdf = sdfs.x;
         inner_sdf = sdfs.y;

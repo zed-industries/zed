@@ -2273,25 +2273,46 @@ impl CornerShape {
     /// A square bitten out of the corner.
     pub const NOTCH: Self = Self(f32::NEG_INFINITY);
 
-    /// How far past the corner box the inner edge of the border reaches
-    /// along the straight edges, in border widths.
+    /// Where the inner edge of the border meets the two straight inner edges
+    /// at this corner, as distances from the corner along the horizontal edge
+    /// and along the vertical edge.
     ///
-    /// Chrome moves the inner curve of a convex corner along the normal at
-    /// the curve's ends by the border width instead of shrinking the curve,
-    /// so a bevel keeps its width and reaches 1 / sqrt(2) past the box. A
-    /// concave bite reaches one border width.
-    pub(crate) fn inner_edge_reach(self) -> f32 {
+    /// This follows css-borders-4 "Rendering corner-shape". Each end of the
+    /// curve moves inward along a normal by the width of its own edge, and two
+    /// different widths tilt the normals so the border grows evenly from one
+    /// end to the other. A concave bite therefore moves each end by the width
+    /// of the other edge.
+    pub(crate) fn inner_curve_ends(
+        self,
+        radius: f32,
+        horizontal_width: f32,
+        vertical_width: f32,
+    ) -> (f32, f32) {
+        let mut half_corner = 0.5f32.powf(1.0 / self.0.abs().exp2());
         if self.0 < 0.0 {
-            return 1.0;
+            half_corner = 1.0 - half_corner;
         }
-        if self.0 >= 1.0 {
-            return 0.0;
-        }
-        let half_corner = 0.5f32.powf(1.0 / self.0.exp2());
         let control = (half_corner / (std::f32::consts::SQRT_2 - 1.0)
             - 1.0 / std::f32::consts::SQRT_2)
             .clamp(0.0, 1.0);
-        (1.0 - control) / (1.0 - control).hypot(control)
+        let mut start_control = control;
+        let inset_diff = (vertical_width - horizontal_width).clamp(-radius, radius);
+        if inset_diff != 0.0 {
+            let s = (2.0 * radius * radius - inset_diff * inset_diff).sqrt();
+            let bevel_control = (s - inset_diff) / (2.0 * s);
+            start_control = if self.0 < 0.0 {
+                bevel_control * 2.0 * control
+            } else {
+                1.0 - (1.0 - bevel_control) * 2.0 * (1.0 - control)
+            };
+        }
+        let end_control = 2.0 * control - start_control;
+        let start_normal_x = (1.0 - start_control) / (1.0 - start_control).hypot(start_control);
+        let end_normal_y = (1.0 - end_control) / end_control.hypot(1.0 - end_control);
+        (
+            radius + horizontal_width * start_normal_x,
+            radius + vertical_width * end_normal_y,
+        )
     }
 }
 
