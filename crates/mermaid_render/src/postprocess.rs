@@ -18,8 +18,8 @@ mod strip_foreignobject;
 pub(crate) mod util;
 
 use anyhow::{Context as _, Result};
-use quick_xml::Reader;
 use quick_xml::events::Event;
+use quick_xml::{Reader, XmlVersion};
 
 use crate::MermaidTheme;
 
@@ -60,7 +60,7 @@ fn extract_svg_id(svg: &str) -> String {
                 .try_get_attribute("id")
                 .ok()
                 .flatten()
-                .and_then(|a| a.unescape_value().ok())
+                .and_then(|a| a.normalized_value(XmlVersion::Implicit1_0).ok())
                 .map(|v| v.into_owned())
                 .unwrap_or_default();
         }

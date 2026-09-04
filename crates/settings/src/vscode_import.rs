@@ -192,6 +192,7 @@ impl VsCodeSettings {
             diagnostics: None,
             editor: self.editor_settings_content(),
             extension: ExtensionSettingsContent::default(),
+            call_hierarchy: None,
             file_finder: None,
             git: self.git_settings_content(),
             git_panel: self.git_panel_settings_content(),
@@ -252,6 +253,7 @@ impl VsCodeSettings {
     fn editor_settings_content(&self) -> EditorSettingsContent {
         EditorSettingsContent {
             auto_signature_help: self.read_bool("editor.parameterHints.enabled"),
+            language_detection: self.read_bool("workbench.editor.languageDetection"),
             autoscroll_on_clicks: None,
             cursor_blink: self.read_enum("editor.cursorBlinking", |s| match s {
                 "blink" | "phase" | "expand" | "smooth" => Some(true),
@@ -265,6 +267,7 @@ impl VsCodeSettings {
                 "underline" | "underline-thin" => Some(CursorShape::Underline),
                 _ => None,
             }),
+            cursor_animation: None,
             current_line_highlight: self.read_enum("editor.renderLineHighlight", |s| match s {
                 "gutter" => Some(CurrentLineHighlight::Gutter),
                 "line" => Some(CurrentLineHighlight::Line),
@@ -385,6 +388,7 @@ impl VsCodeSettings {
     fn search_content(&self) -> Option<SearchSettingsContent> {
         skip_default(SearchSettingsContent {
             include_ignored: self.read_bool("search.useIgnoreFiles"),
+            search_on_type: self.read_bool("search.searchOnType"),
             ..Default::default()
         })
     }
@@ -686,7 +690,13 @@ impl VsCodeSettings {
     fn outline_panel_settings_content(&self) -> Option<OutlinePanelSettingsContent> {
         skip_default(OutlinePanelSettingsContent {
             file_icons: self.read_bool("outline.icons"),
-            folder_icons: self.read_bool("outline.icons"),
+            folder_indicator: self.read_bool("outline.icons").map(|icons| {
+                if icons {
+                    FolderIndicator::Icon
+                } else {
+                    FolderIndicator::Chevron
+                }
+            }),
             git_status: self.read_bool("git.decorations.enabled"),
             ..Default::default()
         })
@@ -815,6 +825,7 @@ impl VsCodeSettings {
             cursor_position_button: None,
             line_endings_button: None,
             active_encoding_button: None,
+            pending_keystrokes_indicator: None,
         })
     }
 
@@ -829,7 +840,7 @@ impl VsCodeSettings {
             drag_and_drop: None,
             entry_spacing: None,
             file_icons: None,
-            folder_icons: None,
+            folder_indicator: None,
             git_status: self.read_bool("git.decorations.enabled"),
             hide_gitignore: self.read_bool("explorer.excludeGitIgnore"),
             hide_hidden: None,
@@ -1061,11 +1072,13 @@ impl VsCodeSettings {
             } else {
                 None
             },
+            on_new_window: None,
             on_last_window_closed: None,
             pane_split_direction_horizontal: None,
             pane_split_direction_vertical: None,
             resize_all_panels_in_dock: None,
             restore_on_file_reopen: self.read_bool("workbench.editor.restoreViewState"),
+            reveal_if_open: self.read_bool("workbench.editor.revealIfOpen"),
             restore_on_startup: None,
             window_decorations: None,
             show_call_status_icon: None,
@@ -1225,5 +1238,17 @@ mod tests {
             None
         );
         assert_eq!(imported_reduce_motion("{}"), None);
+    }
+
+    #[test]
+    fn test_import_reveal_if_open() {
+        let settings = VsCodeSettings::from_str(
+            r#"{ "workbench.editor.revealIfOpen": true }"#,
+            VsCodeSettingsSource::VsCode,
+        )
+        .unwrap()
+        .settings_content();
+
+        assert_eq!(settings.workspace.reveal_if_open, Some(true));
     }
 }
