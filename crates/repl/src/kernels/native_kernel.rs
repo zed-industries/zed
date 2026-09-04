@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result};
+use collections::HashMap;
 use futures::{
     AsyncBufReadExt as _, StreamExt as _,
     channel::mpsc::{self},
@@ -9,7 +10,7 @@ use jupyter_protocol::{
     ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply,
     connection_info::{ConnectionInfo, Transport},
 };
-use project::Fs;
+use project::{Fs, ProjectEnvironment};
 use runtimelib::dirs;
 use smol::net::TcpListener;
 use std::{
@@ -41,7 +42,11 @@ impl Eq for LocalKernelSpecification {}
 
 impl LocalKernelSpecification {
     #[must_use]
-    fn command(&self, connection_path: &PathBuf) -> Result<std::process::Command> {
+    fn command(
+        &self,
+        connection_path: &PathBuf,
+        project_environment: &HashMap<String, String>,
+    ) -> Result<std::process::Command> {
         let argv = &self.kernelspec.argv;
 
         anyhow::ensure!(!argv.is_empty(), "Empty argv in kernelspec {}", self.name);
@@ -61,6 +66,8 @@ impl LocalKernelSpecification {
                 cmd.arg(arg);
             }
         }
+
+        cmd.envs(project_environment);
 
         if let Some(env) = &self.kernelspec.env {
             log::info!(
@@ -114,6 +121,7 @@ impl NativeRunningKernel {
         kernel_specification: LocalKernelSpecification,
         entity_id: EntityId,
         working_directory: PathBuf,
+        project_environment: Option<Entity<ProjectEnvironment>>,
         fs: Arc<dyn Fs>,
         // todo: convert to weak view
         session: Entity<S>,
@@ -145,7 +153,18 @@ impl NativeRunningKernel {
             let content = serde_json::to_string(&connection_info)?;
             fs.atomic_write(connection_path.clone(), content).await?;
 
-            let mut cmd = kernel_specification.command(&connection_path)?;
+            let project_environment = if let Some(project_environment) = project_environment {
+                project_environment
+                    .update(cx, |environment, cx| {
+                        environment.directory_environment(working_directory.clone().into(), cx)
+                    })
+                    .await
+                    .unwrap_or_default()
+            } else {
+                HashMap::default()
+            };
+
+            let mut cmd = kernel_specification.command(&connection_path, &project_environment)?;
             cmd.current_dir(&working_directory);
 
             let mut process = util::process::Child::spawn(
@@ -400,11 +419,76 @@ pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<LocalKer
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::path::PathBuf;
+    use std::{ffi::OsStr, path::PathBuf};
 
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
+
+    fn command_environment_value<'a>(
+        command: &'a std::process::Command,
+        name: &str,
+    ) -> Option<&'a OsStr> {
+        command.get_envs().find_map(
+            |(key, value)| {
+                if key == OsStr::new(name) { value } else { None }
+            },
+        )
+    }
+
+    #[test]
+    fn test_command_applies_project_environment() -> Result<()> {
+        let kernel_specification = LocalKernelSpecification {
+            name: "python".to_string(),
+            path: PathBuf::from("/jupyter/kernels/python"),
+            kernelspec: JupyterKernelspec {
+                argv: vec![
+                    "python".to_string(),
+                    "-m".to_string(),
+                    "ipykernel_launcher".to_string(),
+                    "-f".to_string(),
+                    "{connection_file}".to_string(),
+                ],
+                display_name: "Python".to_string(),
+                language: "python".to_string(),
+                interrupt_mode: None,
+                metadata: None,
+                env: Some(
+                    [
+                        ("KERNEL_ONLY".to_string(), "from-kernel".to_string()),
+                        ("SHARED_VALUE".to_string(), "from-kernel".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+            },
+        };
+
+        let project_environment = [
+            ("PROJECT_ONLY".to_string(), "from-project".to_string()),
+            ("SHARED_VALUE".to_string(), "from-project".to_string()),
+        ]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+
+        let command = kernel_specification
+            .command(&PathBuf::from("connection.json"), &project_environment)?;
+
+        assert_eq!(
+            command_environment_value(&command, "PROJECT_ONLY"),
+            Some(OsStr::new("from-project"))
+        );
+        assert_eq!(
+            command_environment_value(&command, "KERNEL_ONLY"),
+            Some(OsStr::new("from-kernel"))
+        );
+        assert_eq!(
+            command_environment_value(&command, "SHARED_VALUE"),
+            Some(OsStr::new("from-kernel"))
+        );
+
+        Ok(())
+    }
 
     #[gpui::test]
     async fn test_get_kernelspecs(cx: &mut TestAppContext) {
