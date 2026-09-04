@@ -81,6 +81,7 @@ pub struct FakeGitRepositoryState {
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
     pub stash_entries: GitStash,
     pub commit_template: Option<GitCommitTemplate>,
+    pub checkout_file_calls: Vec<Vec<RepoPath>>,
 }
 
 impl FakeGitRepositoryState {
@@ -108,6 +109,7 @@ impl FakeGitRepositoryState {
             commit_history: Vec::new(),
             stash_entries: Default::default(),
             commit_template: None,
+            checkout_file_calls: Default::default(),
         }
     }
 }
@@ -381,8 +383,10 @@ impl GitRepository for FakeGitRepository {
             );
             let contents = self
                 .with_state_async(false, move |state| {
+                    state.checkout_file_calls.push(paths.clone());
                     let mut contents = Vec::new();
                     for path in paths {
+                        anyhow::ensure!(!path.is_empty(), "empty string is not a valid pathspec");
                         if let Some(content) = state.head_contents.get(&path).cloned() {
                             contents.push((path, content));
                             continue;
