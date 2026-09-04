@@ -259,6 +259,7 @@ impl VsCodeSettings {
                 "underline" | "underline-thin" => Some(CursorShape::Underline),
                 _ => None,
             }),
+            cursor_animation: None,
             current_line_highlight: self.read_enum("editor.renderLineHighlight", |s| match s {
                 "gutter" => Some(CurrentLineHighlight::Gutter),
                 "line" => Some(CurrentLineHighlight::Line),
@@ -816,6 +817,7 @@ impl VsCodeSettings {
             cursor_position_button: None,
             line_endings_button: None,
             active_encoding_button: None,
+            pending_keystrokes_indicator: None,
         })
     }
 
@@ -825,6 +827,7 @@ impl VsCodeSettings {
             auto_reveal_entries: self.read_bool("explorer.autoReveal"),
             bold_folder_labels: None,
             button: None,
+            title_tooltip_delay: None,
             default_width: None,
             dock: None,
             drag_and_drop: None,
@@ -1009,10 +1012,6 @@ impl VsCodeSettings {
             agent_buffer_font_family: None,
             agent_buffer_font_size: None,
             git_commit_buffer_font_size: None,
-            markdown_preview_font_family: None,
-            markdown_preview_code_font_family: None,
-            markdown_preview_font_size: None,
-            markdown_preview_theme: None,
             theme: None,
             icon_theme: None,
             ui_density: None,
@@ -1062,6 +1061,7 @@ impl VsCodeSettings {
             } else {
                 None
             },
+            on_new_window: None,
             on_last_window_closed: None,
             pane_split_direction_horizontal: None,
             pane_split_direction_vertical: None,

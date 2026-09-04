@@ -109,6 +109,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: none
     pub max_tabs: Option<NonZeroUsize>,
+    /// What to show when opening a new window.
+    /// Values: empty_tab, launchpad
+    /// Default: launchpad
+    pub on_new_window: Option<OnNewWindow>,
     /// What to do when the last window is closed
     ///
     /// Default: auto (nothing on macOS, "app quit" otherwise)
@@ -135,9 +139,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
-    /// Whether toggling a panel (e.g. with its keyboard shortcut) also closes
-    /// the panel when it is already focused, instead of just moving focus back
-    /// to the editor.
+    /// Whether invoking a panel's `ToggleFocus` action while the panel is
+    /// already focused closes the panel, instead of just moving focus back
+    /// to the editor. This only applies to a panel's focus-toggle action, not
+    /// to its regular visibility-toggle action.
     ///
     /// Default: false
     pub close_panel_on_toggle: Option<bool>,
@@ -556,6 +561,12 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: non_utf8
     pub active_encoding_button: Option<EncodingDisplayOptions>,
+    /// Whether to show an indicator with a countdown while timed multi-stroke input is pending.
+    /// Hovering the indicator pauses the timeout.
+    /// Its binding preview popover is disabled when the which-key popup is enabled.
+    ///
+    /// Default: true
+    pub pending_keystrokes_indicator: Option<bool>,
 }
 
 #[derive(
@@ -691,6 +702,29 @@ pub struct CenteredLayoutSettings {
     JsonSchema,
     MergeFrom,
     PartialEq,
+    Eq,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OnNewWindow {
+    /// Show an empty untitled buffer when opening a new window
+    EmptyTab,
+    /// Show the launchpad with recent projects when opening a new window
+    #[default]
+    Launchpad,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
     Debug,
     strum::VariantArray,
     strum::VariantNames,
@@ -774,6 +808,8 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockSide>,
+    // TODO
+    pub title_tooltip_delay: Option<ProjectPanelTitleTooltipDelay>,
     /// Spacing between worktree entries in the project panel.
     ///
     /// Default: comfortable
@@ -857,6 +893,31 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub git_status_indicator: Option<bool>,
+}
+
+/// Controls the width of the git diff hunk indicators in the gutter.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPanelTitleTooltipDelay {
+    /// Default is 1500ms.
+    #[default]
+    Default,
+    /// A custom offset in milliseconds for the tooltip show delay.
+    Custom(crate::DelayMs),
+    /// Disables the tooltip
+    Disabled,
 }
 
 #[derive(
