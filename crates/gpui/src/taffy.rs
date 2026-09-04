@@ -43,7 +43,7 @@ pub struct TaffyLayoutEngine {
 /// [`Window::request_measured_layout`] runs inside that computation, so an
 /// element that wants to measure a child there cannot use the window's tree.
 /// This holds a second tree for the child, and [`IsolatedLayout::enter`] puts it
-/// in front of the window's tree for the duration of a closure.
+/// in place of the window's tree for the duration of a closure.
 ///
 /// With that, an element can size itself from content that the window's tree
 /// has not laid out yet. A panel that animates its height to the height of its
@@ -69,23 +69,15 @@ impl IsolatedLayout {
         Self(Some(TaffyLayoutEngine::new()))
     }
 
-    /// Run `f` with this tree in front of the window's tree.
+    /// Run `f` with this tree in place of the window's tree.
     ///
-    /// The window gets its own tree back when `f` returns, and also when `f`
-    /// panics, so a caught panic cannot leave the window on the wrong tree. A
-    /// reentered `enter` on the same value holds no tree any more and gives
-    /// the window a fresh one, so the window never sees `None`.
+    /// The window gets its own tree back when `f` returns, so calls that
+    /// straddle the two stay separate.
     pub fn enter<R>(&mut self, window: &mut Window, f: impl FnOnce(&mut Window) -> R) -> R {
-        let inner = self.0.take().unwrap_or_else(TaffyLayoutEngine::new);
-        let outer = mem::replace(&mut window.layout_engine, Some(inner));
-        // The engines go back where they came from before the panic resumes,
-        // which is what makes the state safe to observe after a catch.
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(window)));
-        self.0 = mem::replace(&mut window.layout_engine, outer);
-        match result {
-            Ok(value) => value,
-            Err(payload) => std::panic::resume_unwind(payload),
-        }
+        mem::swap(&mut self.0, &mut window.layout_engine);
+        let result = f(window);
+        mem::swap(&mut self.0, &mut window.layout_engine);
+        result
     }
 
     /// Drop everything this tree holds, keeping it usable for another frame.
@@ -973,28 +965,5 @@ mod isolated_layout_tests {
         // will on screen. Without it the content would measure at max content and
         // the element would stop at 30.
         assert_eq!(bounds.get().size.height, px(60.));
-    }
-
-    #[crate::test]
-    fn a_panic_inside_enter_puts_both_trees_back(cx: &mut TestAppContext) {
-        let bounds = Rc::new(Cell::new(Bounds::default()));
-        let window = cx.add_window({
-            let bounds = bounds.clone();
-            move |_, _| MeasureTestView { bounds }
-        });
-
-        cx.update_window(AnyWindowHandle::from(window), |_, window, _cx| {
-            let mut layout = IsolatedLayout::new();
-            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                layout.enter(window, |_| panic!("a panic during an isolated layout"))
-            }));
-            assert!(caught.is_err());
-            // The window holds its own tree again and this value holds the
-            // isolated one, so the caller that caught the panic can go on.
-            assert!(window.layout_engine.is_some());
-            assert!(layout.0.is_some());
-            assert_eq!(layout.enter(window, |_| 7), 7);
-        })
-        .unwrap();
     }
 }
