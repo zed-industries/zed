@@ -52,8 +52,7 @@ use std::{
     cell::OnceCell,
     cmp,
     collections::HashSet,
-    ops::Neg,
-    ops::Range,
+    ops::{Neg, Range},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -68,7 +67,7 @@ use util::{
     ResultExt, TakeUntilExt, TryFutureExt,
     markdown::MarkdownInlineCode,
     maybe,
-    paths::{PathStyle, compare_paths},
+    paths::{PathExt, PathStyle, compare_paths},
     rel_path::{RelPath, RelPathBuf},
 };
 use workspace::{
@@ -5875,10 +5874,39 @@ impl ProjectPanel {
             (entry_id.to_proto() as usize).into()
         };
 
+        let tooltip_path = self
+            .project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .map(|worktree| {
+                worktree
+                    .read(cx)
+                    .absolutize(&path)
+                    .compact()
+                    .to_string_lossy()
+                    .into_owned()
+            });
+
         div()
             .id(id.clone())
             .relative()
             .group(GROUP_NAME)
+            .when_some(
+                tooltip_path.and_then(|path| {
+                    let delay = match settings.title_tooltip_delay {
+                        settings::ProjectPanelTitleTooltipDelay::Default => 1500,
+                        settings::ProjectPanelTitleTooltipDelay::Custom(delay_ms) => delay_ms.0,
+                        settings::ProjectPanelTitleTooltipDelay::Disabled => {
+                            return None;
+                        }
+                    };
+                    Some((path, delay))
+                }),
+                |this, (path, delay)| {
+                    this.tooltip_show_delay(Duration::from_millis(delay))
+                        .tooltip(Tooltip::text(path))
+                },
+            )
             .cursor_pointer()
             .rounded_none()
             .bg(bg_color)
