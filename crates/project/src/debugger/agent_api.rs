@@ -1101,7 +1101,7 @@ async fn stack_frame_snapshot(
                         );
                         let (value, value_truncated) =
                             truncate_string(summary, limits.max_variable_value_length);
-                        variables.push(AgentDebuggerVariable {
+                        snapshot_variables.push(AgentDebuggerVariable {
                             name: variable.name,
                             value,
                             type_name: variable.type_,
