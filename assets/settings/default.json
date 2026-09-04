@@ -276,6 +276,12 @@
   //
   // Default: "bar"
   "cursor_shape": "bar",
+  // Cursor movement animation settings.
+  // Enabling this may cause additional editor redraws and increase rendering overhead.
+  "cursor_animation": {
+    // Whether cursor movement animation is enabled.
+    "enabled": false,
+  },
   // Determines when the mouse cursor should be hidden in response to keyboard
   // input.
   //
