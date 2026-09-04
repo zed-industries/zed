@@ -1123,8 +1123,14 @@
     //
     // Default: true
     "flexible": true,
-    // Where to position the threads sidebar. Can be 'left' or 'right'.
+    // Where to position the sidebar holding the agent panel and the list of
+    // agent threads. Can be 'left' or 'right'.
     "sidebar_side": "left",
+    // Settings for the panel holding the list of agent threads.
+    "threads": {
+      // Default width for the list of agent threads.
+      "default_width": 300
+    },
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
