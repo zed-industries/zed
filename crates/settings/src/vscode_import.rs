@@ -826,7 +826,7 @@ impl VsCodeSettings {
             auto_reveal_entries: self.read_bool("explorer.autoReveal"),
             bold_folder_labels: None,
             button: None,
-            title_tooltip_delay: Some(ProjectPanelTitleTooltipDelay::Default),
+            title_tooltip_delay: None,
             default_width: None,
             dock: None,
             drag_and_drop: None,
