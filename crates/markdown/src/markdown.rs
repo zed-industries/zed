@@ -13,7 +13,8 @@ use language::LanguageName;
 
 use log::Level;
 use mermaid::{
-    MermaidState, ParsedMarkdownMermaidDiagram, extract_mermaid_diagrams, render_mermaid_diagram,
+    MermaidState, ParsedMarkdownMermaidDiagram, extract_mermaid_diagrams, mermaid_display_size,
+    render_mermaid_diagram,
 };
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
@@ -36,7 +37,7 @@ use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
+    MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Size, Stateful, StrikethroughStyle,
     StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
     TextStyle, TextStyleRefinement, WrappedLineLayout, actions, canvas, img, point, quad, relative,
     size,
@@ -60,6 +61,9 @@ const MERMAID_MAX_ZOOM: f32 = 2.0;
 /// can easily return to the default size.
 const MERMAID_ZOOM_SNAP_TOLERANCE: f32 = 0.05;
 const MERMAID_ZOOM_DEBOUNCE: Duration = Duration::from_millis(300);
+/// A diagram's viewport is at most this fraction of the window height, so a
+/// tall diagram doesn't push the rest of the document off screen.
+const MERMAID_MAX_VIEWPORT_HEIGHT_FRACTION: f32 = 0.7;
 
 /// A callback function that can be used to customize the style of links based on the destination URL.
 /// If the callback returns `None`, the default link style will be used.
@@ -435,30 +439,35 @@ struct MermaidViewState {
     showing_code: bool,
     /// The display scale relative to the diagram's natural size; 1.0 is 1:1.
     zoom: f32,
-    /// Whether the user zoomed out to the fit-to-width floor. While set, the
-    /// zoom tracks the container width so the diagram stays fully visible
-    /// when the container is resized, instead of keeping a stale absolute
-    /// zoom computed against the old width.
+    /// Whether the zoom is pinned to the fit-to-width floor. While set, the
+    /// zoom tracks the viewport width so the diagram stays fully visible
+    /// when the viewport is resized, instead of keeping a stale absolute
+    /// zoom computed against the old width. This is the initial state, so a
+    /// diagram wider than the viewport starts out fitted rather than cropped.
     zoomed_to_fit: bool,
-    /// Horizontal scroll position, used when the diagram overflows.
-    scroll_handle: ScrollHandle,
+    /// The offset of the viewport's top-left corner into the zoomed diagram,
+    /// in logical pixels. Non-negative on both axes, and never more than the
+    /// amount by which the diagram overflows the viewport
+    /// (see [`clamp_mermaid_pan`]).
+    pan: Point<Pixels>,
+    /// The mouse position and pan at the start of the in-progress pan drag,
+    /// against which each drag move is measured.
+    pan_drag_origin: Option<(Point<Pixels>, Point<Pixels>)>,
+    /// The viewport's bounds as of the last layout, if it has been laid out.
+    /// Recorded during prepaint, so the values used at render time are one
+    /// frame stale after a resize; that frame re-renders itself.
+    viewport_bounds: Option<Bounds<Pixels>>,
     /// The pending debounced re-raster scheduled by the last zoom change.
     debounce_task: Option<Task<()>>,
-    /// Overrides the scroll container width, which tests can't obtain from
-    /// the scroll handle since its bounds are only set during layout.
-    #[cfg(test)]
-    container_width_for_test: Option<Pixels>,
 }
 
 impl MermaidViewState {
-    /// The width of the diagram's scroll container as of the last layout,
-    /// if it has been laid out.
-    fn container_width(&self) -> Option<Pixels> {
-        #[cfg(test)]
-        if let Some(width) = self.container_width_for_test {
-            return Some(width);
-        }
-        Some(self.scroll_handle.bounds().size.width).filter(|width| *width > px(0.))
+    /// The width of the diagram's viewport as of the last layout, if it has
+    /// been laid out.
+    fn viewport_width(&self) -> Option<Pixels> {
+        self.viewport_bounds
+            .map(|bounds| bounds.size.width)
+            .filter(|width| *width > px(0.))
     }
 }
 
@@ -467,13 +476,32 @@ impl Default for MermaidViewState {
         Self {
             showing_code: false,
             zoom: 1.0,
-            zoomed_to_fit: false,
-            scroll_handle: ScrollHandle::new(),
+            zoomed_to_fit: true,
+            pan: Point::default(),
+            pan_drag_origin: None,
+            viewport_bounds: None,
             debounce_task: None,
-            #[cfg(test)]
-            container_width_for_test: None,
         }
     }
+}
+
+/// Clamps a pan so the viewport never shows past the edge of a diagram:
+/// each axis lies in `0..=max(0, display - viewport)`.
+pub(crate) fn clamp_mermaid_pan(
+    pan: Point<Pixels>,
+    display_size: Size<Pixels>,
+    viewport_size: Size<Pixels>,
+) -> Point<Pixels> {
+    point(
+        pan.x.clamp(
+            px(0.),
+            (display_size.width - viewport_size.width).max(px(0.)),
+        ),
+        pan.y.clamp(
+            px(0.),
+            (display_size.height - viewport_size.height).max(px(0.)),
+        ),
+    )
 }
 
 pub struct Markdown {
@@ -783,34 +811,41 @@ impl Markdown {
             .map_or(1.0, |view| view.zoom)
     }
 
+    /// The natural (zoom 1.0) size of a diagram, if a raster of it exists.
+    fn mermaid_natural_size(&self, source_offset: usize) -> Option<Size<Pixels>> {
+        let diagram = self.parsed_markdown.mermaid_diagrams.get(&source_offset)?;
+        self.mermaid_state.natural_size(&diagram.contents)
+    }
+
     /// The smallest zoom level for a diagram: the scale that makes it span
-    /// the content width, capped at 1.0 so diagrams that already fit are
+    /// the viewport width, capped at 1.0 so diagrams that already fit are
     /// never zoomed out below their natural size. Falls back to 1.0 when the
-    /// diagram has no raster yet or the container hasn't been laid out.
+    /// diagram has no raster yet or the viewport hasn't been laid out.
     fn mermaid_min_zoom_level(&self, source_offset: usize) -> f32 {
-        let Some(diagram) = self.parsed_markdown.mermaid_diagrams.get(&source_offset) else {
+        let Some(natural_size) = self.mermaid_natural_size(source_offset) else {
             return 1.0;
         };
-        let Some(natural_size) = self.mermaid_state.natural_size(&diagram.contents) else {
-            return 1.0;
-        };
-        let Some(container_width) = self
+        let Some(viewport_width) = self
             .mermaid_views
             .get(&source_offset)
-            .and_then(|view| view.container_width())
+            .and_then(|view| view.viewport_width())
         else {
             return 1.0;
         };
-        if natural_size.width <= container_width {
+        if natural_size.width <= viewport_width {
             return 1.0;
         }
-        container_width / natural_size.width
+        viewport_width / natural_size.width
     }
 
+    /// Sets a diagram's zoom, keeping the diagram point under `anchor` (a
+    /// window position, defaulting to the viewport's center) fixed on screen
+    /// by adjusting the pan.
     pub(crate) fn set_mermaid_zoom_level(
         &mut self,
         source_offset: usize,
         zoom: f32,
+        anchor: Option<Point<Pixels>>,
         cx: &mut Context<Self>,
     ) {
         let min_zoom = self.mermaid_min_zoom_level(source_offset);
@@ -820,24 +855,80 @@ impl Markdown {
             zoom = 1.0;
         }
         // The user zoomed out to (or past) the fit-to-width floor. From here
-        // on the zoom tracks the container width (see
+        // on the zoom tracks the viewport width (see
         // `effective_mermaid_zoom_level`), until the user zooms back in. A
         // zoom landing exactly at 1.0 only sticks when it was clamped, so
         // resetting to the natural size never turns tracking on.
         let zoomed_to_fit = requested_zoom < min_zoom || (zoom <= min_zoom && zoom < 1.0);
 
+        let old_zoom = self.mermaid_zoom_level(source_offset);
+        let pan = self.mermaid_pan_zoomed_about(source_offset, old_zoom, zoom, anchor);
         let debounce_task = self.schedule_mermaid_rerasterize(source_offset, cx);
         let view = self.mermaid_views.entry(source_offset).or_default();
         view.zoom = zoom;
         view.zoomed_to_fit = zoomed_to_fit;
+        view.pan = pan;
         view.debounce_task = Some(debounce_task);
         cx.notify();
     }
 
+    /// The pan that keeps the diagram point under `anchor` (a window
+    /// position, defaulting to the viewport's center) where it is when the
+    /// zoom changes from `old_zoom` to `new_zoom`, clamped to the new
+    /// display size. Until the viewport has been laid out there's nothing to
+    /// anchor to, so the pan is left alone.
+    fn mermaid_pan_zoomed_about(
+        &self,
+        source_offset: usize,
+        old_zoom: f32,
+        new_zoom: f32,
+        anchor: Option<Point<Pixels>>,
+    ) -> Point<Pixels> {
+        let pan = self.mermaid_pan(source_offset);
+        let Some(viewport) = self
+            .mermaid_views
+            .get(&source_offset)
+            .and_then(|view| view.viewport_bounds)
+        else {
+            return pan;
+        };
+        let anchor = anchor.map_or_else(
+            || Point::from(viewport.size) / 2.0,
+            |anchor| anchor - viewport.origin,
+        );
+        // The diagram point under the anchor is `(pan + anchor) / old_zoom`
+        // in natural units; placing it back under the anchor at the new zoom
+        // gives the new pan.
+        let pan = (pan + anchor) * (new_zoom / old_zoom) - anchor;
+        self.clamped_mermaid_pan(source_offset, pan, new_zoom)
+    }
+
+    /// `pan` clamped so the viewport stays within the diagram displayed at
+    /// `zoom`. Left as-is until both a raster and a laid-out viewport exist,
+    /// since there's nothing to clamp against yet.
+    fn clamped_mermaid_pan(
+        &self,
+        source_offset: usize,
+        pan: Point<Pixels>,
+        zoom: f32,
+    ) -> Point<Pixels> {
+        let Some(natural_size) = self.mermaid_natural_size(source_offset) else {
+            return pan;
+        };
+        let Some(viewport) = self
+            .mermaid_views
+            .get(&source_offset)
+            .and_then(|view| view.viewport_bounds)
+        else {
+            return pan;
+        };
+        clamp_mermaid_pan(pan, mermaid_display_size(natural_size, zoom), viewport.size)
+    }
+
     /// The zoom level to display a diagram at, syncing a fit-to-width zoom
-    /// with the current container width. Called at render time so that a
-    /// fully zoomed-out diagram stays stuck to the container width when the
-    /// container is resized, rather than keeping a stale absolute zoom.
+    /// with the current viewport width. Called at render time so that a
+    /// fully zoomed-out diagram stays stuck to the viewport width when the
+    /// viewport is resized, rather than keeping a stale absolute zoom.
     pub(crate) fn effective_mermaid_zoom_level(
         &mut self,
         source_offset: usize,
@@ -885,12 +976,137 @@ impl Markdown {
         })
     }
 
-    pub(crate) fn mermaid_scroll_handle(&mut self, source_offset: usize) -> ScrollHandle {
+    pub(crate) fn mermaid_pan(&self, source_offset: usize) -> Point<Pixels> {
         self.mermaid_views
-            .entry(source_offset)
-            .or_default()
-            .scroll_handle
-            .clone()
+            .get(&source_offset)
+            .map_or_else(Point::default, |view| view.pan)
+    }
+
+    /// The pan to display a diagram at, re-clamped against the current zoom
+    /// and viewport so a zoom-out or a shrinking viewport never leaves the
+    /// viewport hanging past the diagram's edge. Called at render time,
+    /// after [`Self::effective_mermaid_zoom_level`] has settled the zoom.
+    pub(crate) fn effective_mermaid_pan(&mut self, source_offset: usize) -> Point<Pixels> {
+        let zoom = self.mermaid_zoom_level(source_offset);
+        let pan = self.clamped_mermaid_pan(source_offset, self.mermaid_pan(source_offset), zoom);
+        if let Some(view) = self.mermaid_views.get_mut(&source_offset) {
+            view.pan = pan;
+        }
+        pan
+    }
+
+    pub(crate) fn set_mermaid_pan(
+        &mut self,
+        source_offset: usize,
+        pan: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let zoom = self.mermaid_zoom_level(source_offset);
+        let pan = self.clamped_mermaid_pan(source_offset, pan, zoom);
+        let view = self.mermaid_views.entry(source_offset).or_default();
+        if view.pan != pan {
+            view.pan = pan;
+            cx.notify();
+        }
+    }
+
+    /// Pans a diagram by a scroll `delta`, with gpui's scroll container sign
+    /// convention (a positive delta moves the content down and to the
+    /// right, i.e. decreases the pan). Returns whether the
+    /// scroll was consumed: it is only when the diagram can still move along
+    /// the delta's dominant axis, so that a scroll over a diagram that fits,
+    /// or is already panned to its edge, falls through to the document
+    /// instead of being trapped.
+    pub(crate) fn scroll_mermaid_pan(
+        &mut self,
+        source_offset: usize,
+        delta: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let pan = self.mermaid_pan(source_offset);
+        let zoom = self.mermaid_zoom_level(source_offset);
+        let target = self.clamped_mermaid_pan(source_offset, pan - delta, zoom);
+        let moves_along_dominant_axis = if delta.x.abs() > delta.y.abs() {
+            target.x != pan.x
+        } else {
+            target.y != pan.y
+        };
+        if !moves_along_dominant_axis {
+            return false;
+        }
+        self.set_mermaid_pan(source_offset, target, cx);
+        true
+    }
+
+    /// Starts a pan drag from `mouse_position`. Each subsequent
+    /// [`Self::update_mermaid_pan_drag`] pans by the mouse's total travel
+    /// since this point, so the diagram follows the cursor exactly rather
+    /// than accumulating per-move deltas. There is no matching end: the
+    /// origin is simply replaced by the next drag.
+    pub(crate) fn begin_mermaid_pan_drag(
+        &mut self,
+        source_offset: usize,
+        mouse_position: Point<Pixels>,
+    ) {
+        let view = self.mermaid_views.entry(source_offset).or_default();
+        view.pan_drag_origin = Some((mouse_position, view.pan));
+    }
+
+    pub(crate) fn update_mermaid_pan_drag(
+        &mut self,
+        source_offset: usize,
+        mouse_position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((origin_position, origin_pan)) = self
+            .mermaid_views
+            .get(&source_offset)
+            .and_then(|view| view.pan_drag_origin)
+        else {
+            return;
+        };
+        // Dragging the diagram right (positive travel) reveals what's to the
+        // left, i.e. decreases the pan.
+        self.set_mermaid_pan(
+            source_offset,
+            origin_pan - (mouse_position - origin_position),
+            cx,
+        );
+    }
+
+    /// Records the viewport's bounds from layout. Returns whether the size
+    /// changed, in which case the fit-to-width zoom, the viewport height and
+    /// the pan clamp computed from the previous size are stale and the
+    /// diagram needs another render.
+    pub(crate) fn set_mermaid_viewport_bounds(
+        &mut self,
+        source_offset: usize,
+        bounds: Bounds<Pixels>,
+    ) -> bool {
+        let view = self.mermaid_views.entry(source_offset).or_default();
+        let size_changed = view.viewport_bounds.map(|previous| previous.size) != Some(bounds.size);
+        view.viewport_bounds = Some(bounds);
+        size_changed
+    }
+
+    /// The height of a diagram's viewport: the diagram's height at the
+    /// smaller of its natural and fit-to-width zooms, so a fitted diagram is
+    /// fully visible without the viewport growing when zooming in, capped at
+    /// a fraction of the window height. Falls back to the natural height
+    /// until the viewport has been laid out.
+    pub(crate) fn mermaid_viewport_height(
+        &self,
+        source_offset: usize,
+        natural_size: Size<Pixels>,
+        window_height: Pixels,
+    ) -> Pixels {
+        let fit_zoom = self
+            .mermaid_views
+            .get(&source_offset)
+            .and_then(|view| view.viewport_width())
+            .filter(|viewport_width| natural_size.width > *viewport_width)
+            .map_or(1.0, |viewport_width| viewport_width / natural_size.width);
+        (natural_size.height * fit_zoom).min(window_height * MERMAID_MAX_VIEWPORT_HEIGHT_FRACTION)
     }
 
     /// Re-rasterizes a single mermaid diagram at exactly the scale it is
@@ -2636,11 +2852,14 @@ impl Element for MarkdownElement {
                                 && let Some(mermaid_diagram) =
                                     parsed_markdown.mermaid_diagrams.get(&range.start)
                             {
-                                let (showing_code, zoom) =
+                                let (showing_code, zoom, pan) =
                                     self.markdown.update(cx, |markdown, cx| {
+                                        let zoom =
+                                            markdown.effective_mermaid_zoom_level(range.start, cx);
                                         (
                                             markdown.is_mermaid_showing_code(range.start),
-                                            markdown.effective_mermaid_zoom_level(range.start, cx),
+                                            zoom,
+                                            markdown.effective_mermaid_pan(range.start),
                                         )
                                     });
                                 let copy_button_visibility = match &self.code_block_renderer {
@@ -2660,6 +2879,7 @@ impl Element for MarkdownElement {
                                         range.start,
                                         showing_code,
                                         zoom,
+                                        pan,
                                         copy_button_visibility,
                                         self.on_mermaid_zoom.clone(),
                                         window,
