@@ -220,6 +220,15 @@ impl DevContainerManifest {
                 merged_remote_env.insert(k, v);
             }
         }
+        merged_remote_env.retain(|name, _| {
+            let is_valid = is_valid_env(name);
+            if !is_valid {
+                // Docker rejects such a name and echoes the whole `NAME=VALUE`
+                // back, so the value must never reach the argument list.
+                log::warn!("Skipping environment variable with invalid name: {name:?}");
+            }
+            is_valid
+        });
         Ok(merged_remote_env)
     }
 
@@ -2764,6 +2773,11 @@ enum DevContainerBuildResources {
     Docker(DockerBuildResources),
 }
 
+/// Empty or `=`-bearing names cannot be forwarded into a container.
+fn is_valid_env(name: &str) -> bool {
+    !name.is_empty() && !name.contains(['=', '\0'])
+}
+
 /// Replaces occurrences of `${KEY}` and `$KEY` in `line` with `value`.
 /// Bare `$KEY` is only replaced when the character immediately after the key
 /// is not a word character (`[A-Za-z0-9_]`), so `$RUBY_VERSION2` is not
@@ -4019,6 +4033,15 @@ mod test {
                 .collect::<Vec<_>>(),
             vec![OsStr::new("-c"), OsStr::new("echo post-attach")]
         );
+    }
+
+    #[test]
+    fn rejects_invalid_env_names() {
+        assert!(super::is_valid_env("GH_TOKEN"));
+        assert!(super::is_valid_env("lowercase_token"));
+        assert!(!super::is_valid_env(""));
+        assert!(!super::is_valid_env("NAME=WITH_EQUALS"));
+        assert!(!super::is_valid_env("NAME\0WITH_NUL"));
     }
 
     #[cfg(not(target_os = "windows"))]
