@@ -11570,6 +11570,98 @@ async fn test_add_selection_below_with_tab_aligned_columns(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+/// The tab-expanded column a cursor is placed by counts characters, not bytes, so the
+/// three-byte `–` has to advance it by one the way a one-byte `-` does. Counting bytes
+/// lands the cursor inside the character on the next row.
+async fn test_add_selection_with_non_ascii_columns(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc!(
+        "aaaaaaa -- bˇbbbbbb
+         aaaaaaa –– bbbbbbb
+         aaaaaaa –- bbbbbbb"
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        for _ in 0..2 {
+            editor.add_selection_below(
+                &AddSelectionBelow {
+                    skip_soft_wrap: true,
+                },
+                window,
+                cx,
+            );
+        }
+    });
+
+    cx.assert_editor_state(indoc!(
+        "aaaaaaa -- bˇbbbbbb
+         aaaaaaa –– bˇbbbbbb
+         aaaaaaa –- bˇbbbbbb"
+    ));
+
+    cx.set_state(indoc!(
+        "aaaaaaa -- bbbbbbb
+         aaaaaaa –– bbbbbbb
+         aaaaaaa –- bˇbbbbbb"
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        for _ in 0..2 {
+            editor.add_selection_above(
+                &AddSelectionAbove {
+                    skip_soft_wrap: true,
+                },
+                window,
+                cx,
+            );
+        }
+    });
+
+    cx.assert_editor_state(indoc!(
+        "aaaaaaa -- bˇbbbbbb
+         aaaaaaa –– bˇbbbbbb
+         aaaaaaa –- bˇbbbbbb"
+    ));
+}
+
+#[gpui::test]
+/// A row too short to reach the goal columns is skipped rather than clamped. The goal
+/// columns count characters, so the en-dashes above must not push the comparison into
+/// the byte columns of the rows below.
+async fn test_add_selection_skips_rows_too_short_for_the_goal_columns(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // `cccc` sits at characters 13..17 of the first row but bytes 17..21, and `short` is
+    // five characters long, so it cannot hold the selection and is passed over.
+    cx.set_state(indoc!(
+        "aaaa –– bbbb «ccccˇ»
+         short
+         xxxx -- yyyy zzzz"
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc!(
+        "aaaa –– bbbb «ccccˇ»
+         short
+         xxxx -- yyyy «zzzzˇ»"
+    ));
+}
+
+#[gpui::test]
 /// Regression test for a panic ("display point out of range"): with a multi-line fold,
 /// buffer rows below the fold exceed the fold map's max row, so they must be converted
 /// to tab map rows instead of being used directly.
@@ -44981,6 +45073,51 @@ async fn test_columnar_selection_past_end_of_line(cx: &mut TestAppContext) {
         bb
         cccc«ˇcccc»cc
     "});
+}
+
+#[gpui::test]
+async fn test_columnar_selection_skips_rows_shorter_than_goal_column(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // A mouse columnar drag anchors on x pixels, so rows past MAX_EXPANSION_COLUMN
+    // still line up. Rows too short to reach the rectangle collapse to an empty range
+    // at their end, which `select_columns` drops once some row has matched.
+    let long_row = "a".repeat(300);
+    let wide_row = format!("{}b", "c".repeat(299));
+    let state = format!("ˇ{long_row}\nxx\n{wide_row}\nyy\n{wide_row}");
+    cx.set_state(&state);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 295),
+                goal_column: 295,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(4), 300),
+                goal_column: 300,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    // Rows `xx` and `yy` are shorter than the goal column's start and must
+    // get no cursors at all; the long rows are clipped to their EOL.
+    let long_prefix = "a".repeat(295);
+    let wide_prefix = "c".repeat(295);
+    let expected =
+        format!("{long_prefix}«aaaaaˇ»\nxx\n{wide_prefix}«ccccbˇ»\nyy\n{wide_prefix}«ccccbˇ»");
+    cx.assert_editor_state(&expected);
 }
 
 #[gpui::test]

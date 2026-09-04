@@ -457,14 +457,14 @@ impl SelectionsCollection {
         text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {
         let is_empty = goal_columns.start == goal_columns.end;
-        let line_len = display_map.tab_expanded_line_len(multi_buffer_row);
 
         let (start, end) = if is_empty {
             let point =
                 display_map.point_for_tab_expanded_column(multi_buffer_row, goal_columns.start);
             (point, point)
         } else {
-            if goal_columns.start >= line_len {
+            if !display_map.tab_expanded_line_contains_column(multi_buffer_row, goal_columns.start)
+            {
                 return None;
             }
 
