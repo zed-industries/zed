@@ -6,6 +6,11 @@
 //! comes from the CSV parser or from some other producer (e.g. a database result set). Callers
 //! embed it as a child entity and own their own chrome (tab, toolbar, connection state, etc.).
 
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
+
 use gpui::{App, AppContext, Entity, FocusHandle, Focusable, ListAlignment, Task};
 use ui::{
     AbsoluteLength, ResizableColumnsState, SharedString, TableInteractionState,
@@ -13,17 +18,57 @@ use ui::{
 };
 
 use crate::{
-    PerformanceMetrics,
     settings::TableViewSettings,
     table_data_engine::{DisplayToDataMapping, TableDataEngine},
     types::{AnyColumn, TableLikeContent},
 };
 
+#[derive(Debug, Default)]
+pub struct PerformanceMetrics {
+    /// Map of timing metrics with their duration and measurement time.
+    pub timings: HashMap<&'static str, (Duration, Instant)>,
+    /// List of display indices that were rendered in the current frame.
+    pub rendered_indices: Vec<usize>,
+}
+
+impl PerformanceMetrics {
+    pub fn record<F, R>(&mut self, name: &'static str, mut f: F) -> R
+    where
+        F: FnMut() -> R,
+    {
+        let start_time = Instant::now();
+        let ret = f();
+        let duration = start_time.elapsed();
+        self.timings.insert(name, (duration, Instant::now()));
+        ret
+    }
+
+    /// Displays all metrics sorted A-Z in format: `{name}: {took}ms {ago}s ago`
+    pub fn display(&self) -> String {
+        let mut metrics = self.timings.iter().collect::<Vec<_>>();
+        metrics.sort_by_key(|&(name, _)| *name);
+        metrics
+            .iter()
+            .map(|(name, (duration, time))| {
+                let took = duration.as_secs_f32() * 1000.;
+                let ago = time.elapsed().as_secs();
+                format!("{name}: {took:.3}ms {ago}s ago")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Get timing for a specific metric
+    pub fn get_timing(&self, name: &str) -> Option<Duration> {
+        self.timings.get(name).map(|(duration, _)| *duration)
+    }
+}
+
 pub struct TableView {
     pub(crate) engine: TableDataEngine,
     pub(crate) focus_handle: FocusHandle,
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
-    pub(crate) column_widths: ColumnWidths,
+    pub(crate) column_widths: Entity<ResizableColumnsState>,
     /// Background task computing the display-to-data mapping after a filter/sort change.
     /// Stored here so that a new change cancels the previous in-flight computation.
     pub(crate) filter_sort_task: Option<Task<()>>,
@@ -54,7 +99,13 @@ impl TableView {
             engine: TableDataEngine::default(),
             focus_handle: cx.focus_handle(),
             table_interaction_state,
-            column_widths: ColumnWidths::new(cx, 1),
+            column_widths: cx.new(|_cx| {
+                ResizableColumnsState::new(
+                    1,
+                    vec![AbsoluteLength::Pixels(px(150.))],
+                    vec![TableResizeBehavior::Resizable],
+                )
+            }),
             filter_sort_task: None,
             settings: TableViewSettings::default(),
             performance_metrics: PerformanceMetrics::default(),
@@ -92,7 +143,7 @@ impl TableView {
         let mut resize_behaviors = vec![TableResizeBehavior::Resizable; cols];
         resize_behaviors[0] = TableResizeBehavior::None;
 
-        self.column_widths.widths.update(cx, |state, _cx| {
+        self.column_widths.update(cx, |state, _cx| {
             if state.cols() != cols {
                 *state = ResizableColumnsState::new(cols, widths, resize_behaviors);
             } else {
@@ -161,21 +212,4 @@ impl Focusable for TableView {
     }
 }
 
-/// Holds the state of column widths for a `TableView`'s underlying `ui::Table`.
-pub(crate) struct ColumnWidths {
-    pub widths: Entity<ResizableColumnsState>,
-}
 
-impl ColumnWidths {
-    pub(crate) fn new(cx: &mut Context<TableView>, cols: usize) -> Self {
-        Self {
-            widths: cx.new(|_cx| {
-                ResizableColumnsState::new(
-                    cols,
-                    vec![AbsoluteLength::Pixels(px(150.)); cols],
-                    vec![ui::TableResizeBehavior::Resizable; cols],
-                )
-            }),
-        }
-    }
-}

@@ -1,16 +1,12 @@
 use editor::{Editor, EditorEvent};
 use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions};
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
 
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Pane, Workspace};
 
 use crate::parser::EditorState;
 
-pub use crate::table_view::TableView;
+pub use crate::table_view::{PerformanceMetrics, TableView};
 
 mod parser;
 mod renderer;
@@ -204,46 +200,6 @@ impl Item for TabularDataPreviewPane {
                     .map(|name| format!("Preview {}", name.to_string_lossy()).into())
             })
             .unwrap_or_else(|| SharedString::from("Tabular Data Preview"))
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct PerformanceMetrics {
-    /// Map of timing metrics with their duration and measurement time.
-    pub timings: HashMap<&'static str, (Duration, Instant)>,
-    /// List of display indices that were rendered in the current frame.
-    pub rendered_indices: Vec<usize>,
-}
-impl PerformanceMetrics {
-    pub fn record<F, R>(&mut self, name: &'static str, mut f: F) -> R
-    where
-        F: FnMut() -> R,
-    {
-        let start_time = Instant::now();
-        let ret = f();
-        let duration = start_time.elapsed();
-        self.timings.insert(name, (duration, Instant::now()));
-        ret
-    }
-
-    /// Displays all metrics sorted A-Z in format: `{name}: {took}ms {ago}s ago`
-    pub fn display(&self) -> String {
-        let mut metrics = self.timings.iter().collect::<Vec<_>>();
-        metrics.sort_by_key(|&(name, _)| *name);
-        metrics
-            .iter()
-            .map(|(name, (duration, time))| {
-                let took = duration.as_secs_f32() * 1000.;
-                let ago = time.elapsed().as_secs();
-                format!("{name}: {took:.3}ms {ago}s ago")
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    /// Get timing for a specific metric
-    pub fn get_timing(&self, name: &str) -> Option<Duration> {
-        self.timings.get(name).map(|(duration, _)| *duration)
     }
 }
 
