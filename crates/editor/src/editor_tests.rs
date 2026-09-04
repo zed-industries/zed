@@ -45337,7 +45337,6 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
     cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
 }
 
-
 #[gpui::test]
 async fn test_in_preview_key_context(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
