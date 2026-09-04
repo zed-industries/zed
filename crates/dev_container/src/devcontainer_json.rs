@@ -4,6 +4,7 @@ use crate::{command_json::CommandRunner, devcontainer_api::DevContainerError};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json_lenient::Value;
 use util::command::Command;
+use util::redact::is_valid_environment_name;
 
 #[derive(Debug, Deserialize, Serialize, Eq, PartialEq, Clone)]
 #[serde(untagged)]
@@ -285,7 +286,28 @@ impl DevContainer {
         ))
     }
 
+    pub(crate) fn validate_environment_names(&self) -> Result<(), DevContainerError> {
+        for (property, environment) in [
+            ("containerEnv", self.container_env.as_ref()),
+            ("remoteEnv", self.remote_env.as_ref()),
+        ] {
+            if environment.is_some_and(|environment| {
+                environment
+                    .keys()
+                    .any(|name| !is_valid_environment_name(name))
+            }) {
+                return Err(DevContainerError::DevContainerValidationFailed(format!(
+                    "{property} contains an invalid environment variable name"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn validate_devcontainer_contents(&self) -> Result<(), DevContainerError> {
+        self.validate_environment_names()?;
+
         match self.build_type() {
             DevContainerBuildType::Image(_) => Ok(()),
             DevContainerBuildType::Dockerfile(_) => {
@@ -1716,6 +1738,37 @@ mod test {
                     .to_string()
             ))
         );
+    }
+
+    #[test]
+    fn should_reject_invalid_environment_names() {
+        for (json, property) in [
+            (
+                r#"{"image":"ubuntu","containerEnv":{"":"secret"}}"#,
+                "containerEnv",
+            ),
+            (
+                r#"{"image":"ubuntu","containerEnv":{"NAME=VALUE":"secret"}}"#,
+                "containerEnv",
+            ),
+            (
+                r#"{"image":"ubuntu","remoteEnv":{"LINE\nBREAK":"secret"}}"#,
+                "remoteEnv",
+            ),
+            (
+                r#"{"image":"ubuntu","remoteEnv":{"NAME\u0000NUL":"secret"}}"#,
+                "remoteEnv",
+            ),
+        ] {
+            let devcontainer = deserialize_devcontainer_json(json).expect("valid JSON");
+
+            assert_eq!(
+                devcontainer.validate_environment_names(),
+                Err(DevContainerError::DevContainerValidationFailed(format!(
+                    "{property} contains an invalid environment variable name"
+                )))
+            );
+        }
     }
 
     #[test]
