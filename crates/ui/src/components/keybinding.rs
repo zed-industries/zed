@@ -116,7 +116,8 @@ impl KeyBinding {
         cx.refresh_windows();
     }
 
-    fn default_visibility(cx: &mut App) -> bool {
+    /// Returns whether keybindings are visible application-wide.
+    pub fn default_visibility(cx: &mut App) -> bool {
         cx.default_global::<KeyBindingVisibility>().0
     }
 
