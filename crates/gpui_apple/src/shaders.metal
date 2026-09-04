@@ -1630,11 +1630,10 @@ vertex LayerCompositeVertexOutput layer_composite_vertex(
       to_device_position(unit_vertex, composite->region, viewport_size);
   float4 clip_distance = distance_from_clip_rect(
       unit_vertex, composite->region, composite->layer.content_mask.bounds);
-  float4 shadow_color = hsla_to_rgba(composite->layer.shadow_color);
   return LayerCompositeVertexOutput{
       device_position,
       prepare_fill_color(composite->layer.mask),
-      float4(shadow_color.rgb * shadow_color.a, shadow_color.a),
+      premultiply(hsla_to_rgba(composite->layer.shadow_color)),
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 

@@ -1667,8 +1667,7 @@ LayerCompositeVertexOutput layer_composite_vertex(uint vertex_id: SV_VertexID) {
     LayerCompositeVertexOutput output;
     output.position = to_device_position(unit_vertex, composite.region);
     output.mask_solid = prepare_fill_color(composite.layer.mask);
-    float4 shadow_color = hsla_to_rgba(composite.layer.shadow_color);
-    output.shadow_color = float4(shadow_color.rgb * shadow_color.a, shadow_color.a);
+    output.shadow_color = premultiply(hsla_to_rgba(composite.layer.shadow_color));
     output.clip_distance = distance_from_clip_rect(unit_vertex, composite.region,
                                                    composite.layer.content_mask);
     return output;

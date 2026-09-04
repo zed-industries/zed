@@ -9,7 +9,8 @@ use crate::{
     ContentMask, CornerShape, Corners, CornersRefinement, CursorStyle, DefiniteLength,
     DevicePixels, Edges, EdgesRefinement, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight,
     GridLocation, Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size,
-    SizeRefinement, Styled, TextRun, Window, black, phi, point, px, quad, rems, size,
+    SizeRefinement, Styled, TextRun, Window, black, blur_reach, phi, point, px, quad, rems,
+    shadow_reach, size,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -408,9 +409,9 @@ impl LayerEffects {
     /// or the shadow's offset plus three sigmas of its blur, whichever
     /// reaches further. Whole pixels.
     pub fn bleed(&self) -> Pixels {
-        let blur = 3.0 * self.blur.0;
+        let blur = blur_reach(self.blur.0);
         let shadow = self.drop_shadow.as_ref().map_or(0.0, |shadow| {
-            3.0 * shadow.blur.0 + shadow.offset.x.0.abs().max(shadow.offset.y.0.abs())
+            shadow_reach(shadow.blur.0, shadow.offset.x.0, shadow.offset.y.0)
         });
         px(blur.max(shadow).ceil())
     }

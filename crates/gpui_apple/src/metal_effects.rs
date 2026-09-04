@@ -199,20 +199,9 @@ impl Effects {
                 MTLPixelFormat::BGRA8Unorm,
             )
         });
-        // The shadow is the content blurred by its own sigma on top of the
-        // content blur. A Gaussian of a Gaussian is a Gaussian, so one blur
-        // of the sharp content with the two sigmas added in quadrature
-        // gives it, and a sharp shadow reads the content as it is.
-        let shadow_sigma = (layer.blur * layer.blur + layer.shadow_blur * layer.shadow_blur).sqrt();
-        let blurred_shadow = (layer.has_shadow != 0 && shadow_sigma > 0.0).then(|| {
-            self.blur(
-                frame,
-                &content,
-                region,
-                shadow_sigma,
-                MTLPixelFormat::BGRA8Unorm,
-            )
-        });
+        let blurred_shadow = layer
+            .shadow_sigma()
+            .map(|sigma| self.blur(frame, &content, region, sigma, MTLPixelFormat::BGRA8Unorm));
         // A mask over a blurred backdrop asks for a blur whose width
         // follows the mask, pixel by pixel. That blur reads the mask,
         // so it runs at full size, not on the shrunk texture the fixed

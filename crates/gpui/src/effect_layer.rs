@@ -112,8 +112,8 @@ pub struct EffectLayer {
     /// Gaussian sigma of the shadow. 0 is a sharp copy.
     pub shadow_blur: f32,
     /// Where the shadow sits against the content, in device pixels. Two
-    /// scalars, because a `float2` here would need 8 byte alignment in
-    /// Metal and the Rust struct has none.
+    /// scalars, because a two-float vector aligns to 8 bytes in every
+    /// shader language and the Rust struct packs at 4.
     pub shadow_offset_x: f32,
     /// See `shadow_offset_x`.
     pub shadow_offset_y: f32,
@@ -131,19 +131,46 @@ pub struct EffectLayer {
     pub pad: u32,
 }
 
+/// How far a Gaussian blur of `sigma` spreads one pixel, in the unit of
+/// `sigma`.
+pub fn blur_reach(sigma: f32) -> f32 {
+    3.0 * sigma
+}
+
+/// How far a shadow reaches past the box it copies: its offset plus the
+/// reach of its blur.
+pub fn shadow_reach(blur: f32, offset_x: f32, offset_y: f32) -> f32 {
+    blur_reach(blur) + offset_x.abs().max(offset_y.abs())
+}
+
 impl EffectLayer {
     /// The pixels of the frame the layer touches: its box grown by the reach
     /// of its blurs, inside its content mask and inside `parent`.
     pub fn region(&self, parent: LayerRegion) -> LayerRegion {
         let shadow = if self.has_shadow != 0 {
-            3.0 * self.shadow_blur + self.shadow_offset_x.abs().max(self.shadow_offset_y.abs())
+            shadow_reach(self.shadow_blur, self.shadow_offset_x, self.shadow_offset_y)
         } else {
             0.0
         };
-        let pad = (3.0 * self.blur.max(self.backdrop_blur)).max(shadow).ceil() as i32;
+        let pad = blur_reach(self.blur.max(self.backdrop_blur))
+            .max(shadow)
+            .ceil() as i32;
         LayerRegion::around(self.bounds, pad)
             .intersect(LayerRegion::around(self.content_mask.bounds, 0))
             .intersect(parent)
+    }
+
+    /// The sigma that blurs the sharp content into the shadow, or `None`
+    /// when the shadow reads the content as it is. The shadow is the
+    /// content blurred by its own sigma on top of the content blur. A
+    /// Gaussian of a Gaussian is a Gaussian, so one blur with the two
+    /// sigmas added in quadrature gives it.
+    pub fn shadow_sigma(&self) -> Option<f32> {
+        if self.has_shadow == 0 {
+            return None;
+        }
+        let sigma = (self.blur * self.blur + self.shadow_blur * self.shadow_blur).sqrt();
+        (sigma > 0.0).then_some(sigma)
     }
 }
 
@@ -242,7 +269,7 @@ impl BlurPlan {
             1
         };
         let sigma = sigma / scale as f32;
-        let radius = (3.0 * sigma).ceil().min(24.0) as i32;
+        let radius = blur_reach(sigma).ceil().min(24.0) as i32;
         Self {
             scale,
             sigma,

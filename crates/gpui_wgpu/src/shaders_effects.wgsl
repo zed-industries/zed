@@ -308,8 +308,7 @@ fn vs_layer_composite(@builtin(vertex_index) vertex_id: u32) -> LayerCompositeVa
     out.position = to_device_position(unit_vertex, b_layer.region);
     out.mask_solid = prepare_fill_color(b_layer.layer.mask);
     out.clip_distances = distance_from_clip_rect(unit_vertex, b_layer.region, b_layer.layer.content_mask);
-    let shadow_color = hsla_to_rgba(b_layer.layer.shadow_color);
-    out.shadow_color = vec4<f32>(shadow_color.rgb * shadow_color.a, shadow_color.a);
+    out.shadow_color = premultiply(hsla_to_rgba(b_layer.layer.shadow_color));
     return out;
 }
 
