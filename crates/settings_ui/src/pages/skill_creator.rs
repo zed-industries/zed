@@ -402,7 +402,7 @@ impl SkillCreatorPage {
 
     fn recompute_description_error(&mut self, cx: &mut Context<Self>) {
         let description = self.current_description(cx);
-        self.description_length = description.len();
+        self.description_length = description.chars().count();
         let error = validate_description(&description).err();
         self.description_error = error;
         self.description_editor
@@ -1178,15 +1178,16 @@ fn derived_description_from_markdown(content: &str) -> Option<String> {
 }
 
 fn truncate_description(description: &str) -> String {
-    if description.len() <= MAX_SKILL_DESCRIPTION_LEN {
+    if description.chars().count() <= MAX_SKILL_DESCRIPTION_LEN {
         return description.to_string();
     }
 
-    let mut end = MAX_SKILL_DESCRIPTION_LEN;
-    while !description.is_char_boundary(end) {
-        end -= 1;
-    }
-    description[..end].trim().to_string()
+    description
+        .chars()
+        .take(MAX_SKILL_DESCRIPTION_LEN)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 /// Serialize the SKILL.md file to disk at `<skills_dir>/<name>/SKILL.md`.
@@ -1539,6 +1540,15 @@ mod tests {
             message.contains("Skill name must contain only lowercase letters"),
             "error should come from shared skill metadata validation, got: {message}"
         );
+    }
+
+    #[test]
+    fn truncate_description_counts_unicode_characters() {
+        let description = "中".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
+        let truncated = truncate_description(&description);
+
+        assert_eq!(truncated.chars().count(), MAX_SKILL_DESCRIPTION_LEN);
+        assert_eq!(truncated, "中".repeat(MAX_SKILL_DESCRIPTION_LEN));
     }
 
     #[gpui::test]
