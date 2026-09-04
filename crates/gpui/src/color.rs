@@ -804,8 +804,8 @@ pub struct Background {
     pub(crate) solid: Hsla,
     pub(crate) gradient_angle_or_pattern_height: f32,
     /// The color stops, in order. Only the first `stop_count` are live.
-    pub(crate) colors: [LinearColorStop; 8],
-    /// How many entries of `colors` are live. At least 2 for a gradient.
+    pub(crate) colors: [LinearColorStop; MAX_GRADIENT_STOPS],
+    /// How many entries of `colors` are live. The shaders clamp it to 1 to 8.
     pub(crate) stop_count: u32,
     /// 0 when `gradient_angle_or_pattern_height` is the angle, else the
     /// corner the line points at: 1 top left, 2 top right, 3 bottom right,
@@ -905,8 +905,7 @@ pub fn linear_gradient(
 /// Stop positions run from 0.0 to 1.0 along the gradient line and must not
 /// decrease. Fix them up before calling, as CSS Images 3 §3.4.3 describes.
 /// A gradient keeps at most [`MAX_GRADIENT_STOPS`] stops and drops the rest.
-/// One stop paints that color. No stops paint nothing: the shaders index
-/// `stop_count - 1`, so a gradient tag must never carry zero stops.
+/// One stop paints that color. No stops paint nothing.
 pub fn linear_gradient_stops(line: GradientLine, stops: &[LinearColorStop]) -> Background {
     if stops.is_empty() {
         return Background::default();
@@ -928,17 +927,11 @@ pub fn linear_gradient_stops(line: GradientLine, stops: &[LinearColorStop]) -> B
     let mut colors = [LinearColorStop::default(); MAX_GRADIENT_STOPS];
     let kept = stops.len().min(MAX_GRADIENT_STOPS);
     colors[..kept].copy_from_slice(&stops[..kept]);
-    let stop_count = if kept == 1 {
-        colors[1] = colors[0];
-        2
-    } else {
-        kept
-    };
     Background {
         tag: BackgroundTag::LinearGradient,
         gradient_angle_or_pattern_height: angle,
         colors,
-        stop_count: stop_count as u32,
+        stop_count: kept as u32,
         corner,
         ..Default::default()
     }
@@ -1140,7 +1133,7 @@ mod tests {
             &[linear_color_stop(rgba(0xff0000ff), 0.0)],
         );
         background.stop_count = 99;
-        assert_eq!(format!("{background:?}").is_empty(), false);
+        assert!(!format!("{background:?}").is_empty());
         assert!(!background.is_transparent());
     }
 

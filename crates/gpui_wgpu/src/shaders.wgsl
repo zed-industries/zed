@@ -506,7 +506,9 @@ fn linear_gradient_color(background: Background, position: vec2<f32>, bounds: Bo
     let t = (dot(position - center, direction) + line_length / 2.0)
         / max(line_length, 1e-6);
 
-    let last = background.stop_count - 1u;
+    // A count outside 1 to 8 can only come from a hand-built struct. Clamp it
+    // so the array read stays in bounds.
+    let last = clamp(background.stop_count, 1u, 8u) - 1u;
     var color: vec4<f32>;
     if (t <= background.colors[0].percentage) {
         color = gradient_stop_color(background, 0u);

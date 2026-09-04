@@ -287,19 +287,6 @@ float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds,
 }
 
 // Implementation of quad signed distance field
-float pick_corner_shape(float2 center_to_point, Corners corner_shapes) {
-    if (center_to_point.x < 0.) {
-        if (center_to_point.y < 0.) {
-            return corner_shapes.top_left;
-        } else {
-            return corner_shapes.bottom_left;
-        }
-    } else {
-        if (center_to_point.y < 0.) {
-            return corner_shapes.top_right;
-        } else {
-            return corner_shapes.bottom_right;
-        }
     }
 }
 
@@ -429,7 +416,9 @@ float4 linear_gradient_color(Background background, float2 position, Bounds boun
     float t = (dot(position - center, direction) + line_length / 2.0)
         / max(line_length, 1e-6);
 
-    uint last = background.stop_count - 1;
+    // A count outside 1 to 8 can only come from a hand-built struct. Clamp it
+    // so the array read stays in bounds.
+    uint last = clamp(background.stop_count, 1u, 8u) - 1;
     float4 color;
     if (t <= background.colors[0].percentage) {
         color = gradient_stop_color(background, 0);
@@ -656,7 +645,7 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
 
     // Radius and shape of the nearest corner
     float corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
-    float corner_shape = pick_corner_shape(center_to_point, quad.corner_shapes);
+    float corner_shape = pick_corner_radius(center_to_point, quad.corner_shapes);
 
     float2 border = float2(
         center_to_point.x < 0.0 ? quad.border_widths.left : quad.border_widths.right,

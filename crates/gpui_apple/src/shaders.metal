@@ -1252,7 +1252,9 @@ float4 linear_gradient_color(Background background, float2 position,
   float t = (dot(position - center, direction) + line_length / 2.0)
     / max(line_length, 1e-6);
 
-  uint last = background.stop_count - 1;
+  // A count outside 1 to 8 can only come from a hand-built struct. Clamp it
+  // so the array read stays in bounds.
+  uint last = clamp(background.stop_count, 1u, 8u) - 1;
   float4 color;
   if (t <= background.colors[0].percentage) {
     color = gradient_stop_color(background, 0);
