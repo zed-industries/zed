@@ -1643,6 +1643,10 @@ pub struct Workspace {
     auto_watch: AutoWatch,
     window_edited: bool,
     last_window_title: Option<String>,
+    /// The `(window_title_format, window_title_separator)` pair last applied to
+    /// the window, used to skip title recomputation when unrelated settings
+    /// change.
+    last_window_title_settings: Option<(Option<String>, Option<String>)>,
     dirty_items: HashMap<EntityId, Subscription>,
     active_call: Option<(GlobalAnyActiveCall, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
@@ -2040,7 +2044,16 @@ impl Workspace {
         let subscriptions = vec![
             cx.observe_window_activation(window, Self::on_window_activation_changed),
             cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
-                this.update_window_title(window, cx);
+                // Settings can only affect the title through these two values,
+                // so skip the recomputation when they are unchanged.
+                let settings = WorkspaceSettings::get_global(cx);
+                let title_settings = (
+                    settings.window_title_format.clone(),
+                    settings.window_title_separator.clone(),
+                );
+                if this.last_window_title_settings.as_ref() != Some(&title_settings) {
+                    this.update_window_title(window, cx);
+                }
             }),
             cx.subscribe_in(
                 &project.read(cx).git_store().clone(),
@@ -2052,7 +2065,9 @@ impl Workspace {
                         RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged,
                         true,
                     ) => {
-                        this.update_window_title(window, cx);
+                        if this.window_title_needs_branch(cx) {
+                            this.update_window_title(window, cx);
+                        }
                     }
                     _ => {}
                 },
@@ -2134,6 +2149,7 @@ impl Workspace {
             dispatching_keystrokes: Default::default(),
             window_edited: false,
             last_window_title: None,
+            last_window_title_settings: None,
             dirty_items: Default::default(),
             active_call,
             database_id: workspace_id,
@@ -6674,10 +6690,23 @@ impl Workspace {
         self.apply_window_title(window, cx);
     }
 
+    /// Whether the active window-title template references `${branch}`, and so
+    /// can be affected by Git repository events.
+    fn window_title_needs_branch(&self, cx: &App) -> bool {
+        WorkspaceSettings::get_global(cx)
+            .window_title_format
+            .as_deref()
+            .is_some_and(|template| WindowTitleNeeds::from_template(template).branch)
+    }
+
     fn apply_window_title(&mut self, window: &mut Window, cx: &mut App) {
         let project = self.project().read(cx);
         let active_project_path = self.active_item(cx).and_then(|item| item.project_path(cx));
         let settings = WorkspaceSettings::get_global(cx);
+        self.last_window_title_settings = Some((
+            settings.window_title_format.clone(),
+            settings.window_title_separator.clone(),
+        ));
         let separator = settings
             .window_title_separator
             .as_deref()
@@ -12791,7 +12820,16 @@ mod tests {
             });
         });
         cx.executor().run_until_parked();
-        assert_eq!(cx.window_title().as_deref(), Some("root1 — src/one.txt"));
+        // `${relativePath}` renders with the project's path style, which uses
+        // `\` separators on Windows.
+        let expected_relative_path = cx.update(|_, cx| {
+            let path_style = project.read(cx).path_style(cx);
+            rel_path("src/one.txt").display(path_style).to_string()
+        });
+        assert_eq!(
+            cx.window_title().as_deref(),
+            Some(format!("root1 — {expected_relative_path}").as_str())
+        );
 
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
@@ -12801,7 +12839,10 @@ mod tests {
             });
         });
         cx.executor().run_until_parked();
-        assert_eq!(cx.window_title().as_deref(), Some("root1 — src/one.txt"));
+        assert_eq!(
+            cx.window_title().as_deref(),
+            Some(format!("root1 — {expected_relative_path}").as_str())
+        );
 
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
@@ -12811,7 +12852,10 @@ mod tests {
             });
         });
         cx.executor().run_until_parked();
-        assert_eq!(cx.window_title().as_deref(), Some("root1 | src/one.txt"));
+        assert_eq!(
+            cx.window_title().as_deref(),
+            Some(format!("root1 | {expected_relative_path}").as_str())
+        );
 
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |settings, cx| {

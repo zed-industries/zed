@@ -2687,6 +2687,9 @@ mod tests {
             .unindent(),
             r#"{
               "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
               "window_title_separator": " - ",
               "window_title_format": "${fileName}${separator}${projectName}${separator}${appName}"
             }
@@ -2706,7 +2709,10 @@ mod tests {
             }"#
             .unindent(),
             r#"{
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),

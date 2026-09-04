@@ -103,8 +103,9 @@ impl VsCodeSettings {
         self.read_string("window.title")
             .map(|template| translate_vscode_window_title_format(&template))
             // If every placeholder is dropped during translation, keep Zed's
-            // default title behavior instead of importing an empty template.
-            .filter(|template| !template.is_empty())
+            // default title behavior instead of importing a template that
+            // renders as nothing but whitespace.
+            .filter(|template| !template.trim().is_empty())
     }
 
     fn read_bool(&self, setting: &str) -> Option<bool> {
@@ -1184,7 +1185,7 @@ fn translate_vscode_window_title_format(template: &str) -> String {
         let variable = &template[content_start..content_end];
         match variable {
             "projectName" | "fileName" | "filePath" | "relativePath" | "fileStem"
-            | "remoteName" | "remoteHost" | "branch" | "separator" => {
+            | "remoteHost" | "branch" | "separator" => {
                 translated.push_str(&template[variable_start..=content_end]);
             }
             // Keep VS Code alias support in the importer so native Zed settings
@@ -1194,6 +1195,11 @@ fn translate_vscode_window_title_format(template: &str) -> String {
             "activeEditorShort" => translated.push_str("${fileName}"),
             "activeEditorMedium" => translated.push_str("${relativePath}"),
             "activeEditorLong" => translated.push_str("${filePath}"),
+            "activeRepositoryBranchName" => translated.push_str("${branch}"),
+            // VS Code's `${remoteName}` is a provider label such as `SSH`, while
+            // Zed's `${remoteName}` resolves to the connection's name or host,
+            // so the token is dropped rather than imported with mismatched
+            // semantics.
             _ => {}
         }
 
@@ -1250,5 +1256,52 @@ mod tests {
         .settings_content();
 
         assert_eq!(settings.workspace.reveal_if_open, Some(true));
+    }
+
+    #[test]
+    fn test_import_window_title_format() {
+        let imported_title = |content: &str| {
+            VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
+                .unwrap()
+                .settings_content()
+                .workspace
+                .window_title_format
+        };
+
+        assert_eq!(imported_title("{}"), None);
+
+        // VS Code variables are translated to their Zed equivalents.
+        assert_eq!(
+            imported_title(
+                r#"{ "window.title": "${rootName} ${activeRepositoryBranchName} ${activeEditorMedium}" }"#,
+            ),
+            Some("${projectName} ${branch} ${relativePath}".to_string())
+        );
+
+        // Zed-native variables pass through unchanged.
+        assert_eq!(
+            imported_title(r#"{ "window.title": "${projectName}${separator}${filePath}" }"#),
+            Some("${projectName}${separator}${filePath}".to_string())
+        );
+
+        // VS Code's `${remoteName}` is a provider label such as `SSH`, which
+        // doesn't match Zed's connection-name semantics, so it is dropped.
+        assert_eq!(
+            imported_title(r#"{ "window.title": "${remoteName}: ${rootName}" }"#),
+            Some(": ${projectName}".to_string())
+        );
+
+        // Templates that translate to nothing but whitespace fall back to
+        // Zed's default title instead of overriding it.
+        assert_eq!(
+            imported_title(r#"{ "window.title": " ${activeFolderShort} " }"#),
+            None
+        );
+
+        // Literal text around unsupported variables is still imported.
+        assert_eq!(
+            imported_title(r#"{ "window.title": "${activeFolderShort} — literal" }"#),
+            Some(" — literal".to_string())
+        );
     }
 }
