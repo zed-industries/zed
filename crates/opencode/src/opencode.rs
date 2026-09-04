@@ -927,16 +927,6 @@ impl Model {
             // Moonshot AI models
             Self::KimiK3 => Some(vec![ReasoningEffort::Max]),
 
-            // MiniMax models
-            Self::MiniMaxM3 => Some(vec![ReasoningEffort::None, ReasoningEffort::Max]),
-
-            // Xiaomi MiMo models
-            Self::MimoV2_5Pro | Self::MimoV2_5 => Some(vec![
-                ReasoningEffort::Low,
-                ReasoningEffort::Medium,
-                ReasoningEffort::High,
-            ]),
-
             // Z AI models
             Self::Glm5_2 => Some(vec![ReasoningEffort::High, ReasoningEffort::Max]),
 
@@ -965,15 +955,7 @@ impl Model {
                 ReasoningEffort::XHigh,
             ]),
 
-            Self::Qwen3_7Max | Self::Qwen3_7Plus => Some(vec![
-                ReasoningEffort::None,
-                ReasoningEffort::High,
-                ReasoningEffort::Max,
-            ]),
-
-            Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
-                Some(vec![ReasoningEffort::High, ReasoningEffort::Max])
-            }
+            Self::Qwen3_5Plus => Some(vec![ReasoningEffort::High, ReasoningEffort::Max]),
 
             // Tencent models
             Self::Hy3 => Some(vec![
