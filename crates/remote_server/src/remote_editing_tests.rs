@@ -2570,6 +2570,11 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
         }),
     )
     .await;
+    fs.insert_symlink(
+        path!("/linked-project"),
+        PathBuf::from(path!("/code/project1")),
+    )
+    .await;
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
 
@@ -2586,6 +2591,16 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
     let path = project
         .update(cx, |project, cx| {
             project.resolve_abs_path(path!("/code/project1/src"), cx)
+        })
+        .await
+        .unwrap();
+
+    assert!(path.is_dir());
+    assert_eq!(path.abs_path().unwrap(), path!("/code/project1/src"));
+
+    let path = project
+        .update(cx, |project, cx| {
+            project.resolve_abs_path(path!("/linked-project/src"), cx)
         })
         .await
         .unwrap();
