@@ -533,6 +533,7 @@ pub enum SoftWrapIndent {
     /// Continuation lines get 2 extra indent levels beyond the original.
     ExtraTwo,
 }
+
 /// The settings for a particular language.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
