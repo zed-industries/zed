@@ -8772,28 +8772,6 @@ impl Element for EditorElement {
                         }
                     }
 
-                    let sticky_buffer_header = if self.should_show_buffer_headers() {
-                        sticky_header_excerpt.map(|sticky_header_excerpt| {
-                            window.with_element_namespace("blocks", |window| {
-                                self.layout_sticky_buffer_header(
-                                    sticky_header_excerpt,
-                                    scroll_position,
-                                    line_height,
-                                    right_margin,
-                                    &snapshot,
-                                    &hitbox,
-                                    &selected_buffer_ids,
-                                    &blocks,
-                                    &latest_selection_anchors,
-                                    window,
-                                    cx,
-                                )
-                            })
-                        })
-                    } else {
-                        None
-                    };
-
                     let scroll_max: gpui::Point<ScrollPixelOffset> = point(
                         ScrollPixelOffset::from(
                             ((scroll_width - editor_width) / em_layout_width).max(0.0),
@@ -9308,6 +9286,31 @@ impl Element for EditorElement {
                     window.with_element_namespace("expand_toggles", |window| {
                         self.prepaint_expand_toggles(&mut expand_toggles, window, cx)
                     });
+
+                    // Laid out after the gutter toggles so its hitbox is registered last and
+                    // wins hit-testing: `block_mouse_except_scroll` on the header only masks
+                    // hitboxes registered before it.
+                    let sticky_buffer_header = if self.should_show_buffer_headers() {
+                        sticky_header_excerpt.map(|sticky_header_excerpt| {
+                            window.with_element_namespace("blocks", |window| {
+                                self.layout_sticky_buffer_header(
+                                    sticky_header_excerpt,
+                                    scroll_position,
+                                    line_height,
+                                    right_margin,
+                                    &snapshot,
+                                    &hitbox,
+                                    &selected_buffer_ids,
+                                    &blocks,
+                                    &latest_selection_anchors,
+                                    window,
+                                    cx,
+                                )
+                            })
+                        })
+                    } else {
+                        None
+                    };
 
                     let wrap_guides = self.layout_wrap_guides(
                         em_advance,
@@ -10835,6 +10838,117 @@ mod tests {
                 NavigationOverlayPaintCommand::Label(label) => label,
             })
             .collect()
+    }
+
+    #[gpui::test]
+    async fn test_sticky_multibuffer_header_blocks_hidden_expand_toggle(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let window = cx.add_window(|window, cx| {
+            let multi_buffer = MultiBuffer::build_multi(
+                [
+                    ("zero\none\ntwo\nthree\n", vec![Point::row_range(0..1)]),
+                    ("four\nfive\nsix\nseven\n", vec![Point::row_range(1..2)]),
+                ],
+                cx,
+            );
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).expect("expected an editor root");
+        let line_height = window
+            .update(cx, |editor, window, cx| {
+                editor
+                    .style(cx)
+                    .text
+                    .line_height_in_pixels(window.rem_size())
+            })
+            .expect("expected the editor window to remain open");
+        let viewport_size = size(px(500.), line_height * 3.5);
+
+        let excerpt_contexts = |cx: &mut VisualTestContext| {
+            editor.update(cx, |editor, cx| {
+                editor
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .excerpts()
+                    .collect::<Vec<_>>()
+            })
+        };
+
+        let draw_window = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+        };
+
+        cx.simulate_resize(viewport_size);
+        cx.run_until_parked();
+        draw_window(cx);
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_scroll_position(point(0., 2.25), window, cx);
+        });
+        draw_window(cx);
+        let covered_toggle_bounds = cx
+            .debug_bounds("ICON-ExpandDown")
+            .expect("expected an expand toggle underneath the sticky buffer header");
+        // Aim at the header's bare padding, clear of its own fold-toggle button. The
+        // header's child buttons are prepainted after the expand toggle and would swallow
+        // the click on their own; this is the only spot where `block_mouse_except_scroll`
+        // is what keeps the click from reaching the toggle underneath.
+        let covered_toggle_position = point(
+            covered_toggle_bounds.left() + px(0.5),
+            covered_toggle_bounds.center().y,
+        );
+        let scroll_position_before_wheel =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: covered_toggle_position,
+            delta: gpui::ScrollDelta::Lines(point(0., 0.5)),
+            ..Default::default()
+        });
+        assert_ne!(
+            editor.update(cx, |editor, cx| editor.scroll_position(cx)),
+            scroll_position_before_wheel,
+            "scrolling over the sticky buffer header should remain functional"
+        );
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_scroll_position(scroll_position_before_wheel, window, cx);
+        });
+        draw_window(cx);
+        let contexts_before_click = excerpt_contexts(cx);
+
+        cx.simulate_mouse_move(covered_toggle_position, None, gpui::Modifiers::none());
+        draw_window(cx);
+        cx.simulate_click(covered_toggle_position, gpui::Modifiers::none());
+
+        assert_eq!(
+            excerpt_contexts(cx),
+            contexts_before_click,
+            "the sticky buffer header should block the covered expand toggle"
+        );
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_scroll_position(point(0., 0.), window, cx);
+        });
+        cx.simulate_resize(size(px(500.), line_height * 8.));
+        draw_window(cx);
+        let visible_toggle_bounds = cx
+            .debug_bounds("ICON-ExpandDown")
+            .expect("expected a visible expand toggle");
+        let visible_toggle_position = visible_toggle_bounds.center();
+
+        cx.simulate_mouse_move(visible_toggle_position, None, gpui::Modifiers::none());
+        draw_window(cx);
+        cx.simulate_click(visible_toggle_position, gpui::Modifiers::none());
+
+        assert_ne!(
+            excerpt_contexts(cx),
+            contexts_before_click,
+            "an uncovered expand toggle should remain interactive"
+        );
     }
 
     const fn placeholder_hitbox() -> Hitbox {
