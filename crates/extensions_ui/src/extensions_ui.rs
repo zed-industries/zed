@@ -21,7 +21,7 @@ use gpui::{
 };
 
 use picker::{Picker, PickerDelegate};
-use project::DirectoryLister;
+use project::{DirectoryLister, lsp_store::LspStoreEvent};
 
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -36,7 +36,7 @@ use ui::{
 use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
 use workspace::{
-    Workspace,
+    Event as WorkspaceEvent, Workspace,
     item::{Item, ItemEvent},
     workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError},
 };
@@ -281,6 +281,28 @@ pub fn init(cx: &mut App) {
                     }
                 }
             });
+
+        let lsp_store = workspace.project().read(cx).lsp_store();
+        cx.subscribe_in(&lsp_store, window, |workspace, _, event, _window, cx| {
+            if let LspStoreEvent::LanguageDetected {
+                buffer,
+                new_language: Some(_),
+            } = event
+            {
+                extension_suggest::suggest_emmet(workspace, buffer.clone(), cx);
+            }
+        })
+        .detach();
+
+        cx.subscribe_in(&cx.entity(), window, |workspace, _, event, _window, cx| {
+            if let WorkspaceEvent::ItemAdded { item } = event
+                && let Some(editor) = item.downcast::<Editor>()
+                && let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton()
+            {
+                extension_suggest::suggest_emmet(workspace, buffer, cx);
+            }
+        })
+        .detach();
 
         cx.subscribe_in(workspace.project(), window, |_, _, event, window, cx| {
             if let project::Event::LanguageNotFound(buffer) = event {
