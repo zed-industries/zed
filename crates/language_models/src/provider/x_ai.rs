@@ -4,15 +4,14 @@ use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
+use language_model::chat_completion::{ChatCompletionEventMapper, ResponseStreamEvent};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, ProviderSettingsView, RateLimiter,
-    env_var,
+    LanguageModelToolChoice, ProviderSettingsView, RateLimiter, env_var,
 };
-use open_ai::ResponseStreamEvent;
 pub use settings::XaiAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
@@ -384,14 +383,6 @@ impl LanguageModel for XAiLanguageModel {
         supported_thinking_effort_levels(&self.model)
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        if self.model.requires_json_schema_subset() {
-            LanguageModelToolSchemaFormat::JsonSchemaSubset
-        } else {
-            LanguageModelToolSchemaFormat::JsonSchema
-        }
-    }
-
     fn telemetry_id(&self) -> String {
         format!("x_ai/{}", self.model.id())
     }
@@ -439,7 +430,7 @@ impl LanguageModel for XAiLanguageModel {
         let completions = self.stream_completion(request, cx);
         let executor = cx.background_executor().clone();
         async move {
-            let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
+            let mapper = ChatCompletionEventMapper::new();
             Ok(language_model::stream_in_background(
                 mapper.map_stream(completions.await?).boxed(),
                 executor,

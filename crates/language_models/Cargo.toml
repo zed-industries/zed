@@ -11,6 +11,9 @@ workspace = true
 [lib]
 path = "src/language_models.rs"
 
+[features]
+test-support = []
+
 [dependencies]
 ai_onboarding.workspace = true
 async-lock.workspace = true
