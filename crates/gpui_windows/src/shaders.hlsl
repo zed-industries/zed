@@ -287,10 +287,6 @@ float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds,
     return float4(device_position, 0.0, 1.0);
 }
 
-// Implementation of quad signed distance field
-    }
-}
-
 // Signed distance from a point in the positive quadrant to the superellipse
 // (x/a)^n + (y/b)^n = 1. Negative inside. n is 1 for a straight line between
 // the axes, 2 for an ellipse, and infinity for the a by b box.
