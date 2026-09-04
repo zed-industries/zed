@@ -2,11 +2,14 @@
 mod syntax_map_tests;
 
 use crate::{
-    Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS, with_parser,
+    CaptureId, Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS,
+    with_parser,
 };
 use collections::HashMap;
 use futures::FutureExt;
 use gpui::SharedString;
+use language_core::highlight_map::HighlightCaptureRef;
+use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering, Reverse},
@@ -73,7 +76,7 @@ impl Drop for SyntaxSnapshot {
 pub struct SyntaxMapCaptures<'a> {
     layers: Vec<SyntaxMapCapturesLayer<'a>>,
     active_layer_count: usize,
-    grammars: Vec<&'a Grammar>,
+    grammars: Vec<&'a Arc<Grammar>>,
 }
 
 #[derive(Default)]
@@ -88,6 +91,73 @@ pub struct SyntaxMapCapture<'a> {
     pub node: Node<'a>,
     pub index: u32,
     pub grammar_index: usize,
+}
+
+pub(crate) struct HighlightCaptureRegion {
+    pub range: Range<usize>,
+    pub stack: SmallVec<[HighlightCaptureRef; 4]>,
+}
+
+pub(crate) fn flattened_highlight_regions(
+    mut captures: SyntaxMapCaptures<'_>,
+    range: Range<usize>,
+) -> Vec<HighlightCaptureRegion> {
+    let capture_refs = iter::from_fn(move || {
+        let capture = captures.next()?;
+        Some((
+            capture.node.byte_range(),
+            HighlightCaptureRef {
+                grammar_index: capture.grammar_index,
+                capture_id: CaptureId(capture.index),
+            },
+        ))
+    });
+    flatten_capture_regions(range, capture_refs)
+}
+
+fn flatten_capture_regions(
+    range: Range<usize>,
+    mut captures: impl Iterator<Item = (Range<usize>, HighlightCaptureRef)>,
+) -> Vec<HighlightCaptureRegion> {
+    let mut result = Vec::new();
+    let mut stack = Vec::<(Range<usize>, HighlightCaptureRef)>::new();
+    let mut offset = range.start;
+    let mut next_capture = captures.next();
+    loop {
+        stack.retain(|(capture_range, _)| capture_range.end > offset);
+        while let Some((capture_range, capture_ref)) = next_capture.take() {
+            if capture_range.start > offset {
+                next_capture = Some((capture_range, capture_ref));
+                break;
+            }
+            if capture_range.end > offset {
+                stack.push((capture_range, capture_ref));
+            }
+            next_capture = captures.next();
+        }
+        let mut next_boundary = range.end;
+        if let Some(min_end) = stack
+            .iter()
+            .map(|(capture_range, _)| capture_range.end)
+            .min()
+        {
+            next_boundary = next_boundary.min(min_end);
+        }
+        if let Some((capture_range, _)) = &next_capture {
+            next_boundary = next_boundary.min(capture_range.start);
+        }
+        if !stack.is_empty() && next_boundary > offset {
+            result.push(HighlightCaptureRegion {
+                range: offset..next_boundary,
+                stack: stack.iter().map(|(_, capture_ref)| *capture_ref).collect(),
+            });
+        }
+        if next_boundary >= range.end {
+            break;
+        }
+        offset = next_boundary;
+    }
+    result
 }
 
 #[derive(Debug)]
@@ -1182,7 +1252,7 @@ impl<'a> SyntaxMapCaptures<'a> {
         result
     }
 
-    pub fn grammars(&self) -> &[&'a Grammar] {
+    pub fn grammars(&self) -> &[&'a Arc<Grammar>] {
         &self.grammars
     }
 
