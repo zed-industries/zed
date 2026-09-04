@@ -241,6 +241,23 @@
   //
   // Default: true
   "zoomed_padding": true,
+  // Window title template.
+  // Available variables are ${projectName}, ${fileName}, ${filePath},
+  // ${relativePath}, ${fileStem}, ${remoteName}, ${remoteHost},
+  // ${appName}, ${branch}, and ${separator}.
+  // ${separator} is omitted when adjacent variables are empty,
+  // but literal text is preserved.
+  // The collaboration indicator, when present, is appended after the
+  // rendered template.
+  // If the template renders to nothing, the default template is used instead.
+  //
+  // Default: "${projectName}${separator}${fileName}"
+  "window_title_format": "${projectName}${separator}${fileName}",
+  // String substituted for ${separator} in the window title format.
+  // Include any surrounding whitespace in the value.
+  //
+  // Default: " — "
+  "window_title_separator": " — ",
   // On Linux, what draws Zed's window decorations (titlebar).
   // This setting has no effect on other platforms:
   // 1. Zed draws its own window decorations.
