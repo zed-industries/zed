@@ -144,6 +144,8 @@ pub enum Model {
     DeepSeekV4Pro,
     #[serde(rename = "deepseek-v4-flash")]
     DeepSeekV4Flash,
+    #[serde(rename = "deepseek-v4-flash-vision-exp")]
+    DeepSeekV4FlashVisionExp,
     #[serde(rename = "minimax-m2.5")]
     MiniMaxM2_5,
     #[serde(rename = "glm-5")]
@@ -253,7 +255,8 @@ impl Model {
             | Self::Qwen3_8Max
             | Self::Qwen3_8Flash
             | Self::Hy3
-            | Self::Hy4Preview => &[OpenCodeSubscription::Go],
+            | Self::Hy4Preview
+            | Self::DeepSeekV4FlashVisionExp => &[OpenCodeSubscription::Go],
 
             // Deprecated on Go (per models.dev); still offered on Zen
             Self::Glm5 | Self::Grok4_5 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus => {
@@ -314,6 +317,7 @@ impl Model {
 
             Self::DeepSeekV4Pro => "deepseek-v4-pro",
             Self::DeepSeekV4Flash => "deepseek-v4-flash",
+            Self::DeepSeekV4FlashVisionExp => "deepseek-v4-flash-vision-exp",
             Self::MiniMaxM2_5 => "minimax-m2.5",
             Self::Glm5 => "glm-5",
             Self::Glm5_1 => "glm-5.1",
@@ -392,6 +396,7 @@ impl Model {
 
             Self::DeepSeekV4Pro => "DeepSeek V4 Pro",
             Self::DeepSeekV4Flash => "DeepSeek V4 Flash",
+            Self::DeepSeekV4FlashVisionExp => "DeepSeek V4 Flash Vision (Exp)",
             Self::MiniMaxM2_5 => "MiniMax M2.5",
             Self::Glm5 => "GLM 5",
             Self::Glm5_1 => "GLM 5.1",
@@ -500,6 +505,7 @@ impl Model {
             | Self::MimoV2_5
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
+            | Self::DeepSeekV4FlashVisionExp
             | Self::Hy3
             | Self::Hy4Preview => ApiProtocol::OpenAiChat,
 
@@ -515,6 +521,7 @@ impl Model {
         match self {
             Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
+            | Self::DeepSeekV4FlashVisionExp
             | Self::KimiK2_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
@@ -612,7 +619,9 @@ impl Model {
             }
             Self::Hy3 => 256_000,
             Self::Hy4Preview => 1_024_000,
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 1_000_000,
+            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash | Self::DeepSeekV4FlashVisionExp => {
+                1_000_000
+            }
 
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -698,7 +707,9 @@ impl Model {
                 Some(65_536)
             }
             Self::Qwen3_8Max | Self::Qwen3_8Flash => Some(131_072),
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
+            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash | Self::DeepSeekV4FlashVisionExp => {
+                Some(384_000)
+            }
             Self::MimoV2_5Pro | Self::MimoV2_5 => Some(128_000),
             Self::Hy3 => Some(128_000),
             Self::Hy4Preview => Some(64_000),
@@ -773,6 +784,7 @@ impl Model {
             | Self::MuseSpark1_2
             | Self::MimoV2_5
             | Self::Qwen3_5Plus
+            | Self::DeepSeekV4FlashVisionExp
             | Self::Qwen3_6Plus
             | Self::Qwen3_7Plus
             | Self::Qwen3_8Max
@@ -917,7 +929,7 @@ impl Model {
                 ReasoningEffort::High,
                 ReasoningEffort::Max,
             ]),
-            Self::DeepSeekV4Flash => Some(vec![
+            Self::DeepSeekV4Flash | Self::DeepSeekV4FlashVisionExp => Some(vec![
                 ReasoningEffort::Low,
                 ReasoningEffort::High,
                 ReasoningEffort::Max,
