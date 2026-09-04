@@ -18587,6 +18587,7 @@ dependencies = [
  "smallvec",
  "telemetry",
  "theme",
+ "theme_settings",
  "ui",
  "util",
  "workspace",
