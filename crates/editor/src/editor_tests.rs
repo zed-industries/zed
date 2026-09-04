@@ -45970,7 +45970,7 @@ async fn test_display_row_for_inline_code_action(cx: &mut gpui::TestAppContext) 
 
     let display_row = snapshot.display_row_for_inline_code_action(buffer_point);
 
-    // With SoftWrapIndent::None, the wrapped line has 0 indent (0 < 14),
+    // With SoftWrapIndent::None, the wrapped line has 0 indent (0 < 4),
     // so it should snap back to the start of the physical line (DisplayRow 0).
     assert_eq!(display_row, Some(DisplayRow(0)));
 
