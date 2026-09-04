@@ -500,6 +500,7 @@ async fn path_exists(connection: &Arc<dyn RemoteConnection>, path: &Path) -> boo
 mod tests {
     use super::*;
     use extension::ExtensionHostProxy;
+    use extension_host::ExtensionStore;
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext};
     use http_client::BlockedHttpClient;
@@ -589,6 +590,218 @@ mod tests {
                 });
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_open_remote_project_registers_client_with_extension_store(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let executor = cx.executor();
+
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+            extension_host::init(
+                Arc::new(ExtensionHostProxy::new()),
+                app_state.fs.clone(),
+                app_state.client.clone(),
+                NodeRuntime::unavailable(),
+                cx,
+            );
+        });
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs
+            .insert_tree(path!("/project"), json!({ "README.md": "# Test Project" }))
+            .await;
+
+        server_cx.update(HeadlessProject::init);
+        let http_client = Arc::new(BlockedHttpClient);
+        let node_runtime = NodeRuntime::unavailable();
+        let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
+        let proxy = Arc::new(ExtensionHostProxy::new());
+
+        let _headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs.clone(),
+                    http_client,
+                    node_runtime,
+                    languages,
+                    extension_host_proxy: proxy,
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+
+        drop(connect_guard);
+
+        let paths = vec![PathBuf::from(path!("/project"))];
+        let open_options = workspace::OpenOptions::default();
+
+        let mut async_cx = cx.to_async();
+        let result = open_remote_project(opts, paths, app_state, open_options, &mut async_cx).await;
+
+        executor.run_until_parked();
+
+        assert!(result.is_ok(), "open_remote_project should succeed");
+
+        let multi_workspace_handle =
+            cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+
+        let remote_client = multi_workspace_handle
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .remote_client()
+                    .expect("remote project should have a remote client")
+            })
+            .unwrap();
+
+        let extension_store = cx.update(|cx| ExtensionStore::global(cx));
+        let registered = extension_store.read_with(cx, |store, _cx| {
+            store.remote_clients.iter().any(|client| {
+                client
+                    .upgrade()
+                    .is_some_and(|client| client == remote_client)
+            })
+        });
+        assert!(
+            registered,
+            "opening a remote project should register its client with the ExtensionStore"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_open_project_with_existing_connection_registers_client(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let executor = cx.executor();
+
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+            extension_host::init(
+                Arc::new(ExtensionHostProxy::new()),
+                app_state.fs.clone(),
+                app_state.client.clone(),
+                NodeRuntime::unavailable(),
+                cx,
+            );
+        });
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        // Set up an initial window with a local project. This stands in for
+        // "the window is already open" -- the state every one of the
+        // previously-broken call sites (Agent Panel project picker, the
+        // remote servers modal, the git worktree picker) assumes.
+        let local_fs = FakeFs::new(cx.executor());
+        local_fs
+            .insert_tree(path!("/local"), json!({ "file.txt": "" }))
+            .await;
+        let local_project = project::Project::test(local_fs, [path!("/local").as_ref()], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(local_project, window, cx));
+
+        // Every one of the previously-broken call sites establishes its own
+        // fresh `RemoteClient` before calling
+        // `open_remote_project_with_existing_connection` -- even the git
+        // worktree picker, which connects to the same physical host, spawns
+        // a brand-new remote-server process/session for it (see
+        // `ConnectionIdentifier::setup()`). Two independent mock
+        // server/HeadlessProject pairs mirror that faithfully.
+        let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs
+            .insert_tree(path!("/project"), json!({ "README.md": "# Test Project" }))
+            .await;
+
+        server_cx.update(HeadlessProject::init);
+        let proxy = Arc::new(ExtensionHostProxy::new());
+        let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
+        let _headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs.clone(),
+                    http_client: Arc::new(BlockedHttpClient),
+                    node_runtime: NodeRuntime::unavailable(),
+                    languages,
+                    extension_host_proxy: proxy,
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+        drop(connect_guard);
+
+        let remote_client = RemoteClient::connect_mock(opts.clone(), cx).await;
+        let project = cx.update(|cx| {
+            project::Project::remote(
+                remote_client.clone(),
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                true,
+                cx,
+            )
+        });
+
+        let mut async_cx = cx.to_async();
+        let (workspace, _items) = workspace::open_remote_project_with_existing_connection(
+            opts,
+            project,
+            vec![PathBuf::from(path!("/project"))],
+            app_state,
+            window_handle,
+            None,
+            None,
+            &mut async_cx,
+        )
+        .await
+        .expect("opening a project on an existing connection should succeed");
+        executor.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.project().read(cx).remote_client(),
+                Some(remote_client.clone()),
+                "the opened workspace should be backed by the client we connected"
+            );
+        });
+
+        let extension_store = cx.update(|cx| ExtensionStore::global(cx));
+        let registered = extension_store.read_with(cx, |store, _cx| {
+            store.remote_clients.iter().any(|client| {
+                client
+                    .upgrade()
+                    .is_some_and(|client| client == remote_client)
+            })
+        });
+        assert!(
+            registered,
+            "open_remote_project_with_existing_connection should register its client with \
+             the ExtensionStore"
+        );
     }
 
     #[gpui::test]
