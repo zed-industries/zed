@@ -50,8 +50,8 @@ struct LayerComposite {
 // offset checks keep the Rust structs in step with the WGSL ones, whose
 // `Bounds` members align to 8 bytes.
 const _: () = assert!(std::mem::size_of::<BlurParams>() == 16);
-const _: () = assert!(std::mem::size_of::<EffectLayer>() % 8 == 0);
-const _: () = assert!(std::mem::size_of::<LayerComposite>() % 8 == 0);
+const _: () = assert!(std::mem::size_of::<EffectLayer>().is_multiple_of(8));
+const _: () = assert!(std::mem::size_of::<LayerComposite>().is_multiple_of(8));
 const _: () = assert!(std::mem::offset_of!(LayerComposite, layer) == 16);
 
 /// Bind group layouts shared by the blur and composite pipelines.
