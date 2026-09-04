@@ -443,16 +443,8 @@ impl Model {
 
     pub fn protocol(&self, subscription: OpenCodeSubscription) -> ApiProtocol {
         match self {
-            // Models offered by OpenCode have the same configuration across subscriptions
-            //  with one outlier: non-free MiniMax models
-            Self::MiniMaxM3 | Self::MiniMaxM2_7 | Self::MiniMaxM2_5 => {
-                if subscription == OpenCodeSubscription::Zen {
-                    ApiProtocol::OpenAiChat
-                } else {
-                    ApiProtocol::Anthropic
-                }
-            }
 
+           // Anthropic protocol
             Self::ClaudeFable5
             | Self::ClaudeFable5_1
             | Self::ClaudeOpus5
@@ -466,6 +458,18 @@ impl Model {
             | Self::ClaudeSonnet4
             | Self::ClaudeHaiku4_5 => ApiProtocol::Anthropic,
 
+            Self::Qwen3_8Flash | Self::Qwen3_5Plus => ApiProtocol::Anthropic,
+
+           // Google protocol
+            Self::Gemini3_1Pro
+            | Self::Gemini3Flash
+            | Self::Gemini3_5FlashLite
+            | Self::Gemini3_5Flash
+            | Self::Gemini3_6Flash
+            | Self::Gemini3_7Flash
+            | Self::Gemini3_8Flash => ApiProtocol::Google,
+
+           // OpenAI responses protocol
             Self::Gpt5_6Sol
             | Self::Gpt5_6Terra
             | Self::Gpt5_6Luna
@@ -487,27 +491,21 @@ impl Model {
             | Self::Gpt5Codex
             | Self::Gpt5Nano => ApiProtocol::OpenAiResponses,
 
-            Self::Gemini3_1Pro
-            | Self::Gemini3Flash
-            | Self::Gemini3_5FlashLite
-            | Self::Gemini3_5Flash
-            | Self::Gemini3_6Flash
-            | Self::Gemini3_7Flash
-            | Self::Gemini3_8Flash => ApiProtocol::Google,
+            Self::Grok4_6
+            | Self::Grok4_5
+            | Self::GrokBuild0_1
+            | Self::MuseSpark1_2
+            | Self::MuseSpark1_2Contributor
+            | Self::MuseSpark1_3Contributor => ApiProtocol::OpenAiResponses,
 
-            Self::Qwen3_8Max | Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus => {
-                ApiProtocol::OpenAiChat
-            }
-
-            Self::Qwen3_8Flash | Self::Qwen3_5Plus => ApiProtocol::Anthropic,
-
+           // OpenAI chat protocol
             Self::Glm5
             | Self::Glm5_1
             | Self::Glm5_2
             | Self::Glm5_3
-            | Self::Glm5_3Flash
-            | Self::LongCat2_0
-            | Self::KimiK2_5
+            | Self::Glm5_3Flash => ApiProtocol::OpenAiChat,
+
+            Self::KimiK2_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
             | Self::KimiK3
@@ -516,16 +514,31 @@ impl Model {
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
             | Self::DeepSeekV4FlashVisionExp
+            | Self::Qwen3_8Max
+            | Self::Qwen3_7Max
+            | Self::Qwen3_7Plus
             | Self::Hy3
-            | Self::Hy4Preview => ApiProtocol::OpenAiChat,
+            | Self::Hy4Preview
+            | Self::LongCat2_0 => ApiProtocol::OpenAiChat,
 
-            Self::Grok4_6
-            | Self::Grok4_5
-            | Self::GrokBuild0_1
-            | Self::MuseSpark1_2
-            | Self::MuseSpark1_2Contributor
-            | Self::MuseSpark1_3Contributor => ApiProtocol::OpenAiResponses,
+            // Models offered by OpenCode have the same configuration
+            // across subscriptions, with some outliers:
+            Self::Qwen3_6Plus => {
+                if subscription == OpenCodeSubscription::Zen {
+                    ApiProtocol::Anthropic
+                } else {
+                    ApiProtocol::OpenAiChat
+                }
+            }
+            Self::MiniMaxM3 | Self::MiniMaxM2_7 | Self::MiniMaxM2_5 => {
+                if subscription == OpenCodeSubscription::Zen {
+                    ApiProtocol::OpenAiChat
+                } else {
+                    ApiProtocol::Anthropic
+                }
+            }
 
+            // Custom
             Self::Custom { protocol, .. } => *protocol,
         }
     }
@@ -846,7 +859,7 @@ impl Model {
 
     pub fn supported_reasoning_effort_levels(
         &self,
-        _subscription: OpenCodeSubscription,
+        subscription: OpenCodeSubscription,
     ) -> Option<Vec<ReasoningEffort>> {
         match self {
             // Anthropic models
@@ -997,6 +1010,14 @@ impl Model {
             ]),
 
             Self::Qwen3_5Plus => Some(vec![ReasoningEffort::High, ReasoningEffort::Max]),
+
+            Self::Qwen3_6Plus => {
+                if subscription == OpenCodeSubscription::Zen {
+                    Some(vec![ReasoningEffort::High, ReasoningEffort::Max])
+                } else {
+                    None
+                }
+            }
 
             // Tencent models
             Self::Hy3 => Some(vec![
