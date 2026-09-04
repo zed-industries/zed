@@ -247,25 +247,6 @@ impl PerformanceMetrics {
     }
 }
 
-/// Holds state of column widths for a table component in the tabular data preview.
-pub(crate) struct ColumnWidths {
-    pub widths: Entity<ResizableColumnsState>,
-}
-
-impl ColumnWidths {
-    pub(crate) fn new(cx: &mut Context<TabularDataPreviewPane>, cols: usize) -> Self {
-        Self {
-            widths: cx.new(|_cx| {
-                ResizableColumnsState::new(
-                    cols,
-                    vec![AbsoluteLength::Pixels(px(150.)); cols],
-                    vec![ui::TableResizeBehavior::Resizable; cols],
-                )
-            }),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
