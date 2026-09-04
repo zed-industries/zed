@@ -4746,6 +4746,198 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_bulk_above_block_lifecycle_between_split_views(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+        let base_text = "
+            bbb
+            ccc
+        "
+        .unindent();
+        let current_text = "
+            aaa
+            bbb
+            ccc
+        "
+        .unindent();
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let rhs_editor = editor.read_with(cx, |editor, _| editor.rhs_editor.clone());
+        let lhs_editor =
+            editor.read_with(cx, |editor, _| editor.lhs.as_ref().unwrap().editor.clone());
+        let lhs_seed_id = lhs_editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            editor.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Near(snapshot.anchor_before(Point::new(1, 0))),
+                    height: Some(1),
+                    style: BlockStyle::Fixed,
+                    render: Arc::new(|_| div().into_any()),
+                    priority: 0,
+                }],
+                None,
+                cx,
+            )[0]
+        });
+        let rhs_block_ids = rhs_editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            editor.insert_above_blocks(
+                [
+                    BlockProperties {
+                        placement: BlockPlacement::Above(snapshot.anchor_before(Point::new(1, 0))),
+                        height: Some(2),
+                        style: BlockStyle::Fixed,
+                        render: Arc::new(|_| div().into_any()),
+                        priority: 1,
+                    },
+                    BlockProperties {
+                        placement: BlockPlacement::Above(snapshot.anchor_before(Point::new(2, 0))),
+                        height: Some(3),
+                        style: BlockStyle::Fixed,
+                        render: Arc::new(|_| div().into_any()),
+                        priority: 0,
+                    },
+                ],
+                None,
+                cx,
+            )
+        });
+        assert_eq!(rhs_block_ids.len(), 2);
+
+        let balancing_block_ids = lhs_editor.read_with(cx, |lhs_editor, cx| {
+            let companion = lhs_editor
+                .display_map
+                .read(cx)
+                .companion()
+                .unwrap()
+                .read(cx);
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id())
+                .borrow();
+            assert_eq!(mapping.len(), 2);
+            rhs_block_ids
+                .iter()
+                .map(|block_id| *mapping.get(block_id).unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert!(!balancing_block_ids.contains(&lhs_seed_id));
+
+        let get_block_height = |editor: &Entity<crate::Editor>,
+                                block_id: crate::CustomBlockId,
+                                cx: &mut VisualTestContext| {
+            editor.update_in(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                snapshot
+                    .block_for_id(crate::BlockId::Custom(block_id))
+                    .map(|block| block.height())
+            })
+        };
+        assert_eq!(
+            get_block_height(&rhs_editor, rhs_block_ids[0], &mut cx),
+            Some(2)
+        );
+        assert_eq!(
+            get_block_height(&lhs_editor, balancing_block_ids[0], &mut cx),
+            Some(2)
+        );
+        assert_eq!(
+            get_block_height(&rhs_editor, rhs_block_ids[1], &mut cx),
+            Some(3)
+        );
+        assert_eq!(
+            get_block_height(&lhs_editor, balancing_block_ids[1], &mut cx),
+            Some(3)
+        );
+
+        rhs_editor.update(cx, |editor, cx| {
+            editor.resize_blocks(
+                HashMap::from_iter([(rhs_block_ids[0], 4), (rhs_block_ids[1], 5)]),
+                None,
+                cx,
+            );
+        });
+        assert_eq!(
+            get_block_height(&lhs_editor, balancing_block_ids[0], &mut cx),
+            Some(4)
+        );
+        assert_eq!(
+            get_block_height(&lhs_editor, balancing_block_ids[1], &mut cx),
+            Some(5)
+        );
+
+        rhs_editor.update(cx, |editor, cx| {
+            editor.remove_blocks(HashSet::from_iter([rhs_block_ids[0]]), None, cx);
+        });
+        assert_eq!(
+            get_block_height(&rhs_editor, rhs_block_ids[0], &mut cx),
+            None
+        );
+        assert_eq!(
+            get_block_height(&lhs_editor, balancing_block_ids[0], &mut cx),
+            None
+        );
+        assert_eq!(
+            get_block_height(&rhs_editor, rhs_block_ids[1], &mut cx),
+            Some(5)
+        );
+        assert_eq!(
+            get_block_height(&lhs_editor, balancing_block_ids[1], &mut cx),
+            Some(5)
+        );
+        lhs_editor.read_with(cx, |lhs_editor, cx| {
+            let companion = lhs_editor
+                .display_map
+                .read(cx)
+                .companion()
+                .unwrap()
+                .read(cx);
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id())
+                .borrow();
+            assert_eq!(mapping.len(), 1);
+            assert_eq!(
+                mapping.get(&rhs_block_ids[1]),
+                Some(&balancing_block_ids[1])
+            );
+        });
+
+        rhs_editor.update(cx, |editor, cx| {
+            editor.remove_blocks(HashSet::from_iter([rhs_block_ids[1]]), None, cx);
+        });
+        assert_eq!(
+            get_block_height(&lhs_editor, balancing_block_ids[1], &mut cx),
+            None
+        );
+        lhs_editor.read_with(cx, |lhs_editor, cx| {
+            let companion = lhs_editor
+                .display_map
+                .read(cx)
+                .companion()
+                .unwrap()
+                .read(cx);
+            assert!(
+                companion
+                    .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id())
+                    .borrow()
+                    .is_empty()
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_custom_block_deletion_and_resplit_sync(cx: &mut gpui::TestAppContext) {
         use rope::Point;
         use unindent::Unindent as _;
