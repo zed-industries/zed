@@ -170,6 +170,7 @@ pub enum Motion {
     Jump {
         anchor: Anchor,
         line: bool,
+        inclusive: bool,
     },
 }
 
@@ -797,7 +798,10 @@ impl Motion {
             | NextWordEnd { .. }
             | PreviousWordEnd { .. }
             | NextSubwordEnd { .. }
-            | PreviousSubwordEnd { .. } => MotionKind::Inclusive,
+            | PreviousSubwordEnd { .. }
+            | Jump {
+                inclusive: true, ..
+            } => MotionKind::Inclusive,
             Left
             | WrappingLeft
             | Right
@@ -1249,7 +1253,7 @@ impl Motion {
             WindowTop => window_top(map, point, text_layout_details, times - 1),
             WindowMiddle => window_middle(map, point, text_layout_details),
             WindowBottom => window_bottom(map, point, text_layout_details, times - 1),
-            Jump { line, anchor } => mark::jump_motion(map, *anchor, *line),
+            Jump { line, anchor, .. } => mark::jump_motion(map, *anchor, *line),
             ZedSearchResult { new_selections, .. } => {
                 // There will be only one selection, as
                 // Search::SelectNextMatch selects a single match.

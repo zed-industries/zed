@@ -40,7 +40,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         if self.active_operator().is_some() {
-            self.operator_stack.clear();
+            self.clear_operator_stack(window, cx);
             self.sync_vim_settings(window, cx);
             return;
         }
