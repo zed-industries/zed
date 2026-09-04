@@ -2272,6 +2272,27 @@ impl CornerShape {
     pub const SCOOP: Self = Self(-1.0);
     /// A square bitten out of the corner.
     pub const NOTCH: Self = Self(f32::NEG_INFINITY);
+
+    /// How far past the corner box the inner edge of the border reaches
+    /// along the straight edges, in border widths.
+    ///
+    /// Chrome moves the inner curve of a convex corner along the normal at
+    /// the curve's ends by the border width instead of shrinking the curve,
+    /// so a bevel keeps its width and reaches 1 / sqrt(2) past the box. A
+    /// concave bite reaches one border width.
+    pub(crate) fn inner_edge_reach(self) -> f32 {
+        if self.0 < 0.0 {
+            return 1.0;
+        }
+        if self.0 >= 1.0 {
+            return 0.0;
+        }
+        let half_corner = 0.5f32.powf(1.0 / self.0.exp2());
+        let control = (half_corner / (std::f32::consts::SQRT_2 - 1.0)
+            - 1.0 / std::f32::consts::SQRT_2)
+            .clamp(0.0, 1.0);
+        (1.0 - control) / (1.0 - control).hypot(control)
+    }
 }
 
 impl Default for CornerShape {

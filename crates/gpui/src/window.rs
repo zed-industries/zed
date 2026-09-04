@@ -4238,10 +4238,8 @@ impl Window {
         let radii = &quad.corner_radii;
         let widths = &quad.border_widths;
         let shapes = &quad.corner_shapes;
-        // A concave corner draws its border along the bite, which reaches one
-        // border width past the corner box.
         let reach = |radius: ScaledPixels, shape: f32, width: ScaledPixels| {
-            if shape < 0.0 { radius + width } else { radius }
+            radius + width * crate::CornerShape(shape).inner_edge_reach()
         };
         let edge_radii = Edges {
             top: reach(radii.top_left, shapes.top_left, widths.top).max(reach(
@@ -7482,7 +7480,7 @@ mod tests {
     }
 
     #[test]
-    fn test_border_interior_stops_at_the_concave_bite_border() {
+    fn test_border_interior_stops_where_the_inner_edge_reaches() {
         let round = Window::largest_border_interior(&border_only_quad(crate::CornerShape::ROUND));
         assert_eq!(round.top(), ScaledPixels(41.));
         assert_eq!(round.left(), ScaledPixels(9.));
@@ -7491,6 +7489,10 @@ mod tests {
         assert_eq!(notch.top(), ScaledPixels(49.));
         assert_eq!(notch.bottom(), ScaledPixels(71.));
         assert_eq!(notch.left(), ScaledPixels(9.));
+
+        let bevel = Window::largest_border_interior(&border_only_quad(crate::CornerShape::BEVEL));
+        assert!((bevel.top().0 - (41. + 8. / std::f32::consts::SQRT_2)).abs() < 1e-3);
+        assert_eq!(bevel.left(), ScaledPixels(9.));
     }
 
     /// Opening a window synchronously draws it and requests an element arena

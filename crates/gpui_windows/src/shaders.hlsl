@@ -312,11 +312,34 @@ float superellipse_sdf(float2 pt, float2 radii, float n) {
     return (rho - 1.0) / max(length(gradient), 1e-6);
 }
 
+// The normal at the end of a convex corner curve with exponent `n`, as
+// (along the straight edge, into the box). Chrome moves the inner edge of the
+// border along this normal by the border width instead of shrinking the
+// curve, so a bevel keeps its width. A round or squarer corner gives (0, 1).
+float2 inner_curve_normal(float n) {
+    float half_corner = pow(0.5, 1.0 / n);
+    float control =
+        clamp(half_corner / (sqrt(2.0) - 1.0) - 1.0 / sqrt(2.0), 0.0, 1.0);
+    return normalize(float2(1.0 - control, control));
+}
+
+// How far past the corner box the inner edge of the border reaches along the
+// straight edges, in border widths.
+float inner_edge_reach(float shape) {
+    if (shape < 0.0) {
+        return 1.0;
+    }
+    if (shape >= 1.0) {
+        return 0.0;
+    }
+    return inner_curve_normal(exp2(shape)).x;
+}
+
 // The outer and inner signed distances for one corner whose shape is not a
 // plain quarter circle. `shape` is the CSS superellipse curvature: the curve
 // is a superellipse with exponent 2^|shape|, centered on the corner circle's
 // center when the shape is convex and on the outer corner when it is
-// concave. The inner edge keeps the same shape at the border's distance.
+// concave.
 float2 shaped_corner_sdf(float2 corner_to_point, float2 corner_center_to_point,
                          float corner_radius, float shape, float2 reduced_border,
                          float2 straight_border_inner_corner_to_point) {
@@ -333,15 +356,18 @@ float2 shaped_corner_sdf(float2 corner_to_point, float2 corner_center_to_point,
         float inner_bite = superellipse_sdf(from_corner, radii + reduced_border, n);
         return float2(max(straight_outer, -bite), min(straight_inner, inner_bite));
     }
-    bool near_corner = corner_center_to_point.x >= 0.0 && corner_center_to_point.y >= 0.0;
-    if (!near_corner) {
-        return float2(straight_outer, straight_inner);
+    float outer = straight_outer;
+    if (corner_center_to_point.x >= 0.0 && corner_center_to_point.y >= 0.0) {
+        outer = superellipse_sdf(corner_center_to_point, radii, n);
     }
-    float outer = superellipse_sdf(corner_center_to_point, radii, n);
-    float2 inner_radii = radii - reduced_border;
+    float2 normal = inner_curve_normal(n);
+    float2 inner_center_to_point = corner_center_to_point + normal.x * reduced_border;
+    float2 inner_radii = radii - (normal.y - normal.x) * reduced_border;
     float inner = straight_inner;
-    if (inner_radii.x > 0.0 && inner_radii.y > 0.0) {
-        inner = -superellipse_sdf(corner_center_to_point, inner_radii, n);
+    if (inner_center_to_point.x >= 0.0 && inner_center_to_point.y >= 0.0 &&
+        inner_radii.x > 0.0 && inner_radii.y > 0.0) {
+        inner = min(straight_inner,
+                    -superellipse_sdf(inner_center_to_point, inner_radii, n));
     }
     return float2(outer, inner);
 }
@@ -668,12 +694,10 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
     // mirrored into bottom right quadrant.
     float2 corner_center_to_point = corner_to_point + corner_radius;
 
-    // Whether the nearest point on the border is rounded. A concave corner
-    // puts its border along the bite, which reaches one border width past the
-    // corner box.
-    float2 corner_reach = corner_shape < 0.0
-        ? corner_center_to_point + reduced_border
-        : corner_center_to_point;
+    // Whether the nearest point on the border is rounded. The inner edge of a
+    // concave or a bevelled corner reaches past the corner box.
+    float2 corner_reach =
+        corner_center_to_point + inner_edge_reach(corner_shape) * border;
     bool is_near_rounded_corner =
         corner_reach.x >= 0.0 &&
         corner_reach.y >= 0.0;
