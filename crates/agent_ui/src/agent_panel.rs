@@ -11539,6 +11539,118 @@ mod tests {
             "Thread A work_dirs should revert to only /project_a after removing /project_b"
         );
     }
+    #[gpui::test]
+    async fn test_multiple_acp_sessions_get_reloaded_on_project_rename(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
+        });
+
+        let connection_a = StubAgentConnection::new()
+            .with_agent_id("agent-a".into())
+            .with_supports_load_session(true);
+        open_thread_with_custom_connection(&panel, connection_a, &mut cx);
+        send_message(&panel, &mut cx);
+        let thread_id_a = active_thread_id(&panel, &cx);
+
+        let connection_b = StubAgentConnection::new()
+            .with_agent_id("agent-b".into())
+            .with_supports_load_session(true);
+        connection_b.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("done".into()),
+        )]);
+        open_thread_with_custom_connection(&panel, connection_b, &mut cx);
+        send_message(&panel, &mut cx);
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.retained_threads.contains_key(&thread_id_a),
+                "Thread A should be backgrounded before the rename"
+            );
+        });
+
+        let active_thread_before = panel
+            .read_with(&cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+        let retained_thread_before = panel
+            .read_with(&cx, |panel, cx| {
+                let bg_view = panel.retained_threads.get(&thread_id_a).unwrap();
+                bg_view
+                    .read(cx)
+                    .root_thread_view()
+                    .unwrap()
+                    .read(cx)
+                    .thread
+                    .clone()
+            })
+            .entity_id();
+
+        fs.rename(
+            Path::new("/project"),
+            Path::new("/project-renamed"),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        let worktree = project.read_with(&cx, |project, cx| {
+            project.visible_worktrees(cx).next().unwrap()
+        });
+        cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        cx.run_until_parked();
+
+        let active_thread_after = panel
+            .read_with(&cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap();
+        assert_ne!(
+            active_thread_after.entity_id(),
+            active_thread_before,
+            "the active thread's ACP session should be reloaded"
+        );
+        assert_eq!(
+            active_thread_after.read_with(&cx, |thread, _| thread.work_dirs().cloned()),
+            Some(PathList::new(&[Path::new("/project-renamed")])),
+            "the active thread's reloaded session should use the renamed root as its cwd"
+        );
+
+        let retained_thread_after = panel.read_with(&cx, |panel, cx| {
+            let bg_view = panel.retained_threads.get(&thread_id_a).unwrap();
+            bg_view
+                .read(cx)
+                .root_thread_view()
+                .unwrap()
+                .read(cx)
+                .thread
+                .clone()
+        });
+        assert_ne!(
+            retained_thread_after.entity_id(),
+            retained_thread_before,
+            "the backgrounded thread's ACP session should also be reloaded"
+        );
+        assert_eq!(
+            retained_thread_after.read_with(&cx, |thread, _| thread.work_dirs().cloned()),
+            Some(PathList::new(&[Path::new("/project-renamed")])),
+            "the backgrounded thread's reloaded session should use the renamed root as its cwd"
+        );
+    }
 
     #[gpui::test]
     async fn test_new_workspace_inherits_global_last_used_agent(cx: &mut TestAppContext) {
