@@ -168,6 +168,8 @@ pub enum Model {
     Grok4_6,
     #[serde(rename = "muse-spark-1.2")]
     MuseSpark1_2,
+    #[serde(rename = "muse-spark-1.2-contributor")]
+    MuseSpark1_2Contributor,
     #[serde(rename = "kimi-k2.5")]
     KimiK2_5,
     #[serde(rename = "kimi-k2.6")]
@@ -256,7 +258,8 @@ impl Model {
             | Self::Qwen3_8Flash
             | Self::Hy3
             | Self::Hy4Preview
-            | Self::DeepSeekV4FlashVisionExp => &[OpenCodeSubscription::Go],
+            | Self::DeepSeekV4FlashVisionExp
+            | Self::MuseSpark1_2Contributor => &[OpenCodeSubscription::Go],
 
             // Deprecated on Go (per models.dev); still offered on Zen
             Self::Glm5 | Self::Grok4_5 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus => {
@@ -329,6 +332,7 @@ impl Model {
             Self::Grok4_5 => "grok-4.5",
             Self::Grok4_6 => "grok-4.6",
             Self::MuseSpark1_2 => "muse-spark-1.2",
+            Self::MuseSpark1_2Contributor => "muse-spark-1.2-contributor",
             Self::KimiK2_5 => "kimi-k2.5",
             Self::KimiK2_6 => "kimi-k2.6",
             Self::KimiK2_7Code => "kimi-k2.7-code",
@@ -408,6 +412,7 @@ impl Model {
             Self::Grok4_5 => "Grok 4.5",
             Self::Grok4_6 => "Grok 4.6",
             Self::MuseSpark1_2 => "Muse Spark 1.2",
+            Self::MuseSpark1_2Contributor => "Muse Spark 1.2 (Contributor)",
             Self::KimiK2_5 => "Kimi K2.5",
             Self::KimiK2_6 => "Kimi K2.6",
             Self::KimiK2_7Code => "Kimi K2.7 Code",
@@ -509,9 +514,11 @@ impl Model {
             | Self::Hy3
             | Self::Hy4Preview => ApiProtocol::OpenAiChat,
 
-            Self::Grok4_6 | Self::Grok4_5 | Self::GrokBuild0_1 | Self::MuseSpark1_2 => {
-                ApiProtocol::OpenAiResponses
-            }
+            Self::Grok4_6
+            | Self::Grok4_5
+            | Self::GrokBuild0_1
+            | Self::MuseSpark1_2
+            | Self::MuseSpark1_2Contributor => ApiProtocol::OpenAiResponses,
 
             Self::Custom { protocol, .. } => *protocol,
         }
@@ -603,7 +610,7 @@ impl Model {
             Self::KimiK3 => 1_048_576,
             Self::GrokBuild0_1 => 256_000,
             Self::Grok4_6 | Self::Grok4_5 => 500_000,
-            Self::MuseSpark1_2 => 1_048_576,
+            Self::MuseSpark1_2 | Self::MuseSpark1_2Contributor => 1_048_576,
             Self::MimoV2_5Pro => 1_048_576,
             Self::MimoV2_5 => 1_000_000,
             Self::Qwen3_5Plus => 262_144,
@@ -702,7 +709,7 @@ impl Model {
             Self::KimiK3 => Some(131_072),
             Self::GrokBuild0_1 => Some(256_000),
             Self::Grok4_6 | Self::Grok4_5 => Some(500_000),
-            Self::MuseSpark1_2 => Some(131_072),
+            Self::MuseSpark1_2 | Self::MuseSpark1_2Contributor => Some(131_072),
             Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
                 Some(65_536)
             }
@@ -782,6 +789,7 @@ impl Model {
             | Self::Grok4_5
             | Self::Grok4_6
             | Self::MuseSpark1_2
+            | Self::MuseSpark1_2Contributor
             | Self::MimoV2_5
             | Self::Qwen3_5Plus
             | Self::DeepSeekV4FlashVisionExp
@@ -991,7 +999,7 @@ impl Model {
             ]),
 
             // Meta AI models
-            Self::MuseSpark1_2 => Some(vec![
+            Self::MuseSpark1_2 | Self::MuseSpark1_2Contributor => Some(vec![
                 ReasoningEffort::Minimal,
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
