@@ -2,7 +2,7 @@ use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
     FontWeight, GridPlacement, GridTemplate, GridTemplateMinSize, Hsla, JustifyContent, Length,
-    SharedString, StrikethroughStyle, StyleRefinement, TextAlign, TextOverflow,
+    Overscroll, SharedString, StrikethroughStyle, StyleRefinement, TextAlign, TextOverflow,
     TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
 };
 pub use gpui_macros::{
@@ -493,6 +493,18 @@ pub trait Styled: Sized {
         Self: Sized,
     {
         self.style().background = Some(fill.into());
+        self
+    }
+
+    /// Sets where a wheel event goes once this element cannot scroll with
+    /// it, per axis. CSS `overscroll-behavior`.
+    fn overscroll_behavior(mut self, x: Overscroll, y: Overscroll) -> Self
+    where
+        Self: Sized,
+    {
+        let point = &mut self.style().overscroll_behavior;
+        point.x = Some(x);
+        point.y = Some(y);
         self
     }
 

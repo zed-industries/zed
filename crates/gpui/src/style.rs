@@ -218,6 +218,10 @@ pub struct Style {
     /// Ideally we would match the web's behavior and not have a need for this, but right now we're adding this opt-in
     /// style property to limit the potential blast radius.
     pub restrict_scroll_to_axis: bool,
+    /// What happens to a wheel event this element could not scroll with, per
+    /// axis. CSS `overscroll-behavior`.
+    #[refineable]
+    pub overscroll_behavior: Point<Overscroll>,
 
     // Position properties
     /// What should the `position` value of this struct use as a base offset?
@@ -779,6 +783,7 @@ impl Default for Style {
             },
             allow_concurrent_scroll: false,
             restrict_scroll_to_axis: false,
+            overscroll_behavior: Point::default(),
             scrollbar_width: AbsoluteLength::default(),
             position: Position::Relative,
             inset: Edges::auto(),
@@ -1220,6 +1225,22 @@ pub enum Overflow {
     /// for a scrollbar. The amount of space reserved is controlled by the `scrollbar_width` property.
     /// Content that overflows this node should *not* contribute to the scroll region of its parent.
     Scroll,
+}
+
+/// Where a wheel event goes once a scroll container reaches its end on an
+/// axis. CSS `overscroll-behavior`.
+///
+/// <https://developer.mozilla.org/en-US/docs/Web/CSS/overscroll-behavior>
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub enum Overscroll {
+    /// Past the end, the nearest scroll container around this one scrolls.
+    #[default]
+    Auto,
+    /// Past the end, nothing scrolls. Listeners still see the event.
+    Contain,
+    /// The same as `Contain`. CSS also drops the bounce effect, which GPUI
+    /// does not draw.
+    None,
 }
 
 /// The positioning strategy for this item.

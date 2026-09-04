@@ -342,6 +342,14 @@ impl TaffyLayoutEngine {
     // snapped independently, but the raw content-box origin can carry a
     // 1dp residual into descendants.
 
+    /// True when the node has `position: absolute`.
+    pub fn position_is_absolute(&self, id: LayoutId) -> bool {
+        self.taffy
+            .style(id.into())
+            .map(|style| style.position == taffy::style::Position::Absolute)
+            .unwrap_or(false)
+    }
+
     pub fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
         if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
             return layout;
