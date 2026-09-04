@@ -226,6 +226,9 @@ pub struct ThemeSettingsContent {
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
     pub markdown_preview_theme: Option<ThemeSelection>,
+    /// The name of a font to use for rendering Mermaid diagrams in the agent
+    /// panel and markdown preview. Falls back to the UI font if unset.
+    pub mermaid_font_family: Option<FontFamilyName>,
     /// The name of the Zed theme to use.
     pub theme: Option<ThemeSelection>,
     /// The name of the icon theme to use.

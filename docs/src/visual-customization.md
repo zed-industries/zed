@@ -86,7 +86,11 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   "markdown_preview_font_family": null,
   // Controls the font family for code blocks in the markdown preview.
   // If not specified, it falls back to the editor font family.
-  "markdown_preview_code_font_family": null
+  "markdown_preview_code_font_family": null,
+
+  // Controls the font family for Mermaid diagrams in the agent panel and
+  // markdown preview. If not specified, it falls back to the UI font family.
+  "mermaid_font_family": "Inter"
 ```
 
 ### Font ligatures
