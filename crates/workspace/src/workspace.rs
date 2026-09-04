@@ -4126,7 +4126,14 @@ impl Workspace {
 
     pub fn active_item_as<I: 'static>(&self, cx: &App) -> Option<Entity<I>> {
         let item = self.active_item(cx)?;
-        item.to_any_view().downcast::<I>().ok()
+        // Prefer an exact downcast so that we return the active item itself when
+        // its concrete type matches, preserving entity identity for callers that
+        // compare `entity_id`s. Fall back to `act_as` so that wrapper items (e.g.
+        // diff views) resolve to the inner view they expose.
+        item.to_any_view()
+            .downcast::<I>()
+            .ok()
+            .or_else(|| item.act_as::<I>(cx))
     }
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
@@ -4846,6 +4853,9 @@ impl Workspace {
         })
     }
 
+    /// Passing `None` for `pane` uses the default destination and honors
+    /// `reveal_if_open`. Passing a pane explicitly limits reuse and opening to
+    /// that pane.
     pub fn open_path(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -4867,7 +4877,8 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-        let pane = pane.unwrap_or_else(|| {
+        let reveal_if_open = pane.is_none() && WorkspaceSettings::get_global(cx).reveal_if_open;
+        let requested_pane = pane.unwrap_or_else(|| {
             self.last_active_center_pane.clone().unwrap_or_else(|| {
                 self.panes
                     .first()
@@ -4876,10 +4887,28 @@ impl Workspace {
             })
         });
 
+        let workspace = self.weak_self.clone();
         let project_path = path.into();
         let task = self.load_path(project_path.clone(), window, cx);
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
+            let pane = if reveal_if_open {
+                workspace
+                    .read_with(cx, |workspace, cx| {
+                        workspace.pane_containing_project_item(
+                            &requested_pane,
+                            project_entry_id,
+                            &project_path,
+                            cx,
+                        )
+                    })
+                    .ok()
+                    .flatten()
+                    .map(|pane| pane.downgrade())
+                    .unwrap_or(requested_pane)
+            } else {
+                requested_pane
+            };
 
             pane.update_in(cx, |pane, window, cx| {
                 pane.open_item(
@@ -4894,6 +4923,43 @@ impl Workspace {
                     build_item,
                 )
             })
+        })
+    }
+
+    fn pane_containing_project_item(
+        &self,
+        requested_pane: &WeakEntity<Pane>,
+        project_entry_id: Option<ProjectEntryId>,
+        project_path: &ProjectPath,
+        cx: &App,
+    ) -> Option<Entity<Pane>> {
+        let pane_contains_project_item = |pane: &Entity<Pane>| {
+            pane.read(cx).items().any(|item| {
+                if item.buffer_kind(cx) != ItemBufferKind::Singleton {
+                    return false;
+                }
+
+                if let Some(project_entry_id) = project_entry_id {
+                    item.project_entry_ids(cx).as_slice() == [project_entry_id]
+                } else {
+                    item.project_path(cx).as_ref() == Some(project_path)
+                }
+            })
+        };
+
+        let requested_pane = requested_pane.upgrade();
+        if let Some(requested_pane) = requested_pane.as_ref()
+            && pane_contains_project_item(requested_pane)
+        {
+            return Some(requested_pane.clone());
+        }
+
+        self.panes.iter().find_map(|pane| {
+            if requested_pane.as_ref() == Some(pane) || !pane_contains_project_item(pane) {
+                None
+            } else {
+                Some(pane.clone())
+            }
         })
     }
 
@@ -5117,9 +5183,12 @@ impl Workspace {
             .is_some()
     }
 
+    /// Passing `None` for `pane` uses the active pane as the default destination
+    /// and honors `reveal_if_open`. Passing a pane explicitly limits reuse and
+    /// opening to that pane.
     pub fn open_project_item<T>(
         &mut self,
-        pane: Entity<Pane>,
+        pane: Option<Entity<Pane>>,
         project_item: Entity<T::Item>,
         activate_pane: bool,
         focus_item: bool,
@@ -5131,9 +5200,32 @@ impl Workspace {
     where
         T: ProjectItem,
     {
+        let reveal_if_open = pane.is_none() && WorkspaceSettings::get_global(cx).reveal_if_open;
+        let requested_pane = pane.unwrap_or_else(|| self.active_pane.clone());
+        let existing_item = self
+            .find_project_item(&requested_pane, &project_item, cx)
+            .map(|item| (requested_pane.clone(), item))
+            .or_else(|| {
+                if reveal_if_open {
+                    self.panes.iter().find_map(|pane| {
+                        if pane == &requested_pane {
+                            None
+                        } else {
+                            self.find_project_item(pane, &project_item, cx)
+                                .map(|item| (pane.clone(), item))
+                        }
+                    })
+                } else {
+                    None
+                }
+            });
+        let pane = existing_item
+            .as_ref()
+            .map(|(pane, _)| pane.clone())
+            .unwrap_or(requested_pane);
         let old_item_id = pane.read(cx).active_item().map(|item| item.item_id());
 
-        if let Some(item) = self.find_project_item(&pane, &project_item, cx) {
+        if let Some((_, item)) = existing_item {
             if !keep_old_preview
                 && let Some(old_id) = old_item_id
                 && old_id != item.item_id()
@@ -17425,6 +17517,7 @@ mod tests {
         // View
         struct TestPngItemView {
             focus_handle: FocusHandle,
+            project_item: Entity<TestPngItem>,
             project_path: ProjectPath,
         }
         // Model
@@ -17464,6 +17557,18 @@ mod tests {
             fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
                 "".into()
             }
+
+            fn for_each_project_item(
+                &self,
+                cx: &App,
+                callback: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
+            ) {
+                callback(self.project_item.entity_id(), self.project_item.read(cx));
+            }
+
+            fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
+                ItemBufferKind::Singleton
+            }
         }
         impl EventEmitter<()> for TestPngItemView {}
         impl Focusable for TestPngItemView {
@@ -17497,6 +17602,7 @@ mod tests {
             {
                 Self {
                     focus_handle: cx.focus_handle(),
+                    project_item: item.clone(),
                     project_path: item.read(cx).project_path.clone(),
                 }
             }
@@ -17686,6 +17792,127 @@ mod tests {
                 })
                 .await;
             assert!(handle.is_err());
+        }
+
+        #[gpui::test]
+        async fn test_reveal_if_open(cx: &mut TestAppContext) {
+            init_test(cx);
+            cx.update(register_project_item::<TestPngItemView>);
+
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                "/root",
+                json!({
+                    "one.png": "",
+                    "two.png": "",
+                }),
+            )
+            .await;
+            let project = Project::test(fs, ["root".as_ref()], cx).await;
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let worktree_id = project.update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            });
+            let left_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+            let one_in_left_pane = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.open_path(
+                        (worktree_id, rel_path("one.png")),
+                        Some(left_pane.downgrade()),
+                        true,
+                        window,
+                        cx,
+                    )
+                })
+                .await
+                .unwrap();
+            let two_in_left_pane = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.open_path(
+                        (worktree_id, rel_path("two.png")),
+                        Some(left_pane.downgrade()),
+                        true,
+                        window,
+                        cx,
+                    )
+                })
+                .await
+                .unwrap();
+
+            let right_pane = workspace.update_in(cx, |workspace, window, cx| {
+                let right_pane =
+                    workspace.split_pane(left_pane.clone(), SplitDirection::Right, window, cx);
+                workspace.set_active_pane(&right_pane, window, cx);
+                right_pane
+            });
+
+            workspace.read_with(cx, |_, cx| {
+                assert!(!WorkspaceSettings::get_global(cx).reveal_if_open);
+            });
+            let one_in_right_pane = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.open_path(
+                        (worktree_id, rel_path("one.png")),
+                        Some(right_pane.downgrade()),
+                        true,
+                        window,
+                        cx,
+                    )
+                })
+                .await
+                .unwrap();
+            assert_ne!(one_in_left_pane.item_id(), one_in_right_pane.item_id());
+
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.reveal_if_open = Some(true);
+                });
+            });
+
+            let revealed_two = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.open_path((worktree_id, rel_path("two.png")), None, true, window, cx)
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(revealed_two.item_id(), two_in_left_pane.item_id());
+            assert_eq!(left_pane.read_with(cx, |pane, _| pane.items_len()), 2);
+            assert_eq!(right_pane.read_with(cx, |pane, _| pane.items_len()), 1);
+            workspace.read_with(cx, |workspace, _| {
+                assert_eq!(workspace.active_pane(), &left_pane);
+            });
+
+            let two_in_right_pane = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.open_path(
+                        (worktree_id, rel_path("two.png")),
+                        Some(right_pane.downgrade()),
+                        true,
+                        window,
+                        cx,
+                    )
+                })
+                .await
+                .unwrap();
+
+            assert_ne!(two_in_right_pane.item_id(), two_in_left_pane.item_id());
+            assert_eq!(right_pane.read_with(cx, |pane, _| pane.items_len()), 2);
+
+            let two_in_split_pane = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.split_path((worktree_id, rel_path("two.png")), window, cx)
+                })
+                .await
+                .unwrap();
+
+            assert_ne!(two_in_split_pane.item_id(), two_in_left_pane.item_id());
+            assert_ne!(two_in_split_pane.item_id(), two_in_right_pane.item_id());
+            workspace.read_with(cx, |workspace, _| {
+                assert_eq!(workspace.panes.len(), 3);
+            });
         }
 
         #[gpui::test]

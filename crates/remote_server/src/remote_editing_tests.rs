@@ -30,21 +30,23 @@ use gpui::{
 };
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
-    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding, Point,
+    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
+    OffsetRangeExt, Point, PointUtf16,
     language_settings::{AllLanguageSettings, ConfiguredLanguageServer, LanguageSettings},
 };
 use lsp::{
     CompletionContext, CompletionResponse, CompletionTriggerKind, DEFAULT_LSP_REQUEST_TIMEOUT,
-    LanguageServerName,
+    LanguageServerId, LanguageServerName,
 };
 use node_runtime::NodeRuntime;
 use project::{
-    ProgressToken, Project, ProjectPath,
+    LanguageServerLogType, ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
     image_store,
+    lsp_store::log_store::{LanguageServerKind, LanguageServerLogKey, LogStore},
     search::{SearchQuery, SearchResult},
 };
-use remote::RemoteClient;
+use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
 use rpc::proto;
 use serde_json::json;
 use settings::{
@@ -57,7 +59,7 @@ use std::{
     str::FromStr,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 use unindent::Unindent as _;
@@ -1109,7 +1111,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     project
         .update(cx, |project, cx| {
-            project.perform_rename(buffer.clone(), 3, "two".to_string(), cx)
+            project.perform_rename(buffer.clone(), 3, "two".to_string(), None, cx)
         })
         .await
         .unwrap();
@@ -1118,6 +1120,182 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     buffer.update(cx, |buffer, _| {
         assert_eq!(buffer.text(), "fn two() -> usize { 1 }")
     })
+}
+
+#[gpui::test]
+async fn test_remote_call_hierarchy(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "src": {
+                    "lib.rs": "fn main() { helper(); }\nfn helper() {}\n"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+
+    fs.insert_tree(
+        path!("/code/project1/.zed"),
+        json!({
+            "settings.json": r#"
+          {
+            "languages": {"Rust":{"language_servers":["rust-analyzer"]}},
+            "lsp": {
+              "rust-analyzer": {
+                "binary": {
+                  "path": "~/.cargo/bin/rust-analyzer"
+                }
+              }
+            }
+          }"#
+        }),
+    )
+    .await;
+
+    cx.update_entity(&project, |project, _| {
+        project.languages().register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            matcher: Arc::new(LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..LanguageMatcher::default()
+            }),
+            ..LanguageConfig::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    call_hierarchy_provider: Some(lsp::CallHierarchyServerCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        )
+    });
+
+    let mut fake_lsp = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName("rust-analyzer".into()),
+            lsp::ServerCapabilities {
+                call_hierarchy_provider: Some(lsp::CallHierarchyServerCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            None,
+        )
+    });
+
+    cx.run_until_parked();
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.languages().add(rust_lang());
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+
+    cx.run_until_parked();
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let fake_lsp = fake_lsp.next().await.unwrap();
+    let test_uri = lsp::Uri::from_file_path(path!("/code/project1/src/lib.rs")).unwrap();
+
+    fake_lsp.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+        let uri = test_uri.clone();
+        move |_, _| {
+            let uri = uri.clone();
+            async move {
+                Ok(Some(vec![lsp::CallHierarchyItem {
+                    name: "main".into(),
+                    kind: lsp::SymbolKind::FUNCTION,
+                    tags: None,
+                    detail: Some("fn main()".into()),
+                    uri,
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 21)),
+                    selection_range: lsp::Range::new(
+                        lsp::Position::new(0, 3),
+                        lsp::Position::new(0, 7),
+                    ),
+                    data: None,
+                }]))
+            }
+        }
+    });
+
+    fake_lsp.set_request_handler::<lsp::request::CallHierarchyOutgoingCalls, _, _>({
+        move |_, _| {
+            let uri = test_uri.clone();
+            async move {
+                Ok(Some(vec![lsp::CallHierarchyOutgoingCall {
+                    to: lsp::CallHierarchyItem {
+                        name: "helper".into(),
+                        kind: lsp::SymbolKind::FUNCTION,
+                        tags: None,
+                        detail: Some("fn helper()".into()),
+                        uri,
+                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 13)),
+                        selection_range: lsp::Range::new(
+                            lsp::Position::new(1, 3),
+                            lsp::Position::new(1, 9),
+                        ),
+                        data: None,
+                    },
+                    from_ranges: Vec::new(),
+                }]))
+            }
+        }
+    });
+
+    let items = project
+        .update(cx, |project, cx| {
+            project.prepare_call_hierarchy(&buffer, PointUtf16::new(0, 3), cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].name, "main");
+    assert_eq!(items[0].buffer, buffer);
+    items[0].buffer.read_with(cx, |item_buffer, _| {
+        assert_eq!(
+            items[0].selection_range.to_point(item_buffer),
+            Point::new(0, 3)..Point::new(0, 7)
+        );
+    });
+
+    let outgoing_calls = project
+        .update(cx, |project, cx| {
+            project.outgoing_calls(items[0].clone(), cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(outgoing_calls.len(), 1);
+    assert_eq!(outgoing_calls[0].to.name, "helper");
+    assert_eq!(outgoing_calls[0].to.buffer, buffer);
+    outgoing_calls[0].to.buffer.read_with(cx, |item_buffer, _| {
+        assert_eq!(
+            outgoing_calls[0].to.selection_range.to_point(item_buffer),
+            Point::new(1, 3)..Point::new(1, 9)
+        );
+    });
 }
 
 #[gpui::test]
@@ -2601,6 +2779,15 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
     });
 
     let client = cx.read(|cx| project.read(cx).remote_client().unwrap());
+    let reconnected = Arc::new(AtomicBool::new(false));
+    let _subscription = cx.update(|cx| {
+        let reconnected = reconnected.clone();
+        cx.subscribe(&client, move |_client, event, _cx| {
+            if matches!(event, RemoteClientEvent::Reconnected) {
+                reconnected.store(true, Ordering::SeqCst);
+            }
+        })
+    });
     client
         .update(cx, |client, cx| client.simulate_disconnect(cx))
         .detach();
@@ -2615,6 +2802,12 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
             .await
             .unwrap(),
         "fn one() -> usize { 100 }"
+    );
+
+    cx.run_until_parked();
+    assert!(
+        reconnected.load(Ordering::SeqCst),
+        "a successful reconnect should emit RemoteClientEvent::Reconnected"
     );
 }
 
@@ -4453,6 +4646,121 @@ async fn test_remote_trash_restore(cx: &mut TestAppContext, server_cx: &mut Test
 
     worktree.update(cx, |worktree, _cx| {
         assert!(worktree.entry_for_path(rel_path("file_a.txt")).is_some());
+    });
+}
+
+#[gpui::test]
+async fn test_remote_project_creation_notifies_new_entity_observers(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let server_fs = Arc::new(FakeFs::new(server_cx.executor()));
+    server_fs
+        .insert_tree(
+            path!("/project"),
+            json!({
+                "src": {
+                    "main.rs": "fn main() {}",
+                },
+                "README.md": "# Test Project",
+            }),
+        )
+        .await;
+
+    let observer_invocations = Arc::new(AtomicUsize::new(0));
+    cx.update(|cx| {
+        let observer_invocations = observer_invocations.clone();
+        cx.observe_new::<Project>(move |project, _window, cx| {
+            let Some(client) = project.remote_client() else {
+                return;
+            };
+            assert_eq!(
+                client.read(cx).connection_state(),
+                ConnectionState::Connected
+            );
+            observer_invocations.fetch_add(1, Ordering::SeqCst);
+        })
+        .detach();
+    });
+
+    let (project, _headless) = init_test(&server_fs, cx, server_cx).await;
+
+    assert_eq!(
+        observer_invocations.load(Ordering::SeqCst),
+        1,
+        "creating a remote project should notify new-entity observers with a connected remote client exactly once"
+    );
+    assert!(project.read_with(cx, |project, _| project.is_remote()));
+}
+
+#[gpui::test]
+async fn test_log_store_keys_remote_events_by_primary_kind_on_supplementary_id_collision(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let server_fs = Arc::new(FakeFs::new(server_cx.executor()));
+    server_fs
+        .insert_tree(path!("/code"), json!({ "project1": { "README.md": "" } }))
+        .await;
+    let (project, _headless) = init_test(&server_fs, cx, server_cx).await;
+
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
+    log_store.update(cx, |log_store, cx| log_store.add_project(&project, cx));
+
+    // A supplementary server (e.g. Copilot) allocates its ID from the local
+    // registry, which may collide numerically with a host-side server ID.
+    let server_id = LanguageServerId(42);
+    let supplementary_server_key = LanguageServerLogKey::new(
+        LanguageServerKind::Supplementary {
+            project: project.downgrade(),
+        },
+        server_id,
+    );
+    log_store.update(cx, |log_store, cx| {
+        log_store.add_language_server(
+            LanguageServerKind::Supplementary {
+                project: project.downgrade(),
+            },
+            server_id,
+            Some(LanguageServerName::new_static("copilot")),
+            None,
+            None,
+            cx,
+        );
+    });
+
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::LanguageServerLog(
+            server_id,
+            LanguageServerLogType::Log(lsp::MessageType::LOG),
+            "host server log".to_string(),
+        ));
+    });
+    cx.run_until_parked();
+
+    let remote_server_key = LanguageServerLogKey::new(
+        LanguageServerKind::Remote {
+            project: project.downgrade(),
+        },
+        server_id,
+    );
+    log_store.read_with(cx, |log_store, _| {
+        assert_eq!(
+            log_store.server_logs(&remote_server_key).map(|logs| {
+                logs.iter()
+                    .map(|log| log.as_ref().to_string())
+                    .collect::<Vec<_>>()
+            }),
+            Some(vec!["host server log".to_string()]),
+            "host server logs should be keyed by the remote server kind"
+        );
+        assert_eq!(
+            log_store
+                .server_logs(&supplementary_server_key)
+                .map(|logs| logs.len()),
+            Some(0),
+            "host server logs should not leak into the supplementary server with the same ID"
+        );
     });
 }
 

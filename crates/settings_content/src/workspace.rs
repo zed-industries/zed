@@ -67,6 +67,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub restore_on_file_reopen: Option<bool>,
+    /// Whether to reveal an already open file in an existing pane instead of opening it in the active pane.
+    ///
+    /// Default: false
+    pub reveal_if_open: Option<bool>,
     /// The size of the workspace split drop targets on the outer edges.
     /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.
     ///
@@ -105,6 +109,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: none
     pub max_tabs: Option<NonZeroUsize>,
+    /// What to show when opening a new window.
+    /// Values: empty_tab, launchpad
+    /// Default: launchpad
+    pub on_new_window: Option<OnNewWindow>,
     /// What to do when the last window is closed
     ///
     /// Default: auto (nothing on macOS, "app quit" otherwise)
@@ -131,9 +139,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
-    /// Whether toggling a panel (e.g. with its keyboard shortcut) also closes
-    /// the panel when it is already focused, instead of just moving focus back
-    /// to the editor.
+    /// Whether invoking a panel's `ToggleFocus` action while the panel is
+    /// already focused closes the panel, instead of just moving focus back
+    /// to the editor. This only applies to a panel's focus-toggle action, not
+    /// to its regular visibility-toggle action.
     ///
     /// Default: false
     pub close_panel_on_toggle: Option<bool>,
@@ -552,6 +561,12 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: non_utf8
     pub active_encoding_button: Option<EncodingDisplayOptions>,
+    /// Whether to show an indicator with a countdown while timed multi-stroke input is pending.
+    /// Hovering the indicator pauses the timeout.
+    /// Its binding preview popover is disabled when the which-key popup is enabled.
+    ///
+    /// Default: true
+    pub pending_keystrokes_indicator: Option<bool>,
 }
 
 #[derive(
@@ -687,6 +702,29 @@ pub struct CenteredLayoutSettings {
     JsonSchema,
     MergeFrom,
     PartialEq,
+    Eq,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OnNewWindow {
+    /// Show an empty untitled buffer when opening a new window
+    EmptyTab,
+    /// Show the launchpad with recent projects when opening a new window
+    #[default]
+    Launchpad,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
     Debug,
     strum::VariantArray,
     strum::VariantNames,
@@ -780,10 +818,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub file_icons: Option<bool>,
-    /// Whether to show folder icons or chevrons for directories in the project panel.
+    /// What to show for directories in the project panel.
     ///
-    /// Default: true
-    pub folder_icons: Option<bool>,
+    /// Default: icon
+    pub folder_indicator: Option<FolderIndicator>,
     /// Whether to show the git status in the project panel.
     ///
     /// Default: true
@@ -903,6 +941,41 @@ pub enum ProjectPanelEntrySpacing {
     Comfortable,
     /// The standard spacing of entries.
     Standard,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FolderIndicator {
+    /// Show a folder icon.
+    #[default]
+    Icon,
+    /// Show a disclosure chevron.
+    Chevron,
+    /// Show a disclosure chevron followed by a folder icon.
+    Both,
+}
+
+impl FolderIndicator {
+    pub fn shows_chevron(self) -> bool {
+        matches!(self, Self::Chevron | Self::Both)
+    }
+
+    pub fn shows_icon(self) -> bool {
+        matches!(self, Self::Icon | Self::Both)
+    }
 }
 
 #[derive(

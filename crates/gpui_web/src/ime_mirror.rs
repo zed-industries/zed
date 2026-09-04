@@ -75,6 +75,21 @@ pub(crate) struct ImeMirror {
     /// between writes, and a mid-gesture barrage desynchronizes their word
     /// model.
     sync_scheduled: Cell<bool>,
+    /// Whether the `selectionchange` import saw an element selection move
+    /// it could not apply (the app selection changed underneath). Sync
+    /// normally defers to a pending import when the element's live
+    /// selection has moved; a rejected import means no import is coming,
+    /// so the next sync must reassert the app's state instead of waiting.
+    selection_import_rejected: Cell<bool>,
+}
+
+/// Whether the device's primary pointer is coarse (a touch screen). The
+/// distinction drives virtual-keyboard policy: touch-first browsers summon
+/// the keyboard for any focused editable element on a user gesture.
+fn primary_pointer_is_coarse() -> bool {
+    web_sys::window()
+        .and_then(|window| window.match_media("(pointer: coarse)").ok().flatten())
+        .is_some_and(|media_query_list| media_query_list.matches())
 }
 
 impl ImeMirror {
@@ -104,6 +119,14 @@ impl ImeMirror {
         body.append_child(&element)
             .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
         element.focus().ok();
+        // The element must stay focused to receive hardware-key and IME
+        // events, but on touch-first devices a focused *editable* element
+        // invites the browser to summon the virtual keyboard on the next
+        // user gesture — including a scroll. Start read-only there; only a
+        // recognized tap on text input lifts it (`sync_virtual_keyboard`).
+        if primary_pointer_is_coarse() {
+            element.set_read_only(true);
+        }
 
         let this = Self {
             element,
@@ -111,6 +134,7 @@ impl ImeMirror {
             selection: Cell::new((0, 0)),
             window_hint: Cell::new(0),
             sync_scheduled: Cell::new(false),
+            selection_import_rejected: Cell::new(false),
         };
         // Until an input handler asks otherwise, the element is an IME
         // conduit, not a form field: browser-side text assistance would
@@ -230,6 +254,13 @@ impl ImeMirror {
         self.selection.set((selection_start, selection_end));
     }
 
+    /// Records that an element selection move could not be imported, so
+    /// the next sync reasserts the app's state rather than deferring to an
+    /// import that is no longer coming.
+    pub(crate) fn reject_selection_import(&self) {
+        self.selection_import_rejected.set(true);
+    }
+
     /// Schedules a coalesced sync of the mirror for the next task.
     ///
     /// Event handlers must not write to the mirror element mid-gesture:
@@ -290,6 +321,23 @@ impl ImeMirror {
                 return;
             }
             let mirror = &window.ime_mirror;
+            // A live element selection that differs from the stored baseline
+            // while the value still matches is an IME-driven selection move
+            // whose `selectionchange` import hasn't dispatched yet (the event
+            // is asynchronous, and this sync may run first). The element owns
+            // the selection until that import runs: writing now would clobber
+            // an in-progress gesture, e.g. Android's slide-on-backspace
+            // growing its selection. The import reconciles the two sides and
+            // schedules a fresh sync when it cannot adopt the move.
+            if !mirror.selection_import_rejected.replace(false)
+                && *mirror.text.borrow() == mirror.element.value()
+            {
+                let live_start = mirror.selection_start().unwrap_or(0);
+                let live_end = mirror.element_selection_end().unwrap_or(live_start);
+                if (live_start, live_end) != mirror.selection.get() {
+                    return;
+                }
+            }
             let selection = window
                 .with_input_handler(|handler| handler.selected_text_range(false))
                 .flatten();
