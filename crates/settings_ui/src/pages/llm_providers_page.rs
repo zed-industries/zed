@@ -324,8 +324,10 @@ fn render_inline_body(
     provider_name: SharedString,
     title: Option<SharedString>,
     description: Option<InlineDescription>,
-    view: AnyView,
+    view: impl IntoElement,
 ) -> AnyElement {
+    let view = view.into_any_element();
+
     if title.is_none() && description.is_none() {
         return v_flex()
             .pt_1()
@@ -346,12 +348,20 @@ fn render_inline_body(
                 .w_full()
                 .min_w_0()
                 .max_w_1_2()
+                .debug_selector(|| "inline-provider-description".into())
                 .when_some(title, |this, title| this.child(Label::new(title)))
                 .when_some(description, |this, description| {
                     this.child(render_inline_description(provider_name, description))
                 }),
         )
-        .child(h_flex().flex_none().child(view))
+        .child(
+            h_flex()
+                .min_w_0()
+                .max_w_1_2()
+                .flex_1()
+                .justify_end()
+                .child(view),
+        )
         .into_any_element()
 }
 
@@ -1313,4 +1323,75 @@ fn parse_u64_field(value: &str, name: &str) -> Result<u64, SharedString> {
     value
         .parse::<u64>()
         .map_err(|_| format!("{name} must be a number").into())
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{TestAppContext, VisualTestContext, size};
+    use language_models::provider::cloud;
+    use settings::SettingsStore;
+
+    use super::*;
+
+    struct YoungAccountProviderRow;
+
+    impl Render for YoungAccountProviderRow {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().p_4().child(
+                div()
+                    .w_full()
+                    .debug_selector(|| "provider-row".into())
+                    .child(render_inline_body(
+                        "Zed".into(),
+                        Some("Subscribed to Business".into()),
+                        Some(InlineDescription::Text(
+                            "You have access to Zed's hosted models through your organization."
+                                .into(),
+                        )),
+                        cloud::test_support::young_account_configuration(),
+                    )),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn young_account_configuration_stays_within_provider_row(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        for width in [500., 600., 800.] {
+            let window = cx.open_window(size(px(width), px(400.)), |_window, _cx| {
+                YoungAccountProviderRow
+            });
+            cx.run_until_parked();
+
+            let mut visual_context = VisualTestContext::from_window(window.into(), cx);
+            let provider_row_bounds = visual_context
+                .debug_bounds("provider-row")
+                .expect("provider row should be rendered");
+            let description_bounds = visual_context
+                .debug_bounds("inline-provider-description")
+                .expect("provider description should be rendered");
+            let configuration_bounds = visual_context
+                .debug_bounds("zed-ai-configuration")
+                .expect("Zed AI configuration should be rendered");
+
+            assert!(
+                configuration_bounds.right() <= provider_row_bounds.right(),
+                "young account configuration extends past the provider row at {width}px"
+            );
+            assert!(
+                configuration_bounds.size.height >= px(80.),
+                "young account warning does not wrap at {width}px"
+            );
+            assert!(
+                description_bounds.size.width >= px(width / 3.),
+                "provider description collapsed at {width}px"
+            );
+        }
+    }
 }
