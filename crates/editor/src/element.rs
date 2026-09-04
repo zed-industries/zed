@@ -1404,11 +1404,6 @@ impl EditorElement {
             ShowScrollbar::Auto => {
                 let editor = self.editor.read(cx);
                 let is_singleton = editor.buffer_kind(cx) == ItemBufferKind::Singleton;
-                let supports_git_diff_markers =
-                    is_singleton || editor.allow_git_diff_scrollbar_markers;
-                // Git
-                (supports_git_diff_markers && scrollbar_settings.git_diff && snapshot.buffer_snapshot().has_diff_hunks())
-                ||
                 // Buffer Search Results
                 (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights(HighlightKey::BufferSearchHighlights))
                 ||
@@ -5945,6 +5940,17 @@ impl EditorElement {
                         }
                     }
                 })
+            } else if axis == ScrollbarAxis::Vertical {
+                self.refresh_slow_scrollbar_markers(layout, scrollbar_layout, window, cx);
+
+                let markers = self.editor.read(cx).scrollbar_marker_state.markers.clone();
+                window.paint_layer(hitbox.bounds, |window| {
+                    for marker in markers.iter() {
+                        let mut marker = marker.clone();
+                        marker.bounds.origin += hitbox.origin;
+                        window.paint_quad(marker);
+                    }
+                });
             }
         }
 
@@ -10894,15 +10900,17 @@ mod tests {
     use super::*;
     use crate::{
         Editor, FoldPlaceholder, HighlightKey, Inlay, MultiBuffer, NavigationOverlayKey,
-        NavigationOverlayLabel, NavigationTargetOverlay, SelectionEffects,
+        NavigationOverlayLabel, NavigationTargetOverlay, ScrollbarMarkerState, SelectionEffects,
         display_map::{BlockPlacement, BlockProperties, DisplayMap},
         editor_tests::{init_test, update_test_language_settings},
+        test::editor_test_context::EditorTestContext,
     };
     use gpui::{TestAppContext, VisualTestContext, font};
     use language::{Buffer, SelectionGoal, language_settings, tree_sitter_python};
     use log::info;
     use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
+    use ui::scrollbars::ScrollbarAutoHide;
     use util::test::sample_text;
 
     enum PrimaryNavigationOverlay {}
@@ -11178,6 +11186,69 @@ mod tests {
                 "Soft wrapped editor should have no horizontal scrolling!"
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_auto_hidden_scrollbar_paints_git_markers(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.update(|_, cx| {
+            cx.set_global(ScrollbarAutoHide(true));
+            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let scrollbar = settings.editor.scrollbar.get_or_insert_default();
+                    scrollbar.show = Some(settings::ShowScrollbar::Auto);
+                    scrollbar.git_diff = Some(true);
+                });
+            });
+        });
+
+        let long_line_suffix = "x".repeat(200);
+        let mut base_text = String::with_capacity(100 * (long_line_suffix.len() + 10));
+        for row in 0..100 {
+            write!(&mut base_text, "line {row} {long_line_suffix}\n").unwrap();
+        }
+        let modified_text = base_text.replace("line 50 ", "modified line 50 ");
+        cx.set_state(&format!("ˇ{modified_text}"));
+        cx.set_head_text(&base_text);
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            assert!(
+                editor
+                    .snapshot(window, cx)
+                    .buffer_snapshot()
+                    .has_diff_hunks()
+            );
+            editor.scroll_manager.show_scrollbars(window, cx);
+        });
+        cx.background_executor.advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert!(!cx.editor(|editor, _, _| editor.scroll_manager.scrollbars_visible()));
+
+        let style = cx.update_editor(|editor, _, cx| editor.style(cx).clone());
+        let editor = cx.editor.clone();
+        cx.update_editor(|editor, _, _| {
+            editor.scrollbar_marker_state = ScrollbarMarkerState::default();
+        });
+        cx.draw(Default::default(), size(px(400.), px(200.)), |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+        cx.run_until_parked();
+
+        assert!(!cx.editor(|editor, _, _| editor.scroll_manager.scrollbars_visible()));
+        assert!(!cx.editor(|editor, _, _| editor.last_horizontal_scrollbar_visible()));
+        assert!(
+            cx.editor(|editor, _, _| !editor.scrollbar_marker_state.markers.is_empty()),
+            "a hidden scrollbar should still refresh its Git markers"
+        );
+
+        // The first draw populates the marker cache asynchronously; this draw exercises painting it.
+        cx.draw(Default::default(), size(px(400.), px(200.)), |_, _| {
+            EditorElement::new(&editor, style)
+        });
+        assert!(!cx.editor(|editor, _, _| editor.scroll_manager.scrollbars_visible()));
     }
 
     #[gpui::test]
