@@ -113,6 +113,10 @@ pub struct EffectLayer {
     pub backdrop_matrix: [f32; 20],
     /// A fill over the box whose alpha keeps or drops each pixel.
     pub mask: Background,
+    /// WGSL rounds a struct that holds a `vec2<f32>` up to 8 bytes. This pad
+    /// keeps the Rust size at that multiple, so the field after a layer in a
+    /// storage buffer lands at the same offset on both sides.
+    pub pad: u32,
 }
 
 impl EffectLayer {

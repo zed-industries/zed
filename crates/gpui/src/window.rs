@@ -4206,6 +4206,7 @@ impl Window {
             color_matrix: effects.color_matrix.0,
             backdrop_matrix: effects.backdrop_matrix.0,
             mask: effects.mask.unwrap_or_default(),
+            pad: 0,
         };
         self.next_frame.scene.push_effect_layer(layer);
         // The layer applies the opacity once to its whole picture, so the
