@@ -3198,7 +3198,7 @@ impl SettingsWindow {
             .w(SIDEBAR_WIDTH)
             .h_full()
             .p_2p5()
-            .when(cfg!(target_os = "macos"), |this| this.pt_10())
+            .when(cfg!(target_os = "macos"), |this| this.pt_12())
             .flex_none()
             .border_r_1()
             .border_color(cx.theme().colors().border)
