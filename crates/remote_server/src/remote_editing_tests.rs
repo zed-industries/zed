@@ -3739,8 +3739,8 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     assert_eq!(&remote_branches, &branches_set);
 
     cx.update(|cx| {
-        repository.update(cx, |repository, _cx| {
-            repository.change_branch(new_branch.to_string())
+        repository.update(cx, |repository, cx| {
+            repository.change_branch(new_branch.to_string(), cx)
         })
     })
     .await
@@ -3779,8 +3779,8 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     .unwrap();
 
     cx.update(|cx| {
-        repository.update(cx, |repo, _cx| {
-            repo.change_branch("totally-new-branch".to_string())
+        repository.update(cx, |repo, cx| {
+            repo.change_branch("totally-new-branch".to_string(), cx)
         })
     })
     .await

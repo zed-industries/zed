@@ -17142,6 +17142,56 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_change_branch_refreshes_repository_without_fs_events(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "file.txt": "text",
+        }),
+    )
+    .await;
+    fs.insert_branches(path!("/root/.git").as_ref(), &["main", "feature"]);
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+    let branch_name = |repository: &Repository, _cx: &App| {
+        repository
+            .snapshot()
+            .branch
+            .as_ref()
+            .map(|branch| branch.name().to_string())
+    };
+    assert_eq!(
+        repository.read_with(cx, branch_name),
+        Some("main".to_string())
+    );
+
+    fs.pause_events();
+    repository
+        .update(cx, |repository, cx| {
+            repository.change_branch("feature".to_string(), cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        repository.read_with(cx, branch_name),
+        Some("feature".to_string())
+    );
+    fs.unpause_events_and_flush();
+}
+
+#[gpui::test]
 async fn test_git_repository_status_removes_directory_descendants(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
