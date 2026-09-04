@@ -18,6 +18,8 @@ nucleo.workspace = true
 gpui.workspace = true
 gpui_util.workspace = true
 path.workspace = true
+unicode-normalization = "0.1"
+unicode-segmentation.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
