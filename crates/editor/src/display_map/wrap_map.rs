@@ -277,8 +277,8 @@ impl WrapMap {
     }
 
     #[ztracing::instrument(skip_all)]
-    fn indent_adjustment(&self) -> gpui::IndentAdjustment {
-        indent_adjustment_for(self.soft_wrap_indent, self.snapshot.tab_snapshot.tab_size)
+    fn indent_adjustment(&self, tab_size: std::num::NonZeroU32) -> gpui::IndentAdjustment {
+        indent_adjustment_for(self.soft_wrap_indent, tab_size)
     }
 
     #[ztracing::instrument(skip_all)]
@@ -305,17 +305,17 @@ impl WrapMap {
 
             if total_rows < WRAP_YIELD_ROW_INTERVAL {
                 let edits = gpui::block_on(new_snapshot.update(
-                    tab_snapshot,
+                    tab_snapshot.clone(),
                     &tab_edits,
                     wrap_width,
-                    self.indent_adjustment(),
+                    self.indent_adjustment(tab_snapshot.tab_size),
                     &mut line_wrapper,
                     &mut fragment_builder,
                 ));
                 self.snapshot = new_snapshot;
                 self.edits_since_sync = self.edits_since_sync.compose(&edits);
             } else {
-                let indent_adjustment = self.indent_adjustment();
+                let indent_adjustment = self.indent_adjustment(tab_snapshot.tab_size);
                 let task = cx.background_spawn(async move {
                     let edits = new_snapshot
                         .update(
@@ -412,11 +412,12 @@ impl WrapMap {
             if update_passes + total_new_rows < WRAP_YIELD_ROW_INTERVAL {
                 let mut wrap_edits = Patch::default();
                 for (tab_snapshot, tab_edits) in pending_edits {
+                    let indent_adjustment = self.indent_adjustment(tab_snapshot.tab_size);
                     let edits = gpui::block_on(snapshot.update(
                         tab_snapshot,
                         &tab_edits,
                         wrap_width,
-                        self.indent_adjustment(),
+                        indent_adjustment,
                         &mut line_wrapper,
                         &mut fragment_builder,
                     ));
@@ -425,10 +426,12 @@ impl WrapMap {
                 self.snapshot = snapshot;
                 self.edits_since_sync = self.edits_since_sync.compose(&wrap_edits);
             } else {
-                let indent_adjustment = self.indent_adjustment();
+                let soft_wrap_indent = self.soft_wrap_indent;
                 let update_task = cx.background_spawn(async move {
                     let mut edits = Patch::default();
                     for (tab_snapshot, tab_edits) in pending_edits {
+                        let indent_adjustment =
+                            indent_adjustment_for(soft_wrap_indent, tab_snapshot.tab_size);
                         let wrap_edits = snapshot
                             .update(
                                 tab_snapshot,
@@ -1582,6 +1585,50 @@ mod tests {
             wrap_snapshot.text(),
             "fn main() {\n    let x = \n            1;\n    let y = \n            2;\n}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_soft_wrap_indent_updates_on_tab_size_change(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let text = "    let x = 1;\n";
+        let text_system = cx.read(|cx| cx.text_system().clone());
+        let tab_size = 4.try_into().unwrap();
+        let font = test_font();
+        let _font_id = text_system.resolve_font(&font);
+        let font_size = px(14.0);
+
+        let soft_wrapping = Some(font_size * 8.0);
+
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
+        let tabs_snapshot = tab_map.set_max_expansion_column(32);
+        let (wrap_map, _) = cx.update(|cx| {
+            WrapMap::new(
+                tabs_snapshot.clone(),
+                font.clone(),
+                font_size,
+                soft_wrapping,
+                cx,
+            )
+        });
+
+        wrap_map.update(cx, |map, cx| {
+            map.set_soft_wrap_indent(language::language_settings::SoftWrapIndent::ExtraOne, cx)
+        });
+        let wrap_snapshot = wrap_map.update(cx, |map, _cx| map.snapshot.clone());
+        assert_eq!(wrap_snapshot.text(), "    let x = \n        1;\n");
+
+        // Change tab_size to 2
+        let (tabs_snapshot, tab_edits) =
+            tab_map.sync(fold_snapshot, Vec::new(), 2.try_into().unwrap());
+        let (wrap_snapshot, _) =
+            wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
+        assert_eq!(wrap_snapshot.text(), "    let x = \n      1;\n");
     }
 
     #[gpui::test]
