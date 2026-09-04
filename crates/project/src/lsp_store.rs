@@ -147,7 +147,7 @@ use util::{
     paths::{PathStyle, SanitizedPath, UrlExt},
     post_inc,
     redact::redact_command,
-    rel_path::RelPath,
+    rel_path::{RelPath, RelPathBuf},
     union_json_value_into,
 };
 
@@ -4527,6 +4527,7 @@ pub struct BufferLspData {
 struct LspKey {
     request_type: TypeId,
     server_queried: Option<LanguageServerId>,
+    sender_id: proto::PeerId,
 }
 
 impl BufferLspData {
@@ -10272,15 +10273,6 @@ impl LspStore {
             let abs_path = abs_path
                 .to_file_path_ext(path_style)
                 .map_err(|()| anyhow!("can't convert URI to path"))?;
-
-            let fs = lsp_store.update(cx, |lsp_store, _cx| {
-                lsp_store.as_local().map(|local| local.fs.clone())
-            })?;
-            let abs_path = if let Some(fs) = fs {
-                fs.canonicalize(&abs_path).await.unwrap_or(abs_path)
-            } else {
-                abs_path
-            };
             let p = abs_path.clone();
             let yarn_worktree = lsp_store
                 .update(cx, move |lsp_store, cx| match lsp_store.as_local() {
@@ -10301,11 +10293,16 @@ impl LspStore {
                 } else {
                     (Arc::<Path>::from(abs_path.as_path()), None)
                 };
-            let worktree = lsp_store.update(cx, |lsp_store, cx| {
-                lsp_store.worktree_store.update(cx, |worktree_store, cx| {
-                    worktree_store.find_worktree(&worktree_root_target, cx)
-                })
-            })?;
+            let worktree = if known_relative_path.is_some() {
+                lsp_store.read_with(cx, |lsp_store, cx| {
+                    lsp_store
+                        .worktree_store
+                        .read(cx)
+                        .find_worktree(&worktree_root_target, cx)
+                })?
+            } else {
+                find_worktree_for_lsp_path(&lsp_store, &abs_path, cx).await?
+            };
             let (worktree, relative_path, source_ws) = if let Some(result) = worktree {
                 let relative_path = known_relative_path.unwrap_or_else(|| result.1.clone());
                 (result.0, relative_path, None)
@@ -10844,6 +10841,7 @@ impl LspStore {
                 Self::deduplicate_range_based_lsp_requests::<InlayHints>(
                     &lsp_store,
                     server_id,
+                    sender_id,
                     lsp_request_id,
                     &inlay_hints,
                     query_start..query_end,
@@ -10925,6 +10923,7 @@ impl LspStore {
                     let key = LspKey {
                         request_type: TypeId::of::<GetDocumentDiagnostics>(),
                         server_queried: server_id,
+                        sender_id,
                     };
                     if <GetDocumentDiagnostics as LspCommand>::ProtoRequest::stop_previous_requests(
                     ) {
@@ -14411,6 +14410,7 @@ impl LspStore {
     async fn deduplicate_range_based_lsp_requests<T>(
         lsp_store: &Entity<Self>,
         server_id: Option<LanguageServerId>,
+        sender_id: proto::PeerId,
         lsp_request_id: LspRequestId,
         proto_request: &T::ProtoRequest,
         range: Range<Anchor>,
@@ -14440,6 +14440,7 @@ impl LspStore {
                     let key = LspKey {
                         request_type: TypeId::of::<T>(),
                         server_queried: server_id,
+                        sender_id,
                     };
                     let previous_request = lsp_data
                         .chunk_lsp_requests
@@ -14485,6 +14486,7 @@ impl LspStore {
         let key = LspKey {
             request_type: TypeId::of::<T>(),
             server_queried: for_server_id,
+            sender_id,
         };
         lsp_store.update(cx, |lsp_store, cx| {
             let request_task = match for_server_id {
@@ -14544,6 +14546,7 @@ impl LspStore {
                                     .collect::<HashMap<_, _>>();
                                 match client.send_lsp_response::<T::ProtoRequest>(
                                     project_id,
+                                    sender_id,
                                     lsp_request_id,
                                     response,
                                 ) {
@@ -14583,6 +14586,7 @@ impl LspStore {
         let key = LspKey {
             request_type: TypeId::of::<T>(),
             server_queried: server_id,
+            sender_id,
         };
         if T::ProtoRequest::stop_previous_requests() {
             if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&key) {
@@ -14613,6 +14617,7 @@ impl LspStore {
                             .collect::<HashMap<_, _>>();
                         if let Err(e) = client.send_lsp_response::<T::ProtoRequest>(
                             project_id,
+                            sender_id,
                             lsp_request_id,
                             response,
                         ) {
@@ -14946,6 +14951,101 @@ fn lsp_ranges_conflict(a: &lsp::Range, b: &lsp::Range) -> bool {
 
 fn lsp_ranges_overlap(a: &lsp::Range, b: &lsp::Range) -> bool {
     a.start < b.end && b.start < a.end
+}
+
+async fn find_worktree_for_lsp_path(
+    lsp_store: &WeakEntity<LspStore>,
+    abs_path: &Path,
+    cx: &mut AsyncApp,
+) -> Result<Option<(Entity<Worktree>, Arc<RelPath>)>> {
+    let (fs, worktree) = lsp_store.read_with(cx, |lsp_store, cx| {
+        (
+            lsp_store.as_local().map(|local| local.fs.clone()),
+            lsp_store
+                .worktree_store
+                .read(cx)
+                .find_worktree(abs_path, cx),
+        )
+    })?;
+    match worktree {
+        Some((worktree, relative_path)) => {
+            let relative_path =
+                normalize_lsp_relative_path(&worktree, abs_path, relative_path, cx).await?;
+            Ok(Some((worktree, relative_path)))
+        }
+        None => {
+            let Some(fs) = fs else {
+                return Ok(None);
+            };
+            let Ok(canonical_path) = fs.canonicalize(abs_path).await else {
+                return Ok(None);
+            };
+            lsp_store.read_with(cx, |lsp_store, cx| {
+                lsp_store
+                    .worktree_store
+                    .read(cx)
+                    .find_worktree(&canonical_path, cx)
+            })
+        }
+    }
+}
+
+async fn normalize_lsp_relative_path(
+    worktree: &Entity<Worktree>,
+    abs_path: &Path,
+    relative_path: Arc<RelPath>,
+    cx: &mut AsyncApp,
+) -> Result<Arc<RelPath>> {
+    let Some((fs, snapshot, worktree_root)) = worktree.read_with(cx, |worktree, _| {
+        let local_worktree = worktree.as_local()?;
+        if local_worktree.fs_is_case_sensitive() {
+            return None;
+        }
+        Some((
+            local_worktree.fs().clone(),
+            worktree.snapshot(),
+            worktree.abs_path(),
+        ))
+    }) else {
+        return Ok(relative_path);
+    };
+    if snapshot.entry_for_path(&relative_path).is_some() {
+        return Ok(relative_path);
+    }
+
+    let mut normalized_path = RelPathBuf::new();
+    let mut components = relative_path.components();
+    while let Some(component) = components.next() {
+        let mut exact_path = normalized_path.clone();
+        exact_path.push_component(component)?;
+        if snapshot.entry_for_path(&exact_path).is_some() {
+            normalized_path = exact_path;
+            continue;
+        }
+        let case_insensitive_match = snapshot
+            .child_entries(&normalized_path)
+            .find(|entry| {
+                entry
+                    .path
+                    .file_name()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(component))
+            })
+            .map(|entry| entry.path.to_rel_path_buf());
+        let Some(matched_path) = case_insensitive_match else {
+            if let Ok(canonical_path) = fs.canonicalize(abs_path).await
+                && let Ok(canonical_root) = fs.canonicalize(&worktree_root).await
+                && let Ok(canonical_relative_path) = canonical_path.strip_prefix(&canonical_root)
+                && let Ok(canonical_relative_path) =
+                    RelPath::new(canonical_relative_path, PathStyle::local())
+            {
+                return Ok(canonical_relative_path.into_arc());
+            }
+            exact_path.push(components.rest());
+            return Ok(Arc::from(exact_path));
+        };
+        normalized_path = matched_path;
+    }
+    Ok(Arc::from(normalized_path))
 }
 
 fn subscribe_to_binary_statuses(

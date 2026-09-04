@@ -446,7 +446,8 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use language_model_core::{
-        LanguageModelCompletionError, OPEN_AI_PROVIDER_NAME, ProviderErrorCategory,
+        LanguageModelCompletionError, LanguageModelProviderName, OPEN_AI_PROVIDER_NAME,
+        ProviderErrorCategory,
     };
 
     use super::{Model, ReasoningEffort, RequestError, StatusCode};
@@ -548,6 +549,65 @@ mod tests {
                 ..
             } if code == "credit_balance_exhausted"
                 && message == "You have no credits remaining."
+        ));
+    }
+
+    #[test]
+    fn http_usage_limit_type_is_payment_required() {
+        let error = LanguageModelCompletionError::from(RequestError::HttpResponseError {
+            provider: OPEN_AI_PROVIDER_NAME.to_string(),
+            status_code: StatusCode::TOO_MANY_REQUESTS,
+            body: serde_json::json!({
+                "error": {
+                    "type": "usage_limit_reached",
+                    "message": "The usage limit has been reached",
+                    "plan_type": "plus"
+                }
+            })
+            .to_string(),
+            headers: Box::default(),
+        });
+
+        assert!(!error.is_transient());
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                status: Some(StatusCode::TOO_MANY_REQUESTS),
+                code: Some(code),
+                message,
+                category: ProviderErrorCategory::PaymentRequired,
+                ..
+            } if code == "usage_limit_reached"
+                && message == "The usage limit has been reached"
+        ));
+    }
+
+    #[test]
+    fn http_unknown_error_type_is_preserved_for_compatible_provider() {
+        let error = LanguageModelCompletionError::from(RequestError::HttpResponseError {
+            provider: "Compatible Provider".to_string(),
+            status_code: StatusCode::BAD_REQUEST,
+            body: serde_json::json!({
+                "error": {
+                    "type": "provider_specific_error",
+                    "message": "Provider-specific rejection"
+                }
+            })
+            .to_string(),
+            headers: Box::default(),
+        });
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                code: Some(code),
+                message,
+                category: ProviderErrorCategory::InvalidRequest,
+                ..
+            } if provider == LanguageModelProviderName::from("Compatible Provider".to_string())
+                && code == "provider_specific_error"
+                && message == "Provider-specific rejection"
         ));
     }
 
@@ -1034,24 +1094,46 @@ pub async fn stream_completion(
         &request,
     )
     .await?;
+    let provider_name =
+        language_model_core::LanguageModelProviderName::from(provider_name.to_string());
     Ok(events
-        .filter_map(|event| async move {
-            let value = match event {
-                Ok(ChatCompletionStreamEvent::Data(value)) => value,
-                Ok(ChatCompletionStreamEvent::Done) => return None,
-                Err(error) => return Some(Err(anyhow!(error))),
-            };
-            match serde_json::from_str::<ResponseStreamResult>(value.get()) {
-                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                Ok(ResponseStreamResult::Err { error }) => Some(Err(anyhow!(error.message))),
-                Err(error) => {
-                    log::error!(
-                        "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
-                        Response: `{}`",
-                        error,
-                        value,
-                    );
-                    Some(Err(anyhow!(error)))
+        .filter_map(move |event| {
+            let provider_name = provider_name.clone();
+            async move {
+                let value = match event {
+                    Ok(ChatCompletionStreamEvent::Data(value)) => value,
+                    Ok(ChatCompletionStreamEvent::Done) => return None,
+                    Err(error) => return Some(Err(anyhow!(error))),
+                };
+                match serde_json::from_str::<ResponseStreamResult>(value.get()) {
+                    Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                    Ok(ResponseStreamResult::Err { error }) => {
+                        let category = completion::response_error_category(
+                            error.code.as_deref(),
+                            error.error_type.as_deref(),
+                            None,
+                            &error.message,
+                        );
+                        Some(Err(anyhow!(
+                            language_model_core::LanguageModelCompletionError::from_provider_response(
+                                provider_name,
+                                None,
+                                error.code.or(error.error_type),
+                                error.message,
+                                None,
+                                category,
+                            )
+                        )))
+                    }
+                    Err(error) => {
+                        log::error!(
+                            "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
+                            Response: `{}`",
+                            error,
+                            value,
+                        );
+                        Some(Err(anyhow!(error)))
+                    }
                 }
             }
         })
@@ -1195,13 +1277,14 @@ impl From<RequestError> for language_model_core::LanguageModelCompletionError {
                     let error = error_response.error;
                     let category = completion::response_error_category(
                         error.code.as_deref(),
+                        error.error_type.as_deref(),
                         Some(status_code),
                         &error.message,
                     );
                     Self::from_provider_response(
                         provider.into(),
                         Some(status_code),
-                        error.code,
+                        error.code.or(error.error_type),
                         error.message,
                         retry_after,
                         category,
