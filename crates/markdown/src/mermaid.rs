@@ -709,7 +709,10 @@ pub(crate) fn render_mermaid_diagram(
                     })
                     .into_any_element()
             } else {
-                // No fallback — show the code so the user has something to look at
+                // No fallback — show the code so the user has something to look
+                // at. The overlay controls are deliberately omitted so they
+                // don't cover the "Rendering..." indicator; they appear once
+                // the first raster is ready.
                 container
                     .child(render_mermaid_code_view(&parsed.contents.contents))
                     .child(
@@ -726,15 +729,6 @@ pub(crate) fn render_mermaid_diagram(
                                 ),
                         ),
                     )
-                    .when(show_interactive, |container| {
-                        container.child(render_mermaid_overlay_controls(
-                            source_offset,
-                            code.to_string(),
-                            None,
-                            markdown,
-                            on_zoom,
-                        ))
-                    })
                     .into_any_element()
             }
         }
