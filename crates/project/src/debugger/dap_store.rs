@@ -97,6 +97,10 @@ pub struct DapStore {
     breakpoint_store: Entity<BreakpointStore>,
     worktree_store: Entity<WorktreeStore>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
+    /// Terminated sessions kept alive (instead of being dropped) so the agent
+    /// API can still list and snapshot them as `terminated` after the debuggee
+    /// exits. Bounded; excluded from the UI-facing `sessions()` iterator.
+    retained_terminated: Vec<(SessionId, Entity<Session>)>,
     next_session_id: u32,
     adapter_options: BTreeMap<DebugAdapterName, Arc<PersistedAdapterOptions>>,
 }
@@ -236,6 +240,7 @@ impl DapStore {
             breakpoint_store,
             worktree_store,
             sessions: Default::default(),
+            retained_terminated: Vec::new(),
             adapter_options: Default::default(),
         }
     }
@@ -493,7 +498,8 @@ impl DapStore {
         cx.subscribe(&session, {
             move |this: &mut DapStore, _, event: &SessionStateEvent, cx| match event {
                 SessionStateEvent::Shutdown => {
-                    this.shutdown_session(session_id, cx).detach_and_log_err(cx);
+                    this.retire_terminated_session(session_id, cx)
+                        .detach_and_log_err(cx);
                 }
                 SessionStateEvent::Restart | SessionStateEvent::SpawnChildSession { .. } => {}
                 SessionStateEvent::Running => {
@@ -546,7 +552,12 @@ impl DapStore {
     ) -> Option<Entity<session::Session>> {
         let session_id = session_id.borrow();
 
-        self.sessions.get(session_id).cloned()
+        self.sessions.get(session_id).cloned().or_else(|| {
+            self.retained_terminated
+                .iter()
+                .find(|(id, _)| id == session_id)
+                .map(|(_, session)| session.clone())
+        })
     }
     pub fn sessions(&self) -> impl Iterator<Item = &Entity<Session>> {
         self.sessions.values()
@@ -728,10 +739,38 @@ impl DapStore {
         for session_id in self.sessions.keys().cloned().collect::<Vec<_>>() {
             tasks.push(self.shutdown_session(session_id, cx));
         }
+        self.retained_terminated.clear();
 
         cx.background_executor().spawn(async move {
             futures::future::join_all(tasks).await;
         })
+    }
+
+    /// Handles the `Shutdown` event for a session whose debuggee exited (or
+    /// whose adapter died). Instead of dropping the session entity, keep it in
+    /// a small bounded list so the agent API can still report it as
+    /// `terminated` — sessions that exit quickly must not silently vanish from
+    /// `list_sessions`/`snapshot`.
+    ///
+    /// An explicit `stop_session` removes the session from `self.sessions`
+    /// first; the `Shutdown` event it triggers then arrives here as a no-op.
+    fn retire_terminated_session(
+        &mut self,
+        session_id: SessionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(session) = self.sessions.remove(&session_id) else {
+            return Task::ready(Ok(()));
+        };
+
+        const MAX_RETAINED_TERMINATED: usize = 4;
+        if self.retained_terminated.len() >= MAX_RETAINED_TERMINATED {
+            self.retained_terminated.remove(0);
+        }
+        self.retained_terminated.push((session_id, session));
+        cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
+        cx.notify();
+        Task::ready(Ok(()))
     }
 
     pub fn shutdown_session(
@@ -739,7 +778,15 @@ impl DapStore {
         session_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some(session) = self.sessions.remove(&session_id) else {
+        let retained_index = self
+            .retained_terminated
+            .iter()
+            .position(|(id, _)| *id == session_id);
+        let session = self
+            .sessions
+            .remove(&session_id)
+            .or_else(|| retained_index.map(|index| self.retained_terminated.swap_remove(index).1));
+        let Some(session) = session else {
             // Shutdown is idempotent: a `terminated`/`exited` event and an
             // explicit stop can race and both attempt to remove the session.
             return Task::ready(Ok(()));

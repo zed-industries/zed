@@ -190,6 +190,10 @@ pub enum AgentDebuggerStepKind {
 pub struct AgentDebuggerControlResult {
     pub status: AgentDebuggerWaitStatus,
     pub stopped_thread_id: Option<ThreadId>,
+    /// Human-readable observations about the control outcome, surfaced in the
+    /// tool response (e.g. "stopped at a breakpoint before reaching the
+    /// run-to-line target").
+    pub notes: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -287,13 +291,14 @@ impl AgentDebuggerApi {
         &self,
         session_id: SessionId,
         limits: AgentDebuggerSnapshotLimits,
+        preferred_thread_id: Option<ThreadId>,
         cx: &mut App,
     ) -> Task<Result<AgentDebuggerSnapshot>> {
         let dap_store = self.dap_store.clone();
         let breakpoint_store = self.breakpoint_store.clone();
         cx.spawn(async move |cx| {
             let session = session_by_id(&dap_store, session_id, cx)?;
-            snapshot_session(session, breakpoint_store, limits, cx).await
+            snapshot_session(session, breakpoint_store, limits, preferred_thread_id, cx).await
         })
     }
 
@@ -306,7 +311,9 @@ impl AgentDebuggerApi {
         cx: &mut App,
     ) -> Task<Result<AgentDebuggerSnapshot>> {
         let breakpoint_store = self.breakpoint_store.clone();
-        cx.spawn(async move |cx| snapshot_session(session, breakpoint_store, limits, cx).await)
+        cx.spawn(async move |cx| {
+            snapshot_session(session, breakpoint_store, limits, None, cx).await
+        })
     }
 
     pub fn continue_thread(
@@ -323,6 +330,7 @@ impl AgentDebuggerApi {
                 return Ok(AgentDebuggerControlResult {
                     status: AgentDebuggerWaitStatus::Stopped,
                     stopped_thread_id: Some(thread_id),
+                    notes: Vec::new(),
                 });
             }
             let stop_wait = subscribe_to_stop(session.clone(), cx)?;
@@ -357,33 +365,48 @@ impl AgentDebuggerApi {
                 return Ok(AgentDebuggerControlResult {
                     status: AgentDebuggerWaitStatus::Stopped,
                     stopped_thread_id: Some(thread_id),
+                    notes: Vec::new(),
                 });
             }
 
-            let stop_wait = subscribe_to_stop(session.clone(), cx)?;
-            session
-                .update(cx, |session, cx| session.agent_pause_thread(thread_id, cx))
-                .await?;
-            let result = wait_for_stop_or_timeout(stop_wait, timeout, cx).await?;
-            if result.status == AgentDebuggerWaitStatus::Stopped
-                && !wait_for_stack_trace(&session, result.stopped_thread_id, cx).await
-            {
-                // Some adapters acknowledge pause without halting (Delve);
-                // retry once before reporting the broken halt.
+            // Some adapters acknowledge a pause without actually halting
+            // (Debugpy needs a second pause to process the interrupt; Delve
+            // can report a stale stop). Retry a bounded number of times, and
+            // only treat a stop as real once a stack trace succeeds.
+            let mut last_result = None;
+            for _attempt in 0..3 {
                 let stop_wait = subscribe_to_stop(session.clone(), cx)?;
                 session
                     .update(cx, |session, cx| session.agent_pause_thread(thread_id, cx))
                     .await?;
-                let retried = wait_for_stop_or_timeout(stop_wait, timeout, cx).await?;
-                if retried.status == AgentDebuggerWaitStatus::Stopped
-                    && !wait_for_stack_trace(&session, retried.stopped_thread_id, cx).await
-                {
-                    anyhow::bail!(
-                        "Pause was acknowledged but the debuggee did not halt: stack traces still fail while the debuggee is running (adapter quirk)"
-                    );
+                let result = wait_for_stop_or_timeout(stop_wait, timeout, cx).await?;
+                match result.status {
+                    AgentDebuggerWaitStatus::Stopped => {
+                        if wait_for_stack_trace(&session, result.stopped_thread_id, cx).await {
+                            return Ok(result);
+                        }
+                        last_result = Some(result);
+                    }
+                    AgentDebuggerWaitStatus::TimedOut => {
+                        last_result = Some(result);
+                    }
+                    AgentDebuggerWaitStatus::SessionEnded => return Ok(result),
                 }
             }
-            Ok(result)
+
+            if last_result
+                .as_ref()
+                .is_some_and(|result| result.status == AgentDebuggerWaitStatus::Stopped)
+            {
+                anyhow::bail!(
+                    "Pause was acknowledged but the debuggee did not halt: stack traces still fail while the debuggee is running (adapter quirk)"
+                );
+            }
+            Ok(last_result.unwrap_or(AgentDebuggerControlResult {
+                status: AgentDebuggerWaitStatus::TimedOut,
+                stopped_thread_id: None,
+                notes: Vec::new(),
+            }))
         })
     }
 
@@ -402,6 +425,7 @@ impl AgentDebuggerApi {
                 return Ok(AgentDebuggerControlResult {
                     status: AgentDebuggerWaitStatus::Stopped,
                     stopped_thread_id: Some(thread_id),
+                    notes: Vec::new(),
                 });
             }
             let stop_wait = subscribe_to_stop(session.clone(), cx)?;
@@ -439,12 +463,13 @@ impl AgentDebuggerApi {
                 return Ok(AgentDebuggerControlResult {
                     status: AgentDebuggerWaitStatus::Stopped,
                     stopped_thread_id: Some(thread_id),
+                    notes: Vec::new(),
                 });
             }
             let stop_wait = subscribe_to_stop(session.clone(), cx)?;
             let breakpoint = SourceBreakpoint {
                 row,
-                path: Arc::<Path>::from(path),
+                path: Arc::<Path>::from(path.clone()),
                 message: None,
                 condition: None,
                 hit_condition: None,
@@ -455,7 +480,30 @@ impl AgentDebuggerApi {
                     session.agent_run_to_position(breakpoint, thread_id, cx)
                 })
                 .await?;
-            wait_for_stop_or_timeout(stop_wait, timeout, cx).await
+            let mut result = wait_for_stop_or_timeout(stop_wait, timeout, cx).await?;
+            if result.status == AgentDebuggerWaitStatus::Stopped
+                && let Some(stopped_thread_id) = result.stopped_thread_id
+                && let Ok(frames) = session
+                    .update(cx, |session, _| {
+                        session.agent_fetch_stack_frames(stopped_thread_id, 1)
+                    })
+                    .await
+                && let Some(top_frame) = frames.first()
+            {
+                // A breakpoint set earlier can fire before the run-to-line
+                // target; tell the agent where execution actually stopped.
+                if top_frame.line != u64::from(line) {
+                    result.notes.push(format!(
+                        "Stopped at line {} ({}) before reaching the run-to-line target line {line} — a breakpoint may have fired first",
+                        top_frame.line, top_frame.name
+                    ));
+                }
+            } else if result.status == AgentDebuggerWaitStatus::TimedOut {
+                result
+                    .notes
+                    .push(format!("Timed out before reaching line {line}"));
+            }
+            Ok(result)
         })
     }
 
@@ -562,6 +610,7 @@ async fn snapshot_session(
     session: Entity<Session>,
     breakpoint_store: Entity<BreakpointStore>,
     limits: AgentDebuggerSnapshotLimits,
+    preferred_thread_id: Option<ThreadId>,
     cx: &mut AsyncApp,
 ) -> Result<AgentDebuggerSnapshot> {
     let mut notes = Vec::new();
@@ -603,6 +652,7 @@ async fn snapshot_session(
     let dap_threads = session
         .update(cx, |session, _| session.agent_fetch_threads())
         .await?;
+    let adapter = session.read_with(cx, |session, _| session.adapter().to_string());
     let mut remaining_frames = limits.max_frames;
     let mut frames_truncated = false;
     let mut threads = Vec::new();
@@ -611,13 +661,51 @@ async fn snapshot_session(
         notes.push("Stack frames omitted because max_frames is 0".to_string());
     }
 
-    for dap_thread in dap_threads {
-        let thread_id = ThreadId(dap_thread.id);
-        let status = session.read_with(cx, |session, _| session.thread_status(thread_id));
-        let mut frames = Vec::new();
+    // Collect the stopped threads, prioritizing the thread that reported the
+    // stop. Adapters list worker threads before the main thread, and a single
+    // global frame budget consumed in adapter order would let workers starve
+    // the thread the model actually cares about.
+    let mut stopped_threads = dap_threads
+        .iter()
+        .filter(|dap_thread| {
+            session.read_with(cx, |session, _| {
+                session.thread_status(ThreadId(dap_thread.id))
+            }) == ThreadStatus::Stopped
+        })
+        .collect::<Vec<_>>();
+    if let Some(preferred_thread_id) = preferred_thread_id
+        && let Some(index) = stopped_threads
+            .iter()
+            .position(|dap_thread| ThreadId(dap_thread.id) == preferred_thread_id)
+    {
+        let preferred = stopped_threads.remove(index);
+        stopped_threads.insert(0, preferred);
+    }
 
-        if status == ThreadStatus::Stopped && remaining_frames > 0 {
-            let requested_frames = remaining_frames.saturating_add(1);
+    let mut skipped_thread_names = Vec::new();
+    for (index, dap_thread) in stopped_threads.iter().enumerate() {
+        let thread_id = ThreadId(dap_thread.id);
+
+        // Delve synthesizes a "Dummy" thread for the paused program; it has
+        // no stack and only adds noise to the snapshot.
+        if adapter == "Delve" && dap_thread.name == "Dummy" {
+            notes.push("Delve synthetic `Dummy` thread omitted from the snapshot".to_string());
+            continue;
+        }
+
+        let mut frames = Vec::new();
+        if remaining_frames == 0 {
+            skipped_thread_names.push(dap_thread.name.clone());
+        } else {
+            // Reserve at least one frame for each stopped thread that hasn't
+            // been processed yet, so earlier threads can't exhaust the budget
+            // before later ones get any frames.
+            let remaining_stopped = stopped_threads.len() - index;
+            let reserved_for_rest = remaining_stopped
+                .saturating_sub(1)
+                .min(remaining_frames.saturating_sub(1));
+            let available = remaining_frames - reserved_for_rest;
+            let requested_frames = available.saturating_add(1);
             let fetched_frames = session
                 .update(cx, |session, _| {
                     session.agent_fetch_stack_frames(thread_id, requested_frames)
@@ -635,26 +723,27 @@ async fn snapshot_session(
                     .collect::<Vec<_>>(),
                 Err(error) => {
                     notes.push(format!(
-                        "Stack frames for thread `{}` ({:?}) omitted: {error}",
-                        dap_thread.name, thread_id
+                        "Stack frames for thread `{}` ({thread_id:?}) omitted: {error}",
+                        dap_thread.name
                     ));
                     Vec::new()
                 }
             };
 
-            if fetched_frames.len() > remaining_frames {
+            if fetched_frames.len() > available {
                 frames_truncated = true;
-                fetched_frames.truncate(remaining_frames);
+                fetched_frames.truncate(available);
             }
 
             remaining_frames = remaining_frames.saturating_sub(fetched_frames.len());
 
-            for frame in fetched_frames {
+            for (frame_index, frame) in fetched_frames.into_iter().enumerate() {
                 frames.push(
                     stack_frame_snapshot(
                         &session,
                         &breakpoint_store,
                         frame,
+                        frame_index,
                         &limits,
                         &mut notes,
                         cx,
@@ -666,9 +755,29 @@ async fn snapshot_session(
 
         threads.push(AgentDebuggerThread {
             thread_id,
-            name: dap_thread.name,
-            status: AgentDebuggerThreadStatus::from_thread_status(status),
+            name: dap_thread.name.clone(),
+            status: AgentDebuggerThreadStatus::Stopped,
             frames,
+        });
+    }
+    for thread_name in skipped_thread_names {
+        notes.push(format!(
+            "Stack frames for thread `{thread_name}` omitted: max_frames budget exhausted"
+        ));
+    }
+
+    for dap_thread in dap_threads.iter().filter(|dap_thread| {
+        session.read_with(cx, |session, _| {
+            session.thread_status(ThreadId(dap_thread.id))
+        }) != ThreadStatus::Stopped
+    }) {
+        let thread_id = ThreadId(dap_thread.id);
+        let status = session.read_with(cx, |session, _| session.thread_status(thread_id));
+        threads.push(AgentDebuggerThread {
+            thread_id,
+            name: dap_thread.name.clone(),
+            status: AgentDebuggerThreadStatus::from_thread_status(status),
+            frames: Vec::new(),
         });
     }
 
@@ -758,7 +867,7 @@ async fn wait_for_stack_trace(
     let Some(thread_id) = thread_id else {
         return false;
     };
-    for _ in 0..10 {
+    for _ in 0..30 {
         if session
             .update(cx, |session, _| {
                 session.agent_fetch_stack_frames(thread_id, 1)
@@ -769,7 +878,7 @@ async fn wait_for_stack_trace(
             return true;
         }
         cx.background_executor()
-            .timer(Duration::from_millis(100))
+            .timer(Duration::from_millis(200))
             .await;
     }
     false
@@ -814,16 +923,19 @@ async fn wait_for_stop_or_timeout(
                 AgentDebuggerWaitEvent::Stopped(stopped_thread_id) => Ok(AgentDebuggerControlResult {
                     status: AgentDebuggerWaitStatus::Stopped,
                     stopped_thread_id,
+                    notes: Vec::new(),
                 }),
                 AgentDebuggerWaitEvent::SessionEnded => Ok(AgentDebuggerControlResult {
                     status: AgentDebuggerWaitStatus::SessionEnded,
                     stopped_thread_id: None,
+                    notes: Vec::new(),
                 }),
             }
         }
         _ = timer => Ok(AgentDebuggerControlResult {
             status: AgentDebuggerWaitStatus::TimedOut,
             stopped_thread_id: None,
+            notes: Vec::new(),
         }),
     }
 }
@@ -832,113 +944,213 @@ async fn stack_frame_snapshot(
     session: &Entity<Session>,
     breakpoint_store: &Entity<BreakpointStore>,
     frame: dap::StackFrame,
+    frame_index: usize,
     limits: &AgentDebuggerSnapshotLimits,
     notes: &mut Vec<String>,
     cx: &mut AsyncApp,
 ) -> AgentDebuggerStackFrame {
-    let mut scopes = Vec::new();
-    let dap_scopes = match session
-        .update(cx, |session, _| session.agent_fetch_scopes(frame.id))
-        .await
-    {
-        Ok(scopes) => scopes,
-        Err(error) => {
-            notes.push(format!(
-                "Scopes for frame `{}` ({}) omitted: {error}",
-                frame.name, frame.id
-            ));
-            Vec::new()
-        }
-    };
-
-    for scope in dap_scopes {
-        // The agent doesn't need raw register dumps, and some adapters (GDB)
-        // report hundreds of register variables regardless of the limits.
-        if scope.name == "Registers" {
-            notes.push("Registers scope omitted from the snapshot".to_string());
-            continue;
-        }
-
-        let mut variables_unavailable = false;
-        let variables = if scope.variables_reference == 0 || limits.max_variables_per_scope == 0 {
-            if scope.variables_reference != 0 && limits.max_variables_per_scope == 0 {
-                notes.push(format!(
-                    "Variables for scope `{}` omitted because max_variables_per_scope is 0",
-                    scope.name
-                ));
-            }
-            Vec::new()
-        } else {
-            match session
-                .update(cx, |session, cx| {
-                    session.agent_fetch_variables(
-                        scope.variables_reference,
-                        limits.max_variables_per_scope,
-                        cx,
-                    )
-                })
-                .await
-            {
-                Ok(variables) => variables,
-                Err(error) => {
-                    notes.push(format!(
-                        "Variables for scope `{}` omitted: {error}",
-                        scope.name
-                    ));
-                    variables_unavailable = true;
-                    Vec::new()
-                }
-            }
-        };
-
-        let known_variable_count = scope
-            .named_variables
-            .unwrap_or(0)
-            .saturating_add(scope.indexed_variables.unwrap_or(0));
-        let variables_truncated = if variables_unavailable {
-            true
-        } else if limits.max_variables_per_scope == 0 {
-            scope.variables_reference != 0
-        } else {
-            known_variable_count > variables.len() as u64
-                || variables.len() >= limits.max_variables_per_scope
-        };
-        if variables_truncated && !variables_unavailable && limits.max_variables_per_scope > 0 {
-            notes.push(format!(
-                "Variables for scope `{}` truncated to {} variable(s)",
-                scope.name,
-                variables.len()
-            ));
-        }
-
-        let variables = variables
-            .into_iter()
-            // Delve exposes an uninitialized `~rN` return slot before the
-            // return executes; it's adapter noise, not program state.
-            .filter(|variable| !variable.name.starts_with("~r"))
-            .map(|variable| variable_snapshot(variable, limits.max_variable_value_length))
-            .collect::<Vec<_>>();
-        if variables.iter().any(|variable| variable.value_truncated) {
-            notes.push(format!(
-                "Variable values for scope `{}` truncated to {} byte(s)",
-                scope.name, limits.max_variable_value_length
-            ));
-        }
-
-        scopes.push(AgentDebuggerScope {
-            name: scope.name,
-            expensive: scope.expensive,
-            variables_reference: scope.variables_reference,
-            variables,
-            variables_truncated,
-        });
-    }
-
     let source_path = frame
         .source
         .as_ref()
         .and_then(|source| source.path.as_ref())
         .map(PathBuf::from);
+
+    let mut scopes = Vec::new();
+    // Frames without a source path are adapter noise (worker threads, loader
+    // disassembly). Only fetch scopes for the top frames and for frames that
+    // resolve to a real file: scope/variable fetch per frame is the dominant
+    // snapshot cost on adapters with huge Global/Static scopes.
+    if frame_index > 1 && source_path.is_none() {
+        notes.push(format!(
+            "Scopes for frame `{}` ({}) omitted: no source path",
+            frame.name, frame.id
+        ));
+    } else {
+        let dap_scopes = match session
+            .update(cx, |session, _| session.agent_fetch_scopes(frame.id))
+            .await
+        {
+            Ok(scopes) => scopes,
+            Err(error) => {
+                notes.push(format!(
+                    "Scopes for frame `{}` ({}) omitted: {error}",
+                    frame.name, frame.id
+                ));
+                Vec::new()
+            }
+        };
+
+        for scope in dap_scopes {
+            // The agent doesn't need raw register dumps, and some adapters (GDB)
+            // report hundreds of register variables regardless of the limits.
+            if scope.name == "Registers" {
+                notes.push("Registers scope omitted from the snapshot".to_string());
+                continue;
+            }
+
+            // Global/Static scopes can be enormous (JS, CodeLLDB) and are
+            // rarely what the agent needs to diagnose a stop; locals live in
+            // the per-frame scopes.
+            if scope.name == "Global" || scope.name == "Static" {
+                notes.push(format!(
+                    "`{}` scope omitted from frame `{}`",
+                    scope.name, frame.name
+                ));
+                continue;
+            }
+
+            let mut variables_unavailable = false;
+            let variables = if scope.variables_reference == 0 || limits.max_variables_per_scope == 0
+            {
+                if scope.variables_reference != 0 && limits.max_variables_per_scope == 0 {
+                    notes.push(format!(
+                        "Variables for scope `{}` omitted because max_variables_per_scope is 0",
+                        scope.name
+                    ));
+                }
+                Vec::new()
+            } else {
+                match session
+                    .update(cx, |session, cx| {
+                        session.agent_fetch_variables(
+                            scope.variables_reference,
+                            limits.max_variables_per_scope,
+                            cx,
+                        )
+                    })
+                    .await
+                {
+                    Ok(variables) => variables,
+                    Err(error) => {
+                        notes.push(format!(
+                            "Variables for scope `{}` omitted: {error}",
+                            scope.name
+                        ));
+                        variables_unavailable = true;
+                        Vec::new()
+                    }
+                }
+            };
+
+            let known_variable_count = scope
+                .named_variables
+                .unwrap_or(0)
+                .saturating_add(scope.indexed_variables.unwrap_or(0));
+            let variables_truncated = if variables_unavailable {
+                true
+            } else if limits.max_variables_per_scope == 0 {
+                scope.variables_reference != 0
+            } else {
+                known_variable_count > variables.len() as u64
+                    || variables.len() >= limits.max_variables_per_scope
+            };
+            if variables_truncated && !variables_unavailable && limits.max_variables_per_scope > 0 {
+                notes.push(format!(
+                    "Variables for scope `{}` truncated to {} variable(s)",
+                    scope.name,
+                    variables.len()
+                ));
+            }
+
+            // Delve exposes an uninitialized `~rN` return slot before the
+            // return executes; it's adapter noise, not program state.
+            let variables = variables
+                .into_iter()
+                .filter(|variable| !variable.name.starts_with("~r"))
+                .collect::<Vec<_>>();
+
+            let mut filtered_unavailable = 0usize;
+            let mut expanded_aggregates = 0usize;
+            let mut snapshot_variables = Vec::with_capacity(variables.len());
+            for variable in variables.into_iter() {
+                // CodeLLDB reports optimized-out variables as "<variable not
+                // available>"; they carry no information for the agent.
+                if matches!(
+                    variable.value.as_str(),
+                    "<not available>" | "<variable not available>" | "<optimized out>"
+                ) {
+                    filtered_unavailable += 1;
+                    continue;
+                }
+
+                // Some adapters (gdb-dap) return aggregates with an empty
+                // value string and only a variables_reference; expand one
+                // level so the agent can see the contents.
+                if expanded_aggregates < 4
+                    && variable.value.is_empty()
+                    && variable.variables_reference != 0
+                    && variable
+                        .indexed_variables
+                        .is_some_and(|count| (1..=8).contains(&count))
+                {
+                    expanded_aggregates += 1;
+                    let children = session
+                        .update(cx, |session, cx| {
+                            session.agent_fetch_variables(variable.variables_reference, 8, cx)
+                        })
+                        .await
+                        .unwrap_or_default();
+                    if !children.is_empty() {
+                        let summary = format!(
+                            "[{}]",
+                            children
+                                .iter()
+                                .map(|child| child.value.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                        let (value, value_truncated) =
+                            truncate_string(summary, limits.max_variable_value_length);
+                        variables.push(AgentDebuggerVariable {
+                            name: variable.name,
+                            value,
+                            type_name: variable.type_,
+                            variables_reference: variable.variables_reference,
+                            named_variables: variable.named_variables,
+                            indexed_variables: variable.indexed_variables,
+                            value_truncated,
+                        });
+                        continue;
+                    }
+                }
+
+                snapshot_variables.push(variable_snapshot(
+                    variable,
+                    limits.max_variable_value_length,
+                ));
+            }
+            if filtered_unavailable > 0 {
+                notes.push(format!(
+                    "Variables for scope `{}` filtered {} `<not available>` entr{}",
+                    scope.name,
+                    filtered_unavailable,
+                    if filtered_unavailable == 1 {
+                        "y"
+                    } else {
+                        "ies"
+                    }
+                ));
+            }
+            if snapshot_variables
+                .iter()
+                .any(|variable| variable.value_truncated)
+            {
+                notes.push(format!(
+                    "Variable values for scope `{}` truncated to {} byte(s)",
+                    scope.name, limits.max_variable_value_length
+                ));
+            }
+
+            scopes.push(AgentDebuggerScope {
+                name: scope.name,
+                expensive: scope.expensive,
+                variables_reference: scope.variables_reference,
+                variables: snapshot_variables,
+                variables_truncated,
+            });
+        }
+    }
+
     let source_context = match source_context_for_frame(
         breakpoint_store,
         frame.source.as_ref(),

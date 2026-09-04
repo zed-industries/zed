@@ -163,6 +163,7 @@ pub enum SessionState {
 pub struct RunningMode {
     client: Arc<DebugAdapterClient>,
     binary: DebugAdapterBinary,
+    adapter: DebugAdapterName,
     tmp_breakpoint: Option<SourceBreakpoint>,
     worktree: WeakEntity<Worktree>,
     executor: BackgroundExecutor,
@@ -195,6 +196,7 @@ fn client_source(abs_path: &Path) -> dap::Source {
 impl RunningMode {
     async fn new(
         session_id: SessionId,
+        adapter: DebugAdapterName,
         parent_session: Option<Entity<Session>>,
         worktree: WeakEntity<Worktree>,
         binary: DebugAdapterBinary,
@@ -221,6 +223,7 @@ impl RunningMode {
         Ok(Self {
             client: Arc::new(client),
             worktree,
+            adapter,
             tmp_breakpoint: None,
             binary,
             executor: cx.background_executor().clone(),
@@ -234,12 +237,40 @@ impl RunningMode {
         &self.worktree
     }
 
+    /// gdb-dap runs gdb with its cwd at the worktree root and matches
+    /// breakpoint sources against the paths gdb derives from DWARF (relative
+    /// to the compilation directory). An absolute Windows path doesn't match,
+    /// so gdb sets the breakpoint as pending; send the worktree-relative path
+    /// instead so it resolves immediately.
+    fn breakpoint_source(&self, abs_path: &Path, cx: &App) -> dap::Source {
+        if self.adapter.to_string() == "GDB"
+            && let Some(worktree) = self.worktree.upgrade()
+        {
+            let root = worktree.read(cx).abs_path();
+            if let Ok(relative) = abs_path.strip_prefix(root.as_ref()) {
+                return dap::Source {
+                    name: relative
+                        .file_name()
+                        .map(|filename| filename.to_string_lossy().into_owned()),
+                    path: Some(relative.to_string_lossy().replace('\\', "/")),
+                    source_reference: None,
+                    presentation_hint: None,
+                    origin: None,
+                    sources: None,
+                    adapter_data: None,
+                    checksums: None,
+                };
+            }
+        }
+        client_source(abs_path)
+    }
+
     fn unset_breakpoints_from_paths(&self, paths: &Vec<Arc<Path>>, cx: &mut App) -> Task<()> {
         let tasks: Vec<_> = paths
             .iter()
             .map(|path| {
                 self.request(dap_command::SetBreakpoints {
-                    source: client_source(path),
+                    source: self.breakpoint_source(path, cx),
                     source_modified: None,
                     breakpoints: vec![],
                 })
@@ -306,7 +337,7 @@ impl RunningMode {
             .collect::<Vec<_>>();
 
         let task = self.request(dap_command::SetBreakpoints {
-            source: client_source(&abs_path),
+            source: self.breakpoint_source(&abs_path, cx),
             source_modified: Some(matches!(reason, BreakpointUpdatedReason::FileSaved)),
             breakpoints,
         });
@@ -388,7 +419,7 @@ impl RunningMode {
             let error_path = path.clone();
             let send_request = self
                 .request(dap_command::SetBreakpoints {
-                    source: client_source(&path),
+                    source: self.breakpoint_source(&path, cx),
                     source_modified: Some(false),
                     breakpoints,
                 })
@@ -604,7 +635,7 @@ impl SessionState {
         match self {
             SessionState::Running(debug_adapter_client) => debug_adapter_client.request(request),
             SessionState::Booting(_) => Task::ready(Err(anyhow!(
-                "no adapter running to send request: {request:?}"
+                "debug adapter is still booting; cannot send request yet: {request:?}"
             ))),
         }
     }
@@ -928,6 +959,7 @@ impl Session {
         let (messages_tx, _messages_rx) = mpsc::unbounded();
         self.state = SessionState::Running(RunningMode {
             client,
+            adapter: "fake-adapter".into(),
             binary: DebugAdapterBinary {
                 command: None,
                 arguments: Default::default(),
@@ -1004,11 +1036,13 @@ impl Session {
         })];
         self.background_tasks = background_tasks;
         let id = self.id;
+        let adapter = self.adapter.clone();
         let parent_session = self.parent_session.clone();
 
         cx.spawn(async move |this, cx| {
             let mode = RunningMode::new(
                 id,
+                adapter,
                 parent_session,
                 worktree.downgrade(),
                 binary.clone(),
@@ -1596,6 +1630,7 @@ impl Session {
                 self.invalidate_generic();
             }
             Events::Exited(_event) => {
+                log::info!("Debug session {:?}: debuggee exited", self.id);
                 self.clear_active_debug_line(cx);
                 // The debuggee is gone; end the session so it doesn't linger
                 // in session lists as a stale "stopped" entry (some adapters
@@ -1603,6 +1638,7 @@ impl Session {
                 self.shutdown(cx).detach();
             }
             Events::Terminated(_) => {
+                log::info!("Debug session {:?}: debuggee terminated", self.id);
                 self.shutdown(cx).detach();
             }
             Events::Thread(event) => {
