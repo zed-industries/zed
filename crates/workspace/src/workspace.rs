@@ -175,7 +175,6 @@ use crate::{
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 pub const MAX_RECENT_SELECTIONS: usize = 20;
-const DEFAULT_WINDOW_TITLE_SEPARATOR: &str = " — ";
 
 /// Which optional window-title variables are actually referenced by the active
 /// template. Used to skip expensive lookups when the template doesn't need them.
@@ -189,17 +188,6 @@ struct WindowTitleNeeds {
 }
 
 impl WindowTitleNeeds {
-    /// The default title (`${projectName}${separator}${fileName}`) only needs
-    /// `projectName` and `fileName`, both of which are always computed.
-    const DEFAULT: Self = Self {
-        file_path: false,
-        relative_path: false,
-        file_stem: false,
-        remote: false,
-        app_name: false,
-        branch: false,
-    };
-
     fn from_template(template: &str) -> Self {
         Self {
             file_path: template.contains("${filePath}"),
@@ -231,36 +219,21 @@ enum WindowTitleTemplatePart<'a> {
     Separator,
 }
 
-enum WindowTitleVariableValue<'a> {
-    Value(Cow<'a, str>),
-    Empty,
-}
-
-impl<'a> WindowTitleVariableValue<'a> {
-    fn from_optional(value: Option<&'a str>) -> Self {
-        value.map_or(Self::Empty, |value| Self::Value(Cow::Borrowed(value)))
-    }
-}
-
 impl WindowTitleContext {
-    fn value_for(&self, variable: &str) -> WindowTitleVariableValue<'_> {
+    fn value_for(&self, variable: &str) -> Option<&str> {
         match variable {
-            "projectName" => {
-                WindowTitleVariableValue::Value(Cow::Borrowed(self.project_name.as_str()))
-            }
-            "fileName" => WindowTitleVariableValue::from_optional(self.file_name.as_deref()),
-            "filePath" => WindowTitleVariableValue::from_optional(self.file_path.as_deref()),
-            "relativePath" => {
-                WindowTitleVariableValue::from_optional(self.relative_path.as_deref())
-            }
-            "fileStem" => WindowTitleVariableValue::from_optional(self.file_stem.as_deref()),
-            "remoteName" => WindowTitleVariableValue::from_optional(self.remote_name.as_deref()),
-            "remoteHost" => WindowTitleVariableValue::from_optional(self.remote_host.as_deref()),
-            "appName" => WindowTitleVariableValue::Value(Cow::Borrowed(self.app_name)),
-            "branch" => WindowTitleVariableValue::from_optional(self.branch.as_deref()),
+            "projectName" => Some(self.project_name.as_str()),
+            "fileName" => self.file_name.as_deref(),
+            "filePath" => self.file_path.as_deref(),
+            "relativePath" => self.relative_path.as_deref(),
+            "fileStem" => self.file_stem.as_deref(),
+            "remoteName" => self.remote_name.as_deref(),
+            "remoteHost" => self.remote_host.as_deref(),
+            "appName" => Some(self.app_name),
+            "branch" => self.branch.as_deref(),
             // Unknown placeholders collapse like missing values so imported and
             // native templates follow the same rendering rules.
-            _ => WindowTitleVariableValue::Empty,
+            _ => None,
         }
     }
 }
@@ -305,15 +278,6 @@ fn parse_window_title_format(template: &str) -> Vec<WindowTitleTemplatePart<'_>>
     parts
 }
 
-fn default_window_title(separator: &str, context: &WindowTitleContext) -> String {
-    let mut title = context.project_name.clone();
-    if let Some(file_name) = &context.file_name {
-        title.push_str(separator);
-        title.push_str(file_name);
-    }
-    title
-}
-
 fn render_window_title_format(
     template: &str,
     separator: &str,
@@ -326,10 +290,11 @@ fn render_window_title_format(
     for part in parts {
         match part {
             WindowTitleTemplatePart::Literal(text) => current_segment.push_str(text),
-            WindowTitleTemplatePart::Variable(variable) => match context.value_for(variable) {
-                WindowTitleVariableValue::Value(value) => current_segment.push_str(&value),
-                WindowTitleVariableValue::Empty => {}
-            },
+            WindowTitleTemplatePart::Variable(variable) => {
+                if let Some(value) = context.value_for(variable) {
+                    current_segment.push_str(value);
+                }
+            }
             WindowTitleTemplatePart::Separator => {
                 if !current_segment.is_empty() {
                     segments.push(std::mem::take(&mut current_segment));
@@ -1646,7 +1611,7 @@ pub struct Workspace {
     /// The `(window_title_format, window_title_separator)` pair last applied to
     /// the window, used to skip title recomputation when unrelated settings
     /// change.
-    last_window_title_settings: Option<(Option<String>, Option<String>)>,
+    last_window_title_settings: Option<(String, String)>,
     dirty_items: HashMap<EntityId, Subscription>,
     active_call: Option<(GlobalAnyActiveCall, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
@@ -2048,10 +2013,14 @@ impl Workspace {
                 // so skip the recomputation when they are unchanged.
                 let settings = WorkspaceSettings::get_global(cx);
                 let title_settings = (
-                    settings.window_title_format.clone(),
-                    settings.window_title_separator.clone(),
+                    settings.window_title_format.as_str(),
+                    settings.window_title_separator.as_str(),
                 );
-                if this.last_window_title_settings.as_ref() != Some(&title_settings) {
+                let last_title_settings = this
+                    .last_window_title_settings
+                    .as_ref()
+                    .map(|(format, separator)| (format.as_str(), separator.as_str()));
+                if last_title_settings != Some(title_settings) {
                     this.update_window_title(window, cx);
                 }
             }),
@@ -6693,38 +6662,43 @@ impl Workspace {
     /// Whether the active window-title template references `${branch}`, and so
     /// can be affected by Git repository events.
     fn window_title_needs_branch(&self, cx: &App) -> bool {
-        WorkspaceSettings::get_global(cx)
-            .window_title_format
-            .as_deref()
-            .is_some_and(|template| WindowTitleNeeds::from_template(template).branch)
+        WindowTitleNeeds::from_template(&WorkspaceSettings::get_global(cx).window_title_format)
+            .branch
     }
 
     fn apply_window_title(&mut self, window: &mut Window, cx: &mut App) {
         let project = self.project().read(cx);
         let active_project_path = self.active_item(cx).and_then(|item| item.project_path(cx));
         let settings = WorkspaceSettings::get_global(cx);
-        self.last_window_title_settings = Some((
-            settings.window_title_format.clone(),
-            settings.window_title_separator.clone(),
-        ));
-        let separator = settings
-            .window_title_separator
-            .as_deref()
-            .unwrap_or(DEFAULT_WINDOW_TITLE_SEPARATOR);
-        let needs = settings
-            .window_title_format
-            .as_deref()
-            .map(WindowTitleNeeds::from_template)
-            .unwrap_or(WindowTitleNeeds::DEFAULT);
-        let context = self.window_title_context(&project, &needs, cx);
-        let mut title = settings
-            .window_title_format
-            .as_deref()
-            .map(|template| render_window_title_format(template, separator, &context))
-            // Keep the normal title when a custom template resolves entirely to
-            // empty or unknown placeholders.
-            .filter(|title| !title.is_empty())
-            .unwrap_or_else(|| default_window_title(separator, &context));
+        let template = settings.window_title_format.as_str();
+        let separator = settings.window_title_separator.as_str();
+        let settings_changed = self.last_window_title_settings.as_ref().is_none_or(
+            |(last_template, last_separator)| {
+                (last_template.as_str(), last_separator.as_str()) != (template, separator)
+            },
+        );
+        if settings_changed {
+            self.last_window_title_settings = Some((template.to_string(), separator.to_string()));
+        }
+        let needs = WindowTitleNeeds::from_template(template);
+        let context =
+            Self::window_title_context(&project, active_project_path.as_ref(), &needs, cx);
+        let mut title = render_window_title_format(template, separator, &context);
+        // Keep the normal title when a custom template resolves entirely to
+        // empty or unknown placeholders.
+        if title.trim().is_empty()
+            && let Some(default_template) = cx
+                .global::<SettingsStore>()
+                .raw_default_settings()
+                .workspace
+                .window_title_format
+                .as_deref()
+        {
+            let needs = WindowTitleNeeds::from_template(default_template);
+            let context =
+                Self::window_title_context(&project, active_project_path.as_ref(), &needs, cx);
+            title = render_window_title_format(default_template, separator, &context);
+        }
 
         if project.is_via_collab() {
             title.push_str(" ↙");
@@ -6756,17 +6730,15 @@ impl Workspace {
     }
 
     fn window_title_context(
-        &self,
         project: &Project,
+        project_path: Option<&ProjectPath>,
         needs: &WindowTitleNeeds,
         cx: &App,
     ) -> WindowTitleContext {
         let project_name = project_window_title(project, cx);
-        let project_path = self.active_item(cx).and_then(|item| item.project_path(cx));
         let path_style = project.path_style(cx);
 
         let (file_name, file_path, relative_path, file_stem) = project_path
-            .as_ref()
             .map(|project_path| {
                 let file_name = project_path
                     .path
@@ -12432,7 +12404,7 @@ mod tests {
         assert_eq!(
             render_window_title_format(
                 "${projectName}${separator}${fileName}${separator}${remoteHost}",
-                DEFAULT_WINDOW_TITLE_SEPARATOR,
+                " — ",
                 &context,
             ),
             "project — example.com"
@@ -12440,7 +12412,7 @@ mod tests {
         assert_eq!(
             render_window_title_format(
                 "${fileName}${separator}${projectName}${separator}${remoteName}",
-                DEFAULT_WINDOW_TITLE_SEPARATOR,
+                " — ",
                 &context,
             ),
             "project — nickname"
@@ -12448,7 +12420,7 @@ mod tests {
         assert_eq!(
             render_window_title_format(
                 "${projectName}${separator}${relativePath}${separator}${remoteName}${separator}${remoteHost}",
-                DEFAULT_WINDOW_TITLE_SEPARATOR,
+                " — ",
                 &context,
             ),
             "project — src/main.rs — nickname — example.com"
@@ -12462,19 +12434,11 @@ mod tests {
             "project | example.com"
         );
         assert_eq!(
-            render_window_title_format(
-                "${projectName}${separator}",
-                DEFAULT_WINDOW_TITLE_SEPARATOR,
-                &context,
-            ),
+            render_window_title_format("${projectName}${separator}", " — ", &context),
             "project"
         );
         assert_eq!(
-            render_window_title_format(
-                "${projectName}${separator}${fileStem}",
-                DEFAULT_WINDOW_TITLE_SEPARATOR,
-                &context,
-            ),
+            render_window_title_format("${projectName}${separator}${fileStem}", " — ", &context),
             "project — main"
         );
     }
@@ -12496,13 +12460,13 @@ mod tests {
         assert_eq!(
             render_window_title_format(
                 "${projectName}${separator}${typoName}${separator}${fileName}",
-                DEFAULT_WINDOW_TITLE_SEPARATOR,
+                " — ",
                 &context,
             ),
             "project — main.rs"
         );
         assert_eq!(
-            render_window_title_format("${typoName}", DEFAULT_WINDOW_TITLE_SEPARATOR, &context),
+            render_window_title_format("${typoName}", " — ", &context),
             ""
         );
     }
@@ -12517,27 +12481,17 @@ mod tests {
         };
 
         assert_eq!(
-            render_window_title_format(
-                "${projectName}${separator}${appName}",
-                DEFAULT_WINDOW_TITLE_SEPARATOR,
-                &context,
-            ),
+            render_window_title_format("${projectName}${separator}${appName}", " — ", &context),
             "project — Zed"
         );
         assert_eq!(
-            render_window_title_format(
-                "${projectName}${separator}${branch}",
-                DEFAULT_WINDOW_TITLE_SEPARATOR,
-                &context,
-            ),
+            render_window_title_format("${projectName}${separator}${branch}", " — ", &context),
             "project — feature/foo"
         );
     }
 
     #[test]
     fn test_window_title_needs_from_template() {
-        // The default template should match `WindowTitleNeeds::DEFAULT` so that
-        // unchanged setups skip every gated lookup in `window_title_context`.
         let default = WindowTitleNeeds::from_template("${projectName}${separator}${fileName}");
         assert!(!default.file_path);
         assert!(!default.relative_path);
@@ -12877,6 +12831,154 @@ mod tests {
         });
         cx.executor().run_until_parked();
         assert_eq!(cx.window_title().as_deref(), Some("root1 | one.txt"));
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.window_title_format = Some("  ".to_string());
+                })
+            });
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("root1 | one.txt"));
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.window_title_format = Some(" ${remoteHost}".to_string());
+                })
+            });
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("root1 | one.txt"));
+    }
+
+    #[gpui::test]
+    async fn test_window_title_format_path_variables(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root1"), json!({ "src": { "one.txt": "" } }))
+            .await;
+        fs.insert_tree(path!("/root2"), json!({})).await;
+        let project = Project::test(
+            fs.clone(),
+            [path!("/root1").as_ref(), path!("/root2").as_ref()],
+            cx,
+        )
+        .await;
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.window_title_format = Some(
+                        "${appName}${separator}${projectName}${separator}${fileStem}${separator}${filePath}"
+                            .to_string(),
+                    );
+                })
+            });
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("Zed — root1, root2"));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new_in_worktree(
+                1,
+                "src/one.txt",
+                worktree_id,
+                cx,
+            )])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx)
+        });
+        cx.executor().run_until_parked();
+        let expected_file_path = path!("/root1/src/one.txt");
+        assert_eq!(
+            cx.window_title().as_deref(),
+            Some(format!("Zed — root1, root2 — one — {expected_file_path}").as_str())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_window_title_format_empty_project(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (_workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.window_title_format = Some("${fileName}".to_string());
+                })
+            });
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("empty project"));
+    }
+
+    #[gpui::test]
+    async fn test_window_title_format_branch(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root1"), json!({ ".git": {}, "a.txt": "" }))
+            .await;
+        fs.set_branch_name(Path::new(path!("/root1/.git")), Some("main"));
+        let project = Project::test(fs.clone(), [path!("/root1").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.window_title_format = Some(
+                        "${projectName}${separator}${branch}${separator}${fileName}".to_string(),
+                    );
+                })
+            });
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("root1 — main"));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "a.txt", cx)])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx)
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("root1 — main — a.txt"));
+
+        fs.set_branch_name(Path::new(path!("/root1/.git")), Some("feature"));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            cx.window_title().as_deref(),
+            Some("root1 — feature — a.txt")
+        );
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.window_title_format =
+                        Some("${projectName}${separator}${fileName}".to_string());
+                })
+            });
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("root1 — a.txt"));
+
+        fs.set_branch_name(Path::new(path!("/root1/.git")), Some("other"));
+        cx.executor().run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("root1 — a.txt"));
     }
 
     #[gpui::test]

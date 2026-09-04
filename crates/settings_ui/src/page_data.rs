@@ -5058,7 +5058,7 @@ fn window_and_layout_page() -> SettingsPage {
             SettingsPageItem::SectionHeader("Window"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Title Format",
-                description: "Window title template. Available variables are `${projectName}`, `${fileName}`, `${filePath}`, `${relativePath}`, `${fileStem}`, `${remoteName}`, `${remoteHost}`, `${appName}`, `${branch}`, and `${separator}`. `${separator}` is omitted when adjacent variables are empty, but literal text is preserved. The collaboration indicator, when present, is appended after the rendered template.",
+                description: "Window title template. Available variables are `${projectName}`, `${fileName}`, `${filePath}`, `${relativePath}`, `${fileStem}`, `${remoteName}`, `${remoteHost}`, `${appName}`, `${branch}`, and `${separator}`. `${separator}` is omitted when adjacent variables are empty, but literal text is preserved. The collaboration indicator, when present, is appended after the rendered template. If the template renders to nothing, the default template is used instead.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("window_title_format"),

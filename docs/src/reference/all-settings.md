@@ -5277,24 +5277,26 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 - Description: Template for the window title. Use `${separator}` to insert a
   separator that is omitted when adjacent variables are empty. The collaboration
-  indicator, when present, is appended after the rendered template.
+  indicator, when present, is appended after the rendered template. If the
+  template renders to nothing (for example `${branch}` outside a Git
+  repository), the default template is used instead.
 - Setting: `window_title_format`
 - Default: `"${projectName}${separator}${fileName}"`
 
 Available variables:
 
-| Variable       | Description                                          |
-| -------------- | ---------------------------------------------------- |
-| `projectName`  | Name of the current project                          |
-| `fileName`     | Name of the active file (e.g. `main.rs`)             |
-| `filePath`     | Absolute path of the active file                     |
-| `relativePath` | Path of the active file relative to the active worktree |
-| `fileStem`     | File name without extension (e.g. `main`)            |
-| `remoteName`   | Display name of the remote connection, if any        |
-| `remoteHost`   | Host of the remote connection, if any                |
-| `appName`      | Zed release channel name (e.g. `Zed`, `Zed Nightly`) |
-| `branch`       | Git branch checked out in the active repository      |
-| `separator`    | Separator string, omitted when neighbors are empty   |
+| Variable       | Description                                           |
+| -------------- | ----------------------------------------------------- |
+| `projectName`  | Name of the current project                           |
+| `fileName`     | Name of the active file (e.g. `main.rs`)              |
+| `filePath`     | Absolute path of the active file                      |
+| `relativePath` | Path of the active file relative to its worktree root |
+| `fileStem`     | File name without extension (e.g. `main`)             |
+| `remoteName`   | Display name of the remote connection, if any         |
+| `remoteHost`   | Host of the remote connection, if any                 |
+| `appName`      | Zed release channel name (e.g. `Zed`, `Zed Nightly`)  |
+| `branch`       | Git branch checked out in the active repository       |
+| `separator`    | Separator string, omitted when neighbors are empty    |
 
 ```json [settings]
 {

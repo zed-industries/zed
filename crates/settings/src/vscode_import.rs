@@ -1185,12 +1185,11 @@ fn translate_vscode_window_title_format(template: &str) -> String {
         let variable = &template[content_start..content_end];
         match variable {
             "projectName" | "fileName" | "filePath" | "relativePath" | "fileStem"
-            | "remoteHost" | "branch" | "separator" => {
+            | "remoteHost" | "appName" | "branch" | "separator" => {
                 translated.push_str(&template[variable_start..=content_end]);
             }
             // Keep VS Code alias support in the importer so native Zed settings
             // only expose the documented placeholder names.
-            "appName" => translated.push_str("${appName}"),
             "rootName" => translated.push_str("${projectName}"),
             "activeEditorShort" => translated.push_str("${fileName}"),
             "activeEditorMedium" => translated.push_str("${relativePath}"),

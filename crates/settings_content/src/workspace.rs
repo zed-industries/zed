@@ -156,6 +156,7 @@ pub struct WorkspaceSettingsContent {
     /// but literal text is preserved.
     /// The collaboration indicator, when present, is appended after the
     /// rendered template.
+    /// If the template renders to nothing, the default template is used instead.
     ///
     /// Default: `${projectName}${separator}${fileName}`
     pub window_title_format: Option<String>,
