@@ -339,11 +339,13 @@ impl AnyProtoClient {
     pub fn send_lsp_response<T: LspRequestMessage>(
         &self,
         project_id: u64,
+        peer_id: proto::PeerId,
         lsp_request_id: LspRequestId,
         server_responses: HashMap<u64, T::Response>,
     ) -> Result<()> {
         self.send(proto::LspQueryResponse {
             project_id,
+            peer_id: Some(peer_id),
             lsp_request_id: lsp_request_id.0,
             responses: server_responses
                 .into_iter()

@@ -2,6 +2,7 @@ syntax = "proto3";
 package zed.messages;
 
 import "buffer.proto";
+import "core.proto";
 
 message GetDefinition {
   uint64 project_id = 1;
@@ -1035,6 +1036,7 @@ message LspQueryResponse {
   uint64 project_id = 1;
   uint64 lsp_request_id = 2;
   repeated LspResponse responses = 3;
+  PeerId peer_id = 4;
 }
 
 message LspResponse {
