@@ -9,11 +9,12 @@ use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
-    row_chunk::RowChunks,
+    row_chunk::{RowChunkId, RowChunks},
     runnable::{self, RunnableRange},
     syntax_map::{
         MAX_BYTES_TO_QUERY, SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures,
         SyntaxMapMatch, SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
+        flattened_highlight_regions,
     },
     text_diff::text_diff,
     unified_diff_with_offsets,
@@ -35,6 +36,7 @@ use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
     Task, TextStyle,
 };
+use language_core::highlight_cache::{ChunkHighlightCache, ResolvedHighlights};
 
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -149,21 +151,25 @@ pub struct Buffer {
 #[derive(Debug)]
 pub struct TreeSitterData {
     chunks: RowChunks,
-    brackets_by_chunks: Mutex<HashMap<usize, Vec<BracketMatch>>>,
+    brackets_by_chunks: Mutex<HashMap<RowChunkId, Vec<BracketMatch>>>,
+    highlights_by_chunks: ChunkHighlightCache,
 }
 
-const MAX_ROWS_IN_A_CHUNK: u32 = 50;
+pub(crate) const MAX_ROWS_IN_A_CHUNK: u32 = 50;
+pub(crate) const MAX_BYTES_TO_HIGHLIGHT_IN_A_CHUNK: usize = 4 * MAX_BYTES_TO_QUERY;
 
 impl TreeSitterData {
     fn clear(&mut self, snapshot: &text::BufferSnapshot) {
         self.chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
         self.brackets_by_chunks.get_mut().clear();
+        self.highlights_by_chunks.clear();
     }
 
     fn new(snapshot: &text::BufferSnapshot) -> Self {
         Self {
             chunks: RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK),
             brackets_by_chunks: Mutex::new(HashMap::default()),
+            highlights_by_chunks: ChunkHighlightCache::default(),
         }
     }
 
@@ -519,6 +525,13 @@ struct BufferChunkHighlights<'a> {
     highlight_maps: Vec<HighlightMap>,
 }
 
+type HighlightRun = (Range<usize>, HighlightId);
+
+struct CachedChunkHighlightsIter {
+    runs: Vec<HighlightRun>,
+    ix: usize,
+}
+
 /// An iterator that yields chunks of a buffer's text, along with their
 /// syntax highlights and diagnostic status.
 pub struct BufferChunks<'a> {
@@ -533,6 +546,7 @@ pub struct BufferChunks<'a> {
     unnecessary_depth: usize,
     underline: bool,
     highlights: Option<BufferChunkHighlights<'a>>,
+    cached_highlights: Option<CachedChunkHighlightsIter>,
 }
 
 /// A chunk of a buffer's text, along with its syntax highlight and
@@ -1553,6 +1567,7 @@ impl Buffer {
         }
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear(&self.text);
+        Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, self.text.snapshot());
         let old_language = std::mem::replace(&mut self.language, language);
         self.refresh_resolved_settings(cx);
         self.was_changed();
@@ -4121,7 +4136,18 @@ impl BufferSnapshot {
 
         let mut syntax = None;
         if language_aware.tree_sitter {
-            syntax = Some(self.get_highlights(range.clone()));
+            match self.cached_highlight_runs(range.clone()) {
+                Some(runs) => {
+                    return BufferChunks::with_cached_highlights(
+                        self.text.as_rope(),
+                        range,
+                        runs,
+                        language_aware.diagnostics,
+                        self,
+                    );
+                }
+                None => syntax = Some(self.get_highlights(range.clone())),
+            }
         }
         BufferChunks::new(
             self.text.as_rope(),
@@ -4130,6 +4156,102 @@ impl BufferSnapshot {
             language_aware.diagnostics,
             Some(self),
         )
+    }
+
+    pub(crate) fn cached_highlight_runs(&self, range: Range<usize>) -> Option<Vec<HighlightRun>> {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            static DISABLE_HIGHLIGHT_CACHE: std::sync::LazyLock<bool> =
+                std::sync::LazyLock::new(|| {
+                    std::env::var_os("ZED_DISABLE_HIGHLIGHT_CACHE").is_some()
+                });
+            if *DISABLE_HIGHLIGHT_CACHE {
+                return None;
+            }
+        }
+        self.language.as_ref()?.grammar()?;
+        if range.is_empty() {
+            return Some(Vec::new());
+        }
+        let mut runs = Vec::<HighlightRun>::new();
+        for chunk in self
+            .tree_sitter_data
+            .chunks
+            .applicable_chunks(&[range.to_point(self)])
+        {
+            let chunk_range = chunk.anchor_range().to_offset(self);
+            if chunk_range.end <= range.start || chunk_range.start >= range.end {
+                continue;
+            }
+            if chunk_range.len() > MAX_BYTES_TO_HIGHLIGHT_IN_A_CHUNK {
+                return None;
+            }
+            let chunk_highlights = match self.tree_sitter_data.highlights_by_chunks.get(chunk.id) {
+                Some(chunk_highlights) => chunk_highlights,
+                None => {
+                    let chunk_highlights = self.compute_chunk_highlights(chunk_range);
+                    self.tree_sitter_data
+                        .highlights_by_chunks
+                        .insert(chunk.id, chunk_highlights.clone());
+                    chunk_highlights
+                }
+            };
+            for (run_range, highlight_id) in chunk_highlights.runs.iter() {
+                if run_range.end <= range.start {
+                    continue;
+                }
+                if run_range.start >= range.end {
+                    break;
+                }
+                match runs.last_mut() {
+                    Some((last_range, last_highlight_id))
+                        if last_highlight_id == highlight_id
+                            && last_range.end == run_range.start =>
+                    {
+                        last_range.end = run_range.end;
+                    }
+                    _ => runs.push((run_range.clone(), *highlight_id)),
+                }
+            }
+        }
+        Some(runs)
+    }
+
+    fn compute_chunk_highlights(&self, range: Range<usize>) -> ResolvedHighlights {
+        let captures = self.syntax.captures(range.clone(), &self.text, |grammar| {
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| &config.query)
+        });
+        let sources = captures
+            .grammars()
+            .iter()
+            .map(|&grammar| (Arc::clone(grammar), grammar.highlight_map()))
+            .collect::<SmallVec<[(Arc<Grammar>, HighlightMap); 2]>>();
+        let mut runs = Vec::<(Range<usize>, HighlightId)>::new();
+        for region in flattened_highlight_regions(captures, range) {
+            let highlight_id = region.stack.iter().rev().find_map(|capture| {
+                let (_, highlight_map) = sources.get(capture.grammar_index)?;
+                highlight_map.get(capture.capture_id)
+            });
+            let Some(highlight_id) = highlight_id else {
+                continue;
+            };
+            match runs.last_mut() {
+                Some((last_range, last_highlight_id))
+                    if *last_highlight_id == highlight_id
+                        && last_range.end == region.range.start =>
+                {
+                    last_range.end = region.range.end;
+                }
+                _ => runs.push((region.range, highlight_id)),
+            }
+        }
+        ResolvedHighlights {
+            sources,
+            runs: runs.into(),
+        }
     }
 
     pub fn highlighted_text_for_range<T: ToOffset>(
@@ -5508,16 +5630,40 @@ impl<'a> BufferChunks<'a> {
         diagnostics: bool,
         buffer_snapshot: Option<&'a BufferSnapshot>,
     ) -> Self {
-        let mut highlights = None;
-        if let Some((captures, highlight_maps)) = syntax {
-            highlights = Some(BufferChunkHighlights {
-                captures,
-                next_capture: None,
-                stack: Default::default(),
-                highlight_maps,
-            })
-        }
+        let highlights = syntax.map(|(captures, highlight_maps)| BufferChunkHighlights {
+            captures,
+            next_capture: None,
+            stack: Vec::new(),
+            highlight_maps,
+        });
+        Self::init(text, range, highlights, None, diagnostics, buffer_snapshot)
+    }
 
+    fn with_cached_highlights(
+        text: &'a Rope,
+        range: Range<usize>,
+        runs: Vec<HighlightRun>,
+        diagnostics: bool,
+        buffer_snapshot: &'a BufferSnapshot,
+    ) -> Self {
+        Self::init(
+            text,
+            range,
+            None,
+            Some(CachedChunkHighlightsIter { runs, ix: 0 }),
+            diagnostics,
+            Some(buffer_snapshot),
+        )
+    }
+
+    fn init(
+        text: &'a Rope,
+        range: Range<usize>,
+        highlights: Option<BufferChunkHighlights<'a>>,
+        cached_highlights: Option<CachedChunkHighlightsIter>,
+        diagnostics: bool,
+        buffer_snapshot: Option<&'a BufferSnapshot>,
+    ) -> Self {
         let diagnostic_endpoints = diagnostics.then(|| Vec::new().into_iter().peekable());
         let chunks = text.chunks_in_range(range.clone());
 
@@ -5533,6 +5679,7 @@ impl<'a> BufferChunks<'a> {
             unnecessary_depth: 0,
             underline: true,
             highlights,
+            cached_highlights,
         };
         this.initialize_diagnostic_endpoints();
         this
@@ -5542,7 +5689,33 @@ impl<'a> BufferChunks<'a> {
     pub fn seek(&mut self, range: Range<usize>) {
         let old_range = std::mem::replace(&mut self.range, range.clone());
         self.chunks.set_range(self.range.clone());
-        if let Some(highlights) = self.highlights.as_mut() {
+        if let Some(cached) = self.cached_highlights.as_mut() {
+            if old_range.start <= self.range.start && old_range.end >= self.range.end {
+                cached.ix = cached
+                    .runs
+                    .partition_point(|(run_range, _)| run_range.end <= range.start);
+            } else if let Some(snapshot) = self.buffer_snapshot {
+                if let Some(runs) = snapshot.cached_highlight_runs(self.range.clone()) {
+                    cached.runs = runs;
+                    cached.ix = 0;
+                } else {
+                    let (captures, highlight_maps) = snapshot.get_highlights(self.range.clone());
+                    self.cached_highlights = None;
+                    self.highlights = Some(BufferChunkHighlights {
+                        captures,
+                        next_capture: None,
+                        stack: Vec::new(),
+                        highlight_maps,
+                    });
+                }
+            } else {
+                debug_assert!(
+                    false,
+                    "Attempted to seek on a language-aware buffer iterator without associated buffer snapshot"
+                );
+            }
+            self.initialize_diagnostic_endpoints();
+        } else if let Some(highlights) = self.highlights.as_mut() {
             if old_range.start <= self.range.start && old_range.end >= self.range.end {
                 // Reuse existing highlights stack, as the new range is a subrange of the old one.
                 highlights
@@ -5565,7 +5738,7 @@ impl<'a> BufferChunks<'a> {
                 *highlights = BufferChunkHighlights {
                     captures,
                     next_capture: None,
-                    stack: Default::default(),
+                    stack: Vec::new(),
                     highlight_maps,
                 };
             } else {
@@ -5701,6 +5874,21 @@ impl<'a> Iterator for BufferChunks<'a> {
             }
         }
 
+        if let Some(cached) = self.cached_highlights.as_mut() {
+            while cached
+                .runs
+                .get(cached.ix)
+                .is_some_and(|(run_range, _)| run_range.end <= self.range.start)
+            {
+                cached.ix += 1;
+            }
+            if let Some((run_range, _)) = cached.runs.get(cached.ix)
+                && self.range.start < run_range.start
+            {
+                next_capture_start = run_range.start;
+            }
+        }
+
         let mut diagnostic_endpoints = std::mem::take(&mut self.diagnostic_endpoints);
         if let Some(diagnostic_endpoints) = diagnostic_endpoints.as_mut() {
             while let Some(endpoint) = diagnostic_endpoints.peek().copied() {
@@ -5733,6 +5921,13 @@ impl<'a> Iterator for BufferChunks<'a> {
             {
                 chunk_end = chunk_end.min(*parent_capture_end);
                 highlight_id = Some(*parent_highlight_id);
+            }
+            if let Some(cached) = self.cached_highlights.as_ref()
+                && let Some((run_range, run_highlight_id)) = cached.runs.get(cached.ix)
+                && run_range.start <= chunk_start
+            {
+                chunk_end = chunk_end.min(run_range.end);
+                highlight_id = Some(*run_highlight_id);
             }
             let bit_start = chunk_start - self.chunks.offset();
             let bit_end = chunk_end - self.chunks.offset();
