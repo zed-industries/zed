@@ -1,4 +1,5 @@
 use crate::metal_atlas::MetalAtlas;
+use crate::metal_effects::{Effects, Frame};
 use anyhow::{Context as _, Result};
 use block::ConcreteBlock;
 use cocoa::{
@@ -126,6 +127,7 @@ pub struct MetalRenderer {
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
     surfaces_pipeline_state: metal::RenderPipelineState,
+    effects: Effects,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
@@ -160,8 +162,8 @@ impl MetalRenderer {
         // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
         layer.set_opaque(!transparent);
         layer.set_maximum_drawable_count(3);
-        // Allow texture reading for visual tests (captures screenshots without ScreenCaptureKit)
-        #[cfg(any(test, feature = "test-support"))]
+        // Effect layers copy what is under them out of the drawable, and
+        // visual tests read it back, so the drawable is a plain texture.
         layer.set_framebuffer_only(false);
         unsafe {
             let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
@@ -324,6 +326,8 @@ impl MetalRenderer {
             MTLPixelFormat::BGRA8Unorm,
         );
 
+        let effects = Effects::new(&device, &library);
+
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), is_apple_gpu));
         let core_video_texture_cache =
@@ -345,6 +349,7 @@ impl MetalRenderer {
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
             surfaces_pipeline_state,
+            effects,
             unit_vertices,
             instance_buffer_pool,
             sprite_atlas,
@@ -393,6 +398,7 @@ impl MetalRenderer {
             }
         }
         self.update_path_intermediate_textures(size);
+        self.effects.forget_textures();
     }
 
     fn update_path_intermediate_textures(&mut self, size: Size<DevicePixels>) {
@@ -666,9 +672,28 @@ impl MetalRenderer {
             viewport_size,
             Some(metal::MTLClearColor::new(0., 0., 0., alpha)),
         );
+        let unit_vertices = self.unit_vertices.clone();
+        let frame = Frame {
+            command_buffer,
+            texture,
+            viewport_size,
+            unit_vertices: &unit_vertices,
+        };
 
         for batch in scene.batches() {
             match batch {
+                PrimitiveBatch::LayerBegin(index) => {
+                    command_encoder.end_encoding();
+                    command_encoder =
+                        self.effects
+                            .begin_layer(&self.device, &frame, &scene.effect_layers[index]);
+                }
+                PrimitiveBatch::LayerEnd(index) => {
+                    command_encoder.end_encoding();
+                    command_encoder =
+                        self.effects
+                            .end_layer(&self.device, &frame, &scene.effect_layers[index]);
+                }
                 PrimitiveBatch::Shadows(range) => {
                     self.draw_shadows(range, instance_bindings, viewport_size, command_encoder)
                 }
@@ -686,12 +711,7 @@ impl MetalRenderer {
                         command_buffer,
                     )?;
 
-                    command_encoder = new_command_encoder_for_texture(
-                        command_buffer,
-                        texture,
-                        viewport_size,
-                        None,
-                    );
+                    command_encoder = self.effects.resume(&frame);
 
                     if did_draw {
                         if let Err(error) = self.draw_paths_from_intermediate(
@@ -724,9 +744,6 @@ impl MetalRenderer {
                         viewport_size,
                         command_encoder,
                     ),
-                // No Metal support for effect layers yet. Their content
-                // draws straight into the frame.
-                PrimitiveBatch::LayerBegin(_) | PrimitiveBatch::LayerEnd(_) => {}
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
                     &scene.surfaces[range.clone()],
                     range.start,
@@ -739,6 +756,10 @@ impl MetalRenderer {
         }
 
         command_encoder.end_encoding();
+        debug_assert!(
+            !self.effects.has_open_layers(),
+            "the scene opened an effect layer it never closed"
+        );
 
         Ok(command_buffer.to_owned())
     }
@@ -1296,7 +1317,9 @@ fn build_pipeline_state(
     color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::SourceAlpha);
     color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::One);
+    // Alpha composites the same way as colour, so a layer drawn on a clear
+    // texture ends with the alpha of what it painted, never more.
+    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
 
     device
         .new_render_pipeline_state(&descriptor)
@@ -1330,7 +1353,9 @@ fn build_path_sprite_pipeline_state(
     color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::One);
+    // Alpha composites the same way as colour, so a layer drawn on a clear
+    // texture ends with the alpha of what it painted, never more.
+    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
 
     device
         .new_render_pipeline_state(&descriptor)

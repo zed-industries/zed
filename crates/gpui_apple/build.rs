@@ -62,6 +62,11 @@ mod macos_build {
             "SurfaceInputIndex".into(),
             "SurfaceBounds".into(),
             "TransformationMatrix".into(),
+            "EffectLayer".into(),
+            "LayerComposite".into(),
+            "LayerInputIndex".into(),
+            "BlurParams".into(),
+            "BlurInputIndex".into(),
         ]);
         config.no_includes = true;
         config.enumeration.prefix_with_name = true;
@@ -81,7 +86,10 @@ mod macos_build {
         ];
 
         // Source files from this crate
-        let local_src_paths = [crate_dir.join("src/metal_renderer.rs")];
+        let local_src_paths = [
+            crate_dir.join("src/metal_renderer.rs"),
+            crate_dir.join("src/metal_effects.rs"),
+        ];
 
         for src_path in gpui_src_paths.iter().chain(local_src_paths.iter()) {
             println!("cargo:rerun-if-changed={}", src_path.display());
