@@ -370,11 +370,30 @@ impl GitRepository for FakeGitRepository {
 
     fn checkout_files(
         &self,
-        _commit: String,
-        _paths: Vec<RepoPath>,
+        commit: String,
+        paths: Vec<RepoPath>,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        let state = self.state.clone();
+        let fs = self.fs.clone();
+        let repo_dir = self.repository_dir_path.clone();
+        async move {
+            let state = state.lock();
+            for path in paths {
+                let content = if commit.is_empty() {
+                    state.index_contents.get(&path).cloned()
+                } else {
+                    state.head_contents.get(&path).cloned()
+                };
+                if let Some(content) = content {
+                    let file_path = repo_dir.join(path.as_ref());
+                    fs.save(&file_path, &content.as_slice().into(), Default::default())
+                        .await?;
+                }
+            }
+            Ok(())
+        }
+        .boxed()
     }
 
     fn path(&self) -> PathBuf {

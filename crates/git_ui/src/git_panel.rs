@@ -2760,13 +2760,18 @@ impl GitPanel {
                 .repo_path_to_project_path(&entry.repo_path, cx)?;
             let workspace = self.workspace.clone();
 
-            if entry.status.staging().has_staged() {
-                self.change_file_stage(false, vec![entry.clone()], cx);
-            }
             let filename = path.path.file_name()?.to_string();
 
             if !entry.status.is_created() {
-                self.perform_checkout(vec![entry.clone()], window, cx);
+                let commit = if entry.staging == StageStatus::Unstaged {
+                    ""
+                } else {
+                    if entry.status.staging().has_staged() {
+                        self.change_file_stage(false, vec![entry.clone()], cx);
+                    }
+                    "HEAD"
+                };
+                self.perform_checkout(commit, vec![entry.clone()], window, cx);
             } else {
                 let prompt = prompt(&format!("Trash {}?", filename), None, window, cx);
                 cx.spawn_in(window, async move |_, cx| {
@@ -2797,6 +2802,7 @@ impl GitPanel {
 
     fn perform_checkout(
         &mut self,
+        commit: &'static str,
         entries: Vec<GitStatusEntry>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2826,7 +2832,7 @@ impl GitPanel {
             this.update_in(cx, |this, window, cx| {
                 let task = active_repository.update(cx, |repo, cx| {
                     repo.checkout_files(
-                        "HEAD",
+                        commit,
                         entries
                             .into_iter()
                             .map(|entries| entries.repo_path)
@@ -2911,7 +2917,7 @@ impl GitPanel {
         cx.spawn_in(window, async move |this, cx| {
             if let Ok(RestoreCancel::RestoreTrackedFiles) = prompt.await {
                 this.update_in(cx, |this, window, cx| {
-                    this.perform_checkout(entries, window, cx);
+                    this.perform_checkout("HEAD", entries, window, cx);
                 })
                 .ok();
             }
@@ -13924,6 +13930,99 @@ mod tests {
             !detail.contains("unstaged.rs"),
             "prompt should NOT list unstaged.rs, got: {detail}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_discard_unstaged_changes_preserves_staged(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "partially_staged.rs": "working tree modified\n",
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[(
+                "partially_staged.rs",
+                FileStatus::Tracked(TrackedStatus {
+                    index: StatusCode::Modified,
+                    worktree: StatusCode::Modified,
+                }),
+            )],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+        cx.executor().run_until_parked();
+
+        let unstaged_entry = panel.read_with(cx, |panel, _| {
+            panel
+                .entries
+                .iter()
+                .find(|e| {
+                    if let Some(s) = e.status_entry() {
+                        s.repo_path == repo_path("partially_staged.rs")
+                            && s.staging == StageStatus::Unstaged
+                    } else {
+                        false
+                    }
+                })
+                .cloned()
+        });
+        assert!(unstaged_entry.is_some(), "unstaged entry should exist");
+
+        panel.update_in(cx, |panel, window, cx| {
+            let entry_ix = panel
+                .entries
+                .iter()
+                .position(|e| {
+                    if let Some(s) = e.status_entry() {
+                        s.repo_path == repo_path("partially_staged.rs")
+                            && s.staging == StageStatus::Unstaged
+                    } else {
+                        false
+                    }
+                })
+                .expect("unstaged entry should be in entries");
+            panel.selected_entry = Some(entry_ix);
+            panel.revert_selected(&git::RestoreFile { skip_prompt: true }, window, cx);
+        });
+        cx.executor().run_until_parked();
     }
 
     #[gpui::test]
