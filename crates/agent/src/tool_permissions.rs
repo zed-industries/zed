@@ -607,7 +607,7 @@ mod tests {
             sandbox_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
-            sidebar_side: Default::default(),
+            thread_sidebar: Default::default(),
             thinking_display: Default::default(),
         }
     }

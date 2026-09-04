@@ -36,6 +36,19 @@ pub enum SidebarDockPosition {
     Right,
 }
 
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct ThreadSidebarSettingsContent {
+    /// Where to position the threads sidebar.
+    ///
+    /// Default: left
+    pub position: Option<SidebarDockPosition>,
+    /// Default width of the threads sidebar in pixels.
+    ///
+    /// Default: 300
+    pub default_width: Option<crate::PixelSetting>,
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum SidebarSide {
     #[default]
@@ -210,10 +223,8 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub flexible: Option<bool>,
-    /// Where to position the threads sidebar.
-    ///
-    /// Default: left
-    pub sidebar_side: Option<SidebarDockPosition>,
+    /// Settings for the threads sidebar.
+    pub thread_sidebar: Option<ThreadSidebarSettingsContent>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -364,8 +375,8 @@ impl AgentSettingsContent {
         self.dock = Some(dock);
     }
 
-    pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
-        self.sidebar_side = Some(position);
+    pub fn set_thread_sidebar_position(&mut self, position: SidebarDockPosition) {
+        self.thread_sidebar.get_or_insert_default().position = Some(position);
     }
 
     pub fn set_flexible_size(&mut self, flexible: bool) {

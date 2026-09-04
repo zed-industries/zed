@@ -70,7 +70,7 @@ pub fn sidebar_side_context_menu(
     id: impl Into<ElementId>,
     cx: &App,
 ) -> ui::RightClickMenu<ContextMenu> {
-    let current_position = AgentSettings::get_global(cx).sidebar_side;
+    let current_position = AgentSettings::get_global(cx).thread_sidebar.position;
     right_click_menu(id).menu(move |window, cx| {
         let fs = <dyn fs::Fs>::global(cx);
         ContextMenu::build(window, cx, move |mut menu, _, _cx| {
@@ -95,7 +95,7 @@ pub fn sidebar_side_context_menu(
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_sidebar_side(position);
+                                .set_thread_sidebar_position(position);
                         });
                     },
                 );
@@ -351,12 +351,24 @@ impl MultiWorkspace {
             let mut previous_multi_workspace_enabled = !DisableAiSettings::get_global(cx)
                 .disable_ai
                 && AgentSettings::get_global(cx).enabled;
+            let mut previous_thread_sidebar_default_width =
+                AgentSettings::get_global(cx).thread_sidebar.default_width;
             move |this, window, cx| {
                 let multi_workspace_enabled = this.multi_workspace_enabled(cx);
                 if previous_multi_workspace_enabled && !multi_workspace_enabled {
                     this.collapse_to_single_workspace(window, cx);
                 }
                 previous_multi_workspace_enabled = multi_workspace_enabled;
+
+                let thread_sidebar_default_width =
+                    AgentSettings::get_global(cx).thread_sidebar.default_width;
+                if previous_thread_sidebar_default_width != thread_sidebar_default_width {
+                    if let Some(sidebar) = this.sidebar.as_ref() {
+                        sidebar.set_width(None, cx);
+                        this.serialize(cx);
+                    }
+                    previous_thread_sidebar_default_width = thread_sidebar_default_width;
+                }
             }
         });
         Self::subscribe_to_workspace(&workspace, window, cx);
