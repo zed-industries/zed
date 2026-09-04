@@ -45,6 +45,7 @@ pub(crate) struct TestWindowState {
     input_handler: Option<PlatformInputHandler>,
     text_input_configurations: Vec<TextInputConfiguration>,
     text_input_state_changes: Vec<TextInputStateChange>,
+    visible: bool,
     is_fullscreen: bool,
     appearance: WindowAppearance,
     external_drag_files: Vec<(PathBuf, bool)>,
@@ -109,6 +110,7 @@ impl TestWindow {
             input_handler: None,
             text_input_configurations: Vec::new(),
             text_input_state_changes: Vec::new(),
+            visible: params.show,
             is_fullscreen: false,
             appearance: WindowAppearance::Light,
             external_drag_files: Vec::new(),
@@ -136,6 +138,11 @@ impl TestWindow {
 
     pub fn frame_scheduled(&self) -> bool {
         self.0.lock().frame_scheduled
+    }
+
+    /// Returns whether this test window is visible.
+    pub fn is_visible(&self) -> bool {
+        self.0.lock().visible
     }
 
     /// Every [`TextInputConfiguration`] forwarded to this window, in order.
@@ -329,6 +336,10 @@ impl PlatformWindow for TestWindow {
     fn set_app_id(&mut self, _app_id: &str) {}
 
     fn set_background_appearance(&self, _background: WindowBackgroundAppearance) {}
+
+    fn set_visible(&self, visible: bool) {
+        self.0.lock().visible = visible;
+    }
 
     fn set_edited(&mut self, edited: bool) {
         self.0.lock().edited = edited;

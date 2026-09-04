@@ -177,6 +177,8 @@ impl PlatformWindow for HeadlessWindow {
 
     fn set_background_appearance(&self, _background: WindowBackgroundAppearance) {}
 
+    fn set_visible(&self, _visible: bool) {}
+
     fn minimize(&self) {}
 
     fn zoom(&self) {}

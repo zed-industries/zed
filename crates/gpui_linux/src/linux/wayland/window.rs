@@ -102,6 +102,8 @@ pub struct WaylandWindowState {
     children: FxHashMap<ObjectId, bool>,
     pub surface: wl_surface::WlSurface,
     app_id: Option<String>,
+    title: Option<String>,
+    window_min_size: Option<Size<Pixels>>,
     appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     viewport: Option<wp_viewport::WpViewport>,
@@ -122,6 +124,7 @@ pub struct WaylandWindowState {
     handle: AnyWindowHandle,
     active: bool,
     hovered: bool,
+    visible: bool,
     redraw_requested: bool,
     presentation: PresentationState,
     pending_frame_callback: Option<wl_callback::WlCallback>,
@@ -577,9 +580,15 @@ impl WaylandWindowState {
             WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
         };
 
+        let title = options
+            .titlebar
+            .as_ref()
+            .and_then(|titlebar| titlebar.title.as_ref())
+            .map(ToString::to_string);
+
         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
-            if let Some(title) = options.titlebar.and_then(|titlebar| titlebar.title) {
-                xdg_state.toplevel.set_title(title.to_string());
+            if let Some(title) = title.as_ref() {
+                xdg_state.toplevel.set_title(title.clone());
             }
 
             if let Some(app_id) = options.app_id.as_ref() {
@@ -600,6 +609,8 @@ impl WaylandWindowState {
             children: FxHashMap::default(),
             surface,
             app_id: options.app_id,
+            title,
+            window_min_size: options.window_min_size,
             blur: None,
             viewport,
             globals,
@@ -622,6 +633,7 @@ impl WaylandWindowState {
             handle,
             active: false,
             hovered: false,
+            visible: options.show,
             redraw_requested: false,
             presentation: PresentationState::Unpresented,
             pending_frame_callback: None,
@@ -635,6 +647,40 @@ impl WaylandWindowState {
     pub fn is_transparent(&self) -> bool {
         self.decorations == WindowDecorations::Client
             || self.background_appearance != WindowBackgroundAppearance::Opaque
+    }
+
+    fn prepare_to_map(&self) {
+        let WaylandSurfaceState::Xdg(xdg_state) = &self.surface_state else {
+            return;
+        };
+
+        if let Some(title) = self.title.as_ref() {
+            xdg_state.toplevel.set_title(title.clone());
+        }
+        if let Some(app_id) = self.app_id.as_ref() {
+            xdg_state.toplevel.set_app_id(app_id.clone());
+        }
+        if let Some(size) = self.window_min_size {
+            xdg_state
+                .toplevel
+                .set_min_size(f32::from(size.width) as i32, f32::from(size.height) as i32);
+        }
+
+        let max_texture_size = self.renderer.max_texture_size() as i32;
+        xdg_state
+            .toplevel
+            .set_max_size(max_texture_size, max_texture_size);
+
+        if let Some(parent) = self.parent.as_ref() {
+            let parent_toplevel = parent.toplevel();
+            xdg_state.toplevel.set_parent(parent_toplevel.as_ref());
+        }
+
+        if self.fullscreen {
+            xdg_state.toplevel.set_fullscreen(None);
+        } else if self.maximized {
+            xdg_state.toplevel.set_maximized();
+        }
     }
 
     fn update_subpixel_layout(&mut self) {
@@ -861,8 +907,11 @@ impl WaylandWindow {
             frame_ping,
         });
 
-        // Kick things off
-        surface.commit();
+        // An initial empty commit asks the compositor to configure the surface. If the caller
+        // requested a hidden window, defer that commit until the window is shown.
+        if this.borrow().visible {
+            surface.commit();
+        }
 
         Ok((this, surface.id()))
     }
@@ -1123,8 +1172,11 @@ impl WaylandWindowStatePtr {
             );
 
             let initial_configure = self.frame_loop.get() == FrameLoop::Unconfigured;
+            let visible = state.visible;
             drop(state);
-            if initial_configure {
+            if !visible {
+                return;
+            } else if initial_configure {
                 self.frame();
             } else {
                 self.request_redraw();
@@ -1786,7 +1838,9 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_title(&mut self, title: &str) {
-        if let Some(toplevel) = self.borrow().surface_state.toplevel() {
+        let mut state = self.borrow_mut();
+        state.title = Some(title.to_owned());
+        if let Some(toplevel) = state.surface_state.toplevel() {
             toplevel.set_title(title.to_string());
         }
     }
@@ -1811,6 +1865,29 @@ impl PlatformWindow for WaylandWindow {
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {
         self.borrow().background_appearance
+    }
+
+    fn set_visible(&self, visible: bool) {
+        let mut state = self.borrow_mut();
+        if state.visible == visible {
+            return;
+        }
+
+        state.visible = visible;
+        if visible {
+            // Remapping an xdg surface starts with an empty commit and a fresh configure cycle.
+            state.prepare_to_map();
+            state.surface.commit();
+        } else {
+            // Attaching a null buffer unmaps an xdg surface without destroying its role objects.
+            // The next map must wait for a new configure before presenting another buffer.
+            state.pending_frame_callback.take();
+            state.surface.attach(None, 0, 0);
+            state.surface.commit();
+            state.presentation = PresentationState::Unpresented;
+            state.redraw_requested = true;
+            self.0.frame_loop.set(FrameLoop::Unconfigured);
+        }
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {
@@ -1900,6 +1977,12 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
+
+        if !state.visible {
+            state.redraw_requested = true;
+            self.0.frame_loop.set(FrameLoop::Unconfigured);
+            return;
+        }
 
         if state.renderer.device_lost() {
             let raw_window = RawWindow {

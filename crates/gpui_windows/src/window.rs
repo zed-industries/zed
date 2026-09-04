@@ -899,6 +899,31 @@ impl PlatformWindow for WindowsWindow {
         }
     }
 
+    fn set_visible(&self, visible: bool) {
+        let hwnd = self.0.hwnd;
+        let this = self.0.clone();
+        self.0
+            .executor
+            .spawn(async move {
+                if visible {
+                    let initial_placement = this.state.initial_placement.take();
+                    let has_initial_placement = initial_placement.is_some();
+                    this.state.initial_placement.set(initial_placement);
+                    this.set_window_placement().log_err();
+                    if !has_initial_placement {
+                        unsafe {
+                            ShowWindowAsync(hwnd, SW_SHOWNOACTIVATE).ok().log_err();
+                        }
+                    }
+                } else {
+                    unsafe {
+                        ShowWindowAsync(hwnd, SW_HIDE).ok().log_err();
+                    }
+                }
+            })
+            .detach();
+    }
+
     fn minimize(&self) {
         unsafe { ShowWindowAsync(self.0.hwnd, SW_MINIMIZE).ok().log_err() };
     }

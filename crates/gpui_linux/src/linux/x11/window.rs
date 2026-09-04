@@ -275,6 +275,7 @@ pub struct X11WindowState {
     background_appearance: WindowBackgroundAppearance,
     maximized_vertical: bool,
     maximized_horizontal: bool,
+    visible: bool,
     hidden: bool,
     active: bool,
     hovered: bool,
@@ -832,6 +833,7 @@ impl X11WindowState {
                 fullscreen: false,
                 maximized_vertical: false,
                 maximized_horizontal: false,
+                visible: params.show,
                 hidden: false,
                 appearance,
                 handle,
@@ -1588,10 +1590,12 @@ impl PlatformWindow for X11Window {
     }
 
     fn map_window(&mut self) -> anyhow::Result<()> {
-        check_reply(
-            || "X11 MapWindow failed.",
-            self.0.xcb.map_window(self.0.x_window),
-        )?;
+        if self.0.state.borrow().visible {
+            check_reply(
+                || "X11 MapWindow failed.",
+                self.0.xcb.map_window(self.0.x_window),
+            )?;
+        }
         Ok(())
     }
 
@@ -1604,6 +1608,33 @@ impl PlatformWindow for X11Window {
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {
         self.0.state.borrow().background_appearance
+    }
+
+    fn set_visible(&self, visible: bool) {
+        let mut state = self.0.state.borrow_mut();
+        if state.visible == visible {
+            return;
+        }
+        state.visible = visible;
+        drop(state);
+
+        let result = if visible {
+            self.0.xcb.map_window(self.0.x_window)
+        } else {
+            self.0.xcb.unmap_window(self.0.x_window)
+        };
+        check_reply(
+            || {
+                if visible {
+                    "X11 MapWindow failed."
+                } else {
+                    "X11 UnmapWindow failed."
+                }
+            },
+            result,
+        )
+        .log_err();
+        xcb_flush(&self.0.xcb);
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {

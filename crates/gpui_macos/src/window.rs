@@ -1740,6 +1740,26 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    fn set_visible(&self, visible: bool) {
+        let lock = self.0.lock();
+        let window = lock.native_window;
+        let closed = lock.closed.clone();
+        let executor = lock.foreground_executor.clone();
+        executor
+            .spawn(async move {
+                if !closed.load(Ordering::Acquire) {
+                    unsafe {
+                        if visible {
+                            let _: () = msg_send![window, orderFront: nil];
+                        } else {
+                            let _: () = msg_send![window, orderOut: nil];
+                        }
+                    }
+                }
+            })
+            .detach();
+    }
+
     fn minimize(&self) {
         let window = self.0.lock().native_window;
         unsafe {
