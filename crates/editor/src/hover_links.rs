@@ -1849,6 +1849,30 @@ mod tests {
                 assert!(actual_ranges.is_empty(), "When no cmd is pressed, should have no hint label selected, but got: {actual_ranges:?}");
             });
 
+        cx.update_editor(|editor, _window, cx| {
+            let hovered_inlay = editor
+                .display_map
+                .read(cx)
+                .current_inlays()
+                .find(|inlay| inlay.id == InlayId::Hint(0))
+                .cloned()
+                .expect("hovered inlay");
+            let hovered_inlay_id = hovered_inlay.id;
+            editor.splice_inlays(&[hovered_inlay_id], vec![hovered_inlay], cx);
+            assert!(
+                editor.hovered_inlay_hint_command().is_none(),
+                "replacing the hovered inlay should clear its command"
+            );
+        });
+        cx.simulate_click(hover_point, Modifiers::none());
+        cx.background_executor.run_until_parked();
+        assert!(
+            command_requests.try_recv().is_err(),
+            "clicking without moving after hint replacement should not run the stale command"
+        );
+
+        cx.simulate_mouse_move(hover_point, None, Modifiers::none());
+        cx.background_executor.run_until_parked();
         cx.simulate_click(hover_point, Modifiers::none());
         command_requests
             .next()

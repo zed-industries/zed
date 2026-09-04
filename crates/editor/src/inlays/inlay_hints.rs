@@ -142,6 +142,13 @@ impl LspInlayHintData {
         current_hints: impl IntoIterator<Item = Inlay>,
         snapshot: &MultiBufferSnapshot,
     ) {
+        if self
+            .hovered_command
+            .as_ref()
+            .is_some_and(|command| buffer_ids.contains(&command.buffer_id))
+        {
+            self.hovered_command = None;
+        }
         for buffer_id in buffer_ids {
             self.hint_refresh_tasks.remove(buffer_id);
             self.hint_chunk_fetching.remove(buffer_id);
@@ -252,6 +259,17 @@ impl LspInlayHintData {
         for buffer_id in removed_buffer_ids {
             self.hint_refresh_tasks.remove(buffer_id);
             self.hint_chunk_fetching.remove(buffer_id);
+        }
+    }
+
+    pub(super) fn remove_inlay(&mut self, inlay_id: &InlayId) {
+        self.added_hints.remove(inlay_id);
+        if self
+            .hovered_command
+            .as_ref()
+            .is_some_and(|command| command.highlight.inlay == *inlay_id)
+        {
+            self.hovered_command = None;
         }
     }
 
@@ -1091,7 +1109,9 @@ fn spawn_editor_hints_refresh(
 
 #[cfg(test)]
 pub mod tests {
+    use super::{HoveredInlayHintCommand, LspInlayHintData};
     use crate::editor_tests::update_test_language_settings;
+    use crate::hover_links::InlayHighlight;
     use crate::inlays::inlay_hints::InlayHintRefreshReason;
     use crate::scroll::Autoscroll;
     use crate::scroll::ScrollAmount;
@@ -1101,25 +1121,79 @@ pub mod tests {
     use futures::{StreamExt, future};
     use gpui::{AppContext as _, Context, TestAppContext, WindowHandle};
     use itertools::Itertools as _;
-    use language::language_settings::InlayHintKind;
+    use language::language_settings::{InlayHintKind, InlayHintSettings};
     use language::{Capability, FakeLspAdapter};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::rust_lang;
-    use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, FakeLanguageServer};
+    use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, FakeLanguageServer, LanguageServerId};
     use multi_buffer::{MultiBuffer, MultiBufferOffset, PathKey};
     use parking_lot::Mutex;
     use pretty_assertions::assert_eq;
-    use project::{FakeFs, InvalidationStrategy, Project};
+    use project::{CodeAction, FakeFs, InlayId, InvalidationStrategy, LspAction, Project};
     use serde_json::json;
     use settings::{AllLanguageSettingsContent, InlayHintSettingsContent, SettingsStore};
     use std::ops::Range;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     use std::time::Duration;
-    use text::{OffsetRangeExt, Point};
+    use text::{BufferId, OffsetRangeExt, Point};
     use ui::App;
     use util::path;
     use util::paths::natural_sort;
+
+    #[gpui::test]
+    fn test_clearing_buffers_clears_only_matching_hovered_command(cx: &mut TestAppContext) {
+        let hovered_buffer_id = BufferId::new(1).expect("hovered buffer id");
+        let other_buffer_id = BufferId::new(2).expect("other buffer id");
+        let mut inlay_hints = LspInlayHintData::new(InlayHintSettings {
+            enabled: true,
+            show_value_hints: true,
+            show_type_hints: true,
+            show_parameter_hints: true,
+            show_other_hints: true,
+            show_background: false,
+            edit_debounce_ms: 0,
+            scroll_debounce_ms: 0,
+            toggle_on_modifiers_press: None,
+        });
+        inlay_hints.hovered_command = Some(HoveredInlayHintCommand {
+            highlight: InlayHighlight {
+                inlay: InlayId::Hint(1),
+                inlay_position: multi_buffer::Anchor::Min,
+                range: 0..1,
+            },
+            buffer_id: hovered_buffer_id,
+            action: CodeAction {
+                server_id: LanguageServerId(0),
+                range: language::Anchor::min_min_range_for_buffer(hovered_buffer_id),
+                lsp_action: LspAction::Command(lsp::Command {
+                    title: "command".to_string(),
+                    command: "command".to_string(),
+                    arguments: None,
+                }),
+                resolved: true,
+            },
+        });
+        let multi_buffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let snapshot = cx.update(|cx| multi_buffer.read(cx).snapshot(cx));
+
+        inlay_hints.remove_inlay(&InlayId::Hint(2));
+        assert!(inlay_hints.hovered_command.is_some());
+
+        inlay_hints.clear_for_buffers(
+            &HashSet::from_iter([other_buffer_id]),
+            Vec::new(),
+            &snapshot,
+        );
+        assert!(inlay_hints.hovered_command.is_some());
+
+        inlay_hints.clear_for_buffers(
+            &HashSet::from_iter([hovered_buffer_id]),
+            Vec::new(),
+            &snapshot,
+        );
+        assert!(inlay_hints.hovered_command.is_none());
+    }
 
     #[gpui::test]
     async fn test_basic_cache_update_with_duplicate_hints(cx: &mut gpui::TestAppContext) {
