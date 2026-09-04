@@ -4237,11 +4237,33 @@ impl Window {
     fn largest_border_interior(quad: &Quad) -> Bounds<ScaledPixels> {
         let radii = &quad.corner_radii;
         let widths = &quad.border_widths;
+        let shapes = &quad.corner_shapes;
+        // A concave corner draws its border along the bite, which reaches one
+        // border width past the corner box.
+        let reach = |radius: ScaledPixels, shape: f32, width: ScaledPixels| {
+            if shape < 0.0 { radius + width } else { radius }
+        };
         let edge_radii = Edges {
-            top: radii.top_left.max(radii.top_right),
-            right: radii.top_right.max(radii.bottom_right),
-            bottom: radii.bottom_left.max(radii.bottom_right),
-            left: radii.top_left.max(radii.bottom_left),
+            top: reach(radii.top_left, shapes.top_left, widths.top).max(reach(
+                radii.top_right,
+                shapes.top_right,
+                widths.top,
+            )),
+            right: reach(radii.top_right, shapes.top_right, widths.right).max(reach(
+                radii.bottom_right,
+                shapes.bottom_right,
+                widths.right,
+            )),
+            bottom: reach(radii.bottom_left, shapes.bottom_left, widths.bottom).max(reach(
+                radii.bottom_right,
+                shapes.bottom_right,
+                widths.bottom,
+            )),
+            left: reach(radii.top_left, shapes.top_left, widths.left).max(reach(
+                radii.bottom_left,
+                shapes.bottom_left,
+                widths.left,
+            )),
         };
 
         let antialias_inset = point(ScaledPixels(1.0), ScaledPixels(1.0));
@@ -7404,8 +7426,9 @@ mod tests {
         ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
         InputEvent as _, InteractiveElement as _, IntoElement, LongPressEvent, MouseButton,
         MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
-        StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
-        TouchId, TouchPhase, Window, WindowAppearance, WindowOptions, canvas, div, point, px, size,
+        ScaledPixels, StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent,
+        TouchEvent, TouchId, TouchPhase, Window, WindowAppearance, WindowOptions, canvas, div,
+        point, px, size,
     };
 
     struct EmptyView;
@@ -7439,6 +7462,35 @@ mod tests {
                 // a mid-draw arena clear when painted afterwards.
                 .child(div().child("after"))
         }
+    }
+
+    fn border_only_quad(shape: crate::CornerShape) -> crate::Quad {
+        crate::Quad {
+            order: 0,
+            border_style: Default::default(),
+            bounds: Bounds::new(
+                point(ScaledPixels(0.), ScaledPixels(0.)),
+                size(ScaledPixels(120.), ScaledPixels(120.)),
+            ),
+            content_mask: Default::default(),
+            background: Default::default(),
+            border_color: Default::default(),
+            corner_radii: crate::Corners::all(ScaledPixels(40.)),
+            border_widths: crate::Edges::all(ScaledPixels(8.)),
+            corner_shapes: crate::Corners::all(shape.0),
+        }
+    }
+
+    #[test]
+    fn test_border_interior_stops_at_the_concave_bite_border() {
+        let round = Window::largest_border_interior(&border_only_quad(crate::CornerShape::ROUND));
+        assert_eq!(round.top(), ScaledPixels(41.));
+        assert_eq!(round.left(), ScaledPixels(9.));
+
+        let notch = Window::largest_border_interior(&border_only_quad(crate::CornerShape::NOTCH));
+        assert_eq!(notch.top(), ScaledPixels(49.));
+        assert_eq!(notch.bottom(), ScaledPixels(71.));
+        assert_eq!(notch.left(), ScaledPixels(9.));
     }
 
     /// Opening a window synchronously draws it and requests an element arena
