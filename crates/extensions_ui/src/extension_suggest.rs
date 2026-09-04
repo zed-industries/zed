@@ -4,13 +4,17 @@ use std::sync::{Arc, OnceLock};
 use db::kvp::KeyValueStore;
 use editor::Editor;
 use extension_host::ExtensionStore;
-use gpui::{AppContext as _, Context, Entity, SharedString, Window};
+use gpui::{App, AppContext as _, Context, Entity, SharedString, Window};
 use language::Buffer;
+use markdown::{Markdown, MarkdownElement};
+use project::lsp_store::LspStoreEvent;
 use ui::prelude::*;
 use util::ResultExt;
 use util::rel_path::RelPath;
-use workspace::notifications::simple_message_notification::MessageNotification;
-use workspace::{Workspace, notifications::NotificationId};
+use workspace::notifications::{
+    NotificationId, markdown_style, simple_message_notification::MessageNotification,
+};
+use workspace::{Event as WorkspaceEvent, Workspace};
 
 const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("astro", &["astro"]),
@@ -80,6 +84,32 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("xml", &["xml"]),
     ("zig", &["zig"]),
 ];
+
+const EMMET_EXTENSION_ID: &str = "emmet";
+const EMMET_SUPPORTED_LANGUAGES: &[&str] = &[
+    "Angular",
+    "Blade",
+    "CSS",
+    "Django",
+    "ERB",
+    "Elixir",
+    "HEEx",
+    "HTML",
+    "HTML+ERB",
+    "JavaScript",
+    "Jinja2",
+    "LESS",
+    "Liquid",
+    "Nunjucks",
+    "PHP",
+    "SCSS",
+    "Statamic Antlers",
+    "TSX",
+    "Twig",
+    "Vue.js",
+];
+
+struct EmmetSuggestionNotification;
 
 fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
     static SUGGESTIONS_BY_PATH_SUFFIX: OnceLock<HashMap<&str, Arc<str>>> = OnceLock::new();
@@ -207,10 +237,150 @@ pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Cont
     })
 }
 
+pub(crate) fn init(cx: &mut App) {
+    cx.subscribe(&ExtensionStore::global(cx), |_, event, cx| {
+        if let extension_host::Event::ExtensionInstalled(extension_id) = event
+            && extension_id.as_ref() == EMMET_EXTENSION_ID
+        {
+            dismiss_emmet_suggestion(cx);
+        }
+    })
+    .detach();
+}
+
+pub(crate) fn observe_emmet_candidates(
+    workspace: &Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if emmet_suggestion_dismissed(cx) {
+        return;
+    }
+
+    let lsp_store = workspace.project().read(cx).lsp_store();
+    cx.subscribe_in(&lsp_store, window, |workspace, _, event, _window, cx| {
+        if let LspStoreEvent::LanguageDetected {
+            buffer,
+            new_language: Some(_),
+        } = event
+        {
+            suggest_emmet(workspace, buffer.clone(), cx);
+        }
+    })
+    .detach();
+
+    cx.subscribe_in(&cx.entity(), window, |workspace, _, event, _window, cx| {
+        if let WorkspaceEvent::ItemAdded { item } = event
+            && let Some(editor) = item.downcast::<Editor>()
+            && let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton()
+        {
+            suggest_emmet(workspace, buffer, cx);
+        }
+    })
+    .detach();
+}
+
+fn emmet_suggestion_dismissed(cx: &App) -> bool {
+    let key = language_extension_key(EMMET_EXTENSION_ID);
+    match KeyValueStore::global(cx).read_kvp(&key).log_err() {
+        Some(dismissal) => dismissal.is_some(),
+        None => true,
+    }
+}
+
+fn dismiss_emmet_suggestion(cx: &mut App) {
+    let key = language_extension_key(EMMET_EXTENSION_ID);
+    let kvp = KeyValueStore::global(cx);
+    cx.background_spawn(async move { kvp.write_kvp(key, "dismissed".to_string()).await.log_err() })
+        .detach();
+}
+
+fn suggest_emmet(workspace: &mut Workspace, buffer: Entity<Buffer>, cx: &mut Context<Workspace>) {
+    let supported = buffer
+        .read(cx)
+        .language()
+        .is_some_and(|language| EMMET_SUPPORTED_LANGUAGES.contains(&language.name().as_ref()));
+    if !supported {
+        return;
+    }
+
+    let Some(editor) = workspace.active_item_as::<Editor>(cx) else {
+        return;
+    };
+    if editor.read(cx).buffer().read(cx).as_singleton().as_ref() != Some(&buffer) {
+        return;
+    }
+
+    let extension_store = ExtensionStore::global(cx);
+    let extension_store = extension_store.read(cx);
+    if extension_store
+        .installed_extensions()
+        .contains_key(EMMET_EXTENSION_ID)
+        || extension_store
+            .outstanding_operations()
+            .contains_key(EMMET_EXTENSION_ID)
+    {
+        return;
+    }
+
+    if emmet_suggestion_dismissed(cx) {
+        return;
+    }
+
+    workspace.show_notification(
+        NotificationId::unique::<EmmetSuggestionNotification>(),
+        cx,
+        |cx| {
+            cx.new(|cx| {
+                let markdown = cx.new(|cx| {
+                    Markdown::new(
+                        SharedString::new_static(
+                            "Emmet expands abbreviations such as `ul>li*3` into HTML and `m10` into CSS.",
+                        ),
+                        None,
+                        None,
+                        cx,
+                    )
+                });
+                MessageNotification::new_from_builder(cx, move |window, cx| {
+                    MarkdownElement::new(markdown.clone(), markdown_style(window, cx))
+                        .text_size(TextSize::Default.rems(cx))
+                        .into_any_element()
+                })
+                .with_title("Emmet is available for this file")
+                .more_info_message("Learn more")
+                .more_info_url("https://zed.dev/docs/languages/emmet")
+                .primary_message("Install Emmet")
+                .primary_icon(IconName::Check)
+                .primary_icon_color(Color::Success)
+                .primary_on_click(|_window, cx| {
+                    ExtensionStore::global(cx).update(cx, |store, cx| {
+                        store.install_latest_extension(Arc::from(EMMET_EXTENSION_ID), cx);
+                    });
+                })
+                .secondary_message("Don't show again")
+                .secondary_icon(IconName::Close)
+                .secondary_icon_color(Color::Error)
+                .secondary_on_click(|_window, cx| dismiss_emmet_suggestion(cx))
+            })
+        },
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use extension::ExtensionHostProxy;
+    use extension_host::RELOAD_DEBOUNCE_DURATION;
+    use fs::FakeFs;
+    use gpui::{TestAppContext, VisualTestContext};
+    use language::{Language, LanguageConfig, LanguageMatcher};
+    use project::{Project, lsp_store::LspStoreEvent};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
     use util::rel_path::rel_path;
+    use workspace::AppState;
 
     #[test]
     pub fn test_suggested_extension() {
@@ -249,5 +419,273 @@ mod tests {
                 file_name_or_extension: "gleam".into()
             })
         );
+    }
+
+    #[gpui::test]
+    async fn test_emmet_is_suggested_for_supported_language(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+        let (workspace, cx) = open_test_workspace(fs, cx).await;
+
+        open_file(&workspace, "index.html", cx).await;
+
+        assert_eq!(
+            notification_ids(&workspace, cx),
+            vec![NotificationId::unique::<EmmetSuggestionNotification>()]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_emmet_is_suggested_when_language_is_detected_after_editor(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = init_test(cx);
+        let (workspace, cx) = open_test_workspace(fs, cx).await;
+
+        open_file(&workspace, "main.rs", cx).await;
+        assert_eq!(notification_ids(&workspace, cx), Vec::new());
+
+        let (buffer, lsp_store) = workspace.read_with(cx, |workspace, cx| {
+            let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+            let buffer = editor.read(cx).buffer().read(cx).as_singleton().unwrap();
+            let lsp_store = workspace.project().read(cx).lsp_store();
+            (buffer, lsp_store)
+        });
+        let language = Arc::new(test_language("HTML", "html"));
+        cx.update(|_, cx| {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_language(Some(language.clone()), cx)
+            });
+            lsp_store.update(cx, |_, cx| {
+                cx.emit(LspStoreEvent::LanguageDetected {
+                    buffer,
+                    new_language: Some(language),
+                });
+            });
+        });
+
+        assert_eq!(
+            notification_ids(&workspace, cx),
+            vec![NotificationId::unique::<EmmetSuggestionNotification>()]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_emmet_is_not_suggested_for_unsupported_language(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+        let (workspace, cx) = open_test_workspace(fs, cx).await;
+
+        open_file(&workspace, "main.rs", cx).await;
+
+        assert_eq!(notification_ids(&workspace, cx), Vec::new());
+    }
+
+    #[gpui::test]
+    async fn test_emmet_is_not_suggested_after_dismissal(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        kvp.write_kvp(
+            language_extension_key(EMMET_EXTENSION_ID),
+            "dismissed".to_string(),
+        )
+        .await
+        .unwrap();
+        let (workspace, cx) = open_test_workspace(fs, cx).await;
+
+        open_file(&workspace, "index.html", cx).await;
+
+        assert_eq!(notification_ids(&workspace, cx), Vec::new());
+    }
+
+    #[gpui::test]
+    async fn test_emmet_dismissal_applies_to_already_open_workspace(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+        let (workspace, cx) = open_test_workspace(fs, cx).await;
+        let notification_id = NotificationId::unique::<EmmetSuggestionNotification>();
+
+        open_file(&workspace, "index.html", cx).await;
+        assert_eq!(
+            notification_ids(&workspace, cx),
+            vec![notification_id.clone()]
+        );
+
+        let kvp = cx.update(|_, cx| KeyValueStore::global(cx));
+        kvp.write_kvp(
+            language_extension_key(EMMET_EXTENSION_ID),
+            "dismissed".to_string(),
+        )
+        .await
+        .unwrap();
+        workspace.update(cx, |workspace, cx| {
+            workspace.dismiss_notification(&notification_id, cx)
+        });
+
+        open_file(&workspace, "other.html", cx).await;
+
+        assert_eq!(notification_ids(&workspace, cx), Vec::new());
+    }
+
+    #[gpui::test]
+    async fn test_emmet_install_dismisses_suggestion_permanently(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+        let (workspace, cx) = open_test_workspace(fs, cx).await;
+        let notification_id = NotificationId::unique::<EmmetSuggestionNotification>();
+
+        open_file(&workspace, "index.html", cx).await;
+        assert_eq!(
+            notification_ids(&workspace, cx),
+            vec![notification_id.clone()]
+        );
+
+        cx.update(|_, cx| {
+            ExtensionStore::global(cx).update(cx, |_, cx| {
+                cx.emit(extension_host::Event::ExtensionInstalled(Arc::from(
+                    EMMET_EXTENSION_ID,
+                )))
+            });
+        });
+        cx.run_until_parked();
+        let kvp = cx.update(|_, cx| KeyValueStore::global(cx));
+        assert_eq!(
+            kvp.read_kvp(&language_extension_key(EMMET_EXTENSION_ID))
+                .unwrap(),
+            Some("dismissed".to_string())
+        );
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.dismiss_notification(&notification_id, cx)
+        });
+        open_file(&workspace, "other.html", cx).await;
+
+        assert_eq!(notification_ids(&workspace, cx), Vec::new());
+    }
+
+    #[gpui::test]
+    async fn test_emmet_is_not_suggested_when_installed(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+        fs.insert_tree(
+            paths::extensions_dir().join("installed"),
+            json!({
+                "emmet": {
+                    "extension.toml": r#"
+                        id = "emmet"
+                        name = "Emmet"
+                        version = "0.0.14"
+                        schema_version = 1
+                    "#
+                }
+            }),
+        )
+        .await;
+        cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                ExtensionStore::global(cx)
+                    .read(cx)
+                    .installed_extensions()
+                    .keys()
+                    .collect::<Vec<_>>(),
+                vec![&Arc::from(EMMET_EXTENSION_ID)]
+            );
+        });
+        let (workspace, cx) = open_test_workspace(fs, cx).await;
+
+        open_file(&workspace, "index.html", cx).await;
+
+        assert_eq!(notification_ids(&workspace, cx), Vec::new());
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
+        cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content
+                        .extension
+                        .auto_install_extensions
+                        .insert(Arc::from("html"), false);
+                });
+            });
+            cx.set_global(db::AppDatabase::test_new());
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+            extension::init(cx);
+            extension_host::init(
+                Arc::new(ExtensionHostProxy::new()),
+                app_state.fs.clone(),
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                cx,
+            );
+            editor::init(cx);
+            crate::init(cx);
+            app_state.fs.as_fake()
+        })
+    }
+
+    async fn open_test_workspace(
+        fs: Arc<FakeFs>,
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, &mut VisualTestContext) {
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "index.html": "<div></div>",
+                "other.html": "<span></span>",
+                "main.rs": "fn main() {}",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project
+                .languages()
+                .add(Arc::new(test_language("HTML", "html")));
+            project
+                .languages()
+                .add(Arc::new(test_language("Rust", "rs")));
+        });
+        cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx))
+    }
+
+    async fn open_file(workspace: &Entity<Workspace>, file_name: &str, cx: &mut VisualTestContext) {
+        let worktree_id = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .id()
+        });
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path(file_name)), None, true, window, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+    }
+
+    fn notification_ids(
+        workspace: &Entity<Workspace>,
+        cx: &VisualTestContext,
+    ) -> Vec<NotificationId> {
+        workspace.read_with(cx, |workspace, _| workspace.notification_ids())
+    }
+
+    fn test_language(name: &'static str, path_suffix: &str) -> Language {
+        Language::new(
+            LanguageConfig {
+                name: name.into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec![path_suffix.to_string()],
+                    ..LanguageMatcher::default()
+                }
+                .into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        )
     }
 }
