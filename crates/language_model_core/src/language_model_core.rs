@@ -379,15 +379,16 @@ impl LanguageModelCompletionError {
                 category,
                 ..
             } => {
-                status.is_some_and(|status| is_retryable_provider_status(provider, status))
-                    || matches!(
-                        category,
-                        ProviderErrorCategory::RateLimit
-                            | ProviderErrorCategory::Overloaded
-                            | ProviderErrorCategory::Timeout
-                            | ProviderErrorCategory::InternalServer
-                    )
-                    || retry_after.is_some()
+                *category != ProviderErrorCategory::PaymentRequired
+                    && (status.is_some_and(|status| is_retryable_provider_status(provider, status))
+                        || matches!(
+                            category,
+                            ProviderErrorCategory::RateLimit
+                                | ProviderErrorCategory::Overloaded
+                                | ProviderErrorCategory::Timeout
+                                | ProviderErrorCategory::InternalServer
+                        )
+                        || retry_after.is_some())
             }
             Self::ApiReadResponseError { .. } | Self::HttpSend { .. } => true,
             Self::DataRetentionConsentRequired { .. }
