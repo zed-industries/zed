@@ -526,10 +526,10 @@ impl Model {
             | Self::Glm5_2
             | Self::Glm5_3
             | Self::Glm5_3Flash
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4_6
             | Self::LongCat2_0
-            | Self::MiniMaxM2_5
-            | Self::MiniMaxM2_7
-            | Self::MiniMaxM3 => true,
+            | Self::MiniMaxM2_5 => true,
 
             Self::Custom {
                 interleaved_reasoning,
