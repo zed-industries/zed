@@ -882,6 +882,7 @@ fn collect_importable_threads(
                 worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
                 remote_connection: remote_connection.clone(),
                 archived: true,
+                pinned: false,
             });
         }
     }
@@ -1280,6 +1281,23 @@ mod tests {
             .find(|t| t.display_title().as_ref() == "Archived Thread")
             .unwrap();
         assert!(archived.archived);
+    }
+
+    #[test]
+    fn test_imports_threads_from_channel_without_pinned_column() {
+        let dir = tempfile::tempdir().unwrap();
+        let connection = create_channel_db(dir.path(), ReleaseChannel::Nightly);
+        insert_thread(&connection, "Legacy Thread", "2025-01-15T10:00:00Z", false);
+        connection
+            .exec("ALTER TABLE sidebar_threads DROP COLUMN pinned")
+            .unwrap()()
+        .unwrap();
+        drop(connection);
+
+        let threads = read_threads_from_channel(dir.path(), ReleaseChannel::Nightly).unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].display_title().as_ref(), "Legacy Thread");
+        assert!(!threads[0].pinned);
     }
 
     fn init_test(cx: &mut TestAppContext) {

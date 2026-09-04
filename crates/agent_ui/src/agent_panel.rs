@@ -963,6 +963,7 @@ fn thread_metadata_to_debug_json(
         "interacted_at": metadata.interacted_at.as_ref().map(format_timestamp_human),
         "worktree_paths": format!("{:?}", metadata.worktree_paths),
         "archived": metadata.archived,
+        "pinned": metadata.pinned,
     })
 }
 
@@ -8078,6 +8079,7 @@ mod tests {
                         worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
                         remote_connection: None,
                         archived: false,
+                        pinned: false,
                     },
                     cx,
                 );

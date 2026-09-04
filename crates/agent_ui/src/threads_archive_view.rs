@@ -51,6 +51,7 @@ enum ThreadFilter {
     #[default]
     All,
     ArchivedOnly,
+    PinnedOnly,
 }
 
 #[derive(Clone)]
@@ -270,11 +271,12 @@ impl ThreadsArchiveView {
     fn update_items(&mut self, cx: &mut Context<Self>) {
         let store = ThreadMetadataStore::global(cx).read(cx);
 
-        // If we're filtering to archived threads but none remain (e.g. the
-        // user just deleted the last one), fall back to showing all threads
-        // so they aren't stranded with an empty list and a disabled toggle.
-        if self.thread_filter == ThreadFilter::ArchivedOnly
-            && store.archived_entries().next().is_none()
+        // Fall back to all threads when the current special filter no longer
+        // has entries, so the archive view never becomes a dead end.
+        if (self.thread_filter == ThreadFilter::ArchivedOnly
+            && store.archived_entries().next().is_none())
+            || (self.thread_filter == ThreadFilter::PinnedOnly
+                && store.pinned_entries().next().is_none())
         {
             self.thread_filter = ThreadFilter::All;
         }
@@ -285,8 +287,9 @@ impl ThreadsArchiveView {
             .filter(|t| match thread_filter {
                 ThreadFilter::All => true,
                 ThreadFilter::ArchivedOnly => t.archived,
+                ThreadFilter::PinnedOnly => t.pinned,
             })
-            .sorted_by_cached_key(|t| t.created_at.unwrap_or(t.updated_at))
+            .sorted_by_cached_key(|t| (t.pinned, t.created_at.unwrap_or(t.updated_at)))
             .rev()
             .cloned()
             .collect::<Vec<_>>();
@@ -422,6 +425,13 @@ impl ThreadsArchiveView {
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.archive(thread_id, None, cx));
     }
 
+    fn toggle_pinned_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            let pinned = store.entry(thread_id).is_some_and(|thread| !thread.pinned);
+            store.set_pinned(thread_id, pinned, cx);
+        });
+    }
+
     fn archive_selected_thread(
         &mut self,
         _: &ArchiveSelectedThread,
@@ -433,7 +443,7 @@ impl ThreadsArchiveView {
             return;
         };
 
-        if thread.archived {
+        if thread.archived || thread.pinned {
             return;
         }
 
@@ -641,6 +651,7 @@ impl ThreadsArchiveView {
                 let is_restoring = self.restoring.contains(&thread.thread_id);
 
                 let is_archived = thread.archived;
+                let is_pinned = thread.pinned;
 
                 let branch_names_for_thread: HashMap<PathBuf, SharedString> = self
                     .archived_branch_names
@@ -746,25 +757,52 @@ impl ThreadsArchiveView {
                     .into_any_element()
                 } else {
                     base.action_slot(
-                        IconButton::new("archive-thread", IconName::Archive)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip({
-                                move |_window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Archive Thread",
-                                        &ArchiveSelectedThread,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                }
-                            })
-                            .on_click({
-                                let thread_id = thread.thread_id;
-                                cx.listener(move |this, _, _, cx| {
-                                    this.archive_thread(thread_id, cx);
-                                    cx.stop_propagation();
-                                })
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                IconButton::new("toggle-pinned-thread", IconName::Pin)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(if is_pinned {
+                                        Color::Accent
+                                    } else {
+                                        Color::Muted
+                                    })
+                                    .tooltip(Tooltip::text(if is_pinned {
+                                        "Unpin Thread"
+                                    } else {
+                                        "Pin Thread"
+                                    }))
+                                    .on_click({
+                                        let thread_id = thread.thread_id;
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.toggle_pinned_thread(thread_id, cx);
+                                            cx.stop_propagation();
+                                        })
+                                    }),
+                            )
+                            .when(!is_pinned, |this| {
+                                this.child(
+                                    IconButton::new("archive-thread", IconName::Archive)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .tooltip({
+                                            move |_window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Archive Thread",
+                                                    &ArchiveSelectedThread,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .on_click({
+                                            let thread_id = thread.thread_id;
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.archive_thread(thread_id, cx);
+                                                cx.stop_propagation();
+                                            })
+                                        }),
+                                )
                             }),
                     )
                     .on_click({
@@ -951,6 +989,10 @@ impl ThreadsArchiveView {
             let store = ThreadMetadataStore::global(cx).read(cx);
             store.archived_entries().next().is_some()
         };
+        let has_pinned_threads = {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            store.pinned_entries().next().is_some()
+        };
 
         let count_label = if entry_count == 1 {
             "1 thread".to_string()
@@ -988,6 +1030,28 @@ impl ThreadsArchiveView {
                             .tooltip(Tooltip::text("Import Threads"))
                             .on_click(cx.listener(|_this, _, _, cx| {
                                 cx.emit(ThreadsArchiveViewEvent::Import);
+                            })),
+                    )
+                    .child(
+                        IconButton::new("filter-pinned-only", IconName::Pin)
+                            .icon_size(IconSize::Small)
+                            .disabled(!has_pinned_threads)
+                            .toggle_state(self.thread_filter == ThreadFilter::PinnedOnly)
+                            .tooltip(Tooltip::text(
+                                if self.thread_filter == ThreadFilter::PinnedOnly {
+                                    "Show All Threads"
+                                } else {
+                                    "Show Only Pinned Threads"
+                                },
+                            ))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.thread_filter =
+                                    if this.thread_filter == ThreadFilter::PinnedOnly {
+                                        ThreadFilter::All
+                                    } else {
+                                        ThreadFilter::PinnedOnly
+                                    };
+                                this.update_items(cx);
                             })),
                     )
                     .child(

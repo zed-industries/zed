@@ -67,7 +67,13 @@ const THREAD_ID_MIGRATION_KEY: &str = "thread-metadata-thread-id-backfill";
 pub(crate) fn list_thread_metadata_from_connection(
     connection: &db::sqlez::connection::Connection,
 ) -> anyhow::Result<Vec<ThreadMetadata>> {
-    connection.select::<ThreadMetadata>(ThreadMetadataDb::LIST_QUERY)?()
+    if let Ok(mut query) = connection.select::<ThreadMetadata>(ThreadMetadataDb::LIST_QUERY) {
+        return query();
+    }
+
+    // Other release channels may not have run the pinned migration yet.
+    // Treat those threads as unpinned while importing their metadata.
+    connection.select::<ThreadMetadata>(ThreadMetadataDb::LEGACY_LIST_QUERY)?()
 }
 
 /// Run the `ThreadMetadataDb` migrations on a raw connection.
@@ -142,6 +148,7 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
                         worktree_paths: WorktreePaths::from_folder_paths(&entry.folder_paths),
                         remote_connection: None,
                         archived: true,
+                        pinned: false,
                     })
                 })
                 .collect::<Vec<_>>()
@@ -323,6 +330,9 @@ pub struct ThreadMetadata {
     pub worktree_paths: WorktreePaths,
     pub remote_connection: Option<RemoteConnectionOptions>,
     pub archived: bool,
+    /// User-managed pin. Pinned threads are sorted before other threads and
+    /// cannot be archived until they are unpinned.
+    pub pinned: bool,
 }
 
 impl ThreadMetadata {
@@ -612,6 +622,11 @@ impl ThreadMetadataStore {
         self.entries().filter(|t| t.archived)
     }
 
+    /// Returns all user-pinned threads.
+    pub fn pinned_entries(&self) -> impl Iterator<Item = &ThreadMetadata> + '_ {
+        self.entries().filter(|t| t.pinned)
+    }
+
     /// Returns all threads for the given path list and remote connection,
     /// excluding archived threads.
     ///
@@ -861,6 +876,10 @@ impl ThreadMetadataStore {
         archive_job: Option<(Task<()>, async_channel::Sender<()>)>,
         cx: &mut Context<Self>,
     ) {
+        if self.entry(thread_id).is_some_and(|thread| thread.pinned) {
+            return;
+        }
+
         self.update_archived(thread_id, true, cx);
 
         if let Some(job) = archive_job {
@@ -874,6 +893,21 @@ impl ThreadMetadataStore {
         self.update_archived(thread_id, false, cx);
         // Dropping the Sender triggers cancellation in the background task.
         self.in_flight_archives.remove(&thread_id);
+    }
+
+    pub fn set_pinned(&mut self, thread_id: ThreadId, pinned: bool, cx: &mut Context<Self>) {
+        if let Some(thread) = self.threads.get(&thread_id) {
+            if pinned && thread.archived {
+                return;
+            }
+            if thread.pinned != pinned {
+                self.save_internal(ThreadMetadata {
+                    pinned,
+                    ..thread.clone()
+                });
+                cx.notify();
+            }
+        }
     }
 
     pub fn cleanup_completed_archive(&mut self, thread_id: ThreadId) {
@@ -1329,6 +1363,7 @@ impl ThreadMetadataStore {
         let archived = existing_thread
             .map(|t| t.archived)
             .unwrap_or(worktree_paths.is_empty());
+        let pinned = existing_thread.is_some_and(|t| t.pinned);
 
         let was_draft = existing_thread.map_or(true, |t| t.is_draft());
         if was_draft && !is_draft {
@@ -1350,6 +1385,7 @@ impl ThreadMetadataStore {
             worktree_paths,
             remote_connection,
             archived,
+            pinned,
         };
 
         self.save(metadata, cx);
@@ -1462,6 +1498,9 @@ impl Domain for ThreadMetadataDb {
         sql!(
             ALTER TABLE sidebar_threads ADD COLUMN title_override TEXT;
         ),
+        sql!(
+            ALTER TABLE sidebar_threads ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+        ),
     ];
 }
 
@@ -1477,7 +1516,13 @@ impl ThreadMetadataDb {
     }
 
     const LIST_QUERY: &str = "SELECT thread_id, session_id, agent_id, title, updated_at, \
-        created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, \
+        created_at, interacted_at, folder_paths, folder_paths_order, archived, pinned, main_worktree_paths, \
+        main_worktree_paths_order, remote_connection, title_override \
+        FROM sidebar_threads \
+        ORDER BY updated_at DESC";
+
+    const LEGACY_LIST_QUERY: &str = "SELECT thread_id, session_id, agent_id, title, updated_at, \
+        created_at, interacted_at, folder_paths, folder_paths_order, archived, 0 AS pinned, main_worktree_paths, \
         main_worktree_paths_order, remote_connection, title_override \
         FROM sidebar_threads \
         ORDER BY updated_at DESC";
@@ -1531,10 +1576,11 @@ impl ThreadMetadataDb {
         let title_override = row.title_override.as_ref().map(|t| t.to_string());
         let thread_id = row.thread_id;
         let archived = row.archived;
+        let pinned = row.pinned;
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection, title_override) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
+            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, interacted_at, folder_paths, folder_paths_order, archived, pinned, main_worktree_paths, main_worktree_paths_order, remote_connection, title_override) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15) \
                        ON CONFLICT(thread_id) DO UPDATE SET \
                            session_id = excluded.session_id, \
                            agent_id = excluded.agent_id, \
@@ -1545,6 +1591,7 @@ impl ThreadMetadataDb {
                            folder_paths = excluded.folder_paths, \
                            folder_paths_order = excluded.folder_paths_order, \
                            archived = excluded.archived, \
+                           pinned = excluded.pinned, \
                            main_worktree_paths = excluded.main_worktree_paths, \
                            main_worktree_paths_order = excluded.main_worktree_paths_order, \
                            remote_connection = excluded.remote_connection, \
@@ -1560,6 +1607,7 @@ impl ThreadMetadataDb {
             i = stmt.bind(&folder_paths, i)?;
             i = stmt.bind(&folder_paths_order, i)?;
             i = stmt.bind(&archived, i)?;
+            i = stmt.bind(&pinned, i)?;
             i = stmt.bind(&main_worktree_paths, i)?;
             i = stmt.bind(&main_worktree_paths_order, i)?;
             i = stmt.bind(&remote_connection, i)?;
@@ -1714,6 +1762,7 @@ impl Column for ThreadMetadata {
         let (folder_paths_order_str, next): (Option<String>, i32) =
             Column::column(statement, next)?;
         let (archived, next): (bool, i32) = Column::column(statement, next)?;
+        let (pinned, next): (bool, i32) = Column::column(statement, next)?;
         let (main_worktree_paths_str, next): (Option<String>, i32) =
             Column::column(statement, next)?;
         let (main_worktree_paths_order_str, next): (Option<String>, i32) =
@@ -1787,6 +1836,7 @@ impl Column for ThreadMetadata {
                 worktree_paths,
                 remote_connection,
                 archived,
+                pinned,
             },
             next,
         ))
@@ -1864,6 +1914,7 @@ mod tests {
         ThreadMetadata {
             thread_id: ThreadId::new(),
             archived: false,
+            pinned: false,
             session_id: Some(acp::SessionId::new(session_id)),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title: if title.is_empty() {
@@ -2171,6 +2222,7 @@ mod tests {
             worktree_paths: WorktreePaths::from_folder_paths(&second_paths),
             remote_connection: None,
             archived: false,
+            pinned: false,
         };
 
         cx.update(|cx| {
@@ -2256,6 +2308,7 @@ mod tests {
             worktree_paths: WorktreePaths::from_folder_paths(&project_a_paths),
             remote_connection: None,
             archived: false,
+            pinned: false,
         };
 
         cx.update(|cx| {
@@ -2382,6 +2435,7 @@ mod tests {
             worktree_paths: WorktreePaths::from_folder_paths(&project_paths),
             remote_connection: None,
             archived: false,
+            pinned: false,
         };
 
         cx.update(|cx| {
@@ -3117,6 +3171,7 @@ mod tests {
         let local_linked_thread = ThreadMetadata {
             thread_id: ThreadId::new(),
             archived: false,
+            pinned: false,
             session_id: Some(acp::SessionId::new("local-linked")),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title: Some("Local Linked".into()),
@@ -3131,6 +3186,7 @@ mod tests {
         let remote_linked_thread = ThreadMetadata {
             thread_id: ThreadId::new(),
             archived: false,
+            pinned: false,
             session_id: Some(acp::SessionId::new("remote-linked")),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title: Some("Remote Linked".into()),
@@ -3310,6 +3366,76 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_pinned_flag_persists_across_reload(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let metadata = make_metadata(
+            "session-1",
+            "Thread 1",
+            Utc::now(),
+            PathList::new(&[Path::new("/project-a")]),
+        );
+        let thread_id = metadata.thread_id;
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(metadata, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.set_pinned(thread_id, true, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                let _ = store.reload(cx);
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            assert!(store.entry(thread_id).unwrap().pinned);
+            assert_eq!(store.pinned_entries().count(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pinned_thread_cannot_be_archived(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let metadata = make_metadata(
+            "session-1",
+            "Pinned Thread",
+            Utc::now(),
+            PathList::new(&[Path::new("/project-a")]),
+        );
+        let thread_id = metadata.thread_id;
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(metadata, cx);
+                store.set_pinned(thread_id, true, cx);
+                store.archive(thread_id, None, cx);
+            });
+        });
+
+        cx.update(|cx| {
+            let thread = ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry(thread_id)
+                .unwrap();
+            assert!(thread.pinned);
+            assert!(!thread.archived);
+        });
+    }
+
+    #[gpui::test]
     async fn test_archive_nonexistent_thread_is_noop(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -3362,6 +3488,7 @@ mod tests {
                 entries,
                 vec![ThreadMetadata {
                     archived: true,
+                    pinned: false,
                     ..metadata
                 }]
             );

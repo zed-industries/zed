@@ -127,6 +127,8 @@ struct SerializedSidebar {
     width: Option<f32>,
     #[serde(default)]
     active_view: SerializedSidebarView,
+    #[serde(default)]
+    show_pinned_threads_only: bool,
 }
 
 #[derive(Debug, Default)]
@@ -800,6 +802,7 @@ pub struct Sidebar {
     /// its interaction time.
     draft_kinds: HashMap<ThreadId, DraftKind>,
     view: SidebarView,
+    show_pinned_threads_only: bool,
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
@@ -938,6 +941,7 @@ impl Sidebar {
             live_thread_statuses: HashMap::new(),
             draft_kinds: HashMap::new(),
             view: SidebarView::default(),
+            show_pinned_threads_only: false,
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_handles: HashMap::new(),
@@ -957,6 +961,9 @@ impl Sidebar {
     }
 
     fn is_group_collapsed(&self, key: &ProjectGroupKey, cx: &App) -> bool {
+        if self.show_pinned_threads_only {
+            return false;
+        }
         self.multi_workspace
             .upgrade()
             .and_then(|mw| {
@@ -1570,7 +1577,8 @@ impl Sidebar {
             let label = group_key.display_name(&path_detail_map);
 
             let is_collapsed = self.is_group_collapsed(group_key, cx);
-            let should_load_threads = !is_collapsed || !query.is_empty();
+            let should_load_threads =
+                self.show_pinned_threads_only || !is_collapsed || !query.is_empty();
 
             let is_active = active_workspace
                 .as_ref()
@@ -1820,6 +1828,16 @@ impl Sidebar {
                     && let Some(ActiveEntry::Thread { thread_id, .. }) = self.active_entry.as_ref()
                 {
                     notified_threads.remove(thread_id);
+                }
+            }
+
+            if self.show_pinned_threads_only {
+                current_thread_ids.extend(threads.iter().map(|thread| thread.metadata.thread_id));
+                threads.retain(|thread| thread.metadata.pinned);
+                terminals.clear();
+
+                if threads.is_empty() {
+                    continue;
                 }
             }
 
@@ -3261,6 +3279,9 @@ impl Sidebar {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.show_pinned_threads_only {
+            return;
+        }
         let is_collapsed = self.is_group_collapsed(project_group_key, cx);
         self.set_group_expanded(project_group_key, is_collapsed, cx);
         self.update_entries(cx);
@@ -5321,6 +5342,9 @@ impl Sidebar {
     ) {
         let store = ThreadMetadataStore::global(cx);
         let metadata = store.read(cx).entry_by_session(session_id).cloned();
+        if metadata.as_ref().is_some_and(|metadata| metadata.pinned) {
+            return;
+        }
         let metadata_thread_id = metadata.as_ref().map(|metadata| metadata.thread_id);
         let thread_entry = self.contents.entries.iter().find_map(|entry| match entry {
             ListEntry::Thread(thread) => metadata_thread_id
@@ -5713,6 +5737,9 @@ impl Sidebar {
         };
         match self.contents.entries.get(ix) {
             Some(ListEntry::Thread(thread)) => {
+                if thread.metadata.pinned {
+                    return;
+                }
                 match thread.status {
                     AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation => {
                         return;
@@ -5771,6 +5798,13 @@ impl Sidebar {
         })
     }
 
+    fn toggle_thread_pinned(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            let pinned = store.entry(thread_id).is_some_and(|thread| !thread.pinned);
+            store.set_pinned(thread_id, pinned, cx);
+        });
+    }
+
     fn thread_display_time(metadata: &ThreadMetadata) -> DateTime<Utc> {
         metadata.interacted_at.unwrap_or(metadata.updated_at)
     }
@@ -5793,11 +5827,15 @@ impl Sidebar {
             }
         }
 
+        fn is_pinned(entry: &ListEntry) -> bool {
+            matches!(entry, ListEntry::Thread(thread) if thread.metadata.pinned)
+        }
+
         let row_entries = terminals
             .into_iter()
             .map(ListEntry::Terminal)
             .chain(threads.into_iter().map(ListEntry::Thread))
-            .sorted_by_key(|right| std::cmp::Reverse(display_time(right)));
+            .sorted_by_key(|right| std::cmp::Reverse((is_pinned(right), display_time(right))));
 
         for entry in row_entries {
             if let ListEntry::Thread(thread) = &entry {
@@ -6253,6 +6291,7 @@ impl Sidebar {
             || self
                 .regenerating_titles
                 .contains(&thread.metadata.thread_id);
+        let is_pinned = thread.metadata.pinned;
 
         let thread_item = ThreadItem::new(id, title.clone())
             .base_bg(sidebar_bg)
@@ -6290,7 +6329,24 @@ impl Sidebar {
             .when_some(rename_title_editor, |this, title_editor| {
                 this.is_truncated(false).title_slot(title_editor)
             })
-            .when(is_hovered && !is_renaming, |this| {
+            .when((is_hovered || is_pinned) && !is_renaming, |this| {
+                let pin_button = IconButton::new(("pin-thread", ix), IconName::Pin)
+                    .icon_size(IconSize::Small)
+                    .icon_color(if is_pinned {
+                        Color::Accent
+                    } else {
+                        Color::Muted
+                    })
+                    .tooltip(Tooltip::text(if is_pinned {
+                        "Unpin Thread"
+                    } else {
+                        "Pin Thread"
+                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_thread_pinned(thread_id_for_actions, cx);
+                        cx.stop_propagation();
+                    }));
+
                 let rename_button = IconButton::new(("rename-thread", ix), IconName::Pencil)
                     .icon_size(IconSize::Small)
                     .tooltip({
@@ -6349,7 +6405,7 @@ impl Sidebar {
                                 })
                                 .into_any_element(),
                         ),
-                        None => Some(
+                        None if !is_pinned => Some(
                             IconButton::new("archive-thread", IconName::Archive)
                                 .icon_size(IconSize::Small)
                                 .tooltip({
@@ -6373,14 +6429,18 @@ impl Sidebar {
                                 })
                                 .into_any_element(),
                         ),
+                        None => None,
                     }
                 };
 
                 this.action_slot(
                     h_flex()
                         .gap_0p5()
-                        .child(rename_button)
-                        .when_some(contextual_action, |this, action| this.child(action)),
+                        .child(pin_button)
+                        .when(is_hovered, |this| this.child(rename_button))
+                        .when(is_hovered, |this| {
+                            this.when_some(contextual_action, |this, action| this.child(action))
+                        }),
                 )
             })
             .on_click({
@@ -6521,16 +6581,20 @@ impl Sidebar {
                             });
                         }
 
-                        menu.separator().entry("Archive Thread", None, {
-                            let session_id = session_id.clone();
-                            move |window, cx| {
-                                sidebar
-                                    .update(cx, |sidebar, cx| {
-                                        sidebar.archive_thread(&session_id, window, cx);
-                                    })
-                                    .ok();
-                            }
-                        })
+                        if is_pinned {
+                            menu
+                        } else {
+                            menu.separator().entry("Archive Thread", None, {
+                                let session_id = session_id.clone();
+                                move |window, cx| {
+                                    sidebar
+                                        .update(cx, |sidebar, cx| {
+                                            sidebar.archive_thread(&session_id, window, cx);
+                                        })
+                                        .ok();
+                                }
+                            })
+                        }
                     })
                 }
             })
@@ -7260,6 +7324,8 @@ impl Sidebar {
         let has_query = self.has_filter_query(cx);
         let message = if has_query {
             "No threads match your search."
+        } else if self.show_pinned_threads_only {
+            "No pinned threads"
         } else {
             "No threads yet"
         };
@@ -7370,7 +7436,28 @@ impl Sidebar {
                                             this.update_entries(cx);
                                         })),
                                 )
-                            }),
+                            })
+                            .child(
+                                IconButton::new("toggle-pinned-threads", IconName::Pin)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(if self.show_pinned_threads_only {
+                                        Color::Accent
+                                    } else {
+                                        Color::Muted
+                                    })
+                                    .tooltip(Tooltip::text(if self.show_pinned_threads_only {
+                                        "Show All Threads"
+                                    } else {
+                                        "Show Pinned Threads"
+                                    }))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.show_pinned_threads_only =
+                                            !this.show_pinned_threads_only;
+                                        this.selection = None;
+                                        this.serialize(cx);
+                                        this.update_entries(cx);
+                                    })),
+                            ),
                     )
             })
             .when(right_window_controls, |this| {
@@ -7833,6 +7920,7 @@ impl WorkspaceSidebar for Sidebar {
                 SidebarView::ThreadList => SerializedSidebarView::ThreadList,
                 SidebarView::Archive(_) => SerializedSidebarView::History,
             },
+            show_pinned_threads_only: self.show_pinned_threads_only,
         };
         serde_json::to_string(&serialized).ok()
     }
@@ -7847,6 +7935,7 @@ impl WorkspaceSidebar for Sidebar {
             if let Some(width) = serialized.width {
                 self.width = px(width).clamp(MIN_WIDTH, MAX_WIDTH);
             }
+            self.show_pinned_threads_only = serialized.show_pinned_threads_only;
             if serialized.active_view == SerializedSidebarView::History {
                 cx.defer_in(window, |this, window, cx| {
                     this.show_archive(window, cx);
