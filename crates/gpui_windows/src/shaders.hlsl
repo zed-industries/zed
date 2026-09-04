@@ -1455,6 +1455,7 @@ struct EffectLayer {
     float color_matrix[20];
     float backdrop_matrix[20];
     Background mask;
+    uint pad;
 };
 
 struct LayerComposite {
