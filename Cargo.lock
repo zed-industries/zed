@@ -7573,6 +7573,7 @@ dependencies = [
  "log",
  "metal",
  "objc",
+ "objc2-foundation 0.3.2",
  "parking_lot",
 ]
 
