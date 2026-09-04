@@ -1565,6 +1565,10 @@ impl DisplaySnapshot {
             .sum();
         let point =
             tab_snapshot.tab_point_to_point(TabPoint(Point::new(tab_row, byte_column)), Bias::Left);
+        // `byte_column` is a character boundary of the tab-expanded row, but folds and
+        // inlays put text in that row that has no buffer counterpart, so the mapping back
+        // is not a boundary this function can assume. Callers anchor at what they get, and
+        // an interior offset panics in `Buffer::anchor_at_offset`.
         self.buffer_snapshot().clip_point(point, Bias::Left)
     }
 

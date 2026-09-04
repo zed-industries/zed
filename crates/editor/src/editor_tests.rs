@@ -11618,6 +11618,40 @@ async fn test_add_selection_with_non_ascii_columns(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+/// A row too short to reach the goal columns is skipped rather than clamped. The goal
+/// columns count characters, so the en-dashes above must not push the comparison into
+/// the byte columns of the rows below.
+async fn test_add_selection_skips_rows_too_short_for_the_goal_columns(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // `cccc` sits at characters 13..17 of the first row but bytes 17..21, and `short` is
+    // five characters long, so it cannot hold the selection and is passed over.
+    cx.set_state(indoc!(
+        "aaaa –– bbbb «ccccˇ»
+         short
+         xxxx -- yyyy zzzz"
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc!(
+        "aaaa –– bbbb «ccccˇ»
+         short
+         xxxx -- yyyy «zzzzˇ»"
+    ));
+}
+
+#[gpui::test]
 /// Regression test for a panic ("display point out of range"): with a multi-line fold,
 /// buffer rows below the fold exceed the fold map's max row, so they must be converted
 /// to tab map rows instead of being used directly.
@@ -45037,9 +45071,9 @@ async fn test_columnar_selection_skips_rows_shorter_than_goal_column(cx: &mut Te
 
     let mut cx = EditorTestContext::new(cx).await;
 
-    // Rows longer than MAX_EXPANSION_COLUMN exercise the bounded
-    // `tab_expanded_line_contains_column` check: rows shorter than the goal
-    // column's start must be skipped without walking them to their end.
+    // A mouse columnar drag anchors on x pixels, so rows past MAX_EXPANSION_COLUMN
+    // still line up. Rows too short to reach the rectangle collapse to an empty range
+    // at their end, which `select_columns` drops once some row has matched.
     let long_row = "a".repeat(300);
     let wide_row = format!("{}b", "c".repeat(299));
     let state = format!("ˇ{long_row}\nxx\n{wide_row}\nyy\n{wide_row}");
