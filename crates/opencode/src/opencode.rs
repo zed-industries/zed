@@ -530,7 +530,7 @@ impl Model {
         }
     }
 
-    pub fn interleaved_reasoning(&self, _subscription: OpenCodeSubscription) -> bool {
+    pub fn interleaved_reasoning(&self, subscription: OpenCodeSubscription) -> bool {
         match self {
             Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
@@ -550,6 +550,14 @@ impl Model {
             | Self::ClaudeSonnet4_6
             | Self::LongCat2_0
             | Self::MiniMaxM2_5 => true,
+
+            Self::MiniMaxM2_7 | Self::MiniMaxM3 => {
+                if subscription == OpenCodeSubscription::Zen {
+                    true
+                } else {
+                    false
+                }
+            }
 
             Self::Custom {
                 interleaved_reasoning,
