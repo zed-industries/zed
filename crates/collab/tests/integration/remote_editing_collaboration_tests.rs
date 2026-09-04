@@ -1466,7 +1466,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
             "remote .zed/settings.json should sync after trust approval"
         )
     });
-    let _fake_language_server = fake_language_server.await.unwrap();
+    let fake_language_server = fake_language_server.await.unwrap();
     editor.update_in(cx_a, |editor, window, cx| {
         editor.handle_input("1", window, cx);
     });
@@ -1476,6 +1476,37 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
         lsp_inlay_hint_request_count.load(Ordering::Acquire) > 0,
         "inlay hints should be queried after trust approval"
     );
+
+    cx_a.run_until_parked();
+    for progress_token in [42, 43] {
+        let previous_requests = lsp_inlay_hint_request_count.load(Ordering::Acquire);
+        fake_language_server
+            .request::<lsp::request::WorkDoneProgressCreate>(
+                lsp::WorkDoneProgressCreateParams {
+                    token: lsp::ProgressToken::Number(progress_token),
+                },
+                lsp::DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .unwrap();
+        for progress in [
+            lsp::WorkDoneProgress::Begin(lsp::WorkDoneProgressBegin::default()),
+            lsp::WorkDoneProgress::End(lsp::WorkDoneProgressEnd::default()),
+        ] {
+            fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+                token: lsp::ProgressToken::Number(progress_token),
+                value: lsp::ProgressParamsValue::WorkDone(progress),
+            });
+        }
+        cx_a.run_until_parked();
+        cx_a.executor().advance_clock(Duration::from_secs(1));
+        cx_a.run_until_parked();
+        assert_eq!(
+            lsp_inlay_hint_request_count.load(Ordering::Acquire),
+            previous_requests + 1,
+        );
+    }
 
     let can_trust_a = trusted_worktrees.update(cx_a, |store, cx| {
         store.can_trust(&worktree_store, worktree_ids[0], cx)

@@ -497,19 +497,19 @@ impl Editor {
             if applicable_chunks.is_empty() && !ignore_previous_fetches {
                 continue;
             }
-            inlay_hints
-                .hint_refresh_tasks
-                .entry(buffer_id)
-                .or_default()
-                .push(spawn_editor_hints_refresh(
-                    buffer_id,
-                    invalidate_cache,
-                    debounce,
-                    visible_excerpts,
-                    known_chunks,
-                    applicable_chunks,
-                    cx,
-                ));
+            let refresh_tasks = inlay_hints.hint_refresh_tasks.entry(buffer_id).or_default();
+            if matches!(reason, InlayHintRefreshReason::RefreshRequested { .. }) {
+                refresh_tasks.clear();
+            }
+            refresh_tasks.push(spawn_editor_hints_refresh(
+                buffer_id,
+                invalidate_cache,
+                debounce,
+                visible_excerpts,
+                known_chunks,
+                applicable_chunks,
+                cx,
+            ));
         }
     }
 
@@ -1116,7 +1116,7 @@ pub mod tests {
     use crate::scroll::Autoscroll;
     use crate::scroll::ScrollAmount;
     use crate::{Editor, SelectionEffects};
-    use collections::HashSet;
+    use collections::{HashSet, VecDeque};
     use futures::channel::oneshot;
     use futures::{StreamExt, future};
     use gpui::{AppContext as _, Context, TestAppContext, WindowHandle};
@@ -1393,21 +1393,25 @@ pub mod tests {
             })
         });
         let (first_request_unblock, first_request_gate) = oneshot::channel::<()>();
-        let first_request_gate = Arc::new(Mutex::new(Some(first_request_gate)));
+        let (second_request_unblock, second_request_gate) = oneshot::channel::<()>();
+        let request_gates = Arc::new(Mutex::new(VecDeque::from([
+            first_request_gate,
+            second_request_gate,
+        ])));
         let lsp_request_count = Arc::new(AtomicU32::new(0));
         let (_, editor, fake_server) = prepare_test_objects(cx, {
-            let first_request_gate = first_request_gate.clone();
+            let request_gates = request_gates.clone();
             let lsp_request_count = lsp_request_count.clone();
             move |fake_server, file_with_hints| {
                 let lsp_request_count = lsp_request_count.clone();
-                let first_request_gate = first_request_gate.clone();
+                let request_gates = request_gates.clone();
                 fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
                     move |params, _| {
-                        let first_request_gate = first_request_gate.lock().take();
+                        let request_gate = request_gates.lock().pop_front();
                         let i = lsp_request_count.fetch_add(1, Ordering::Release) + 1;
                         async move {
-                            if let Some(first_request_gate) = first_request_gate {
-                                first_request_gate.await.ok();
+                            if let Some(request_gate) = request_gate {
+                                request_gate.await.ok();
                             }
                             assert_eq!(
                                 params.text_document.uri,
@@ -1451,17 +1455,17 @@ pub mod tests {
         cx.executor().run_until_parked();
 
         first_request_unblock.send(()).unwrap();
+        cx.executor().run_until_parked();
+        run_work_cycle(&fake_server, 42, cx).await;
         cx.executor().advance_clock(Duration::from_secs(1));
         cx.executor().run_until_parked();
-        assert_eq!(
-            2,
-            lsp_request_count.load(Ordering::Acquire),
-            "The refresh should have re-queried the server"
-        );
+        second_request_unblock.send(()).unwrap();
+        cx.executor().run_until_parked();
+        assert_eq!(3, lsp_request_count.load(Ordering::Acquire));
 
         editor
             .update(cx, |editor, _window, cx| {
-                let expected_hints = vec!["2".to_string()];
+                let expected_hints = vec!["3".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor, cx),
@@ -1476,154 +1480,75 @@ pub mod tests {
     async fn test_cache_update_on_lsp_completion_tasks(cx: &mut gpui::TestAppContext) {
         init_test(cx, &|settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
-                show_value_hints: Some(true),
                 enabled: Some(true),
                 edit_debounce_ms: Some(0),
                 scroll_debounce_ms: Some(0),
-                show_type_hints: Some(true),
-                show_parameter_hints: Some(true),
-                show_other_hints: Some(true),
-                show_background: Some(false),
-                toggle_on_modifiers_press: None,
+                ..InlayHintSettingsContent::default()
             })
         });
 
-        let (_, editor, fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
-            let lsp_request_count = Arc::new(AtomicU32::new(0));
-            fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
-                move |params, _| {
-                    let task_lsp_request_count = Arc::clone(&lsp_request_count);
-                    async move {
-                        assert_eq!(
-                            params.text_document.uri,
-                            lsp::Uri::from_file_path(file_with_hints).unwrap(),
-                        );
-                        let current_call_id =
-                            Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
-                        Ok(Some(vec![lsp::InlayHint {
-                            position: lsp::Position::new(0, current_call_id),
-                            label: lsp::InlayHintLabel::String(current_call_id.to_string()),
-                            kind: None,
-                            text_edits: None,
-                            tooltip: None,
-                            padding_left: None,
-                            padding_right: None,
-                            data: None,
-                        }]))
+        let (_, editor, fake_server) = prepare_test_objects(cx, |fake_server, _| {
+            let request_count = AtomicU32::new(0);
+            fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |_, _| {
+                let request_count = request_count.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if request_count == 0 {
+                        return Ok(Some(Vec::new()));
                     }
-                },
-            );
+                    Ok(Some(vec![lsp::InlayHint {
+                        position: lsp::Position::new(0, 0),
+                        label: lsp::InlayHintLabel::String(request_count.to_string()),
+                        kind: None,
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: None,
+                        padding_right: None,
+                        data: None,
+                    }]))
+                }
+            });
         })
         .await;
-        cx.executor().run_until_parked();
 
+        let overlapping_token = lsp::ProgressToken::String("background-work".to_owned());
+        start_work(&fake_server, overlapping_token.clone(), cx).await;
         editor
             .update(cx, |editor, _, cx| {
-                let expected_hints = vec!["0".to_string()];
-                assert_eq!(
-                    expected_hints,
-                    cached_hint_labels(editor, cx),
-                    "Should get its first hints when opening the editor"
-                );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(visible_hint_labels(editor, cx), Vec::<String>::new());
             })
             .unwrap();
 
-        let progress_token = 42;
-        fake_server
-            .request::<lsp::request::WorkDoneProgressCreate>(
-                lsp::WorkDoneProgressCreateParams {
-                    token: lsp::ProgressToken::Number(progress_token),
-                },
-                DEFAULT_LSP_REQUEST_TIMEOUT,
-            )
-            .await
-            .into_response()
-            .expect("work done progress create request failed");
-        cx.executor().run_until_parked();
-        fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
-            token: lsp::ProgressToken::Number(progress_token),
-            value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
-                lsp::WorkDoneProgressBegin::default(),
-            )),
-        });
-        cx.executor().run_until_parked();
+        for (progress_token, expected_label) in [(42, "1"), (42, "2"), (43, "3")] {
+            run_work_cycle(&fake_server, progress_token, cx).await;
+            editor
+                .update(cx, |editor, _, cx| {
+                    assert_eq!(visible_hint_labels(editor, cx), [expected_label]);
+                })
+                .unwrap();
+            end_work(&fake_server, lsp::ProgressToken::Number(progress_token), cx);
+            editor
+                .update(cx, |editor, _, cx| {
+                    assert_eq!(visible_hint_labels(editor, cx), [expected_label]);
+                })
+                .unwrap();
+        }
 
+        end_work(&fake_server, overlapping_token, cx);
         editor
             .update(cx, |editor, _, cx| {
-                let expected_hints = vec!["0".to_string()];
-                assert_eq!(
-                    expected_hints,
-                    cached_hint_labels(editor, cx),
-                    "Should not update hints while the work task is running"
-                );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            })
-            .unwrap();
-
-        fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
-            token: lsp::ProgressToken::Number(progress_token),
-            value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
-                lsp::WorkDoneProgressEnd::default(),
-            )),
-        });
-        cx.executor().run_until_parked();
-
-        editor
-            .update(cx, |editor, _, cx| {
-                let expected_hints = vec!["1".to_string()];
-                assert_eq!(
-                    expected_hints,
-                    cached_hint_labels(editor, cx),
-                    "New hints should be queried after the work task is done"
-                );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            })
-            .unwrap();
-
-        run_work_cycle(&fake_server, progress_token + 1, cx).await;
-
-        editor
-            .update(cx, |editor, _, cx| {
-                let expected_hints = vec!["1".to_string()];
-                assert_eq!(
-                    expected_hints,
-                    cached_hint_labels(editor, cx),
-                    "Repeated work cycles without buffer changes should not invalidate hints again"
-                );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(visible_hint_labels(editor, cx), ["4"]);
             })
             .unwrap();
 
         editor
             .update(cx, |editor, window, cx| {
-                editor.handle_input("~", window, cx);
+                editor.handle_input("~", window, cx)
             })
             .unwrap();
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _, cx| {
-                let expected_hints = vec!["2".to_string()];
-                assert_eq!(
-                    expected_hints,
-                    cached_hint_labels(editor, cx),
-                    "A buffer edit should invalidate and re-query the hints"
-                );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            })
-            .unwrap();
-
-        run_work_cycle(&fake_server, progress_token + 2, cx).await;
-
-        editor
-            .update(cx, |editor, _, cx| {
-                let expected_hints = vec!["3".to_string()];
-                assert_eq!(
-                    expected_hints,
-                    cached_hint_labels(editor, cx),
-                    "A buffer edit should re-allow the work-end hint refresh"
-                );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(visible_hint_labels(editor, cx), ["5"]);
             })
             .unwrap();
     }
@@ -4836,13 +4761,6 @@ let c = 3;"#
 
     #[gpui::test]
     async fn test_refresh_requested_multi_server(cx: &mut gpui::TestAppContext) {
-        // Bug 2: When one LSP server sends workspace/inlayHint/refresh, the editor
-        // wipes all tracking state via clear(), then spawns tasks that call
-        // LspStore::inlay_hints with for_server=Some(requesting_server). The LspStore
-        // filters out other servers' cached hints via the for_server guard, so only
-        // the requesting server's hints are returned. apply_fetched_hints removes ALL
-        // visible hints (should_invalidate()=true) but only adds back the requesting
-        // server's hints. Other servers' hints disappear permanently.
         init_test(cx, &|settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
                 enabled: Some(true),
@@ -4955,12 +4873,11 @@ let c = 3;"#
             })
             .await
             .unwrap();
+        cx.executor().run_until_parked();
+        let fake_server_a = fake_servers_a.next().await.unwrap();
+        let fake_server_b = fake_servers_b.next().await.unwrap();
         let editor =
             cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
-        cx.executor().run_until_parked();
-
-        let fake_server_a = fake_servers_a.next().await.unwrap();
-        let _fake_server_b = fake_servers_b.next().await.unwrap();
 
         editor
             .update(cx, |editor, window, cx| {
@@ -4972,15 +4889,11 @@ let c = 3;"#
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
 
-        // Verify both servers' hints are present initially.
         editor
             .update(cx, |editor, _window, cx| {
-                let visible = visible_hint_labels(editor, cx);
-                let has_a = visible.iter().any(|h| h.starts_with("server_a"));
-                let has_b = visible.iter().any(|h| h.starts_with("server_b"));
-                assert!(
-                    has_a && has_b,
-                    "Both servers should have hints initially. Got: {visible:?}"
+                assert_eq!(
+                    visible_hint_labels(editor, cx),
+                    ["server_a_1", "server_b_1"]
                 );
             })
             .unwrap();
@@ -5007,23 +4920,52 @@ let c = 3;"#
 
         editor
             .update(cx, |editor, _window, cx| {
-                let visible = visible_hint_labels(editor, cx);
-                let has_a = visible.iter().any(|h| h.starts_with("server_a"));
-                let has_b = visible.iter().any(|h| h.starts_with("server_b"));
-                assert!(
-                    has_a,
-                    "Server A hints should be present after its own refresh. Got: {visible:?}"
-                );
-                assert!(
-                    has_b,
-                    "Server B hints should NOT be lost when server A triggers \
-                     RefreshRequested. Bug 2: clear() wipes all tracking, then \
-                     LspStore filters out server B's cached hints via the for_server \
-                     guard, and apply_fetched_hints removes all visible hints but only \
-                     adds back server A's. Got: {visible:?}"
+                assert_eq!(
+                    visible_hint_labels(editor, cx),
+                    ["server_a_2", "server_b_1"]
                 );
             })
             .unwrap();
+
+        run_work_cycle(&fake_server_a, 42, cx).await;
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(
+                    visible_hint_labels(editor, cx),
+                    ["server_a_3", "server_b_1"]
+                );
+            })
+            .unwrap();
+
+        update_test_language_settings(cx, &|settings| {
+            settings
+                .defaults
+                .inlay_hints
+                .as_mut()
+                .unwrap()
+                .edit_debounce_ms = Some(100);
+        });
+        for server in [&fake_server_a, &fake_server_b] {
+            server
+                .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+                .await
+                .into_response()
+                .unwrap();
+        }
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(
+                    visible_hint_labels(editor, cx),
+                    ["server_a_4", "server_b_2"]
+                );
+            })
+            .unwrap();
+        assert_eq!(server_a_request_count.load(Ordering::Acquire), 4);
+        assert_eq!(server_b_request_count.load(Ordering::Acquire), 2);
     }
 
     #[gpui::test]
@@ -5441,10 +5383,19 @@ let c = 3;"#
         progress_token: i32,
         cx: &mut gpui::TestAppContext,
     ) {
+        start_work(fake_server, lsp::ProgressToken::Number(progress_token), cx).await;
+        end_work(fake_server, lsp::ProgressToken::Number(progress_token), cx);
+    }
+
+    async fn start_work(
+        fake_server: &FakeLanguageServer,
+        progress_token: lsp::ProgressToken,
+        cx: &mut gpui::TestAppContext,
+    ) {
         fake_server
             .request::<lsp::request::WorkDoneProgressCreate>(
                 lsp::WorkDoneProgressCreateParams {
-                    token: lsp::ProgressToken::Number(progress_token),
+                    token: progress_token.clone(),
                 },
                 DEFAULT_LSP_REQUEST_TIMEOUT,
             )
@@ -5453,14 +5404,21 @@ let c = 3;"#
             .expect("work done progress create request failed");
         cx.executor().run_until_parked();
         fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
-            token: lsp::ProgressToken::Number(progress_token),
+            token: progress_token,
             value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
                 lsp::WorkDoneProgressBegin::default(),
             )),
         });
         cx.executor().run_until_parked();
+    }
+
+    fn end_work(
+        fake_server: &FakeLanguageServer,
+        progress_token: lsp::ProgressToken,
+        cx: &mut gpui::TestAppContext,
+    ) {
         fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
-            token: lsp::ProgressToken::Number(progress_token),
+            token: progress_token,
             value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
                 lsp::WorkDoneProgressEnd::default(),
             )),

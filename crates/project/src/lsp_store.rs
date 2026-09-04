@@ -4420,7 +4420,7 @@ fn next_lsp_fetch_id() -> u64 {
     NEXT_LSP_FETCH_ID.fetch_add(1, atomic::Ordering::Relaxed) as u64
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct RunningFetch<T> {
     id: u64,
     version: Global,
@@ -8672,10 +8672,8 @@ impl LspStore {
         let current_servers = self.language_server_ids_for_request(&buffer, &capability_probe, cx);
         let lsp_data = self.latest_lsp_data(&buffer, cx);
         let query_version = lsp_data.buffer_version.clone();
-        if let InvalidationStrategy::RefreshRequested { server_id } = invalidate {
-            lsp_data
-                .inlay_hints
-                .invalidate_for_server_refresh(server_id);
+        if matches!(invalidate, InvalidationStrategy::RefreshRequested { .. }) {
+            lsp_data.inlay_hints.invalidate_pending_refreshes();
         }
         let existing_inlay_hints = &mut lsp_data.inlay_hints;
         existing_inlay_hints
@@ -8707,7 +8705,10 @@ impl LspStore {
         let mut chunk_hint_tasks = HashMap::default();
         for chunk in applicable_chunks {
             let cached_hints = existing_inlay_hints.cached_hints(&chunk).cloned();
-            let running_fetch = existing_inlay_hints.fetched_hints(&chunk).clone();
+            let running_fetch = existing_inlay_hints
+                .fetched_hints(&chunk)
+                .as_ref()
+                .map(|fetch| fetch.task.clone());
             let servers_to_query = if cached_hints.is_none() && running_fetch.is_none() {
                 Some(None)
             } else if missing_servers.is_empty() {
@@ -8741,9 +8742,11 @@ impl LspStore {
                 None => current_servers.clone(),
             };
 
+            let fetch_id = next_lsp_fetch_id();
             let next_hint_id = next_hint_id.clone();
             let buffer = buffer.clone();
             let query_version = query_version.clone();
+            let fetched_servers = queried_servers.clone();
             let range_to_query = chunk.anchor_range();
             let new_inlay_hints = cx
                 .spawn(async move |lsp_store, cx| {
@@ -8766,6 +8769,10 @@ impl LspStore {
                                 if lsp_data.buffer_version != query_version {
                                     return CacheInlayHints::default();
                                 }
+                                RunningFetch::take_finished(
+                                    lsp_data.inlay_hints.fetched_hints(&chunk),
+                                    fetch_id,
+                                );
                                 if new_hints_by_server.is_empty() {
                                     lsp_data.inlay_hints.invalidate_for_chunk(chunk);
                                 } else {
@@ -8799,7 +8806,11 @@ impl LspStore {
                                 .update(cx, |lsp_store, cx| {
                                     let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
                                     if lsp_data.buffer_version == query_version {
-                                        for server_id in &queried_servers {
+                                        RunningFetch::take_finished(
+                                            lsp_data.inlay_hints.fetched_hints(&chunk),
+                                            fetch_id,
+                                        );
+                                        for server_id in &fetched_servers {
                                             lsp_data.inlay_hints.fetched_servers.remove(server_id);
                                         }
                                     }
@@ -8811,7 +8822,12 @@ impl LspStore {
                 })
                 .shared();
 
-            *existing_inlay_hints.fetched_hints(&chunk) = Some(new_inlay_hints.clone());
+            *existing_inlay_hints.fetched_hints(&chunk) = Some(RunningFetch {
+                id: fetch_id,
+                version: lsp_data.buffer_version.clone(),
+                servers: queried_servers,
+                task: new_inlay_hints.clone(),
+            });
             chunk_hint_tasks.insert(chunk.row_range(), ChunkFetch::Running(new_inlay_hints));
         }
 
@@ -11959,14 +11975,10 @@ impl LspStore {
         token: ProgressToken,
         cx: &mut Context<Self>,
     ) {
-        let language_server_status =
-            if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-                status
-            } else {
-                return;
-            };
-
-        if !language_server_status.progress_tokens.contains(&token) {
+        let Some(status) = self.language_server_statuses.get_mut(&language_server_id) else {
+            return;
+        };
+        if !status.progress_tokens.contains(&token) {
             return;
         }
 
@@ -11986,7 +11998,7 @@ impl LspStore {
                 }
                 self.on_lsp_work_start(
                     language_server_id,
-                    token.clone(),
+                    token,
                     LanguageServerProgress {
                         title: Some(report.title),
                         is_disk_based_diagnostics_progress,
@@ -12012,10 +12024,12 @@ impl LspStore {
                 cx,
             ),
             lsp::WorkDoneProgress::End(_) => {
-                language_server_status.progress_tokens.remove(&token);
-                self.on_lsp_work_end(language_server_id, token.clone(), cx);
+                status.progress_tokens.remove(&token);
+                self.on_lsp_work_end(language_server_id, token, cx);
                 if is_disk_based_diagnostics_progress {
                     self.disk_based_diagnostics_finished(language_server_id, cx);
+                } else {
+                    self.refresh_inlay_hints(language_server_id, cx);
                 }
             }
         }
@@ -12106,14 +12120,9 @@ impl LspStore {
         token: ProgressToken,
         cx: &mut Context<Self>,
     ) {
-        if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            let refresh_inlay_hints = status
-                .pending_work
-                .remove(&token)
-                .is_some_and(|work| !work.is_disk_based_diagnostics_progress);
-            if refresh_inlay_hints {
-                self.refresh_inlay_hints_on_work_end(language_server_id, cx);
-            }
+        if let Some(status) = self.language_server_statuses.get_mut(&language_server_id)
+            && status.pending_work.remove(&token).is_some()
+        {
             cx.notify();
         }
 
