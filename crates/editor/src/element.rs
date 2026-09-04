@@ -5334,10 +5334,21 @@ impl EditorElement {
         });
     }
 
+    const DELETED_MARKER_WIDTH_RATIO: f32 = 0.35 / 0.275;
+
     fn gutter_strip_width(line_height: Pixels, cx: &App) -> Pixels {
         match EditorSettings::get_global(cx).gutter.git_gutter_width {
             GitGutterWidth::Custom(width) => px(*width),
             GitGutterWidth::Default => (0.275 * line_height).floor(),
+        }
+    }
+
+    fn deleted_marker_base_width(setting: GitGutterWidth, line_height: Pixels) -> Pixels {
+        match setting {
+            GitGutterWidth::Custom(width) => px(*width * Self::DELETED_MARKER_WIDTH_RATIO),
+            GitGutterWidth::Default => {
+                (0.275 * line_height * Self::DELETED_MARKER_WIDTH_RATIO).floor()
+            }
         }
     }
 
@@ -5376,10 +5387,10 @@ impl EditorElement {
                             .into();
                     let end_y = start_y + line_height;
 
-                    let width = match EditorSettings::get_global(cx).gutter.git_gutter_width {
-                        GitGutterWidth::Custom(width) => px(*width),
-                        GitGutterWidth::Default => (0.35 * line_height).floor(),
-                    };
+                    let width = Self::deleted_marker_base_width(
+                        EditorSettings::get_global(cx).gutter.git_gutter_width,
+                        line_height,
+                    );
                     let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                     let highlight_size = size(width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
@@ -12579,6 +12590,33 @@ mod tests {
         assert_eq!(
             calculate_wrap_width(SoftWrap::Bounded(200), px(400.0), em_width),
             Some(px(400.0)),
+        );
+    }
+
+    #[test]
+    fn test_deleted_marker_base_width() {
+        use settings::PixelSetting;
+
+        assert_eq!(
+            EditorElement::deleted_marker_base_width(GitGutterWidth::Default, px(22.0)),
+            px(7.0),
+        );
+
+        let boosted = EditorElement::deleted_marker_base_width(
+            GitGutterWidth::Custom(PixelSetting(6.0)),
+            px(22.0),
+        );
+        assert!(
+            boosted > px(6.0),
+            "boosted={boosted:?} must exceed the raw custom width so the deleted pill stays visible"
+        );
+
+        assert_eq!(
+            EditorElement::deleted_marker_base_width(
+                GitGutterWidth::Custom(PixelSetting(0.0)),
+                px(22.0),
+            ),
+            px(0.0),
         );
     }
 }
