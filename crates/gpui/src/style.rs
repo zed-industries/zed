@@ -774,7 +774,7 @@ impl Style {
         window.paint_effect_layer(
             bounds,
             corner_radii,
-            self.corner_shapes.clone(),
+            self.corner_shapes,
             &self.effects,
             |window| self.paint_box(bounds, corner_radii, window, cx, continuation),
         );
@@ -833,7 +833,7 @@ impl Style {
             window.paint_effect_layer(
                 bounds,
                 corner_radii,
-                self.corner_shapes.clone(),
+                self.corner_shapes,
                 &effects,
                 |window| {
                     let mut border_color = image
@@ -851,7 +851,7 @@ impl Style {
                             border_color,
                             self.border_style,
                         )
-                        .corner_shapes(self.corner_shapes.clone()),
+                        .corner_shapes(self.corner_shapes),
                     );
                 },
             );
