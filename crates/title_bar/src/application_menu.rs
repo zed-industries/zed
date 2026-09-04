@@ -355,7 +355,7 @@ impl Render for ApplicationMenu {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Action, OwnedMenu, OwnedMenuItem, TestAppContext};
+    use gpui::{Action, Menu, MenuItem, OwnedMenu, OwnedMenuItem, TestAppContext};
     use project::DisableAiSettings;
     use settings::{Settings, SettingsStore};
 
@@ -366,6 +366,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             DisableAiSettings::register(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
     }
 
@@ -403,30 +404,82 @@ mod tests {
         assert!(!has_item(&without_agent_panel, "View", "Agent Panel"));
     }
 
+    fn view_menu(include_agent_panel: bool) -> Menu {
+        let mut items = vec![];
+        if include_agent_panel {
+            items.push(MenuItem::action(
+                "Agent Panel",
+                OpenApplicationMenu(String::new()),
+            ));
+        }
+        items.push(MenuItem::action(
+            "Diagnostics",
+            OpenApplicationMenu(String::new()),
+        ));
+
+        Menu {
+            name: "View".into(),
+            items,
+            disabled: false,
+        }
+    }
+
     #[gpui::test]
-    fn test_entries_refresh_on_settings_change_without_recreating_entity(cx: &mut TestAppContext) {
+    fn test_entries_refresh_on_settings_change(cx: &mut TestAppContext) {
         init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_menus(vec![view_menu(true)]);
+        });
 
         let (app_menu, cx) = cx.add_window_view(|window, cx| ApplicationMenu::new(window, cx));
 
-        app_menu.update(cx, |app_menu, _cx| {
-            app_menu.entries =
-                ApplicationMenu::build_entries(vec![owned_menu("View", "Agent Panel")]);
-        });
         assert!(app_menu.read_with(cx, |app_menu, _| has_item(
             &app_menu.entries,
             "View",
             "Agent Panel"
         )));
 
+        assert!(app_menu.read_with(cx, |app_menu, _| has_item(
+            &app_menu.entries,
+            "View",
+            "Diagnostics"
+        )));
+
         cx.update(|_, cx| {
+            cx.set_menus(vec![view_menu(false)]);
             DisableAiSettings::override_global(DisableAiSettings { disable_ai: true }, cx);
         });
 
-        assert!(!app_menu.read_with(cx, |app_menu, _| has_item(
+        assert!(
+            !app_menu.read_with(cx, |app_menu, _| has_item(
+                &app_menu.entries,
+                "View",
+                "Agent Panel"
+            )),
+            "expected Agent Panel is not in the View menu"
+        );
+
+        assert!(app_menu.read_with(cx, |app_menu, _| has_item(
+            &app_menu.entries,
+            "View",
+            "Diagnostics"
+        )));
+
+        cx.update(|_, cx| {
+            cx.set_menus(vec![view_menu(true)]);
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: false }, cx);
+        });
+
+        assert!(app_menu.read_with(cx, |app_menu, _| has_item(
             &app_menu.entries,
             "View",
             "Agent Panel"
+        )));
+        assert!(app_menu.read_with(cx, |app_menu, _| has_item(
+            &app_menu.entries,
+            "View",
+            "Diagnostics"
         )));
     }
 }
