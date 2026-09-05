@@ -12662,6 +12662,255 @@ async fn test_search_in_unopened_non_utf8_files(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_project_search_reports_deferred_dirs_in_non_git_workspace(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_depth = Some(5);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "shallow.txt": "alpha 637390123 bravo\n",
+            "a": {
+                "b": {
+                    "c": {
+                        "d": {
+                            "e": {
+                                "f": {
+                                    "deep.txt": "637390123\n"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    let query = SearchQuery::text(
+        "637390123",
+        false,
+        true,
+        false,
+        PathMatcher::default(),
+        PathMatcher::default(),
+        false,
+        None,
+    )
+    .unwrap();
+
+    let (results, deferred_dirs) = search_with_diagnostics(&project, query, cx).await.unwrap();
+
+    // The shallow file is reachable; the deep one is not.
+    assert!(
+        results.contains_key(&path!("root/shallow.txt").to_string()),
+        "shallow file should be searched; got {results:?}"
+    );
+    assert!(
+        !results.contains_key(&path!("root/a/b/c/d/e/f/deep.txt").to_string()),
+        "deep unopened file should be silently omitted; got {results:?}"
+    );
+
+    // The deferred dir (e.g. `a`) is reported via PartialIndex so the UI can
+    // warn the user that the search result is incomplete.
+    assert!(
+        deferred_dirs >= 1,
+        "expected at least one deferred dir reported via PartialIndex, got {deferred_dirs}"
+    );
+}
+
+// #63739 — when `file_scan_inclusions` covers a path past the depth cap, the
+// scanner pierces the depth for those paths at scan time and project search
+// finds the deep file on the first search (without requiring the user to
+// open it). This is integration coverage for the worktree scanner pierce + the
+// project-search enumerator pipeline.
+#[gpui::test]
+async fn test_project_search_finds_deep_files_when_inclusions_pierce_depth(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_depth = Some(5);
+                settings.project.worktree.file_scan_inclusions = Some(vec!["src/**".to_string()]);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "a": { "b": { "c": { "d": { "e": { "f": {
+                    "deep.txt": "alpha 637390123 bravo\n"
+                } } } } } }
+            },
+            "other": {
+                "x": { "y": { "z": { "u": { "v": { "w": {
+                    "other.txt": "637390123\n"
+                } } } } } }
+            },
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    let query = SearchQuery::text(
+        "637390123",
+        false,
+        true,
+        false,
+        PathMatcher::default(),
+        PathMatcher::default(),
+        false,
+        None,
+    )
+    .unwrap();
+
+    let (results, deferred_dirs) = search_with_diagnostics(&project, query, cx).await.unwrap();
+
+    assert!(
+        results.contains_key(&path!("root/src/a/b/c/d/e/f/deep.txt").to_string()),
+        "deep file under `src/**` should be discovered via inclusions; got {results:?}"
+    );
+    assert!(
+        !results.contains_key(&path!("root/other/x/y/z/u/v/w/other.txt").to_string()),
+        "deep file NOT covered by inclusions should remain unsearched; got {results:?}"
+    );
+
+    // `src/**` was pierced by the scanner so it should not appear in the
+    // deferred count, but `other` is still deferred (and reported).
+    assert!(
+        deferred_dirs >= 1,
+        "uncovered deep dirs should still be reported as deferred"
+    );
+}
+
+// #63739 — when no `file_scan_inclusions` is set and the workspace only has
+// files within the depth cap, no `PartialIndex` warning is emitted.
+#[gpui::test]
+async fn test_project_search_no_partial_when_workspace_shallow(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_depth = Some(5);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "shallow.txt": "alpha 637390123 bravo\n",
+            "sub": { "deeper.txt": "637390123\n" },
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    let query = SearchQuery::text(
+        "637390123",
+        false,
+        true,
+        false,
+        PathMatcher::default(),
+        PathMatcher::default(),
+        false,
+        None,
+    )
+    .unwrap();
+
+    let (results, deferred_dirs) = search_with_diagnostics(&project, query, cx).await.unwrap();
+
+    assert_eq!(deferred_dirs, 0, "no PartialIndex expected");
+    assert_eq!(results.len(), 2, "both shallow files should match");
+}
+
+// #63739 — non-included deferred directories are NOT force-expanded. The
+// scanner pierces only paths covered by `file_scan_inclusions`; unrelated
+// deep dirs remain deferred and are reported via PartialIndex so the user
+// knows the result is partial.
+#[gpui::test]
+async fn test_project_search_does_not_force_expand_unrelated_deferred_dirs(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_depth = Some(5);
+                settings.project.worktree.file_scan_inclusions = Some(vec!["src/**".to_string()]);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "a": { "b": { "c": { "d": { "e": { "f": {
+                    "in_inclusions.txt": "alpha 637390123 bravo\n"
+                } } } } } }
+            },
+            "node_modules": {
+                "x": { "y": { "z": { "u": { "v": { "w": {
+                    "not_in_inclusions.txt": "637390123\n"
+                } } } } } }
+            },
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    let query = SearchQuery::text(
+        "637390123",
+        false,
+        true,
+        false,
+        PathMatcher::default(),
+        PathMatcher::default(),
+        false,
+        None,
+    )
+    .unwrap();
+
+    let (results, deferred_dirs) = search_with_diagnostics(&project, query, cx).await.unwrap();
+
+    assert!(
+        results.contains_key(&path!("root/src/a/b/c/d/e/f/in_inclusions.txt").to_string()),
+        "included deep file should be searched; got {results:?}"
+    );
+    assert!(
+        !results.contains_key(
+            &path!("root/node_modules/x/y/z/u/v/w/not_in_inclusions.txt").to_string()
+        ),
+        "non-included deep file must NOT be force-expanded; got {results:?}"
+    );
+
+    // `node_modules` is past depth and NOT covered by `src/**`, so it must
+    // remain deferred and be reported via PartialIndex.
+    assert!(
+        deferred_dirs >= 1,
+        "non-included deferred dirs should still be reported as deferred"
+    );
+}
+
+#[gpui::test]
 async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -19574,8 +19823,10 @@ async fn search(
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
             }
-            SearchResult::LimitReached | SearchResult::WaitingForScan | SearchResult::Searching => {
-            }
+            SearchResult::LimitReached
+            | SearchResult::WaitingForScan
+            | SearchResult::Searching
+            | SearchResult::PartialIndex { .. } => {}
         }
     }
     Ok(results
@@ -19596,6 +19847,51 @@ async fn search(
             })
         })
         .collect())
+}
+
+/// Run a project search and return the matched files plus any deferred-dir
+/// diagnostics emitted by the search pipeline.
+async fn search_with_diagnostics(
+    project: &Entity<Project>,
+    query: SearchQuery,
+    cx: &mut gpui::TestAppContext,
+) -> Result<(HashMap<String, Vec<Range<usize>>>, u32)> {
+    let search_rx = project.update(cx, |project, cx| project.search(query, cx));
+    let mut results = HashMap::default();
+    let mut deferred_dirs: u32 = 0;
+    while let Ok(search_result) = search_rx.rx.recv().await {
+        match search_result {
+            SearchResult::Buffer { buffer, ranges } => {
+                results.entry(buffer).or_insert(ranges);
+            }
+            SearchResult::LimitReached | SearchResult::WaitingForScan | SearchResult::Searching => {
+            }
+            SearchResult::PartialIndex {
+                deferred_dirs: count,
+            } => {
+                deferred_dirs = deferred_dirs.saturating_add(count);
+            }
+        }
+    }
+    let results = results
+        .into_iter()
+        .map(|(buffer, ranges)| {
+            buffer.update(cx, |buffer, cx| {
+                let path = buffer
+                    .file()
+                    .unwrap()
+                    .full_path(cx)
+                    .to_string_lossy()
+                    .to_string();
+                let ranges = ranges
+                    .into_iter()
+                    .map(|range| range.to_offset(buffer))
+                    .collect::<Vec<_>>();
+                (path, ranges)
+            })
+        })
+        .collect();
+    Ok((results, deferred_dirs))
 }
 
 #[gpui::test]

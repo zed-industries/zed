@@ -28,6 +28,9 @@ pub enum SearchResult {
     LimitReached,
     WaitingForScan,
     Searching,
+    PartialIndex {
+        deferred_dirs: u32,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq)]

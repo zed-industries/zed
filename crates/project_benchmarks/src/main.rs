@@ -218,7 +218,9 @@ fn main() -> Result<(), anyhow::Error> {
                             matched_chunks += ranges.len();
                         }
                         SearchResult::LimitReached => break,
-                        SearchResult::WaitingForScan | SearchResult::Searching => continue,
+                        SearchResult::WaitingForScan
+                        | SearchResult::Searching
+                        | SearchResult::PartialIndex { .. } => continue,
                     }
                 }
                 let elapsed = timer.elapsed();

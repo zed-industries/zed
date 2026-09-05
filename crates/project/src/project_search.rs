@@ -452,6 +452,7 @@ impl Search {
             _ = maybe!(async move {
                 let gitignored_tracker = PathInclusionMatcher::new(query.clone());
                 let include_ignored = query.include_ignored();
+                let mut total_deferred_dirs: u32 = 0;
                 for worktree in worktrees {
                     let scan_complete = worktree.read_with(cx, |worktree, _| {
                         worktree.as_local().map(|local| local.scan_complete())
@@ -470,6 +471,7 @@ impl Search {
                             Some((this.snapshot(), this.as_local()?.settings()))
                         })
                         .context("The worktree is not local")?;
+
                     if query.include_ignored() {
                         // Pre-fetch all of the ignored directories as they're going to be searched.
                         let mut entries_to_refresh = vec![];
@@ -496,6 +498,10 @@ impl Search {
                         }
                         snapshot = worktree.read_with(cx, |this, _| this.snapshot());
                     }
+
+                    total_deferred_dirs = total_deferred_dirs
+                        .saturating_add(snapshot.deferred_scan_dir_count() as u32);
+
                     let tx = tx.clone();
                     let results = results.clone();
                     let snapshot = Arc::new(snapshot);
@@ -519,6 +525,14 @@ impl Search {
                                     return;
                                 };
                             }
+                        })
+                        .await;
+                }
+
+                if total_deferred_dirs > 0 {
+                    _ = results_tx
+                        .send(SearchResult::PartialIndex {
+                            deferred_dirs: total_deferred_dirs,
                         })
                         .await;
                 }

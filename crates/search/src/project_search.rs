@@ -321,8 +321,48 @@ enum SearchActivity {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SearchCompletion {
-    NoResults,
-    Results { limit_reached: bool },
+    NoResults {
+        deferred_dirs: u32,
+    },
+    Results {
+        limit_reached: bool,
+        deferred_dirs: u32,
+    },
+}
+
+impl Default for SearchCompletion {
+    fn default() -> Self {
+        SearchCompletion::NoResults { deferred_dirs: 0 }
+    }
+}
+
+fn partial_index_message(deferred_dirs: u32) -> String {
+    format!(
+        "Results may be incomplete — {deferred_dirs} director{} {} not indexed due to `file_scan_depth`. Add paths to `file_scan_inclusions` or raise `file_scan_depth` to search them.",
+        if deferred_dirs == 1 { "y" } else { "ies" },
+        if deferred_dirs == 1 { "was" } else { "were" },
+    )
+}
+
+#[cfg(test)]
+mod partial_index_message_tests {
+    use super::partial_index_message;
+
+    #[test]
+    fn singular() {
+        assert_eq!(
+            partial_index_message(1),
+            "Results may be incomplete — 1 directory was not indexed due to `file_scan_depth`. Add paths to `file_scan_inclusions` or raise `file_scan_depth` to search them."
+        );
+    }
+
+    #[test]
+    fn plural() {
+        assert_eq!(
+            partial_index_message(42),
+            "Results may be incomplete — 42 directories were not indexed due to `file_scan_depth`. Add paths to `file_scan_inclusions` or raise `file_scan_depth` to search them."
+        );
+    }
 }
 
 impl SearchState {
@@ -338,16 +378,25 @@ impl SearchState {
     }
 
     fn no_results_so_far(self) -> bool {
-        self.completion() == Some(SearchCompletion::NoResults)
+        matches!(self.completion(), Some(SearchCompletion::NoResults { .. }))
     }
 
     fn limit_reached(self) -> bool {
         matches!(
             self.completion(),
             Some(SearchCompletion::Results {
-                limit_reached: true
+                limit_reached: true,
+                ..
             })
         )
+    }
+
+    fn deferred_dirs(self) -> u32 {
+        match self.completion() {
+            Some(SearchCompletion::NoResults { deferred_dirs })
+            | Some(SearchCompletion::Results { deferred_dirs, .. }) => deferred_dirs,
+            None => 0,
+        }
     }
 }
 
@@ -670,17 +719,19 @@ async fn consume_search_stream(
     let mut matches = pin!(search_results.rx.clone().ready_chunks(1024));
 
     let mut limit_reached = false;
+    let mut partial_deferred_dirs: u32 = 0;
     let mut reused_results = if reuse_excerpts {
         Some(project_search.read_with(cx, ReusedResults::new).ok()?)
     } else {
         None
     };
     while let Some(results) = matches.next().await {
-        let (buffers_with_ranges, has_reached_limit, search_activity) = cx
+        let (buffers_with_ranges, has_reached_limit, search_activity, partial_index) = cx
             .background_executor()
             .spawn(async move {
                 let mut limit_reached = false;
                 let mut search_activity = None;
+                let mut partial_index: u32 = 0;
                 let mut buffers_with_ranges = Vec::with_capacity(results.len());
                 for result in results {
                     match result {
@@ -696,12 +747,21 @@ async fn consume_search_stream(
                         project::search::SearchResult::Searching => {
                             search_activity = Some(SearchActivity::Searching);
                         }
+                        project::search::SearchResult::PartialIndex { deferred_dirs } => {
+                            partial_index = partial_index.saturating_add(deferred_dirs);
+                        }
                     }
                 }
-                (buffers_with_ranges, limit_reached, search_activity)
+                (
+                    buffers_with_ranges,
+                    limit_reached,
+                    search_activity,
+                    partial_index,
+                )
             })
             .await;
         limit_reached |= has_reached_limit;
+        partial_deferred_dirs = partial_deferred_dirs.saturating_add(partial_index);
         if let Some(search_activity) = search_activity {
             project_search
                 .update(cx, |project_search, cx| {
@@ -788,9 +848,14 @@ async fn consume_search_stream(
                 reused_results.finish(project_search, cx);
             }
             project_search.search_state = if project_search.match_ranges.is_empty() {
-                SearchState::Completed(SearchCompletion::NoResults)
+                SearchState::Completed(SearchCompletion::NoResults {
+                    deferred_dirs: partial_deferred_dirs,
+                })
             } else {
-                SearchState::Completed(SearchCompletion::Results { limit_reached })
+                SearchState::Completed(SearchCompletion::Results {
+                    limit_reached,
+                    deferred_dirs: partial_deferred_dirs,
+                })
             };
             project_search.pending_search.take();
             cx.notify();
@@ -1057,7 +1122,7 @@ impl Render for ProjectSearchView {
                     activity: SearchActivity::Searching,
                     ..
                 } => "Searching…",
-                SearchState::Completed(SearchCompletion::NoResults) => "No Results",
+                SearchState::Completed(SearchCompletion::NoResults { .. }) => "No Results",
                 _ => "Search All Files",
             };
 
@@ -1067,11 +1132,24 @@ impl Render for ProjectSearchView {
 
             let page_content: Option<AnyElement> = match model.search_state {
                 SearchState::Idle => Some(self.landing_text_minor(cx).into_any_element()),
-                _ if model.search_state.no_results_so_far() => Some(
-                    Label::new("No results found in this project for the provided query")
-                        .size(LabelSize::Small)
-                        .into_any_element(),
-                ),
+                _ if model.search_state.no_results_so_far() => {
+                    let deferred_dirs = model.search_state.deferred_dirs();
+                    let mut elements: Vec<AnyElement> = Vec::new();
+                    elements.push(
+                        Label::new("No results found in this project for the provided query")
+                            .size(LabelSize::Small)
+                            .into_any_element(),
+                    );
+                    if deferred_dirs > 0 {
+                        elements.push(
+                            Label::new(partial_index_message(deferred_dirs))
+                                .size(LabelSize::Small)
+                                .color(Color::Warning)
+                                .into_any_element(),
+                        );
+                    }
+                    Some(v_flex().gap_1().children(elements).into_any_element())
+                }
                 _ => None,
             };
 
@@ -3005,6 +3083,7 @@ impl Render for ProjectSearchBar {
         let theme_colors = cx.theme().colors();
         let project_search = search.entity.read(cx);
         let limit_reached = project_search.search_state.limit_reached();
+        let deferred_dirs = project_search.search_state.deferred_dirs();
         let is_search_underway = project_search.pending_search.is_some();
 
         let color_override = match (
@@ -3131,7 +3210,21 @@ impl Render for ProjectSearchBar {
                             "Search Limits Reached\nTry narrowing your search",
                         ))
                     }),
-            );
+            )
+            .when(deferred_dirs > 0, |this| {
+                this.child(
+                    div()
+                        .id("partial-index-warning")
+                        .ml_1()
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .color(Color::Warning)
+                                .size(IconSize::Small)
+                                .into_any_element(),
+                        )
+                        .tooltip(Tooltip::text(partial_index_message(deferred_dirs))),
+                )
+            });
 
         let mode_column = h_flex()
             .gap_1()
