@@ -4,7 +4,8 @@ use collections::HashSet;
 use editor::{Editor, MultiBufferOffset};
 use git::{
     Oid,
-    repository::{InitialGraphCommitData, LogSource, RepoPath},
+    repository::{InitialGraphCommitData, LogSource, RepoPath, repo_path},
+    status::{FileStatus, StatusCode, TrackedStatus},
 };
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
 use language::{
@@ -11966,4 +11967,391 @@ async fn test_file_rows_reserve_the_chevron_slot(cx: &mut gpui::TestAppContext) 
             "{indicator:?}: a directory draws its own chevron, so it reserves nothing"
         );
     }
+}
+
+#[gpui::test]
+async fn test_restore_folder_prompt_lists_only_tracked_changes(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "src": {
+                "main.rs": "modified main",
+                "lib_[x].rs": "modified lib",
+                "untracked.rs": "new file",
+                "unchanged.rs": "unchanged contents",
+            },
+            "outside.rs": "modified outside",
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            ("src/main.rs", "original main".into()),
+            ("src/lib_[x].rs", "original lib".into()),
+            ("src/unchanged.rs", "unchanged contents".into()),
+            ("outside.rs", "original outside".into()),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/src", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.restore_file(&git::RestoreFile { skip_prompt: false }, window, cx)
+    });
+
+    let (message, detail) = cx
+        .pending_prompt()
+        .expect("restoring a folder should show a confirmation prompt");
+
+    assert_eq!(message, "Discard changes to 2 files in `src`?");
+    let mut listed = detail.lines().collect::<Vec<_>>();
+    listed.sort();
+    assert_eq!(listed, vec!["`lib_[x].rs`", "`main.rs`"]);
+}
+
+#[gpui::test]
+async fn test_restore_folder_with_only_untracked_changes_does_nothing(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "src": {
+                "untracked.rs": "new file",
+                "unchanged.rs": "unchanged contents",
+            },
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[("src/unchanged.rs", "unchanged contents".into())],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/src", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.restore_file(&git::RestoreFile { skip_prompt: false }, window, cx)
+    });
+
+    assert!(
+        !cx.has_pending_prompt(),
+        "a folder without tracked changes should not be restorable"
+    );
+}
+
+#[gpui::test]
+async fn test_restore_folder_prompt_is_folder_scoped_for_a_single_file(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "src": {
+                "main.rs": "modified main",
+                "unchanged.rs": "unchanged contents",
+            },
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            ("src/main.rs", "original main".into()),
+            ("src/unchanged.rs", "unchanged contents".into()),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/src", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.restore_file(&git::RestoreFile { skip_prompt: false }, window, cx)
+    });
+
+    let (message, detail) = cx
+        .pending_prompt()
+        .expect("restoring a folder should show a confirmation prompt");
+
+    assert_eq!(message, "Discard changes to 1 file in `src`?");
+    assert_eq!(detail, "`main.rs`");
+}
+
+#[gpui::test]
+async fn test_restore_folder_restores_tracked_changes(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "src": {
+                "main.rs": "modified main",
+                "nested": {
+                    "lib.rs": "modified lib",
+                },
+                "untracked.rs": "new file",
+            },
+            "outside.rs": "modified outside",
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            ("src/main.rs", "original main".into()),
+            ("src/nested/lib.rs", "original lib".into()),
+            ("outside.rs", "original outside".into()),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/src", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.restore_file(&git::RestoreFile { skip_prompt: false }, window, cx)
+    });
+    cx.simulate_prompt_answer("Restore");
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap(),
+        "original main"
+    );
+    assert_eq!(
+        fs.load(path!("/root/src/nested/lib.rs").as_ref())
+            .await
+            .unwrap(),
+        "original lib"
+    );
+    assert_eq!(
+        fs.load(path!("/root/src/untracked.rs").as_ref())
+            .await
+            .unwrap(),
+        "new file",
+        "untracked files should be left alone"
+    );
+    assert_eq!(
+        fs.load(path!("/root/outside.rs").as_ref()).await.unwrap(),
+        "modified outside",
+        "files outside of the restored folder should be left alone"
+    );
+}
+
+#[gpui::test]
+async fn test_restore_root_uses_tracked_file_pathspecs(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "README.md": "modified readme",
+            "src": {
+                "main.rs": "modified main",
+            },
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            ("README.md", "original readme".into()),
+            ("src/main.rs", "original main".into()),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.restore_file(&git::RestoreFile { skip_prompt: false }, window, cx)
+    });
+    cx.simulate_prompt_answer("Restore");
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs.load(path!("/root/README.md").as_ref()).await.unwrap(),
+        "original readme"
+    );
+    assert_eq!(
+        fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap(),
+        "original main"
+    );
+
+    let mut checkout_paths = fs
+        .with_git_state(path!("/root/.git").as_ref(), false, |state| {
+            state
+                .checkout_file_calls
+                .iter()
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    checkout_paths.sort();
+
+    assert!(
+        checkout_paths.iter().all(|path| !path.is_empty()),
+        "root restore should not pass an empty pathspec to git"
+    );
+    assert_eq!(
+        checkout_paths,
+        vec![repo_path("README.md"), repo_path("src/main.rs")]
+    );
+}
+
+#[gpui::test]
+async fn test_restore_folder_refuses_untracked_descendant_obstruction(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "src": {
+                "generated": {
+                    "untracked.txt": "new file",
+                },
+            },
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[("src/generated", "tracked file contents".into())],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/src", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.restore_file(&git::RestoreFile { skip_prompt: false }, window, cx)
+    });
+    cx.run_until_parked();
+
+    assert!(
+        !cx.has_pending_prompt(),
+        "restore should be refused before the destructive confirmation"
+    );
+    assert_eq!(
+        fs.load(path!("/root/src/generated/untracked.txt").as_ref())
+            .await
+            .unwrap(),
+        "new file"
+    );
+    let checkout_call_count = fs
+        .with_git_state(path!("/root/.git").as_ref(), false, |state| {
+            state.checkout_file_calls.len()
+        })
+        .unwrap();
+    assert_eq!(checkout_call_count, 0);
+}
+
+#[test]
+fn test_restore_status_includes_type_changed() {
+    assert!(ProjectPanel::is_restorable_status(FileStatus::Tracked(
+        TrackedStatus {
+            index_status: StatusCode::TypeChanged,
+            worktree_status: StatusCode::Unmodified,
+        },
+    )));
+    assert!(ProjectPanel::is_restorable_status(FileStatus::Tracked(
+        TrackedStatus {
+            index_status: StatusCode::Unmodified,
+            worktree_status: StatusCode::TypeChanged,
+        },
+    )));
+    assert!(!ProjectPanel::is_restorable_status(FileStatus::Tracked(
+        TrackedStatus {
+            index_status: StatusCode::Added,
+            worktree_status: StatusCode::Unmodified,
+        },
+    )));
+}
+
+#[test]
+fn test_checkout_path_batches_splits_large_pathspecs() {
+    let paths = [
+        format!("{}a", "a".repeat(MAX_CHECKOUT_PATHSPEC_BYTES / 2)),
+        format!("{}b", "b".repeat(MAX_CHECKOUT_PATHSPEC_BYTES / 2)),
+        "src/main.rs".to_string(),
+    ]
+    .into_iter()
+    .map(|path| repo_path(&path))
+    .collect::<Vec<_>>();
+
+    let batches = ProjectPanel::checkout_path_batches(paths.clone());
+
+    assert_eq!(batches.len(), 2);
+    assert!(batches.iter().all(|batch| {
+        batch
+            .iter()
+            .map(|path| path.as_unix_str().len() + 1)
+            .sum::<usize>()
+            <= MAX_CHECKOUT_PATHSPEC_BYTES
+    }));
+    assert_eq!(batches.into_iter().flatten().collect::<Vec<_>>(), paths);
 }

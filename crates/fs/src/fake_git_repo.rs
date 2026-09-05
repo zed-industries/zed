@@ -81,6 +81,7 @@ pub struct FakeGitRepositoryState {
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
     pub stash_entries: GitStash,
     pub commit_template: Option<GitCommitTemplate>,
+    pub checkout_file_calls: Vec<Vec<RepoPath>>,
 }
 
 impl FakeGitRepositoryState {
@@ -108,6 +109,7 @@ impl FakeGitRepositoryState {
             commit_history: Vec::new(),
             stash_entries: Default::default(),
             commit_template: None,
+            checkout_file_calls: Default::default(),
         }
     }
 }
@@ -370,11 +372,63 @@ impl GitRepository for FakeGitRepository {
 
     fn checkout_files(
         &self,
-        _commit: String,
-        _paths: Vec<RepoPath>,
+        commit: String,
+        paths: Vec<RepoPath>,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        Box::pin(async move {
+            anyhow::ensure!(
+                commit == "HEAD",
+                "checking out {commit} is not supported by FakeGitRepository"
+            );
+            let contents = self
+                .with_state_async(false, move |state| {
+                    state.checkout_file_calls.push(paths.clone());
+                    let mut contents = Vec::new();
+                    for path in paths {
+                        anyhow::ensure!(!path.is_empty(), "empty string is not a valid pathspec");
+                        if let Some(content) = state.head_contents.get(&path).cloned() {
+                            contents.push((path, content));
+                            continue;
+                        }
+
+                        let initial_len = contents.len();
+                        contents.extend(
+                            state
+                                .head_contents
+                                .iter()
+                                .filter(|(head_path, _)| head_path.starts_with(&path))
+                                .map(|(head_path, content)| (head_path.clone(), content.clone())),
+                        );
+                        anyhow::ensure!(
+                            contents.len() > initial_len,
+                            "pathspec '{}' did not match any file(s) known to git",
+                            path.as_unix_str()
+                        );
+                    }
+                    Ok(contents)
+                })
+                .await?;
+
+            let work_dir = self
+                .dot_git_path
+                .parent()
+                .context("git directory has no parent")?
+                .to_owned();
+            for (path, content) in &contents {
+                self.fs
+                    .write(&work_dir.join(path.as_std_path()), content)
+                    .await?;
+            }
+
+            self.with_state_async(true, move |state| {
+                for (path, content) in contents {
+                    state.index_contents.insert(path, content);
+                }
+                Ok(())
+            })
+            .await
+        })
     }
 
     fn path(&self) -> PathBuf {
