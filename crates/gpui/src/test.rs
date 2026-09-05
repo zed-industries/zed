@@ -35,14 +35,17 @@ use std::{
     pin::Pin,
 };
 
-#[cfg(all(test, feature = "test-memory"))]
-pub(crate) mod memory {
+/// Opt-in live Rust allocation accounting for test and benchmark executables.
+#[cfg(feature = "test-memory")]
+pub mod memory {
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
-    struct CountingAllocator;
+    /// A system allocator that counts requested bytes still allocated.
+    pub struct CountingAllocator;
     static LIVE_BYTES: AtomicUsize = AtomicUsize::new(0);
 
+    #[cfg(test)]
     #[global_allocator]
     static ALLOCATOR: CountingAllocator = CountingAllocator;
 
@@ -81,7 +84,8 @@ pub(crate) mod memory {
         }
     }
 
-    pub(crate) fn live_bytes() -> usize {
+    /// Returns live requested bytes, excluding native allocations and allocator overhead.
+    pub fn live_bytes() -> usize {
         LIVE_BYTES.load(Relaxed)
     }
 }
