@@ -1280,10 +1280,11 @@ async fn choose_thread_for_action(
     // first control operation doesn't fail spuriously (a hard error is only
     // correct once the session has had a chance to settle).
     let mut attempts = 0u32;
-    // Allow the adapter up to ~3s to surface threads before giving up, and a
-    // shorter grace window after the session settles so the first `stopped`
-    // event of a stopOnEntry launch isn't raced.
-    let max_attempts = 30;
+    // Allow the adapter up to ~30s to surface threads before giving up — the
+    // first launch of an auto-downloaded adapter (e.g. vscode-js-debug) can take
+    // tens of seconds to boot — and a shorter grace window after the session
+    // settles so the first `stopped` event of a stopOnEntry launch isn't raced.
+    let max_attempts = 300;
     let grace_attempts = 5;
     let poll_interval = std::time::Duration::from_millis(100);
     loop {
