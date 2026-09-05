@@ -11484,12 +11484,12 @@ impl Editor {
     }
 
     #[cfg(test)]
-    pub fn set_workspace_for_test(&mut self, workspace: WeakEntity<Workspace>) {
+    pub(crate) fn set_workspace_for_test(&mut self, workspace: WeakEntity<Workspace>) {
         self.workspace = Some((workspace, None));
     }
 
     #[cfg(test)]
-    pub fn clear_workspace_for_test(&mut self) {
+    pub(crate) fn clear_workspace_for_test(&mut self) {
         self.workspace = None;
     }
 
@@ -11512,22 +11512,6 @@ impl Editor {
             }
         };
         self.open_or_toggle_breadcrumb_listing(target, window, cx);
-    }
-
-    pub(crate) fn map_text_outline_items(
-        &self,
-        text_items: &[OutlineItem<text::Anchor>],
-        multi_buffer_snapshot: &MultiBufferSnapshot,
-    ) -> Vec<OutlineItem<Anchor>> {
-        text_items
-            .iter()
-            .filter_map(|item| {
-                crate::document_symbols::text_outline_item_to_multibuffer(
-                    item,
-                    multi_buffer_snapshot,
-                )
-            })
-            .collect()
     }
 
     pub fn open_breadcrumb_navigation_action(

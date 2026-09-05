@@ -239,6 +239,16 @@ fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
         .lsp_enabled()
 }
 
+pub(crate) fn text_outline_items_to_multibuffer(
+    text_items: &[OutlineItem<text::Anchor>],
+    multi_buffer_snapshot: &MultiBufferSnapshot,
+) -> Vec<OutlineItem<Anchor>> {
+    text_items
+        .iter()
+        .filter_map(|item| text_outline_item_to_multibuffer(item, multi_buffer_snapshot))
+        .collect()
+}
+
 pub(crate) fn text_outline_item_to_multibuffer(
     item: &OutlineItem<text::Anchor>,
     multi_buffer_snapshot: &MultiBufferSnapshot,

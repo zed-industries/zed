@@ -55,7 +55,7 @@ impl BreadcrumbSegmentTarget {
 }
 
 pub fn render_breadcrumb_text(
-    mut segments: Vec<HighlightedText>,
+    segments: Vec<HighlightedText>,
     breadcrumb_font: Option<Font>,
     prefix: Option<gpui::AnyElement>,
     active_item: &dyn ItemHandle,
@@ -68,9 +68,76 @@ pub fn render_breadcrumb_text(
         .downcast::<Editor>()
         .map(|editor| editor.downgrade());
 
+    let row = prepare_breadcrumb_strip(
+        segments,
+        breadcrumb_font,
+        prefix.is_some(),
+        active_item,
+        multibuffer_header,
+        cx,
+    );
+
+    let breadcrumbs_stack = div()
+        .min_w_0()
+        .flex_1()
+        .when(multibuffer_header, |this| {
+            this.pl_2()
+                .border_l_1()
+                .border_color(cx.theme().colors().border.opacity(0.6))
+        })
+        .child(row)
+        .into_any_element();
+
+    let breadcrumbs = if let Some(prefix) = prefix {
+        h_flex()
+            .min_w_0()
+            .flex_1()
+            .gap_1p5()
+            .child(prefix)
+            .child(breadcrumbs_stack)
+            .into_any_element()
+    } else {
+        breadcrumbs_stack
+    };
+
+    match editor {
+        Some(_editor) => element
+            .id("breadcrumb_container")
+            .min_w_0()
+            .h(rems_from_px(22_f32))
+            .px(DynamicSpacing::Base04.rems(cx))
+            .when(!multibuffer_header, |this| this.overflow_hidden())
+            .child(breadcrumbs)
+            .into_any_element(),
+        None => element
+            .h(rems_from_px(22_f32))
+            .pl_1()
+            .child(breadcrumbs)
+            .into_any_element(),
+    }
+}
+
+/// Split out of the render so a test can hold what the bar is about to paint: what each segment
+/// names, what it opens, and which kind - and so which colour - it is painted as.
+fn prepare_breadcrumb_strip(
+    mut segments: Vec<HighlightedText>,
+    breadcrumb_font: Option<Font>,
+    has_prefix: bool,
+    active_item: &dyn ItemHandle,
+    multibuffer_header: bool,
+    cx: &App,
+) -> BreadcrumbStrip {
+    let editor = active_item
+        .downcast::<Editor>()
+        .map(|editor| editor.downgrade());
+
     let mut symbol_segments: Vec<Option<BreadcrumbSegmentTarget>> = Vec::new();
     let mut menu_listing: Option<BreadcrumbListing> = None;
     let mut file_segment_index = 0usize;
+    // Only a singleton editor has one. A terminal, an image, a diff view or a multibuffer hands
+    // the bar a name and symbols with no file among them, and classifying their first segment as
+    // the file would colour it like one.
+    let mut has_file_segment = false;
     let mut has_root_segment = false;
     let mut file_icon: Option<SharedString> = None;
     let mut file_git_status_color: Option<Color> = None;
@@ -82,11 +149,12 @@ pub fn render_breadcrumb_text(
         if let Some(buffer) = editor_ref.buffer().read(cx).as_singleton() {
             let buffer_id = buffer.read(cx).remote_id();
             let mut path_split = false;
+            has_file_segment = true;
 
             let real_project_path = active_item.project_path(cx);
             // Only the file segment paints it, and only when no prefix already occupies that
             // slot. Resolving it otherwise costs an icon lookup on every repaint.
-            if prefix.is_none() {
+            if !has_prefix {
                 file_icon = breadcrumb_file_icon(
                     real_project_path
                         .as_ref()
@@ -220,7 +288,7 @@ pub fn render_breadcrumb_text(
     // classified - and coloured - as the file segment.
     let kinds = classify_breadcrumb_segment_kinds(
         segments.len(),
-        (!multibuffer_header).then_some(file_segment_index),
+        (!multibuffer_header && has_file_segment).then_some(file_segment_index),
         has_root_segment,
     );
     let protected_index = menu_listing.as_ref().and_then(|listing| {
@@ -240,7 +308,7 @@ pub fn render_breadcrumb_text(
 
     let apply_dirty_filename_style =
         !workspace::TabBarSettings::get_global(cx).show && active_item.is_dirty(cx);
-    let show_file_segment_icon = prefix.is_none();
+    let show_file_segment_icon = !has_prefix;
 
     let prepared_segments = segments
         .into_iter()
@@ -253,11 +321,20 @@ pub fn render_breadcrumb_text(
                     target,
                     Some(BreadcrumbSegmentTarget::Symbol { item: None, .. })
                 );
+            // The file segment carries the unsaved-changes style, and never a directory the
+            // menu has browsed to. An item with no file segment keeps it on the first one,
+            // which is the name it puts there and where the bar styled it before.
+            let dirty_filename_style = apply_dirty_filename_style
+                && if has_file_segment {
+                    is_file_segment
+                } else {
+                    index == 0
+                };
             PreparedBreadcrumbSegment {
                 kind,
                 label,
                 target,
-                dirty_filename_style: apply_dirty_filename_style && is_file_segment,
+                dirty_filename_style,
                 icon: (is_file_segment && show_file_segment_icon)
                     .then(|| file_icon.clone())
                     .flatten(),
@@ -266,49 +343,10 @@ pub fn render_breadcrumb_text(
         })
         .collect();
 
-    let row = BreadcrumbStrip {
+    BreadcrumbStrip {
         segments: prepared_segments,
-        editor: editor.clone(),
+        editor,
         breadcrumb_font,
-    };
-
-    let breadcrumbs_stack = div()
-        .min_w_0()
-        .flex_1()
-        .when(multibuffer_header, |this| {
-            this.pl_2()
-                .border_l_1()
-                .border_color(cx.theme().colors().border.opacity(0.6))
-        })
-        .child(row)
-        .into_any_element();
-
-    let breadcrumbs = if let Some(prefix) = prefix {
-        h_flex()
-            .min_w_0()
-            .flex_1()
-            .gap_1p5()
-            .child(prefix)
-            .child(breadcrumbs_stack)
-            .into_any_element()
-    } else {
-        breadcrumbs_stack
-    };
-
-    match editor {
-        Some(_editor) => element
-            .id("breadcrumb_container")
-            .min_w_0()
-            .h(rems_from_px(22_f32))
-            .px(DynamicSpacing::Base04.rems(cx))
-            .when(!multibuffer_header, |this| this.overflow_hidden())
-            .child(breadcrumbs)
-            .into_any_element(),
-        None => element
-            .h(rems_from_px(22_f32))
-            .pl_1()
-            .child(breadcrumbs)
-            .into_any_element(),
     }
 }
 
@@ -6433,6 +6471,88 @@ mod tests {
             cx.debug_bounds("breadcrumb-segment-0"),
             None,
             "a multibuffer bar paints no navigable segment"
+        );
+    }
+
+    // The file segment belongs to a singleton editor and nobody else. Everything else the bar
+    // renders - a multibuffer here, and out in the workspace a terminal, an image or a diff
+    // view - hands it a name and symbols with no file among them, and calling the first of
+    // those the file paints it in the file's colour instead of the muted one they all had.
+    #[gpui::test]
+    async fn test_a_bar_with_no_file_segment_paints_none_of_it_as_the_file(
+        cx: &mut TestAppContext,
+    ) {
+        use super::layout::BreadcrumbSegmentKind;
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+
+        init_test(cx, |_| {});
+
+        let labels = || {
+            vec![
+                HighlightedText {
+                    text: "name".into(),
+                    highlights: vec![],
+                },
+                HighlightedText {
+                    text: "impl Widget".into(),
+                    highlights: vec![],
+                },
+            ]
+        };
+        let kinds_for = |editor: &Entity<Editor>, cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                super::prepare_breadcrumb_strip(labels(), None, false, editor, false, cx)
+                    .segments
+                    .iter()
+                    .map(|segment| segment.kind)
+                    .collect::<Vec<_>>()
+            })
+        };
+
+        let multi_buffer = cx.update(|cx| {
+            MultiBuffer::build_multi(
+                [
+                    (
+                        "fn one() {}
+",
+                        vec![text::Point::row_range(0..1)],
+                    ),
+                    (
+                        "fn two() {}
+",
+                        vec![text::Point::row_range(0..1)],
+                    ),
+                ],
+                cx,
+            )
+        });
+        let multi_window = cx.add_window(|window, cx| build_editor(multi_buffer, window, cx));
+        let multi_editor = multi_window.root(cx).unwrap();
+        assert_eq!(
+            kinds_for(&multi_editor, cx),
+            vec![BreadcrumbSegmentKind::Middle, BreadcrumbSegmentKind::Middle],
+            "an item with no file segment is painted muted end to end"
+        );
+
+        // The control: the same call on a singleton does name a file segment, so the assertion
+        // above is about the item and not about the labels or the call. One segment comes back,
+        // not two, because a singleton replaces the caller's symbol labels with its own trail,
+        // and with no cursor and no outline that trail is empty.
+        let buffer = cx.new(|cx| {
+            language::Buffer::local(
+                "fn one() {}
+",
+                cx,
+            )
+        });
+        let singleton = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let singleton_window = cx.add_window(|window, cx| build_editor(singleton, window, cx));
+        let singleton_editor = singleton_window.root(cx).unwrap();
+        assert_eq!(
+            kinds_for(&singleton_editor, cx),
+            vec![BreadcrumbSegmentKind::File],
+            "a singleton editor names its file segment"
         );
     }
 

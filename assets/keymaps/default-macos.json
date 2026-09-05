@@ -1281,6 +1281,8 @@
       // ToggleActionsMenu) live in keymaps/specific-overrides-macos.json, which
       // is loaded after the base keymap so they win over conflicting base-keymap
       // Editor bindings.
+      // Breadcrumb menu bindings (SelectParent/SelectChild/SelectFirst/SelectLast)
+      // live in keymaps/specific-overrides-macos.json for the same reason.
     },
   },
   {

@@ -350,6 +350,35 @@ pub(super) struct BreadcrumbStrip {
     pub(super) breadcrumb_font: Option<Font>,
 }
 
+/// What a segment's chrome needs from the editor rather than from the segment, read once a
+/// frame instead of once per segment: `active_buffer` clones a multibuffer snapshot, and the
+/// strip paints up to `MAX_BREADCRUMB_SEGMENTS_HARD_CAP` segments.
+#[derive(Clone, Copy)]
+struct SegmentEditorState {
+    /// A buffer with no file has no path to copy, so neither the tooltip line nor the
+    /// right-click handler may claim otherwise.
+    has_file_path: bool,
+    menu_open: bool,
+}
+
+impl SegmentEditorState {
+    fn read(editor: Option<&WeakEntity<Editor>>, cx: &App) -> Self {
+        let Some(editor) = editor.and_then(|editor| editor.upgrade()) else {
+            return Self {
+                has_file_path: false,
+                menu_open: false,
+            };
+        };
+        let editor = editor.read(cx);
+        Self {
+            has_file_path: editor
+                .active_buffer(cx)
+                .is_some_and(|buffer| buffer.read(cx).file().is_some()),
+            menu_open: editor.breadcrumb_navigation_menu().is_some(),
+        }
+    }
+}
+
 impl BreadcrumbStrip {
     fn protected_segment_index(&self, cx: &App) -> Option<usize> {
         let editor = self.editor.as_ref()?.upgrade()?;
@@ -474,6 +503,7 @@ impl BreadcrumbStrip {
         position: usize,
         last_position: usize,
         max_label_width: Option<Pixels>,
+        editor_state: SegmentEditorState,
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::AnyElement {
@@ -530,6 +560,7 @@ impl BreadcrumbStrip {
                 Rc::new(target),
                 label,
                 editor,
+                editor_state,
                 cx,
             ),
             _ => label,
@@ -545,27 +576,18 @@ impl BreadcrumbStrip {
         target: Rc<BreadcrumbSegmentTarget>,
         label: gpui::AnyElement,
         editor: WeakEntity<Editor>,
+        editor_state: SegmentEditorState,
         cx: &mut App,
     ) -> gpui::AnyElement {
         // The title is built inside the tooltip closure: formatting a path here would allocate
         // for a string the user usually never sees.
         let tooltip_target = target.clone();
         let tooltip_editor = editor.clone();
-        // A buffer with no file has no path to copy, so neither the tooltip line nor the
-        // right-click handler may claim otherwise.
         let copyable_path = match target.as_ref() {
             BreadcrumbSegmentTarget::Directory { .. } => true,
-            BreadcrumbSegmentTarget::Symbol { .. } => editor.upgrade().is_some_and(|editor| {
-                let editor = editor.read(cx);
-                editor
-                    .active_buffer(cx)
-                    .is_some_and(|buffer| buffer.read(cx).file().is_some())
-            }),
+            BreadcrumbSegmentTarget::Symbol { .. } => editor_state.has_file_path,
         };
-
-        let menu_open = editor
-            .upgrade()
-            .is_some_and(|editor| editor.read(cx).breadcrumb_navigation_menu().is_some());
+        let menu_open = editor_state.menu_open;
         let trigger = ButtonLike::new(element_id.clone())
             .style(ButtonStyle::Subtle)
             .size(ButtonSize::None)
@@ -686,6 +708,7 @@ impl BreadcrumbStrip {
         position: usize,
         last_position: usize,
         max_glyph_width: Option<Pixels>,
+        editor_state: SegmentEditorState,
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::AnyElement {
@@ -713,6 +736,7 @@ impl BreadcrumbStrip {
                 Rc::new(target),
                 content,
                 editor,
+                editor_state,
                 cx,
             ),
             _ => content,
@@ -862,6 +886,7 @@ impl gpui::Element for BreadcrumbStrip {
         let mut x = bounds.origin.x;
         let mut children = Vec::with_capacity(sequence.len());
         let mut menu_anchor_bounds = None;
+        let editor_state = SegmentEditorState::read(self.editor.as_ref(), cx);
         for (position, item) in sequence.into_iter().enumerate() {
             let segment_index = match &item {
                 FinalItem::Segment(index) => Some(*index),
@@ -882,7 +907,15 @@ impl gpui::Element for BreadcrumbStrip {
                         };
                     let label_budget = (is_last || protected_index == Some(index))
                         .then(|| (remaining_width - reserved).max(Pixels::ZERO));
-                    self.render_segment(index, position, last_position, label_budget, window, cx)
+                    self.render_segment(
+                        index,
+                        position,
+                        last_position,
+                        label_budget,
+                        editor_state,
+                        window,
+                        cx,
+                    )
                 }
                 FinalItem::Ellipsis(hidden) => {
                     // The collapse below can only pick which slot a run lands in, never widen
@@ -895,6 +928,7 @@ impl gpui::Element for BreadcrumbStrip {
                         position,
                         last_position,
                         Some(glyph_budget),
+                        editor_state,
                         window,
                         cx,
                     )

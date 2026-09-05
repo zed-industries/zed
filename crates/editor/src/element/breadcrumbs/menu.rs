@@ -1311,7 +1311,10 @@ impl BreadcrumbNavigationMenu {
         };
         let (all_items, cursor_ranges) = editor.update(cx, |editor, cx| {
             let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-            let all_items = editor.map_text_outline_items(text_items, &multi_buffer_snapshot);
+            let all_items = crate::document_symbols::text_outline_items_to_multibuffer(
+                text_items,
+                &multi_buffer_snapshot,
+            );
             let cursor_ranges = editor
                 .outline_symbols_at_cursor
                 .as_ref()

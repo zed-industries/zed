@@ -29,8 +29,7 @@ use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
 pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
-use git_store::Repository;
-pub use git_store::RepositoryId;
+use git_store::{Repository, RepositoryId};
 pub mod search_history;
 pub mod yarn;
 
@@ -47,7 +46,6 @@ use crate::{
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
-pub use git_store::RepositorySnapshot;
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
