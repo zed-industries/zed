@@ -1420,7 +1420,9 @@ or
   "tab_bar": {
     "show": true,
     "show_nav_history_buttons": true,
-    "show_tab_bar_buttons": true
+    "show_tab_bar_buttons": true,
+    "show_pinned_tabs_in_separate_row": false,
+    "wrap_tabs": false
   }
 }
 ```
@@ -1450,6 +1452,26 @@ or
 - Description: Whether or not to show the tab bar buttons.
 - Setting: `show_tab_bar_buttons`
 - Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Pinned Tabs In Separate Row
+
+- Description: Whether to show pinned tabs in a separate row above unpinned tabs. Only takes effect when both pinned and unpinned tabs are present.
+- Setting: `show_pinned_tabs_in_separate_row`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+### Wrap Tabs
+
+- Description: Whether to wrap tabs onto additional rows instead of scrolling horizontally when the tab bar overflows. Composes with `show_pinned_tabs_in_separate_row`: pinned tabs stay on the top row, unpinned tabs wrap across rows below.
+- Setting: `wrap_tabs`
+- Default: `false`
 
 **Options**
 
