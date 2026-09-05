@@ -315,6 +315,14 @@ pub struct AgentSettingsContent {
     ///
     /// Default: ""
     pub terminal_init_command: Option<String>,
+    /// Maximum size in bytes of a terminal tool command's output that is sent
+    /// to the agent, when the command didn't request specific head/tail lines.
+    /// Output beyond this limit is truncated. Larger values give the agent
+    /// more context from verbose commands, but use more of the model's context
+    /// window per tool call.
+    ///
+    /// Default: 16384
+    pub terminal_output_limit: Option<u64>,
     /// How thinking blocks should be displayed by default in the agent panel.
     ///
     /// Default: automatic
