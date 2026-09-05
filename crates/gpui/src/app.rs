@@ -48,7 +48,7 @@ use crate::{
     ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, ClipboardReadError,
     CursorStyle, DispatchPhase, DisplayId, EventEmitter, ExternalDragPayload, FocusHandle,
     FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId,
-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton,
     PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
     ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
@@ -313,12 +313,70 @@ impl Application {
 
 type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut App) -> bool + 'static>;
+type MissingGlyphCallback = Box<dyn FnMut(&[MissingGlyph], &mut App) + 'static>;
 pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>;
 type WindowClosedHandler = Box<dyn FnMut(&mut App, WindowId)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
+
+struct MissingGlyphCallbackEntry {
+    registration: Rc<()>,
+    callback: Option<MissingGlyphCallback>,
+}
+
+#[derive(Default)]
+struct MissingGlyphCallbackSlot {
+    entry: RefCell<Option<MissingGlyphCallbackEntry>>,
+}
+
+impl MissingGlyphCallbackSlot {
+    fn replace(&self, callback: MissingGlyphCallback) -> Rc<()> {
+        let registration = Rc::new(());
+        self.entry.borrow_mut().replace(MissingGlyphCallbackEntry {
+            registration: registration.clone(),
+            callback: Some(callback),
+        });
+        registration
+    }
+
+    fn invoke(&self, missing_glyphs: &[MissingGlyph], cx: &mut App) {
+        let Some((registration, mut callback)) =
+            self.entry.borrow_mut().as_mut().and_then(|entry| {
+                entry
+                    .callback
+                    .take()
+                    .map(|callback| (entry.registration.clone(), callback))
+            })
+        else {
+            return;
+        };
+        callback(missing_glyphs, cx);
+
+        let mut entry = self.entry.borrow_mut();
+        let is_current = entry
+            .as_ref()
+            .is_some_and(|entry| Rc::ptr_eq(&entry.registration, &registration));
+        if is_current {
+            let Some(entry) = entry.as_mut() else {
+                return;
+            };
+            entry.callback = Some(callback);
+        }
+    }
+
+    fn remove(&self, registration: &Rc<()>) -> bool {
+        let mut entry = self.entry.borrow_mut();
+        let is_current = entry
+            .as_ref()
+            .is_some_and(|entry| Rc::ptr_eq(&entry.registration, registration));
+        if is_current {
+            entry.take();
+        }
+        is_current
+    }
+}
 
 /// Defines when the application should automatically quit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -709,6 +767,7 @@ pub struct App {
     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
+    missing_glyph_callback: Rc<MissingGlyphCallbackSlot>,
     pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
     pub(crate) system_wake_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
@@ -843,6 +902,7 @@ impl App {
                 keystroke_observers: SubscriberSet::new(),
                 keystroke_interceptors: SubscriberSet::new(),
                 keyboard_layout_observers: SubscriberSet::new(),
+                missing_glyph_callback: Rc::default(),
                 thermal_state_observers: SubscriberSet::new(),
                 system_wake_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
@@ -2014,6 +2074,38 @@ impl App {
         &self.text_system
     }
 
+    /// Invokes a callback with grapheme clusters that exhausted font fallback.
+    ///
+    /// Registering a callback replaces the previous callback and enables missing-glyph
+    /// detection. The callback runs on the foreground executor after shaping has
+    /// released its internal locks. Dropping its subscription disables detection until
+    /// another callback is registered.
+    pub fn on_missing_glyphs(
+        &self,
+        callback: impl FnMut(&[MissingGlyph], &mut App) + 'static,
+    ) -> Subscription {
+        let registration = self.missing_glyph_callback.replace(Box::new(callback));
+
+        if let Some(receiver) = self.text_system.take_missing_glyph_receiver() {
+            let callback = self.missing_glyph_callback.clone();
+            self.spawn(async move |cx| {
+                while let Ok(missing_glyphs) = receiver.recv().await {
+                    cx.update(|cx| callback.invoke(&missing_glyphs, cx));
+                }
+            })
+            .detach();
+        }
+        self.text_system.enable_missing_glyph_reporting();
+
+        let callback = self.missing_glyph_callback.clone();
+        let text_system = self.text_system.clone();
+        Subscription::new(move || {
+            if callback.remove(&registration) {
+                text_system.disable_missing_glyph_reporting();
+            }
+        })
+    }
+
     /// Check whether a global of the given type has been assigned.
     pub fn has_global<G: Global>(&self) -> bool {
         self.globals_by_type.contains_key(&TypeId::of::<G>())
@@ -3109,7 +3201,10 @@ mod test {
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
 
-    use crate::{AppContext, Context, Empty, IntoElement, Render, TestAppContext, Window};
+    use crate::{
+        AppContext, Context, Empty, FallbackFontClass, IntoElement, MissingGlyph, Render,
+        TestAppContext, Window,
+    };
 
     struct RenderCounter(Rc<Cell<usize>>);
 
@@ -3135,6 +3230,65 @@ mod test {
         cx.to_async().refresh();
 
         assert_eq!(render_count.get(), render_count_before_refresh + 1);
+    }
+
+    #[gpui::test]
+    fn missing_glyph_callbacks_follow_subscription_lifetime(cx: &mut TestAppContext) {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let subscription = cx.update(|cx| {
+            let observed = observed.clone();
+            cx.on_missing_glyphs(move |missing_glyphs, _| {
+                observed.borrow_mut().extend_from_slice(missing_glyphs);
+            })
+        });
+        cx.update(|cx| {
+            cx.text_system()
+                .report_missing_glyphs_in_test(vec![missing_glyph("active")]);
+        });
+        cx.run_until_parked();
+        assert_eq!(observed.borrow().as_slice(), &[missing_glyph("active")]);
+
+        let second_observed = Rc::new(RefCell::new(Vec::new()));
+        let second_subscription = cx.update(|cx| {
+            let second_observed = second_observed.clone();
+            cx.on_missing_glyphs(move |missing_glyphs, _| {
+                second_observed
+                    .borrow_mut()
+                    .extend_from_slice(missing_glyphs);
+            })
+        });
+        cx.update(|cx| {
+            cx.text_system()
+                .report_missing_glyphs_in_test(vec![missing_glyph("replacement")]);
+        });
+        cx.run_until_parked();
+        assert_eq!(observed.borrow().as_slice(), &[missing_glyph("active")]);
+        assert_eq!(
+            second_observed.borrow().as_slice(),
+            &[missing_glyph("replacement")]
+        );
+
+        drop(subscription);
+        cx.update(|cx| {
+            cx.text_system()
+                .report_missing_glyphs_in_test(vec![missing_glyph("after old drop")]);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            second_observed.borrow().as_slice(),
+            &[
+                missing_glyph("replacement"),
+                missing_glyph("after old drop")
+            ]
+        );
+
+        drop(second_subscription);
+        cx.update(|cx| {
+            cx.text_system()
+                .report_missing_glyphs_in_test(vec![missing_glyph("inactive")]);
+        });
+        cx.run_until_parked();
+        assert_eq!(second_observed.borrow().len(), 2);
     }
 
     #[test]
@@ -3188,5 +3342,9 @@ mod test {
         let (path, restart_arguments) = restart.await.expect("restart was not requested");
         assert_eq!(path, Some(restart_path));
         assert_eq!(restart_arguments, arguments);
+    }
+
+    fn missing_glyph(grapheme: &'static str) -> MissingGlyph {
+        MissingGlyph::new(grapheme.into(), FallbackFontClass::Proportional)
     }
 }
