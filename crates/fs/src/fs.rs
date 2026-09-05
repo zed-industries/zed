@@ -2212,32 +2212,50 @@ impl FakeFs {
         emit_git_event: bool,
         worktree: Worktree,
     ) {
-        let ref_name = worktree
-            .ref_name
-            .as_ref()
-            .expect("linked worktree must have a ref_name");
-        let branch_name = ref_name
-            .strip_prefix("refs/heads/")
-            .unwrap_or(ref_name.as_ref());
+        let directory_name = if let Some(ref_name) = &worktree.ref_name {
+            ref_name
+                .strip_prefix("refs/heads/")
+                .unwrap_or(ref_name.as_ref())
+                .to_string()
+        } else {
+            let base_directory_name = worktree
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_else(|| worktree.display_name())
+                .to_string();
+            let mut directory_name = base_directory_name.clone();
+            let mut suffix = 1;
+            while self
+                .is_dir(&dot_git.join("worktrees").join(&directory_name))
+                .await
+            {
+                directory_name = format!("{base_directory_name}{suffix}");
+                suffix += 1;
+            }
+            directory_name
+        };
 
-        // Create ref in git state.
-        self.with_git_state(dot_git, false, |state| {
-            state
-                .refs
-                .insert(ref_name.to_string(), worktree.sha.to_string());
-        })
-        .unwrap();
+        if let Some(ref_name) = &worktree.ref_name {
+            self.with_git_state(dot_git, false, |state| {
+                state
+                    .refs
+                    .insert(ref_name.to_string(), worktree.sha.to_string());
+            })
+            .unwrap();
+        }
 
         // Create .git/worktrees/<name>/ directory with HEAD, commondir, and gitdir.
-        let worktrees_entry_dir = dot_git.join("worktrees").join(branch_name);
+        let worktrees_entry_dir = dot_git.join("worktrees").join(directory_name);
         self.create_dir(&worktrees_entry_dir).await.unwrap();
 
-        self.write_file_internal(
-            worktrees_entry_dir.join("HEAD"),
-            format!("ref: {ref_name}").into_bytes(),
-            false,
-        )
-        .unwrap();
+        let head = worktree
+            .ref_name
+            .as_ref()
+            .map(|ref_name| format!("ref: {ref_name}"))
+            .unwrap_or_else(|| worktree.sha.to_string());
+        self.write_file_internal(worktrees_entry_dir.join("HEAD"), head.into_bytes(), false)
+            .unwrap();
 
         self.write_file_internal(
             worktrees_entry_dir.join("commondir"),
@@ -2273,32 +2291,26 @@ impl FakeFs {
         &self,
         dot_git: &Path,
         emit_git_event: bool,
-        ref_name: &str,
-    ) {
-        let branch_name = ref_name.strip_prefix("refs/heads/").unwrap_or(ref_name);
-        let worktrees_entry_dir = dot_git.join("worktrees").join(branch_name);
-
-        // Read gitdir to find the worktree checkout path.
-        let gitdir_content = self
-            .load_internal(worktrees_entry_dir.join("gitdir"))
-            .await
-            .unwrap();
-        let gitdir_str = String::from_utf8(gitdir_content).unwrap();
-        let worktree_path = PathBuf::from(gitdir_str.trim())
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or_default();
+        worktree_path: &Path,
+    ) -> Result<()> {
+        let dot_git_content = self.load_internal(worktree_path.join(".git")).await?;
+        let dot_git_content = String::from_utf8(dot_git_content)?;
+        let worktrees_entry_dir = PathBuf::from(
+            dot_git_content
+                .trim()
+                .strip_prefix("gitdir: ")
+                .context("worktree .git file missing gitdir pointer")?,
+        );
 
         // Remove the worktree checkout directory.
         self.remove_dir(
-            &worktree_path,
+            worktree_path,
             RemoveOptions {
                 recursive: true,
                 ignore_if_not_exists: true,
             },
         )
-        .await
-        .unwrap();
+        .await?;
 
         // Remove the .git/worktrees/<name>/ directory.
         self.remove_dir(
@@ -2308,12 +2320,13 @@ impl FakeFs {
                 ignore_if_not_exists: false,
             },
         )
-        .await
-        .unwrap();
+        .await?;
 
         if emit_git_event {
-            self.with_git_state(dot_git, true, |_| {}).unwrap();
+            self.with_git_state(dot_git, true, |_| {})?;
         }
+
+        Ok(())
     }
 
     pub fn set_unmerged_paths_for_repo(

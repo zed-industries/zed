@@ -374,6 +374,7 @@ impl ThreadMetadata {
 pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
     worktree_paths: &WorktreePaths,
     branch_names: &std::collections::HashMap<PathBuf, SharedString, S>,
+    detached_paths: &std::collections::HashSet<PathBuf>,
 ) -> Vec<ThreadItemWorktreeInfo> {
     let mut infos: Vec<ThreadItemWorktreeInfo> = Vec::new();
     let mut linked_short_names: Vec<(SharedString, SharedString)> = Vec::new();
@@ -396,6 +397,7 @@ pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
                 highlight_positions: Vec::new(),
                 kind: WorktreeKind::Linked,
                 branch_name: branch_names.get(folder_path).cloned(),
+                detached: detached_paths.contains(folder_path),
             });
         } else {
             let Some(name) = folder_path.file_name() else {
@@ -407,6 +409,7 @@ pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
                 highlight_positions: Vec::new(),
                 kind: WorktreeKind::Main,
                 branch_name: branch_names.get(folder_path).cloned(),
+                detached: false,
             });
         }
     }
