@@ -440,20 +440,23 @@ impl WindowsWindow {
             draw_coordinator,
         } = creation_info;
         register_window_class(icon);
-        let parent_hwnd = if params.kind == WindowKind::Dialog {
-            let parent_window = unsafe { GetActiveWindow() };
-            if parent_window.is_invalid() {
-                None
+        let parent_hwnd =
+            if params.kind == WindowKind::Dialog || params.kind == WindowKind::Floating {
+                let parent_window = unsafe { GetActiveWindow() };
+                if parent_window.is_invalid() {
+                    None
+                } else {
+                    // Disable the parent window to make this dialog modal
+                    if params.kind == WindowKind::Dialog {
+                        unsafe {
+                            EnableWindow(parent_window, false).as_bool();
+                        };
+                    }
+                    Some(parent_window)
+                }
             } else {
-                // Disable the parent window to make this dialog modal
-                unsafe {
-                    EnableWindow(parent_window, false).as_bool();
-                };
-                Some(parent_window)
-            }
-        } else {
-            None
-        };
+                None
+            };
         let hide_title_bar = params
             .titlebar
             .as_ref()
@@ -483,6 +486,12 @@ impl WindowsWindow {
             let dwexstyle = if params.kind == WindowKind::Dialog {
                 dwstyle |= WS_POPUP | WS_CAPTION;
                 WS_EX_DLGMODALFRAME
+            } else if params.kind == WindowKind::Floating && parent_hwnd.is_some() {
+                dwstyle |= WS_POPUPWINDOW;
+                if !hide_title_bar {
+                    dwstyle |= WS_CAPTION;
+                }
+                WS_EX_APPWINDOW
             } else {
                 WS_EX_APPWINDOW
             };
@@ -628,6 +637,8 @@ impl PlatformWindow for WindowsWindow {
     fn resize(&mut self, size: Size<Pixels>) {
         let hwnd = self.0.hwnd;
         let bounds = gpui::bounds(self.bounds().origin, size).to_device_pixels(self.scale_factor());
+
+        _ = self.state.border_offset.update(hwnd);
         let rect = calculate_window_rect(bounds, &self.state.border_offset);
 
         self.0
