@@ -18,12 +18,14 @@ handles and maps a window-local `GlobalElementId` to each node's `EntityId`.
 Parent and child edges contain IDs rather than owning handles. The same view can
 therefore appear in different mounted scopes without sharing their recordings.
 
-App maintains forward and reverse render dependencies. Nested entity-access
-collectors include descendant reads in their parents, preserving ancestor
-invalidation. Entity notifications traverse the same dependency graph for models,
-views, local state, and nodes. Rebuilding replaces dependencies; unmounting removes
-them. Entity mutation revisions also reject reuse after an unnotified update when
-some other input causes a frame. Notifications emitted during drawing invalidate recordings for the next
+Each node records the entities read while rendering its scope, and the engine keeps
+the reverse map from entity to consuming nodes. A parent depends on its children, so
+a dirty child dirties its ancestors through the same graph. Reads establish
+dirtiness only: `App::notify` still notifies just the entity it is given, marking
+windows that read it dirty and running its observers, and the engine expands the
+window's dirty set through the consumer map when the next frame begins. Rebuilding
+replaces a node's dependencies; unmounting removes them. Entity mutation revisions
+also reject reuse after an unnotified update when some other input causes a frame. Notifications emitted during drawing invalidate recordings for the next
 requested frame. They do not schedule a draw themselves, preserving the existing focus-lost
 fallback behavior.
 
