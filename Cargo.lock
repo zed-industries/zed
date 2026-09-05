@@ -7188,6 +7188,7 @@ dependencies = [
  "git",
  "git_ui_core",
  "gpui",
+ "http_client",
  "indoc",
  "itertools 0.14.0",
  "language",
