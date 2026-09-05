@@ -368,10 +368,6 @@ impl BreadcrumbNavigationMenu {
         self.navigated_path.clone()
     }
 
-    pub fn is_navigated(&self) -> bool {
-        self.navigated_path.is_some()
-    }
-
     pub fn symbol_trail(&self) -> &[OutlineItem<Anchor>] {
         &self.symbol_trail
     }
@@ -703,6 +699,9 @@ impl BreadcrumbNavigationMenu {
         self.pending_restore_symbol_range = None;
         if !self.filter_is_empty() {
             self.pending_initial_selection = false;
+            // A new query lands on its best match. The index is only kept across a rank the
+            // user arrowed through while it was in flight, which sets it again after this.
+            self.selected_index = None;
         }
         self.rerank_filter(cx);
         // `selected_index` and the row lookups address the ranked matches the moment the

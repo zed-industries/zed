@@ -106,9 +106,16 @@ pub fn render_breadcrumb_text(
                 cx,
             );
             let menu = editor_ref.breadcrumb_navigation_menu().cloned();
-            let (navigated, navigated_path) = menu.as_ref().map_or((false, None), |menu| {
-                let menu = menu.read(cx);
-                (menu.is_navigated(), menu.navigated_path())
+            let navigated_path = menu
+                .as_ref()
+                .and_then(|menu| menu.read(cx).navigated_path());
+            // Browsing an ancestor of the open file keeps the file's whole trail on the bar: that
+            // directory is one of the segments already painted, and the menu anchors to it. Only
+            // a listing off the file's path replaces the trail with where the user has gone.
+            let navigated_off_path = navigated_path.as_ref().is_some_and(|(worktree_id, path)| {
+                !real_project_path.as_ref().is_some_and(|project_path| {
+                    project_path.worktree_id == *worktree_id && project_path.path.starts_with(path)
+                })
             });
             let menu_symbol_trail = menu
                 .as_ref()
@@ -133,7 +140,9 @@ pub fn render_breadcrumb_text(
                 && !segments.is_empty()
                 && let Some(project) = editor_ref.project()
             {
-                let split = if let Some((worktree_id, path)) = navigated_path.as_ref() {
+                let split = if navigated_off_path
+                    && let Some((worktree_id, path)) = navigated_path.as_ref()
+                {
                     project
                         .read(cx)
                         .worktree_for_id(*worktree_id, cx)
@@ -160,7 +169,11 @@ pub fn render_breadcrumb_text(
 
                 if let Some((path_labels, path_targets)) = split {
                     file_segment_index = path_labels.len() - 1;
-                    let replace_range = if navigated { 0..segments.len() } else { 0..1 };
+                    let replace_range = if navigated_off_path {
+                        0..segments.len()
+                    } else {
+                        0..1
+                    };
                     segments.splice(replace_range, path_labels);
                     symbol_segments = path_targets;
                     path_split = true;
@@ -175,7 +188,7 @@ pub fn render_breadcrumb_text(
                 }));
             }
 
-            if !navigated {
+            if !navigated_off_path {
                 let cursor_chain = editor_ref
                     .outline_symbols_at_cursor
                     .as_ref()
@@ -3391,7 +3404,7 @@ mod tests {
                 }
             };
             assert_eq!(path, "dir_a");
-            assert!(menu.is_navigated());
+            assert!(menu.navigated_path().is_some());
             assert_eq!(
                 menu.entry_names()
                     .iter()
@@ -5359,6 +5372,97 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_a_new_query_selects_its_best_match(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "alpha.txt": "", "beta.txt": "", "gamma.txt": "" }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                div().size_full().child(self.menu.clone())
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(multi_buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+
+        // Park the selection on the last row, as a user who arrowed there would.
+        menu.update_in(cx, |menu, window, cx| {
+            window.focus(&menu.focus_handle(cx), cx);
+            menu.set_selected_row(2, cx);
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        menu.read_with(cx, |menu, _| assert_eq!(menu.selected_index(), Some(2)));
+
+        // Every name matches "a"; the best match is "alpha.txt", not whatever sits at the old
+        // index in the new results.
+        cx.simulate_input("a");
+        cx.run_until_parked();
+
+        menu.read_with(cx, |menu, cx| {
+            let rows = menu.published_row_labels(cx);
+            assert_eq!(rows.first().map(|r| r.as_ref()), Some("alpha.txt"));
+            assert_eq!(
+                menu.selected_index(),
+                Some(0),
+                "a new query must land on its best match, got rows {rows:?}"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_typing_a_filter_does_not_blank_the_rows(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
         use crate::test::build_editor;
@@ -6030,6 +6134,125 @@ mod tests {
                 "equal-scoring matches must keep the listing's own order"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_bar_keeps_the_file_trail_while_browsing_an_ancestor(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor_with_project;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::{path, rel_path::rel_path};
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "src": { "a": { "file.rs": "fn main() {}" }, "b": { "other.rs": "" } } }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/src/a/file.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct BarHost {
+            editor: Entity<Editor>,
+        }
+        impl gpui::Render for BarHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                let file_name = vec![HighlightedText {
+                    text: "file.rs".into(),
+                    highlights: vec![],
+                }];
+                h_flex().size_full().child(render_breadcrumb_text(
+                    file_name,
+                    None,
+                    None,
+                    &self.editor,
+                    false,
+                    cx,
+                ))
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| {
+                let mut editor =
+                    build_editor_with_project(project.clone(), multi_buffer, window, cx);
+                editor.set_workspace_for_test(workspace.downgrade());
+                editor
+            });
+            BarHost { editor }
+        });
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+
+        // Open on the file's own directory, then step out to the root the way Left does: a
+        // navigated listing of an ancestor.
+        host_window
+            .update(cx, |host, window, cx| {
+                host.editor.update(cx, |editor, cx| {
+                    editor.open_breadcrumb_navigation(
+                        BreadcrumbListing::Directory {
+                            worktree_id,
+                            path: rel_path("src/a").into_arc(),
+                        },
+                        window,
+                        cx,
+                    );
+                });
+                let menu = host
+                    .editor
+                    .read(cx)
+                    .breadcrumb_navigation_menu()
+                    .cloned()
+                    .expect("menu opened");
+                menu.update(cx, |menu, cx| {
+                    menu.set_listing(
+                        BreadcrumbListing::Directory {
+                            worktree_id,
+                            path: RelPath::empty().into_arc(),
+                        },
+                        Some(rel_path("src/a/file.rs").into_arc()),
+                        true,
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+
+        // root(0) › src(1) › a(2) › file.rs(3): the whole trail stays while the menu lists the
+        // root, so the file segment is still painted and the root segment anchors the menu.
+        assert!(
+            cx.debug_bounds("breadcrumb-segment-3").is_some(),
+            "browsing an ancestor must not drop the file's segments from the bar"
+        );
+        assert!(
+            cx.debug_bounds("breadcrumb-segment-0").is_some(),
+            "the ancestor being browsed is one of the painted segments"
+        );
     }
 
     #[gpui::test]
