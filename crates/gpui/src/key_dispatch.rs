@@ -1651,10 +1651,22 @@ mod tests {
             window.activate_window();
         });
 
+        let query_accepts_text_input = |cx: &mut VisualTestContext| {
+            let mut platform_window = cx.test_window(cx.window_handle());
+            let mut input_handler = platform_window.take_input_handler()?;
+            let accepts_text_input = input_handler.query_accepts_text_input();
+            platform_window.set_input_handler(input_handler);
+            Some(accepts_text_input)
+        };
+
         assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(true));
+        assert_eq!(query_accepts_text_input(cx), Some(true));
         cx.simulate_keystrokes("ctrl-x");
         cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+        // The macOS window routes printable keys through `query_accepts_text_input`,
+        // so pending multi-stroke prefixes must not suppress IME-first routing.
         assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(false));
+        assert_eq!(query_accepts_text_input(cx), Some(true));
 
         let prefers_ime_after_blur = {
             let mut platform_window = cx.test_window(cx.window_handle());
@@ -1677,6 +1689,7 @@ mod tests {
 
         cx.simulate_keystrokes("ctrl-x");
         assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(false));
+        assert_eq!(query_accepts_text_input(cx), Some(true));
         cx.simulate_keystrokes("k");
         cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
         assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(true));
