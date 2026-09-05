@@ -835,6 +835,118 @@ mod tests {
     };
     use std::{cell::Cell, rc::Rc};
 
+    #[gpui::test]
+    fn node_engine_replays_debug_bounds_in_paint_order(cx: &mut TestAppContext) {
+        struct Leaf(&'static str);
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let label = self.0;
+                div()
+                    .w(px(100.))
+                    .h(px(100.))
+                    .debug_selector(|| "shared".into())
+                    .child(div().size_full().debug_selector(move || label.into()))
+            }
+        }
+        struct Root {
+            children: Vec<Entity<Leaf>>,
+            cached: bool,
+        }
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .flex()
+                    .size_full()
+                    .children(self.children.iter().map(|child| {
+                        if self.cached {
+                            child
+                                .clone()
+                                .cached(StyleRefinement::default().w(px(100.)).h(px(100.)))
+                                .into_any_element()
+                        } else {
+                            child.clone().into_any_element()
+                        }
+                    }))
+            }
+        }
+        for retained in [false, true] {
+            for cached in [false, true] {
+                let window = cx.open_window(size(px(300.), px(100.)), |window, cx| {
+                    window.draw_engine = if retained {
+                        DrawEngine::Node(crate::NodeEngine::new())
+                    } else {
+                        DrawEngine::Legacy
+                    };
+                    Root {
+                        children: ["a", "b", "c"]
+                            .into_iter()
+                            .map(|label| cx.new(|_| Leaf(label)))
+                            .collect(),
+                        cached,
+                    }
+                });
+                cx.run_until_parked();
+                for step in 0..3 {
+                    window
+                        .update(cx, |root, _, cx| match step {
+                            0 => root
+                                .children
+                                .first()
+                                .expect("first leaf")
+                                .update(cx, |_, cx| cx.notify()),
+                            1 => {
+                                root.children.swap(0, 2);
+                                cx.notify();
+                            }
+                            _ => {
+                                root.children.pop();
+                                cx.notify();
+                            }
+                        })
+                        .expect("window");
+                    cx.run_until_parked();
+                    let actual = window
+                        .update(cx, |_, window, _| {
+                            if retained && step == 0 {
+                                assert!(
+                                    window
+                                        .retained_node_stats()
+                                        .expect("retained stats")
+                                        .reused_subtrees
+                                        > 0
+                                );
+                            }
+                            window.rendered_frame.debug_bounds.clone()
+                        })
+                        .expect("window");
+                    if step == 2 {
+                        assert!(!actual.contains_key("a"));
+                    }
+                    assert_eq!(
+                        actual.get("shared"),
+                        actual.get(if step == 0 {
+                            "c"
+                        } else if step == 1 {
+                            "a"
+                        } else {
+                            "b"
+                        })
+                    );
+                    window
+                        .update(cx, |_, window, _| window.refresh())
+                        .expect("window");
+                    cx.run_until_parked();
+                    let expected = window
+                        .update(cx, |_, window, _| {
+                            window.rendered_frame.debug_bounds.clone()
+                        })
+                        .expect("window");
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+    }
+
     struct Dependency;
 
     struct CountingLeaf {

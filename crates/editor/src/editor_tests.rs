@@ -85,6 +85,127 @@ fn display_ranges(editor: &Editor, cx: &mut Context<'_, Editor>) -> Vec<Range<Di
         .display_ranges(&editor.display_snapshot(cx))
 }
 
+#[gpui::test]
+async fn test_workspace_rendering_stress(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let text: String = (0..250)
+        .map(|index| format!("fn function_{index}(value: usize) -> usize {{\n    // Rendering stress: λ\n    value + {index}\n}}\n"))
+        .collect();
+    let files: serde_json::Map<String, serde_json::Value> = (0..6)
+        .map(|index| (format!("file{index}.rs"), json!(text)))
+        .collect();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/rendering-stress"), json!(files))
+        .await;
+    let project = Project::test(fs, [path!("/rendering-stress").as_ref()], cx).await;
+    project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let window_handle = cx.update(|window, _| window.window_handle());
+    cx.simulate_window_resize(window_handle, size(px(1600.), px(1000.)));
+    let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .expect("worktree")
+            .read(cx)
+            .id()
+    });
+    let mut pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    let mut editors = Vec::new();
+    for index in 0..6 {
+        if index != 0 && index % 2 == 0 {
+            pane = workspace.update_in(cx, |workspace, window, cx| {
+                workspace.split_pane(pane.clone(), SplitDirection::Right, window, cx)
+            });
+        }
+        let file = format!("file{index}.rs");
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(
+                    (worktree_id, rel_path(&file)),
+                    Some(pane.downgrade()),
+                    true,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("open file")
+            .downcast::<Editor>()
+            .expect("editor");
+        editors.push((pane.clone(), editor));
+    }
+    cx.run_until_parked();
+    let mut reused_subtrees = 0;
+    let mut maximum_layout_nodes = 0;
+    let steps = std::env::var("GPUI_STRESS_STEPS").map_or(48, |value| {
+        value.parse::<usize>().expect("stress step count")
+    });
+    assert!(steps >= 4, "stress workload needs at least four updates");
+    for step in 0..steps {
+        let editor_index = step / 4 % editors.len();
+        let (pane, editor) = &editors[editor_index];
+        if step % 4 == 0 {
+            pane.update_in(cx, |pane, window, cx| {
+                pane.activate_item(editor_index % 2, true, true, window, cx);
+            });
+        }
+        editor.update_in(cx, |editor, window, cx| {
+            let row = (step * 17 % 225 * 4) as u32;
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([Point::new(row, 0)..Point::new(row, 2)]);
+            });
+            if step % 3 == 0 {
+                editor.handle_input("// edited ", window, cx);
+            }
+            editor.scroll_screen(
+                &ScrollAmount::Page(if step % 2 == 0 { 1. } else { -0.5 }),
+                window,
+                cx,
+            );
+        });
+        if step % 8 == 0 {
+            cx.simulate_window_resize(
+                window_handle,
+                size(px(1200. + (step % 3) as f32 * 100.), px(800.)),
+            );
+        }
+        cx.run_until_parked();
+        let incremental = cx.update(|window, _| {
+            if let Some(stats) = window.retained_node_stats() {
+                if step < 4 {
+                    eprintln!("workspace rendering step {step}: {stats:?}");
+                }
+                reused_subtrees += stats.reused_subtrees;
+                maximum_layout_nodes = maximum_layout_nodes.max(stats.layout_nodes);
+            }
+            window.scene_snapshot_for_test()
+        });
+        assert!(
+            incremental.len() > 1000,
+            "workspace must produce a nontrivial scene"
+        );
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let rebuilt = cx.update(|window, _| window.scene_snapshot_for_test());
+        assert!(
+            incremental == rebuilt,
+            "incremental scene differs from full refresh at step {step}"
+        );
+    }
+    if cx.update(|window, _| window.retained_node_stats().is_some()) {
+        assert!(
+            reused_subtrees > 0,
+            "stress workload must exercise retained reuse"
+        );
+    }
+    eprintln!(
+        "workspace rendering stress: 6 Rust files, 3 panes, {steps} updates; reused subtrees={reused_subtrees}, maximum layout nodes={maximum_layout_nodes}"
+    );
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod property_test;
 

@@ -97,14 +97,48 @@ focus and keyboard dispatch through reuse, moved hit targets, hover, and disposa
 of measurement callbacks that capture frame-arena elements. These are
 focused differential tests, not a complete semantic oracle for arbitrary Zed UI.
 
-Deferred drawing, prompts, accessibility, inspector output, and debug bounds
-conservatively force rebuilds. Global and other ambient invalidation still relies
+Deferred drawing, prompts, accessibility, and inspector output conservatively
+force rebuilds. Debug-selector bounds are recorded and replayed in paint order,
+including repeated selectors and removal, without forcing a full redraw.
+Global and other ambient invalidation still relies
 on existing window refresh paths where precise tracking is unavailable. Full Zed
 interaction, IME, and every custom element's side effects need further coverage.
 
 Changed scope bounds are diagnostic only. GPU scene submission and presentation
 remain unchanged; the engine does not submit damage regions. Render counts
 establish skipped CPU work, not measured battery or GPU savings.
+
+The editor's `test_workspace_rendering_stress` opens six 1,000-line Rust files in
+three panes of a real `MultiWorkspace`. It runs 48 tab/focus, selection, edit,
+scroll, and resize updates, comparing each completed scene with a forced full
+refresh of the same window. This checks cache reuse against rebuilding with the
+same engine and resources, not against a separate legacy window. Run it in both
+modes:
+
+```sh
+GPUI_EXPERIMENTAL_NODE_ENGINE=0 cargo test -p editor test_workspace_rendering_stress --lib -- --nocapture
+GPUI_EXPERIMENTAL_NODE_ENGINE=1 cargo test -p editor test_workspace_rendering_stress --lib -- --nocapture
+```
+
+Set `GPUI_STRESS_STEPS` to change the update count (at least four). Updates are
+grouped by editor so focus changes do not turn every step into a full refresh.
+The retained run also requires a nonzero reuse count. Frame statistics report
+the reason for full refreshes and the number of scopes whose measurement
+captures cannot survive a frame.
+
+This uses production workspace/editor rendering with the headless test platform;
+it does not exercise native GPU presentation, OS input, or IME composition.
+
+Run the path-capture microbenchmark with:
+
+```sh
+cargo test -p gpui path_recording_capture_benchmark --release --lib --no-default-features -- --ignored --nocapture
+```
+
+It compares clearing and reusing vertex buffers for 32 paths, alternating run
+order across five batches. Both variants still copy the geometry. Buffer lifetime
+regressions independently check that stable path slots preserve allocation and
+that replay matches the source scene when geometry and local ranges change.
 
 ## Follow-up checklist
 
@@ -118,6 +152,10 @@ Performance and ownership:
   insertion, capture, and replay can duplicate geometry. Measure copied bytes and
   allocation counts with paths, then reduce payload copies and retain nested
   buffer capacity. The text benchmark's allocation result does not cover paths.
+- [x] Preserve existing path vertex buffers when overwriting node recordings.
+  Regression tests cover changed geometry, shrinking paths, operation-type
+  replacement, child-range compaction, and removal. This removes repeated vertex
+  allocation during stable capture; it does not remove the vertex copies.
 - [ ] Evaluate writing effects directly into retained storage, avoiding the active
   frame-to-recording capture pass while preserving existing frame/replay APIs.
 - [ ] Benchmark deeper nesting, many callbacks, large paths, mixed dirty scopes,
@@ -135,13 +173,18 @@ Correctness and integration before considering default enablement:
 - [ ] Run real Zed interaction traces: typing, selection, scrolling, pane resizing,
   tabs, terminal input, menus, popovers, drag-and-drop, and multiple windows.
   Compare legacy and retained behavior through full and partial redraws.
+- [x] Add a headless real-workspace rendering stress test with six Rust files,
+  three panes, 48 updates, full-refresh scene comparisons, and a retained-reuse
+  assertion. Native interaction and the remaining UI surfaces still need coverage.
 - [ ] Expand the differential oracle beyond selected scene snapshots: replay
   deterministic event sequences and compare scenes plus hit testing, dispatch,
   focus/tab order, input-handler behavior, and state/resource lifetimes.
 - [ ] Extend input tests for overlapping/clipped content, nested scroll regions,
   hover/tooltip/cursor transitions, keyboard propagation, and focused subtree
   movement, replacement, and removal.
-- [ ] Verify accessibility, prompts, deferred drawing, inspector, and debug-bound
+- [x] Retain debug-selector bounds instead of forcing full-window rebuilds in
+  tests. Cover duplicate selectors, cached replay, reordering, and removal.
+- [ ] Verify accessibility, prompts, deferred drawing, and inspector
   fallbacks, including entering and leaving each mode with cached content present.
 - [ ] Audit custom-element side effects and measurement captures for frame-arena
   lifetimes, including callbacks that disappear or change during a rebuild.
@@ -165,11 +208,22 @@ Damage tracking and backend work:
 
 ## Review validation
 
-The retained engine passes the GPUI suite (248 tests, one manual benchmark
-ignored) and the editor suite (898 tests, one ignored). The workspace suite
+The retained engine passes the GPUI suite (251 tests, two manual benchmarks
+ignored) and the editor suite (899 tests, one ignored). The workspace suite
 (238 tests) passed before the final allocation optimizations. The GPUI suite also
-passes with the legacy engine. The eleven focused node-engine tests pass across
+passes with the legacy engine. The twelve focused node-engine tests pass across
 20 scheduler iterations.
+
+The workspace stress test passes its 48 scene comparisons under both engines.
+Its initial version exposed a test-only full-refresh fallback for debug selectors
+on workspace tabs. Retaining that metadata allowed the grouped workload to
+exercise reuse; the first four sampled frames rebuilt 18 scopes and reused two
+subtrees each, with 20 live scopes and 38 retained layout nodes.
+
+The frame timings below predate the path-buffer and debug-selector follow-up;
+they have not been remeasured for it. The path-capture microbenchmark produced
+variable timings without a clear CPU-speedup conclusion. Its allocation-reuse
+regressions pass, but geometry still gets copied into the recording.
 
 The editor suite exposed a focus scheduling regression that the small scene
 fixtures did not catch. Repeated notifications from focus-lost fallback handlers

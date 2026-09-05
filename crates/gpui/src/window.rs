@@ -961,6 +961,8 @@ pub(crate) struct Frame {
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+    #[cfg(any(test, feature = "test-support"))]
+    debug_bounds_history: Vec<(String, Bounds<Pixels>)>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -988,9 +990,26 @@ pub(crate) struct PaintIndex {
     accessed_element_states_index: usize,
     tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
+    #[cfg(any(test, feature = "test-support"))]
+    debug_bounds_index: usize,
 }
 
 impl Frame {
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn record_debug_bounds(&mut self, selector: &str, bounds: Bounds<Pixels>) {
+        self.debug_bounds.insert(selector.to_owned(), bounds);
+        // Selectors can repeat across scopes; replay must preserve the last writer.
+        self.debug_bounds_history
+            .push((selector.to_owned(), bounds));
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn replay_debug_bounds(&mut self, entries: &[(String, Bounds<Pixels>)]) {
+        for (selector, bounds) in entries {
+            self.record_debug_bounds(selector, *bounds);
+        }
+    }
+
     pub(crate) fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
             focus: None,
@@ -1009,6 +1028,8 @@ impl Frame {
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            debug_bounds_history: Vec::new(),
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             next_inspector_instance_ids: FxHashMap::default(),
@@ -1037,6 +1058,7 @@ impl Frame {
         #[cfg(any(test, feature = "test-support"))]
         {
             self.debug_bounds.clear();
+            self.debug_bounds_history.clear();
         }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -2981,18 +3003,21 @@ impl Window {
         let inspector_active = self.inspector.is_some();
         #[cfg(not(any(feature = "inspector", debug_assertions)))]
         let inspector_active = false;
-        #[cfg(any(test, feature = "test-support"))]
-        let has_debug_bounds = !self.rendered_frame.debug_bounds.is_empty();
-        #[cfg(not(any(test, feature = "test-support")))]
-        let has_debug_bounds = false;
-        let full_refresh = has_debug_bounds
-            || self.refreshing
-            || !self.rendered_frame.deferred_draws.is_empty()
-            || self.prompt.is_some()
-            || self.a11y.is_active()
-            || inspector_active;
+        let full_refresh_reason = if self.refreshing {
+            Some("window refresh")
+        } else if !self.rendered_frame.deferred_draws.is_empty() {
+            Some("deferred drawing")
+        } else if self.prompt.is_some() {
+            Some("prompt")
+        } else if self.a11y.is_active() {
+            Some("accessibility")
+        } else if inspector_active {
+            Some("inspector")
+        } else {
+            None
+        };
         if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.begin_frame(full_refresh);
+            node_engine.begin_frame(full_refresh_reason);
             // No scope can graft an old layout when every mounted node is dirty.
             // Keep the newly built tree for subsequent partial updates.
             if node_engine.discard_dirty_layouts(cx) {
@@ -3361,6 +3386,12 @@ impl Window {
         }
     }
 
+    /// Returns the last completed scene for differential rendering tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn scene_snapshot_for_test(&self) -> String {
+        self.rendered_frame.scene.snapshot_for_test()
+    }
+
     pub(crate) fn node_engine_enabled(&self) -> bool {
         matches!(self.draw_engine, DrawEngine::Node(_))
     }
@@ -3602,6 +3633,10 @@ impl Window {
         self.next_frame.cursor_styles
             [paint_range.start.cursor_styles_index..paint_range.end.cursor_styles_index]
             .clone_into(&mut recording.cursor_styles);
+        #[cfg(any(test, feature = "test-support"))]
+        self.next_frame.debug_bounds_history
+            [paint_range.start.debug_bounds_index..paint_range.end.debug_bounds_index]
+            .clone_into(&mut recording.debug_bounds);
         recording
     }
 
@@ -3637,6 +3672,8 @@ impl Window {
         cx: &App,
     ) -> Range<PaintIndex> {
         let start = self.paint_index();
+        #[cfg(any(test, feature = "test-support"))]
+        self.next_frame.replay_debug_bounds(&recording.debug_bounds);
         self.next_frame
             .cursor_styles
             .extend(recording.cursor_styles.iter().cloned());
@@ -3735,10 +3772,17 @@ impl Window {
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
+            #[cfg(any(test, feature = "test-support"))]
+            debug_bounds_index: self.next_frame.debug_bounds_history.len(),
         }
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        #[cfg(any(test, feature = "test-support"))]
+        self.next_frame.replay_debug_bounds(
+            &self.rendered_frame.debug_bounds_history
+                [range.start.debug_bounds_index..range.end.debug_bounds_index],
+        );
         self.next_frame.cursor_styles.extend(
             self.rendered_frame.cursor_styles
                 [range.start.cursor_styles_index..range.end.cursor_styles_index]

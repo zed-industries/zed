@@ -142,8 +142,22 @@ impl Scene {
         self.replay_recording(&prev_scene.paint_operations[range]);
     }
 
-    pub(crate) fn recording(&self, range: Range<usize>, operations: &mut Vec<PaintOperation>) {
-        operations.extend_from_slice(&self.paint_operations[range]);
+    pub(crate) fn recording(
+        &self,
+        range: Range<usize>,
+        operations: &mut Vec<PaintOperation>,
+        start: usize,
+    ) -> usize {
+        let mut end = start;
+        for operation in &self.paint_operations[range] {
+            if let Some(previous) = operations.get_mut(end) {
+                previous.clone_from(operation);
+            } else {
+                operations.push(operation.clone());
+            }
+            end += 1;
+        }
+        end
     }
 
     pub(crate) fn replay_recording(&mut self, recording: &[PaintOperation]) {
@@ -156,7 +170,7 @@ impl Scene {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn snapshot_for_test(&self) -> String {
         format!(
             "{:?}",
@@ -236,11 +250,29 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
-#[derive(Clone)]
 pub(crate) enum PaintOperation {
     Primitive(Primitive),
     StartLayer(Bounds<ScaledPixels>),
     EndLayer,
+}
+
+impl Clone for PaintOperation {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Primitive(primitive) => Self::Primitive(primitive.clone()),
+            Self::StartLayer(bounds) => Self::StartLayer(*bounds),
+            Self::EndLayer => Self::EndLayer,
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        match (self, source) {
+            (Self::Primitive(Primitive::Path(path)), Self::Primitive(Primitive::Path(source))) => {
+                path.clone_from(source);
+            }
+            (target, source) => *target = source.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -810,7 +842,7 @@ impl From<PaintSurface> for Primitive {
 pub struct PathId(pub usize);
 
 /// A line made up of a series of vertices and control points.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 #[expect(missing_docs)]
 pub struct Path<P: Clone + Debug + Default + PartialEq> {
     pub id: PathId,
@@ -822,6 +854,34 @@ pub struct Path<P: Clone + Debug + Default + PartialEq> {
     start: Point<P>,
     current: Point<P>,
     contour_count: usize,
+}
+
+impl<P: Clone + Debug + Default + PartialEq> Clone for Path<P> {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            order: self.order,
+            bounds: self.bounds.clone(),
+            content_mask: self.content_mask.clone(),
+            vertices: self.vertices.clone(),
+            color: self.color,
+            start: self.start.clone(),
+            current: self.current.clone(),
+            contour_count: self.contour_count,
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.id = source.id;
+        self.order = source.order;
+        self.bounds.clone_from(&source.bounds);
+        self.content_mask.clone_from(&source.content_mask);
+        self.vertices.clone_from(&source.vertices);
+        self.color = source.color;
+        self.start.clone_from(&source.start);
+        self.current.clone_from(&source.current);
+        self.contour_count = source.contour_count;
+    }
 }
 
 impl Path<Pixels> {
