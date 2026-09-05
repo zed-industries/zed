@@ -27,6 +27,10 @@ pub(crate) enum NodeRenderDecision {
 /// Work performed by the experimental retained engine in its last completed frame.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RetainedNodeStats {
+    /// Input that forced every scope to rebuild, when present.
+    pub full_refresh_reason: Option<&'static str>,
+    /// Scopes with measurement captures that cannot survive the frame arena.
+    pub frame_bound_scopes: usize,
     /// Scopes whose output was rebuilt.
     pub rebuilt_scopes: usize,
     /// Subtrees whose recorded output was reused without visiting their descendants.
@@ -182,13 +186,16 @@ impl NodeEngine {
         true
     }
 
-    pub(crate) fn begin_frame(&mut self, full_refresh: bool) {
+    pub(crate) fn begin_frame(&mut self, full_refresh_reason: Option<&'static str>) {
         debug_assert!(self.traversal_stack.is_empty());
-        self.full_refresh = full_refresh;
-        self.frame_stats = RetainedNodeStats::default();
+        self.full_refresh = full_refresh_reason.is_some();
+        self.frame_stats = RetainedNodeStats {
+            full_refresh_reason,
+            ..RetainedNodeStats::default()
+        };
         self.changed_bounds = None;
         self.next_roots.clear();
-        if full_refresh {
+        if self.full_refresh {
             self.dirty_nodes.extend(self.nodes.keys().copied());
         }
     }
@@ -450,6 +457,7 @@ impl NodeEngine {
         self.next_roots = stale_roots;
         self.full_refresh = false;
         self.frame_stats.live_nodes = self.nodes.len();
+        self.frame_stats.frame_bound_scopes = self.frame_bound_nodes.len();
         self.last_frame_stats = self.frame_stats;
         self.changed_bounds.take()
     }
