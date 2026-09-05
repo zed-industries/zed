@@ -2180,11 +2180,11 @@ mod tests {
         }
     }
 
-    struct BenchmarkLeaf {
+    struct SiblingLeaf {
         revision: usize,
     }
 
-    impl Render for BenchmarkLeaf {
+    impl Render for SiblingLeaf {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div()
                 .w(px(120.))
@@ -2199,11 +2199,11 @@ mod tests {
         }
     }
 
-    struct BenchmarkHost {
-        leaves: Vec<Entity<BenchmarkLeaf>>,
+    struct SiblingHost {
+        leaves: Vec<Entity<SiblingLeaf>>,
     }
 
-    impl Render for BenchmarkHost {
+    impl Render for SiblingHost {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div()
                 .size_full()
@@ -2216,11 +2216,11 @@ mod tests {
     #[gpui::test]
     fn node_engine_reuses_after_fully_dirty_frames(cx: &mut TestAppContext) {
         let build = |engine| {
-            move |window: &mut Window, cx: &mut Context<BenchmarkHost>| {
+            move |window: &mut Window, cx: &mut Context<SiblingHost>| {
                 window.node_engine = engine;
-                BenchmarkHost {
+                SiblingHost {
                     leaves: (0..3)
-                        .map(|_| cx.new(|_| BenchmarkLeaf { revision: 0 }))
+                        .map(|_| cx.new(|_| SiblingLeaf { revision: 0 }))
                         .collect(),
                 }
             }
@@ -2231,7 +2231,7 @@ mod tests {
         );
         let retained = cx.open_window(size(px(500.), px(300.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
-        let snapshot = |window: crate::WindowHandle<BenchmarkHost>, cx: &mut TestAppContext| {
+        let snapshot = |window: crate::WindowHandle<SiblingHost>, cx: &mut TestAppContext| {
             window
                 .update(cx, |_, window, _| {
                     window.rendered_frame.scene.snapshot_for_test()
@@ -2262,8 +2262,6 @@ mod tests {
                     let stats = window.retained_node_stats().expect("retained engine");
                     assert_eq!(stats.rebuilt_scopes, if dirty_all { 4 } else { 2 });
                     assert_eq!(stats.reused_subtrees, if dirty_all { 0 } else { 2 });
-                    assert_eq!(window.rendered_frame.scene.paint_operations.capacity(), 0);
-                    assert_eq!(window.next_frame.scene.paint_operations.capacity(), 0);
                 })
                 .expect("window open");
         }

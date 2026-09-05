@@ -187,10 +187,6 @@ mod tests {
         window
             .update(cx, |_, window, _| {
                 assert_eq!(window.rendered_frame.deferred_draws.len(), 2);
-                {
-                    assert_eq!(window.rendered_frame.scene.paint_operations.capacity(), 0);
-                    assert_eq!(window.next_frame.scene.paint_operations.capacity(), 0);
-                }
                 assert!(
                     window
                         .rendered_frame

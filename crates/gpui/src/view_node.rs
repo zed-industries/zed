@@ -235,43 +235,6 @@ impl ViewNodeScene {
         self.operations.truncate(self.operation_count);
     }
 
-    #[cfg(test)]
-    pub(crate) fn record(
-        &mut self,
-        scene: &Scene,
-        range: Range<usize>,
-        children: &mut [(Range<usize>, crate::node_engine::ViewNodeId)],
-    ) {
-        children.sort_unstable_by_key(|(range, _)| (range.start, range.end));
-        // Keep existing operations alive until overwritten so path vertex buffers
-        // can be reused across dirty frames.
-        let mut operation_count = 0;
-        self.segments.clear();
-        let mut cursor = range.start;
-        for (child_range, child) in children {
-            if child_range.start < cursor || child_range.end > range.end {
-                continue;
-            }
-            if cursor < child_range.start {
-                operation_count =
-                    self.record_local(scene, cursor..child_range.start, operation_count);
-            }
-            self.segments.push(ViewNodeSceneSegment::Child(*child));
-            cursor = child_range.end;
-        }
-        if cursor < range.end {
-            operation_count = self.record_local(scene, cursor..range.end, operation_count);
-        }
-        self.operations.truncate(operation_count);
-    }
-
-    #[cfg(test)]
-    fn record_local(&mut self, scene: &Scene, range: Range<usize>, start: usize) -> usize {
-        let end = scene.recording(range, &mut self.operations, start);
-        self.segments.push(ViewNodeSceneSegment::Local(start..end));
-        end
-    }
-
     pub(crate) fn replay(
         &self,
         scene: &mut Scene,
@@ -356,7 +319,6 @@ mod tests {
         for (vertices, offset) in [(64, 0.), (64, 3.), (8, 10.), (32, 5.)] {
             let mut expected = path_scene(vertices, offset);
             let mut scene = Scene::default();
-            scene.use_node_scene_storage(true);
             scene.begin_node_scene(recording);
             let path = expected.paths.first().expect("path").clone();
             let pointer = path.vertices.as_ptr();
@@ -365,58 +327,9 @@ mod tests {
             scene.finish();
             expected.finish();
             assert_eq!(scene.snapshot_for_test(), expected.snapshot_for_test());
-            assert_eq!(scene.paint_operations.capacity(), 0);
             let current = recorded_path(&recording).vertices.as_ptr();
             assert_eq!(current, pointer);
             assert_replay(&recording, &expected);
         }
-    }
-
-    #[test]
-    fn path_recording_reuses_vertices_and_replaces_geometry() {
-        let mut recording = ViewNodeScene::default();
-        let initial = path_scene(64, 0.);
-        recording.record(&initial, 0..initial.len(), &mut []);
-        let pointer = recorded_path(&recording).vertices.as_ptr();
-        let capacity = recorded_path(&recording).vertices.capacity();
-        for (vertices, offset) in [(64, 3.), (8, 10.), (32, 5.)] {
-            let mut scene = path_scene(vertices, offset);
-            scene.finish();
-            recording.record(&scene, 0..scene.len(), &mut []);
-            assert_eq!(recorded_path(&recording).vertices.as_ptr(), pointer);
-            assert_eq!(recorded_path(&recording).vertices.capacity(), capacity);
-            assert_replay(&recording, &scene);
-            assert_eq!(
-                format!("{:?}", recorded_path(&recording)),
-                format!("{:?}", scene.paths.first().expect("path"))
-            );
-        }
-        recording.record(&Scene::default(), 0..0, &mut []);
-        assert!(recording.operations.is_empty());
-        assert!(recording.segments.is_empty());
-    }
-
-    #[test]
-    fn path_recording_replaces_variants_and_compacts_child_ranges() {
-        let mut scene = path_scene(16, 0.);
-        let bounds = scene.paths.first().expect("path").bounds;
-        scene.push_layer(bounds);
-        scene.replay_recording(&path_scene(8, 1.).paint_operations);
-        scene.pop_layer();
-        let mut recording = ViewNodeScene::default();
-        recording.record(&scene, 0..scene.len(), &mut []);
-        let child = EntityId::from(1);
-        recording.record(&scene, 0..scene.len(), &mut [(0..1, child)]);
-        assert!(
-            matches!(recording.segments.first(), Some(ViewNodeSceneSegment::Child(id)) if *id == child)
-        );
-        assert_eq!(recording.operations.len(), scene.len() - 1);
-        let mut expected = Scene::default();
-        expected.replay_recording(&scene.paint_operations[1..]);
-        expected.finish();
-        assert_replay(&recording, &expected);
-        recording.record(&scene, 0..scene.len(), &mut []);
-        scene.finish();
-        assert_replay(&recording, &scene);
     }
 }

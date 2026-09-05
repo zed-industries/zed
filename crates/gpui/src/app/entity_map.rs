@@ -161,6 +161,11 @@ impl EntityMap {
         }
     }
 
+    pub(crate) fn end_query<T>(&mut self, mut lease: Lease<T>) {
+        self.entities
+            .insert(lease.id, lease.entity.take().expect("leased entity"));
+    }
+
     pub(crate) fn revision(&self, entity_id: EntityId) -> Option<u64> {
         self.revisions.get(entity_id).copied()
     }

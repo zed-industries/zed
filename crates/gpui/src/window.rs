@@ -3413,8 +3413,6 @@ impl Window {
 
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
-        #[cfg(test)]
-        self.next_frame.scene.use_node_scene_storage(true);
         // Now actually paint the elements.
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);

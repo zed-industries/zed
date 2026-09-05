@@ -39,11 +39,7 @@ impl From<bool> for PaddedBool32 {
 #[derive(Default)]
 #[expect(missing_docs)]
 pub struct Scene {
-    #[cfg(test)]
-    pub(crate) paint_operations: Vec<PaintOperation>,
     operation_count: usize,
-    #[cfg(test)]
-    discard_paint_operations: bool,
     node_scene: Option<crate::view_node::ViewNodeScene>,
     node_scene_stack: Vec<crate::view_node::ViewNodeScene>,
     primitive_bounds: BoundsTree<ScaledPixels>,
@@ -62,13 +58,7 @@ pub struct Scene {
 impl Scene {
     pub fn clear(&mut self) {
         debug_assert!(self.node_scene.is_none() && self.node_scene_stack.is_empty());
-        #[cfg(test)]
-        self.paint_operations.clear();
         self.operation_count = 0;
-        #[cfg(test)]
-        {
-            self.discard_paint_operations = false;
-        }
         self.primitive_bounds.clear();
         self.layer_stack.clear();
         self.paths.clear();
@@ -149,16 +139,6 @@ impl Scene {
         self.record_operation(PaintOperation::Primitive(primitive));
     }
 
-    #[cfg(test)]
-    pub(crate) fn use_node_scene_storage(&mut self, enabled: bool) {
-        // Prepaint callers can submit primitives outside a retained scope.
-        // Preserve their replay log when switching storage after prepaint.
-        self.discard_paint_operations = enabled && self.operation_count == 0;
-        if self.discard_paint_operations {
-            self.paint_operations = Vec::new();
-        }
-    }
-
     pub(crate) fn begin_node_scene(&mut self, mut recording: crate::view_node::ViewNodeScene) {
         recording.begin();
         if let Some(parent) = self.node_scene.replace(recording) {
@@ -197,36 +177,8 @@ impl Scene {
     fn record_operation(&mut self, operation: PaintOperation) {
         self.operation_count += 1;
         if let Some(recording) = &mut self.node_scene {
-            #[cfg(test)]
-            if !self.discard_paint_operations {
-                self.paint_operations.push(operation.clone());
-            }
             recording.push(operation);
-        } else {
-            #[cfg(test)]
-            if !self.discard_paint_operations {
-                self.paint_operations.push(operation);
-            }
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn recording(
-        &self,
-        range: Range<usize>,
-        operations: &mut Vec<PaintOperation>,
-        start: usize,
-    ) -> usize {
-        let mut end = start;
-        for operation in &self.paint_operations[range] {
-            if let Some(previous) = operations.get_mut(end) {
-                previous.clone_from(operation);
-            } else {
-                operations.push(operation.clone());
-            }
-            end += 1;
-        }
-        end
     }
 
     pub(crate) fn replay_recording(&mut self, recording: &[PaintOperation]) {
@@ -323,25 +275,6 @@ pub(crate) enum PaintOperation {
     Primitive(Primitive),
     StartLayer(Bounds<ScaledPixels>),
     EndLayer,
-}
-
-impl Clone for PaintOperation {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Primitive(primitive) => Self::Primitive(primitive.clone()),
-            Self::StartLayer(bounds) => Self::StartLayer(*bounds),
-            Self::EndLayer => Self::EndLayer,
-        }
-    }
-
-    fn clone_from(&mut self, source: &Self) {
-        match (self, source) {
-            (Self::Primitive(Primitive::Path(path)), Self::Primitive(Primitive::Path(source))) => {
-                path.clone_from(source);
-            }
-            (target, source) => *target = source.clone(),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -911,7 +844,7 @@ impl From<PaintSurface> for Primitive {
 pub struct PathId(pub usize);
 
 /// A line made up of a series of vertices and control points.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[expect(missing_docs)]
 pub struct Path<P: Clone + Debug + Default + PartialEq> {
     pub id: PathId,
@@ -923,34 +856,6 @@ pub struct Path<P: Clone + Debug + Default + PartialEq> {
     start: Point<P>,
     current: Point<P>,
     contour_count: usize,
-}
-
-impl<P: Clone + Debug + Default + PartialEq> Clone for Path<P> {
-    fn clone(&self) -> Self {
-        Self {
-            id: self.id,
-            order: self.order,
-            bounds: self.bounds.clone(),
-            content_mask: self.content_mask.clone(),
-            vertices: self.vertices.clone(),
-            color: self.color,
-            start: self.start.clone(),
-            current: self.current.clone(),
-            contour_count: self.contour_count,
-        }
-    }
-
-    fn clone_from(&mut self, source: &Self) {
-        self.id = source.id;
-        self.order = source.order;
-        self.bounds.clone_from(&source.bounds);
-        self.content_mask.clone_from(&source.content_mask);
-        self.vertices.clone_from(&source.vertices);
-        self.color = source.color;
-        self.start.clone_from(&source.start);
-        self.current.clone_from(&source.current);
-        self.contour_count = source.contour_count;
-    }
 }
 
 impl Path<Pixels> {
