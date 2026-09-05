@@ -226,6 +226,9 @@ impl NodeEngine {
         previous: &FxHashSet<EntityId>,
         current: &FxHashSet<EntityId>,
     ) {
+        if previous == current {
+            return;
+        }
         for source in previous.difference(current) {
             Self::remove_dependency(consumers, node_id, *source);
         }

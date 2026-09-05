@@ -329,6 +329,60 @@ legacy and 0.191 MiB retained. After-close medians still include shared caches:
 3.312/3.463 MiB for three panes, and 2.938–3.404/3.046–3.466 MiB across workbench
 modes (legacy/retained). Non-scene effect duplication remains follow-up work.
 
+## Metadata capture cleanup
+
+Text-layout capture preserves unchanged key/layout `Arc` leases in existing
+recording slots and skips the cache read lock when all four text ranges are
+empty. It still looks up the current layout: an unchanged key does not justify
+retaining a replaced map value. A regression covers reordering, replacement
+under the same key, shrinking, and removal. Dependency updates return early
+when the old and new source sets are equal; dependency revisions still refresh.
+
+A saved executable from `32354c727f` was compared with the cleanup executable in
+fresh processes on the M4 Max. Three runs per variant/workload alternated legacy,
+before, and after; each used 30 samples, two seconds warmup, and five seconds
+measurement. Compilation, debug tests, and heavy CPU activity delayed or retried
+runs. The executables were preserved separately during subsequent diagnostics.
+
+| Workload | Retained before | Retained after |
+| --- | ---: | ---: |
+| Workbench: full | 1.840 ms | 1.846 ms |
+| Workbench: row | 0.400 ms | 0.390 ms |
+| Three editor panes | 1.633 ms | 1.604 ms |
+
+These medians do not establish a reliable full-redraw improvement: before/after
+ranges overlap in every fixture. Full-workbench estimates span 1.837–1.898 ms
+before and 1.842–1.853 ms after. The legacy median in this session was 1.812 ms;
+comparing its ratio with an earlier session's 3.2% overhead would misattribute
+machine/run variation to the cleanup. The code removes redundant reference-count
+updates and empty locks, without claiming a demonstrated full-redraw speedup.
+
+The cleanup passes 254 GPUI tests under each engine, 13 node tests across 20
+scheduler iterations, the real-workspace stress and platform-handler IME tests,
+and `./script/clippy -p gpui -p benchmarks`. All seven release benchmark fixtures
+pass their scene and Metal pixel comparisons under both engines. Parent metadata
+recordings still duplicate descendant effects; that ownership change remains on
+the follow-up checklist.
+
+A temporary diagnostic omitted all non-scene recording capture in the fully
+dirty workbench while still building the normal frame and node scene output.
+The fixture reported 54 rebuilt scopes and zero reused subtrees after warmup.
+Three fresh runs per variant, alternating control/omitted/omitted/control/control/
+omitted with 40 samples, two seconds warmup, and five seconds measurement, gave
+medians of 1.866 ms with capture and 1.843 ms without it: about 23 microseconds.
+Control estimates ranged from 1.850–1.905 ms and omission estimates from
+1.824–1.848 ms. Runs interrupted by compilation, debug tests, or heavy CPU
+activity were retried; an initial unguarded batch and a subsequent group with
+more than 5% within-variant spread were discarded.
+
+This estimates the cost of all remaining capture in that workload, not the
+saving achievable by removing only redundant ancestor copies. Omitting capture
+also changes resource lifetimes, so it is not an additive attribution of the
+whole retained/legacy gap. It is not a valid general rendering mode; the
+diagnostic switch was removed. Ordered local metadata fragments with child-node
+references remain the next ownership candidate, with dispatch parent/focus
+remapping and phase-specific ordering preserved.
+
 ## Historical measurements before direct node scene storage
 
 The measurements below describe the earlier capture-based implementation, which
