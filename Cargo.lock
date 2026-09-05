@@ -14810,6 +14810,7 @@ dependencies = [
  "remote",
  "remote_connection",
  "remote_server",
+ "rpc",
  "semver",
  "serde_json",
  "settings",
