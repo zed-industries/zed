@@ -2,9 +2,11 @@
 mod file_finder_tests;
 #[cfg(test)]
 mod multi_select_tests;
+mod recent_files;
 
 use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
+pub use recent_files::{RecentFiles, RecentFilesDelegate, Toggle as ToggleRecentFiles};
 
 use channel::ChannelStore;
 use client::ChannelId;
@@ -73,6 +75,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(FileFinder::register).detach();
     cx.observe_new(OpenPathPrompt::register).detach();
     cx.observe_new(OpenPathPrompt::register_new_path).detach();
+    recent_files::init(cx);
 }
 
 impl FileFinder {
