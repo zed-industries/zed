@@ -4673,6 +4673,21 @@ impl Workspace {
         self.serialize_workspace(window, cx);
     }
 
+    pub fn is_panel_open<T: Panel>(&self, cx: &mut Context<Self>) -> bool {
+        self.all_docks().iter().any(|dock| {
+            let dock = dock.read(cx);
+            dock.is_open() && dock.panel_index_for_type::<T>() == dock.active_panel_index()
+        })
+    }
+
+    pub fn toggle_panel<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_panel_open::<T>(cx) {
+            self.close_panel::<T>(window, cx);
+        } else {
+            self.toggle_panel_focus::<T>(window, cx);
+        }
+    }
+
     /// Transfer focus to the panel of the given type.
     pub fn focus_panel<T: Panel>(
         &mut self,
