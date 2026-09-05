@@ -142,10 +142,11 @@ Run the path-capture microbenchmark with:
 cargo test -p gpui path_recording_capture_benchmark --release --lib --no-default-features -- --ignored --nocapture
 ```
 
-It compares clearing and reusing vertex buffers for 32 paths, alternating run
-order across five batches. Both variants still copy the geometry. Buffer lifetime
-regressions independently check that stable path slots preserve allocation and
-that replay matches the source scene when geometry and local ranges change.
+It compares clearing and reusing vertex buffers in the test-only eager capture
+reference for 32 paths, alternating run order across five batches. Both variants
+copy geometry; neither measures the direct node writer. Direct-write regressions
+check that painted path payloads move into their recording without another copy
+and that replay matches the source scene as geometry changes.
 
 ## Follow-up checklist
 
@@ -156,13 +157,13 @@ Performance and ownership:
   hitboxes, dispatch nodes, callback handles, text-layout references, and state
   keys. Preserve phase order and dispatch-ID remapping while removing duplication.
 - [ ] Audit path-heavy scenes. `Path::clone` copies its vertex vector; scene
-  insertion, capture, and replay can duplicate geometry. Measure copied bytes and
+  insertion and replay can duplicate geometry. Measure copied bytes and
   allocation counts with paths, then reduce payload copies and retain nested
   buffer capacity. The text benchmark's allocation result does not cover paths.
-- [x] Preserve existing path vertex buffers when overwriting node recordings.
-  Regression tests cover changed geometry, shrinking paths, operation-type
-  replacement, child-range compaction, and removal. This removes repeated vertex
-  allocation during stable capture; it does not remove the vertex copies.
+- [x] Move freshly painted path payloads into node recordings without another
+  vertex copy. Operation vectors retain capacity across rebuilds. GPU primitive
+  insertion and retained replay still copy geometry; the eager reference capture
+  and its buffer-reuse tests remain test-only.
 - [x] Make retained scene storage the primary operation destination. Node buffers
   receive painted operations directly; normal retained frames keep no flat
   operation buffers. Child IDs preserve ordering without a scene-capture pass.
@@ -259,6 +260,74 @@ Both editor engine runs pass 900 tests (one ignored), including the 48-step
 real-workspace scene oracle; the platform-handler IME test also passes 20
 scheduler iterations per engine. The default workspace suite passes 238 tests.
 The offscreen Metal pixel oracle passes under both engines.
+
+### CPU timing after direct scene ownership
+
+After commit `3ecfbd7fcf`, release runs without allocation instrumentation produced
+these medians of three Criterion point estimates per engine/workload on the M4
+Max. Each workload ran in fresh processes, alternating engines in order legacy,
+retained, retained, legacy, legacy, retained, before moving to the next workload.
+Each process used 20 samples, one second of warmup, and three seconds of measurement.
+
+| Workload | Legacy | Retained | Retained change |
+| --- | ---: | ---: | ---: |
+| Existing editor benchmark | 0.686 ms | 0.685 ms | Approximately equal |
+| One editor pane | 0.985 ms | 0.976 ms | Approximately equal |
+| Three editor panes | 2.960 ms | 1.468 ms | 50.4% less time (2.02×) |
+| Workbench: row | 0.815 ms | 0.524 ms | 35.8% less time (1.56×) |
+| Workbench: editor | 1.677 ms | 1.102 ms | 34.3% less time (1.52×) |
+| Workbench: mixed | 1.173 ms | 0.886 ms | 24.4% less time (1.32×) |
+| Workbench: full | 1.570 ms | 1.621 ms | +3.2% (+0.051 ms) |
+
+The full-workbench point estimates range from 1.570–1.578 ms legacy and
+1.616–1.622 ms retained. The single-editor fixture ranges overlap between engines;
+their sub-percent median differences are not evidence of a precise speedup.
+The earlier capture-based full-workbench comparison measured +7.2% (+0.128 ms).
+Absolute legacy timings differ between sessions, so these runs do not isolate
+an exact before/after CPU saving attributable to the ownership change.
+
+Initial timing batches showed a roughly fivefold slowdown in legacy followed by
+large timing shifts during retained runs; those batches were discarded. The
+replacement runs grouped engines by workload, retried runs interrupted by
+compilation or heavy CPU activity, and repeated entire workload groups when an
+engine's three point estimates spanned more than 10% of their median. Row and
+mixed groups each required two repeats. This makes the filtering explicit;
+measurements on additional machines and sustained interactive workloads remain
+useful. CPU timings include offscreen Metal submission, not GPU completion,
+compositor presentation, or battery consumption.
+
+### Warm Rust heap after direct scene ownership
+
+On the M4 Max, three fresh processes per engine/workload sampled live requested
+Rust heap at updates 300, 400, and 500 (nine warm samples per table entry).
+The same memory-instrumented executable ran both engines in alternating order;
+these totals include shared runtime/application state and exclude native/GPU
+allocations and allocator rounding.
+
+| Workload | Legacy warm | Retained warm | Retained change |
+| --- | ---: | ---: | ---: |
+| Existing editor benchmark | 4.881 MiB | 4.711 MiB | −3.5% |
+| One editor pane | 6.275 MiB | 5.654 MiB | −9.9% |
+| Three editor panes | 9.585 MiB | 9.113 MiB | −4.9% |
+| Workbench: row | 6.924 MiB | 6.473 MiB | −6.5% |
+| Workbench: editor | 7.325 MiB | 6.924 MiB | −5.5% |
+| Workbench: mixed | 7.182 MiB | 6.781 MiB | −5.6% |
+| Workbench: full | 7.322 MiB | 7.178 MiB | −2.0% |
+
+All five capacity samples in each retained process report zero frame operation
+buffer bytes. Node operation capacities match the earlier audit: 0.164 MiB for
+the existing editor, 0.65625 MiB for one pane, 1.96875 MiB for three panes, and
+0.60242 MiB for each workbench mode. Removing the two frame logs saves 0.328,
+1.3125, 2.625, and 1.3125 MiB respectively relative to the capture-based retained
+implementation. The former 22.2% three-pane heap overhead becomes a 4.9% saving
+against the current legacy run.
+
+These are warm-window samples, not a complete lifetime or steady-state proof.
+The largest within-process increase from update 300 to 500 is about 0.215 MiB
+legacy and 0.191 MiB retained. After-close medians still include shared caches:
+3.896/3.897 MiB for the existing editor, 3.103/3.103 MiB for one pane,
+3.312/3.463 MiB for three panes, and 2.938–3.404/3.046–3.466 MiB across workbench
+modes (legacy/retained). Non-scene effect duplication remains follow-up work.
 
 ## Historical measurements before direct node scene storage
 
