@@ -848,13 +848,13 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                         Use these clang flags: -fPIC -shared -Os -Wl,--export=tree_sitter_{{language_name}}
 
                         Here are the available wasi-sdk assets:
-                        - wasi-sdk-25.0-x86_64-macos.tar.gz
-                        - wasi-sdk-25.0-arm64-macos.tar.gz
-                        - wasi-sdk-25.0-x86_64-linux.tar.gz
-                        - wasi-sdk-25.0-arm64-linux.tar.gz
-                        - wasi-sdk-25.0-x86_64-linux.tar.gz
-                        - wasi-sdk-25.0-arm64-linux.tar.gz
-                        - wasi-sdk-25.0-x86_64-windows.tar.gz
+                        - wasi-sdk-34.0-x86_64-macos.tar.gz
+                        - wasi-sdk-34.0-arm64-macos.tar.gz
+                        - wasi-sdk-34.0-x86_64-linux.tar.gz
+                        - wasi-sdk-34.0-arm64-linux.tar.gz
+                        - wasi-sdk-34.0-riscv64-linux.tar.gz
+                        - wasi-sdk-34.0-x86_64-windows.tar.gz
+                        - wasi-sdk-34.0-arm64-windows.tar.gz
                     "})],
                 ),
                 message(
