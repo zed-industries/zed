@@ -1441,7 +1441,7 @@ struct FakeFsState {
     moves: std::collections::HashMap<u64, PathBuf>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     trash: Mutex<SlotMap<TrashId, (TrashedEntry, FakeFsEntry)>>,
-    file_to_create_before_watch_add: Option<(PathBuf, PathBuf)>,
+    file_to_create_before_watch_add: Option<(PathBuf, PathBuf, bool)>,
     remove_dir_errors: std::collections::HashMap<PathBuf, String>,
     case_sensitive: bool,
 }
@@ -1449,12 +1449,14 @@ struct FakeFsState {
 #[cfg(feature = "test-support")]
 impl FakeFsState {
     fn create_file_before_watch_add(&mut self, watch_path: &Path) -> Result<()> {
-        let Some((pending_watch_path, file_path)) = self.file_to_create_before_watch_add.take()
+        let Some((pending_watch_path, file_path, emit_notification)) =
+            self.file_to_create_before_watch_add.take()
         else {
             return Ok(());
         };
         if pending_watch_path != watch_path {
-            self.file_to_create_before_watch_add = Some((pending_watch_path, file_path));
+            self.file_to_create_before_watch_add =
+                Some((pending_watch_path, file_path, emit_notification));
             return Ok(());
         }
 
@@ -1473,7 +1475,9 @@ impl FakeFsState {
             });
             Ok(())
         })?;
-        self.emit_event([(file_path, Some(PathEventKind::Created))]);
+        if emit_notification {
+            self.emit_event([(file_path, Some(PathEventKind::Created))]);
+        }
         Ok(())
     }
 }
@@ -1980,6 +1984,21 @@ impl FakeFs {
         self.state.lock().file_to_create_before_watch_add = Some((
             normalize_path(watch_path.as_ref()),
             normalize_path(path.as_ref()),
+            true,
+        ));
+    }
+
+    /// Simulates a file created outside the coverage of any existing watcher,
+    /// as can happen before adding a non-recursive directory watch on Linux.
+    pub fn create_file_without_notification_before_next_watch_add(
+        &self,
+        watch_path: impl AsRef<Path>,
+        path: impl AsRef<Path>,
+    ) {
+        self.state.lock().file_to_create_before_watch_add = Some((
+            normalize_path(watch_path.as_ref()),
+            normalize_path(path.as_ref()),
+            false,
         ));
     }
 
