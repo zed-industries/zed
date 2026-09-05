@@ -5884,6 +5884,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
 - `starts_open`: Whether the git panel should open on startup
+- `commit_editor`: Whether the commit message editor is shown in the git panel by default. Can be `expanded` or `collapsed`
 
 ## Git Worktree Directory
 
