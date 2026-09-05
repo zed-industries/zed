@@ -10,6 +10,7 @@ use editor::{
     EditorEvent, EditorSettings, SelectionEffects, SplittableEditor, actions::GoToHunk,
     multibuffer_context_lines, scroll::Autoscroll,
 };
+use futures::{FutureExt as _, StreamExt as _, stream};
 use futures_lite::future::yield_now;
 use git::{repository::RepoPath, status::FileStatus};
 use gpui::{
@@ -35,6 +36,10 @@ use workspace::{
     item::{Item, SaveOptions},
 };
 use ztracing::instrument;
+
+/// Loading every changed file at once makes the first one land no sooner than the
+/// last, leaving a large diff on a spinner. Throughput flattens past this point.
+const MAX_CONCURRENT_BUFFER_LOADS: usize = 16;
 
 struct BufferSubscriptions {
     _diff: Entity<BufferDiff>,
@@ -678,17 +683,28 @@ impl DiffMultibuffer {
 
         let mut buffers_to_fold = Vec::new();
 
-        for (path_key, entry) in entries {
-            if let Some(loaded_buffer) = entry.load.await.log_err() {
-                // We might be lagging behind enough that all future entry.load futures are no longer pending.
-                // If that is the case, this task will never yield, starving the foreground thread of execution time.
-                yield_now().await;
+        // Ordered, so excerpts don't shift under the reader as later files arrive.
+        let mut loads = stream::iter(entries.into_iter().map(|(path_key, entry)| {
+            let diff_buffer_list::DiffBuffer {
+                repo_path,
+                file_status,
+                load,
+            } = entry;
+            load.map(move |loaded| (path_key, repo_path, file_status, loaded))
+        }))
+        .buffered(MAX_CONCURRENT_BUFFER_LOADS);
+
+        while let Some((path_key, repo_path, file_status, loaded)) = loads.next().await {
+            // Buffered loads can already be complete when we poll them, in which
+            // case this loop never awaits and starves the foreground thread.
+            yield_now().await;
+            if let Some(loaded_buffer) = loaded.log_err() {
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
                         if let Some(buffer_id) = this.register_buffer(
-                            entry.repo_path,
+                            repo_path,
                             path_key,
-                            entry.file_status,
+                            file_status,
                             loaded_buffer.display_buffer,
                             loaded_buffer.main_buffer,
                             loaded_buffer.diff,

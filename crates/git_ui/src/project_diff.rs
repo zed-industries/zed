@@ -1534,6 +1534,63 @@ mod tests {
         );
     }
 
+    /// Excerpt order must come from `PathKey`, not from the order loads finish.
+    /// Uses more files than `MAX_CONCURRENT_BUFFER_LOADS` so the stream refills.
+    #[gpui::test(iterations = 10)]
+    async fn test_excerpts_are_ordered_by_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        const FILE_COUNT: usize = 20;
+
+        let names = (0..FILE_COUNT)
+            .map(|index| format!("f{index:02}.txt"))
+            .collect::<Vec<_>>();
+
+        let fs = FakeFs::new(cx.executor());
+        let mut tree = serde_json::Map::new();
+        tree.insert(".git".to_owned(), json!({}));
+        for (index, name) in names.iter().enumerate() {
+            tree.insert(name.clone(), json!(format!("new-{index:02}\n")));
+        }
+        fs.insert_tree(path!("/project"), serde_json::Value::Object(tree))
+            .await;
+
+        let head = names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| (name.as_str(), format!("old-{index:02}\n")))
+            .collect::<Vec<_>>();
+        fs.set_head_and_index_for_repo(Path::new(path!("/project/.git")), &head);
+
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        let editor = item.read_with(cx, |item, cx| item.editor(cx).read(cx).rhs_editor().clone());
+        let text = editor.update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx).text());
+
+        // Unique per-file content, so appearance order is excerpt order.
+        let actual = text
+            .lines()
+            .filter(|line| line.starts_with("new-"))
+            .collect::<Vec<_>>();
+        let expected = (0..FILE_COUNT)
+            .map(|index| format!("new-{index:02}"))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+
     #[gpui::test]
     async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
         init_test(cx);
