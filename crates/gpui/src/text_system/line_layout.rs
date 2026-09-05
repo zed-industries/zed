@@ -422,7 +422,7 @@ pub(crate) struct LineLayoutRecording {
     wrapped_lines_by_hash: Vec<(Arc<HashedCacheKey>, Arc<WrappedLineLayout>)>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct LineLayoutIndex {
     lines_index: usize,
     wrapped_lines_index: usize,
@@ -454,66 +454,60 @@ impl LineLayoutCache {
         range: Range<LineLayoutIndex>,
         recording: &mut LineLayoutRecording,
     ) {
+        if range.start == range.end {
+            recording.lines.clear();
+            recording.wrapped_lines.clear();
+            recording.lines_by_hash.clear();
+            recording.wrapped_lines_by_hash.clear();
+            return;
+        }
         let frame = self.current_frame.read();
-        recording.lines.clear();
-        recording.lines.extend(
-            frame.used_lines[range.start.lines_index..range.end.lines_index]
-                .iter()
-                .map(|key| {
-                    (
-                        key.clone(),
-                        frame.lines.get(key).expect("used layout exists").clone(),
-                    )
-                }),
+        Self::record_entries(
+            &frame.used_lines[range.start.lines_index..range.end.lines_index],
+            &frame.lines,
+            &mut recording.lines,
         );
-        recording.wrapped_lines.clear();
-        recording.wrapped_lines.extend(
-            frame.used_wrapped_lines
-                [range.start.wrapped_lines_index..range.end.wrapped_lines_index]
-                .iter()
-                .map(|key| {
-                    (
-                        key.clone(),
-                        frame
-                            .wrapped_lines
-                            .get(key)
-                            .expect("used layout exists")
-                            .clone(),
-                    )
-                }),
+        Self::record_entries(
+            &frame.used_wrapped_lines
+                [range.start.wrapped_lines_index..range.end.wrapped_lines_index],
+            &frame.wrapped_lines,
+            &mut recording.wrapped_lines,
         );
-        recording.lines_by_hash.clear();
-        recording.lines_by_hash.extend(
-            frame.used_lines_by_hash
-                [range.start.lines_by_hash_index..range.end.lines_by_hash_index]
-                .iter()
-                .map(|key| {
-                    (
-                        key.clone(),
-                        frame
-                            .lines_by_hash
-                            .get(key)
-                            .expect("used layout exists")
-                            .clone(),
-                    )
-                }),
+        Self::record_entries(
+            &frame.used_lines_by_hash
+                [range.start.lines_by_hash_index..range.end.lines_by_hash_index],
+            &frame.lines_by_hash,
+            &mut recording.lines_by_hash,
         );
-        recording.wrapped_lines_by_hash.clear();
-        recording.wrapped_lines_by_hash.extend(
-            frame.used_wrapped_lines_by_hash
-                [range.start.wrapped_lines_by_hash_index..range.end.wrapped_lines_by_hash_index]
-                .iter()
-                .map(|key| {
-                    (
-                        key.clone(),
-                        frame
-                            .wrapped_lines_by_hash
-                            .get(key)
-                            .expect("used layout exists")
-                            .clone(),
-                    )
-                }),
+        Self::record_entries(
+            &frame.used_wrapped_lines_by_hash
+                [range.start.wrapped_lines_by_hash_index..range.end.wrapped_lines_by_hash_index],
+            &frame.wrapped_lines_by_hash,
+            &mut recording.wrapped_lines_by_hash,
         );
+    }
+
+    fn record_entries<K: Eq + Hash, V>(
+        keys: &[Arc<K>],
+        layouts: &FxHashMap<Arc<K>, Arc<V>>,
+        recording: &mut Vec<(Arc<K>, Arc<V>)>,
+    ) {
+        recording.reserve(keys.len().saturating_sub(recording.len()));
+        for (index, key) in keys.iter().enumerate() {
+            let layout = layouts.get(key).expect("used layout exists");
+            if let Some((previous_key, previous_layout)) = recording.get_mut(index) {
+                // Stable slots already own these leases; avoid redundant atomic refcount updates.
+                if !Arc::ptr_eq(previous_key, key) {
+                    *previous_key = key.clone();
+                }
+                if !Arc::ptr_eq(previous_layout, layout) {
+                    *previous_layout = layout.clone();
+                }
+            } else {
+                recording.push((key.clone(), layout.clone()));
+            }
+        }
+        recording.truncate(keys.len());
     }
 
     pub(crate) fn replay_layouts(&self, recording: &LineLayoutRecording) {
@@ -1058,6 +1052,37 @@ impl AsCacheKeyRef for CacheKeyRef<'_> {
 mod tests {
     use super::*;
     use crate::GlyphId;
+
+    #[test]
+    fn recording_updates_reordered_and_replaced_layouts_and_releases_removed_entries() {
+        let first = Arc::new(1);
+        let second = Arc::new(2);
+        let first_layout = Arc::new(LineLayout::default());
+        let second_layout = Arc::new(LineLayout::default());
+        let mut layouts = FxHashMap::default();
+        layouts.insert(first.clone(), first_layout.clone());
+        layouts.insert(second.clone(), second_layout.clone());
+        let mut recording = Vec::new();
+        LineLayoutCache::record_entries(&[first.clone(), second.clone()], &layouts, &mut recording);
+        let capacity = recording.capacity();
+        let replacement = Arc::new(LineLayout::default());
+        layouts.insert(first.clone(), replacement.clone());
+        LineLayoutCache::record_entries(&[second.clone(), first.clone()], &layouts, &mut recording);
+        let (key, layout) = recording.first().expect("first entry");
+        assert!(Arc::ptr_eq(key, &second));
+        assert!(Arc::ptr_eq(layout, &second_layout));
+        let (key, layout) = recording.last().expect("last entry");
+        assert!(Arc::ptr_eq(key, &first));
+        assert!(Arc::ptr_eq(layout, &replacement));
+        assert_eq!(Arc::strong_count(&first_layout), 1);
+        LineLayoutCache::record_entries(&[first], &layouts, &mut recording);
+        assert_eq!(recording.len(), 1);
+        assert_eq!(Arc::strong_count(&second_layout), 2);
+        LineLayoutCache::record_entries(&[], &layouts, &mut recording);
+        assert!(recording.is_empty());
+        assert_eq!(recording.capacity(), capacity);
+        assert_eq!(Arc::strong_count(&replacement), 2);
+    }
 
     fn glyph_at(x: f32, index: usize) -> ShapedGlyph {
         ShapedGlyph {
