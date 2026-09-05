@@ -869,6 +869,7 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::ToggleLspLogs>,
         cx: AsyncApp,
     ) -> Result<()> {
+        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let server_id = LanguageServerId::from_proto(envelope.payload.server_id);
         let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.downgrade());
         cx.update(|cx| {
@@ -887,8 +888,14 @@ impl HeadlessProject {
                 };
             let server_key =
                 LanguageServerLogKey::new(LanguageServerKind::LocalSsh { lsp_store }, server_id);
-            log_store.update(cx, |log_store, _| {
-                log_store.toggle_lsp_logs(&server_key, envelope.payload.enabled, toggled_log_kind);
+            log_store.update(cx, |log_store, cx| {
+                log_store.set_downstream_log_stream(
+                    &server_key,
+                    peer_id,
+                    toggled_log_kind,
+                    envelope.payload.enabled,
+                    cx,
+                );
             });
             anyhow::Ok(())
         })?;

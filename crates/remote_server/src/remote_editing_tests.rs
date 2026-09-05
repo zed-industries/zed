@@ -43,7 +43,9 @@ use project::{
     LanguageServerLogType, ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
     image_store,
-    lsp_store::log_store::{LanguageServerKind, LanguageServerLogKey, LogStore},
+    lsp_store::log_store::{
+        GlobalLogStore, LanguageServerKind, LanguageServerLogKey, LogKind, LogStore,
+    },
     search::{SearchQuery, SearchResult},
 };
 use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
@@ -4691,6 +4693,161 @@ async fn test_remote_project_creation_notifies_new_entity_observers(
         "creating a remote project should notify new-entity observers with a connected remote client exactly once"
     );
     assert!(project.read_with(cx, |project, _| project.is_remote()));
+}
+
+#[gpui::test]
+async fn test_remote_log_streams_follow_aggregate_demand(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let server_fs = Arc::new(FakeFs::new(server_cx.executor()));
+    server_fs
+        .insert_tree(path!("/code"), json!({ "project1": { "README.md": "" } }))
+        .await;
+    let (project, headless) = init_test(&server_fs, cx, server_cx).await;
+
+    let server_id = LanguageServerId(42);
+    let remote_server_key = LanguageServerLogKey::new(
+        LanguageServerKind::Remote {
+            project: project.downgrade(),
+        },
+        server_id,
+    );
+    let local_log_store = cx.new(|cx| LogStore::new(false, cx));
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.add_project(&project, cx);
+        log_store.add_language_server(
+            remote_server_key.kind.clone(),
+            server_id,
+            Some(LanguageServerName::new_static("test-server")),
+            None,
+            None,
+            cx,
+        );
+    });
+
+    let headless_lsp_store =
+        headless.read_with(server_cx, |headless, _| headless.lsp_store.downgrade());
+    let headless_server_key = LanguageServerLogKey::new(
+        LanguageServerKind::LocalSsh {
+            lsp_store: headless_lsp_store,
+        },
+        server_id,
+    );
+    let headless_log_store = server_cx.update(|cx| cx.global::<GlobalLogStore>().0.clone());
+    headless_log_store.update(server_cx, |log_store, cx| {
+        log_store.add_language_server(
+            headless_server_key.kind.clone(),
+            server_id,
+            Some(LanguageServerName::new_static("test-server")),
+            None,
+            None,
+            cx,
+        );
+    });
+
+    let peer_id = proto::PeerId { owner_id: 1, id: 1 };
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.retain_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(headless_log_store.read_with(server_cx, |log_store, _| {
+        log_store
+            .language_servers
+            .get(&headless_server_key)
+            .is_some_and(|state| state.rpc_state.is_some())
+    }));
+
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::ToggleLspLogs {
+            peer_id,
+            server_id,
+            enabled: true,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.release_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(
+        headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        }),
+        "releasing a local view must preserve downstream demand on the remote host"
+    );
+
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::CollaboratorLeft(peer_id));
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(headless_log_store.read_with(server_cx, |log_store, _| {
+        log_store
+            .language_servers
+            .get(&headless_server_key)
+            .is_some_and(|state| state.rpc_state.is_none())
+    }));
+
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::ToggleLspLogs {
+            peer_id,
+            server_id,
+            enabled: true,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(
+        headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        }),
+        "downstream demand must enable the stream on the remote host"
+    );
+
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.retain_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+    });
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::ToggleLspLogs {
+            peer_id,
+            server_id,
+            enabled: false,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(
+        headless_log_store.read_with(server_cx, |log_store, _| {
+            log_store
+                .language_servers
+                .get(&headless_server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        }),
+        "releasing downstream demand must preserve a local view on the remote host"
+    );
+
+    local_log_store.update(cx, |log_store, cx| {
+        log_store.release_view_log_stream(&remote_server_key, LogKind::Rpc, cx);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    assert!(headless_log_store.read_with(server_cx, |log_store, _| {
+        log_store
+            .language_servers
+            .get(&headless_server_key)
+            .is_some_and(|state| state.rpc_state.is_none())
+    }));
 }
 
 #[gpui::test]

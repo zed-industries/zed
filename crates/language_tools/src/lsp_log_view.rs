@@ -1,4 +1,4 @@
-use collections::VecDeque;
+use collections::{HashMap, HashSet, VecDeque};
 use edit_prediction::EditPredictionStore;
 use editor::{Editor, EditorEvent, MultiBufferOffset, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
@@ -18,11 +18,9 @@ use project::{
     },
     search::SearchQuery,
 };
-use proto::toggle_lsp_logs::LogType;
 use settings::SeedQuerySetting;
 use std::{any::TypeId, borrow::Cow, sync::Arc};
 use ui::{Checkbox, ContextMenu, PopoverMenu, ToggleState, prelude::*};
-use util::ResultExt as _;
 use workspace::{
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemHandle},
@@ -102,6 +100,7 @@ pub struct LspLogView {
     log_store: Entity<LogStore>,
     current_server_key: Option<LanguageServerLogKey>,
     active_entry_kind: LogKind,
+    enabled_streams: HashMap<LanguageServerLogKey, HashSet<LogKind>>,
     project: Entity<Project>,
     focus_handle: FocusHandle,
     _log_store_subscriptions: Vec<Subscription>,
@@ -261,18 +260,19 @@ impl LspLogView {
         });
 
         cx.on_release(|log_view, cx| {
-            let project = log_view.project.downgrade();
-            let lsp_store = log_view.project.read(cx).lsp_store().downgrade();
-            log_view.log_store.update(cx, |log_store, cx| {
-                for (key, state) in &log_store.language_servers {
-                    if key.is_for_project(&project, &lsp_store)
-                        && let Some(log_kind) = state.toggled_log_kind
-                        && let Some(log_type) = log_type(log_kind)
-                    {
-                        send_toggle_log_message(key, false, log_type, cx);
-                    }
-                }
-            });
+            let enabled_streams = log_view
+                .enabled_streams
+                .iter()
+                .flat_map(|(key, log_kinds)| {
+                    log_kinds
+                        .iter()
+                        .map(|log_kind| (key.clone(), *log_kind))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            for (key, log_kind) in enabled_streams {
+                log_view.set_stream_enabled(&key, log_kind, false, cx);
+            }
         })
         .detach();
 
@@ -284,6 +284,7 @@ impl LspLogView {
             log_store,
             current_server_key: None,
             active_entry_kind: LogKind::Logs,
+            enabled_streams: HashMap::default(),
             _log_store_subscriptions: vec![
                 model_changes_subscription,
                 events_subscriptions,
@@ -429,6 +430,115 @@ impl LspLogView {
         Some(rows)
     }
 
+    fn set_stream_enabled(
+        &mut self,
+        key: &LanguageServerLogKey,
+        log_kind: LogKind,
+        enabled: bool,
+        cx: &mut App,
+    ) {
+        if enabled {
+            let already_enabled = self
+                .enabled_streams
+                .get(key)
+                .is_some_and(|log_kinds| log_kinds.contains(&log_kind));
+            if already_enabled {
+                return;
+            }
+            let Some(()) = self.log_store.update(cx, |log_store, cx| {
+                log_store.retain_view_log_stream(key, log_kind, cx)
+            }) else {
+                return;
+            };
+            self.enabled_streams
+                .entry(key.clone())
+                .or_default()
+                .insert(log_kind);
+        } else {
+            let Some(log_kinds) = self.enabled_streams.get_mut(key) else {
+                return;
+            };
+            if !log_kinds.remove(&log_kind) {
+                return;
+            }
+            if log_kinds.is_empty() {
+                self.enabled_streams.remove(key);
+            }
+            self.log_store.update(cx, |log_store, cx| {
+                log_store.release_view_log_stream(key, log_kind, cx);
+            });
+        }
+    }
+
+    fn set_visible_log_stream(
+        &mut self,
+        key: &LanguageServerLogKey,
+        log_kind: LogKind,
+        cx: &mut App,
+    ) {
+        self.set_stream_enabled(key, log_kind, true, cx);
+        let stream_is_enabled = self
+            .enabled_streams
+            .get(key)
+            .is_some_and(|log_kinds| log_kinds.contains(&log_kind));
+        if stream_is_enabled {
+            self.disable_visible_log_streams(Some((key, log_kind)), cx);
+        }
+    }
+
+    fn disable_visible_log_streams(
+        &mut self,
+        except: Option<(&LanguageServerLogKey, LogKind)>,
+        cx: &mut App,
+    ) {
+        let visible_log_streams = self
+            .enabled_streams
+            .iter()
+            .flat_map(|(key, log_kinds)| {
+                log_kinds
+                    .iter()
+                    .filter(|log_kind| matches!(log_kind, LogKind::Logs | LogKind::Trace))
+                    .map(|log_kind| (key.clone(), *log_kind))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        for (key, log_kind) in visible_log_streams {
+            let should_preserve = except.is_some_and(|(except_key, except_kind)| {
+                except_key == &key && except_kind == log_kind
+            });
+            if !should_preserve {
+                self.set_stream_enabled(&key, log_kind, false, cx);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn show_entry_for_test(
+        &mut self,
+        key: LanguageServerLogKey,
+        log_kind: LogKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match log_kind {
+            LogKind::Rpc => self.show_rpc_trace_for_server(key, window, cx),
+            LogKind::Trace => self.show_trace_for_server(key, window, cx),
+            LogKind::Logs => self.show_logs_for_server(key, window, cx),
+            LogKind::ServerInfo => self.show_server_info(key, window, cx),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stream_enabled_for_test(
+        &self,
+        key: &LanguageServerLogKey,
+        log_kind: LogKind,
+    ) -> bool {
+        self.enabled_streams
+            .get(key)
+            .is_some_and(|log_kinds| log_kinds.contains(&log_kind))
+    }
+
     fn show_logs_for_server(
         &mut self,
         key: LanguageServerLogKey,
@@ -453,15 +563,10 @@ impl LspLogView {
             let (editor, editor_subscriptions) = Self::editor_for_logs(log_contents, window, cx);
             self.editor = editor;
             self.editor_subscriptions = editor_subscriptions;
+            self.set_visible_log_stream(&key, LogKind::Logs, cx);
             cx.notify();
         }
         self.editor.read(cx).focus_handle(cx).focus(window, cx);
-        self.log_store.update(cx, |log_store, cx| {
-            let state = log_store.get_language_server_state(&key)?;
-            state.toggled_log_kind = Some(LogKind::Logs);
-            send_toggle_log_message(&key, true, LogType::Log, cx);
-            Some(())
-        });
     }
 
     fn update_log_level(
@@ -513,12 +618,7 @@ impl LspLogView {
             let (editor, editor_subscriptions) = Self::editor_for_logs(log_contents, window, cx);
             self.editor = editor;
             self.editor_subscriptions = editor_subscriptions;
-            self.log_store.update(cx, |log_store, cx| {
-                let state = log_store.get_language_server_state(&key)?;
-                state.toggled_log_kind = Some(LogKind::Trace);
-                send_toggle_log_message(&key, true, LogType::Trace, cx);
-                Some(())
-            });
+            self.set_visible_log_stream(&key, LogKind::Trace, cx);
             cx.notify();
         }
         self.editor.read(cx).focus_handle(cx).focus(window, cx);
@@ -533,10 +633,13 @@ impl LspLogView {
         self.toggle_rpc_trace_for_server(key.clone(), true, window, cx);
         let rpc_log = self.log_store.update(cx, |log_store, _| {
             log_store
-                .enable_rpc_trace_for_language_server(&key)
+                .get_language_server_state(&key)?
+                .rpc_state
+                .as_ref()
                 .map(|state| log_contents(&state.rpc_messages, ()))
         });
         if let Some(rpc_log) = rpc_log {
+            self.disable_visible_log_streams(None, cx);
             self.current_server_key = Some(key);
             self.active_entry_kind = LogKind::Rpc;
             let (editor, editor_subscriptions) = Self::editor_for_logs(rpc_log, window, cx);
@@ -575,17 +678,7 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.log_store.update(cx, |log_store, cx| {
-            if enabled {
-                log_store.enable_rpc_trace_for_language_server(&key);
-            } else {
-                log_store.disable_rpc_trace_for_language_server(&key);
-            }
-
-            if log_store.language_servers.contains_key(&key) {
-                send_toggle_log_message(&key, enabled, LogType::Rpc, cx);
-            }
-        });
+        self.set_stream_enabled(&key, LogKind::Rpc, enabled, cx);
         if !enabled && self.current_server_key.as_ref() == Some(&key) {
             self.show_logs_for_server(key, window, cx);
             cx.notify();
@@ -665,55 +758,14 @@ impl LspLogView {
         let Some(server_info) = server_info else {
             return;
         };
-        self.current_server_key = Some(key.clone());
+        self.current_server_key = Some(key);
         self.active_entry_kind = LogKind::ServerInfo;
         let (editor, editor_subscriptions) = Self::editor_for_server_info(server_info, window, cx);
         self.editor = editor;
         self.editor_subscriptions = editor_subscriptions;
         cx.notify();
         self.editor.read(cx).focus_handle(cx).focus(window, cx);
-        self.log_store.update(cx, |log_store, cx| {
-            let state = log_store.get_language_server_state(&key)?;
-            if let Some(log_kind) = state.toggled_log_kind.take()
-                && let Some(log_type) = log_type(log_kind)
-            {
-                send_toggle_log_message(&key, false, log_type, cx);
-            }
-            Some(())
-        });
-    }
-}
-
-fn log_type(log_kind: LogKind) -> Option<LogType> {
-    match log_kind {
-        LogKind::Rpc => Some(LogType::Rpc),
-        LogKind::Trace => Some(LogType::Trace),
-        LogKind::Logs => Some(LogType::Log),
-        LogKind::ServerInfo => None,
-    }
-}
-
-fn send_toggle_log_message(
-    key: &LanguageServerLogKey,
-    enabled: bool,
-    log_type: LogType,
-    cx: &mut App,
-) {
-    if let LanguageServerKind::Remote { project } = &key.kind {
-        project
-            .update(cx, |project, cx| {
-                if let Some((client, project_id)) = project.lsp_store().read(cx).upstream_client() {
-                    client
-                        .send(proto::ToggleLspLogs {
-                            project_id,
-                            log_type: log_type as i32,
-                            server_id: key.server_id.to_proto(),
-                            enabled,
-                        })
-                        .log_err();
-                }
-            })
-            .ok();
+        self.disable_visible_log_streams(None, cx);
     }
 }
 

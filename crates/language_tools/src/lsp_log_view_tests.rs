@@ -10,9 +10,10 @@ use language::{
 };
 use lsp::LanguageServerName;
 use project::{
-    FakeFs, Project,
+    Event as ProjectEvent, FakeFs, Project,
     lsp_store::log_store::{LanguageServerKind, LanguageServerLogKey, LogKind, LogStore},
 };
+use proto::PeerId;
 use serde_json::json;
 use settings::SettingsStore;
 use util::path;
@@ -323,6 +324,183 @@ async fn test_log_store_removes_unavailable_copilot_server(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_local_views_and_downstream_peers_own_rpc_streams_independently(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/stream-ownership"), json!({ "test.rs": "" }))
+        .await;
+    let project = Project::test(fs, [path!("/stream-ownership").as_ref()], cx).await;
+    let server_id = LanguageServerId(100);
+    let server_key = LanguageServerLogKey::new(
+        LanguageServerKind::Local {
+            project: project.downgrade(),
+        },
+        server_id,
+    );
+    let first_peer_id = PeerId { owner_id: 1, id: 1 };
+    let second_peer_id = PeerId { owner_id: 2, id: 2 };
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
+
+    log_store.update(cx, |store, cx| {
+        store.add_project(&project, cx);
+        store.add_language_server(
+            server_key.kind.clone(),
+            server_id,
+            Some(LanguageServerName::new_static("test-server")),
+            None,
+            None,
+            cx,
+        );
+    });
+
+    for peer_id in [first_peer_id, second_peer_id] {
+        project.update(cx, |_, cx| {
+            cx.emit(ProjectEvent::ToggleLspLogs {
+                peer_id,
+                server_id,
+                enabled: true,
+                toggled_log_kind: LogKind::Rpc,
+            });
+        });
+    }
+    project.update(cx, |_, cx| {
+        cx.emit(ProjectEvent::ToggleLspLogs {
+            peer_id: first_peer_id,
+            server_id,
+            enabled: false,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    assert!(log_store.read_with(cx, |store, _| {
+        store
+            .language_servers
+            .get(&server_key)
+            .is_some_and(|state| state.rpc_state.is_some())
+    }));
+    project.update(cx, |_, cx| {
+        cx.emit(ProjectEvent::CollaboratorLeft(second_peer_id));
+    });
+    assert!(log_store.read_with(cx, |store, _| {
+        store
+            .language_servers
+            .get(&server_key)
+            .is_some_and(|state| state.rpc_state.is_none())
+    }));
+
+    project.update(cx, |_, cx| {
+        cx.emit(ProjectEvent::ToggleLspLogs {
+            peer_id: first_peer_id,
+            server_id,
+            enabled: true,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    log_store.update(cx, |store, cx| {
+        assert_eq!(
+            store.retain_view_log_stream(&server_key, LogKind::Rpc, cx),
+            Some(())
+        );
+        assert_eq!(
+            store.release_view_log_stream(&server_key, LogKind::Rpc, cx),
+            Some(())
+        );
+    });
+    assert!(
+        log_store.read_with(cx, |store, _| {
+            store
+                .language_servers
+                .get(&server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        }),
+        "releasing the final local view must preserve a downstream peer's RPC stream"
+    );
+    project.update(cx, |_, cx| {
+        cx.emit(ProjectEvent::ToggleLspLogs {
+            peer_id: first_peer_id,
+            server_id,
+            enabled: false,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    assert!(log_store.read_with(cx, |store, _| {
+        store
+            .language_servers
+            .get(&server_key)
+            .is_some_and(|state| state.rpc_state.is_none())
+    }));
+
+    log_store.update(cx, |store, cx| {
+        assert_eq!(
+            store.retain_view_log_stream(&server_key, LogKind::Rpc, cx),
+            Some(())
+        );
+    });
+    project.update(cx, |_, cx| {
+        cx.emit(ProjectEvent::ToggleLspLogs {
+            peer_id: first_peer_id,
+            server_id,
+            enabled: true,
+            toggled_log_kind: LogKind::Rpc,
+        });
+        cx.emit(ProjectEvent::ToggleLspLogs {
+            peer_id: first_peer_id,
+            server_id,
+            enabled: false,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    assert!(
+        log_store.read_with(cx, |store, _| {
+            store
+                .language_servers
+                .get(&server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        }),
+        "disabling a downstream peer's RPC stream must preserve a local view's stream"
+    );
+    log_store.update(cx, |store, cx| {
+        assert_eq!(
+            store.release_view_log_stream(&server_key, LogKind::Rpc, cx),
+            Some(())
+        );
+    });
+    assert!(log_store.read_with(cx, |store, _| {
+        store
+            .language_servers
+            .get(&server_key)
+            .is_some_and(|state| state.rpc_state.is_none())
+    }));
+
+    project.update(cx, |_, cx| {
+        cx.emit(ProjectEvent::ToggleLspLogs {
+            peer_id: first_peer_id,
+            server_id,
+            enabled: true,
+            toggled_log_kind: LogKind::Rpc,
+        });
+        cx.emit(ProjectEvent::CollaboratorUpdated {
+            old_peer_id: first_peer_id,
+            new_peer_id: second_peer_id,
+        });
+        cx.emit(ProjectEvent::ToggleLspLogs {
+            peer_id: second_peer_id,
+            server_id,
+            enabled: false,
+            toggled_log_kind: LogKind::Rpc,
+        });
+    });
+    assert!(log_store.read_with(cx, |store, _| {
+        store
+            .language_servers
+            .get(&server_key)
+            .is_some_and(|state| state.rpc_state.is_none())
+    }));
+}
+
+#[gpui::test]
 async fn test_lsp_log_view(cx: &mut TestAppContext) {
     zlog::init_test();
 
@@ -375,6 +553,18 @@ async fn test_lsp_log_view(cx: &mut TestAppContext) {
     language_server
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
         .await;
+    let server_key = LanguageServerLogKey::new(
+        LanguageServerKind::Local {
+            project: project.downgrade(),
+        },
+        language_server.server.server_id(),
+    );
+    let unavailable_server_key = LanguageServerLogKey::new(
+        LanguageServerKind::Local {
+            project: project.downgrade(),
+        },
+        LanguageServerId(999),
+    );
 
     let window =
         cx.add_window(|window, cx| LspLogView::new(project.clone(), log_store.clone(), window, cx));
@@ -410,6 +600,45 @@ async fn test_lsp_log_view(cx: &mut TestAppContext) {
             }]
         );
         assert_eq!(view.editor.read(cx).text(cx), "hello from the server\n");
+    });
+
+    log_view.update_in(&mut cx, |view, window, cx| {
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Logs));
+
+        view.show_entry_for_test(server_key.clone(), LogKind::Trace, window, cx);
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Trace));
+
+        view.show_entry_for_test(server_key.clone(), LogKind::Rpc, window, cx);
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Trace));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Rpc));
+
+        view.show_entry_for_test(server_key.clone(), LogKind::Logs, window, cx);
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Trace));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Rpc));
+
+        view.show_entry_for_test(server_key.clone(), LogKind::Trace, window, cx);
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Trace));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Rpc));
+
+        view.show_entry_for_test(server_key.clone(), LogKind::ServerInfo, window, cx);
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(!view.stream_enabled_for_test(&server_key, LogKind::Trace));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Rpc));
+
+        view.show_entry_for_test(server_key.clone(), LogKind::Logs, window, cx);
+        view.show_entry_for_test(unavailable_server_key.clone(), LogKind::Logs, window, cx);
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(!view.stream_enabled_for_test(&unavailable_server_key, LogKind::Logs));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Rpc));
+
+        view.show_entry_for_test(unavailable_server_key.clone(), LogKind::Rpc, window, cx);
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Logs));
+        assert!(!view.stream_enabled_for_test(&unavailable_server_key, LogKind::Rpc));
+        assert!(view.stream_enabled_for_test(&server_key, LogKind::Rpc));
     });
 }
 
