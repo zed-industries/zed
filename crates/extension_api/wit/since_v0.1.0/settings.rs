@@ -4,7 +4,7 @@ use std::num::NonZeroU32;
 /// The settings for a particular language.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LanguageSettings {
-    /// How many columns a tab should occupy.
+    /// How many columns each indentation level should occupy.
     pub tab_size: NonZeroU32,
 }
 

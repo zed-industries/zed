@@ -4,14 +4,14 @@ use collections::HashSet;
 use gpui::{App, AppContext as _, Context, Task, Window};
 use language::language_settings::LanguageSettings;
 use multi_buffer::{IndentGuide, MultiBufferRow, ToPoint};
-use text::{LineIndent, Point};
+use text::Point;
 use util::ResultExt;
 
 use crate::{DisplaySnapshot, Editor};
 
 struct ActiveIndentedRange {
     row_range: Range<MultiBufferRow>,
-    indent: LineIndent,
+    indent_column: u32,
 }
 
 #[derive(Default)]
@@ -97,8 +97,13 @@ impl Editor {
             }
 
             let snapshot = snapshot.clone();
+            let indentation = snapshot
+                .buffer_snapshot()
+                .language_settings_at(selection.head(), cx)
+                .indentation();
 
-            let task = cx.background_spawn(resolve_indented_range(snapshot, cursor_row));
+            let task =
+                cx.background_spawn(resolve_indented_range(snapshot, cursor_row, indentation));
 
             // Try to resolve the indent in a short amount of time, otherwise move it to a background task.
             match cx
@@ -127,7 +132,7 @@ impl Editor {
             .iter()
             .enumerate()
             .filter(|(_, indent_guide)| {
-                indent_guide.indent_level() == active_indent_range.indent.len(indent_guide.tab_size)
+                indent_guide.indent_level() == active_indent_range.indent_column
             });
 
         let mut matches = HashSet::default();
@@ -205,12 +210,16 @@ pub fn indent_guides_in_range(
 async fn resolve_indented_range(
     snapshot: DisplaySnapshot,
     buffer_row: MultiBufferRow,
+    indentation: language::language_settings::IndentationSettings,
 ) -> Option<ActiveIndentedRange> {
     snapshot
         .buffer_snapshot()
-        .enclosing_indent(buffer_row)
+        .enclosing_indent(buffer_row, indentation)
         .await
-        .map(|(row_range, indent)| ActiveIndentedRange { row_range, indent })
+        .map(|(row_range, indent_column)| ActiveIndentedRange {
+            row_range,
+            indent_column,
+        })
 }
 
 fn should_recalculate_indented_range(

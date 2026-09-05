@@ -215,7 +215,9 @@ impl Vim {
         text.push_str(suffix);
 
         if self.editor_input_enabled() {
-            self.update_editor(cx, |_, editor, cx| editor.insert(&text, window, cx));
+            self.update_editor(cx, |_, editor, cx| {
+                editor.insert_without_autoindent(&text, window, cx)
+            });
         } else {
             self.input_ignored(text.into(), window, cx);
         }

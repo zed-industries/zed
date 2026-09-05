@@ -100,7 +100,7 @@ use gpui::{
 };
 use language::{
     LanguageAwareStyling, Point, Subscription as BufferSubscription,
-    language_settings::{AllLanguageSettings, LanguageSettings},
+    language_settings::LanguageSettings,
 };
 
 use multi_buffer::{
@@ -110,7 +110,7 @@ use multi_buffer::{
 use project::project_settings::DiagnosticSeverity;
 use project::{InlayId, lsp_store::LspFoldingRange, lsp_store::TokenType};
 use serde::Deserialize;
-use settings::Settings;
+use settings::SettingsStore;
 use smallvec::SmallVec;
 use sum_tree::{Bias, TreeMap};
 use text::{BufferId, LineIndent, Patch};
@@ -126,7 +126,6 @@ use std::{
     borrow::Cow,
     fmt::Debug,
     iter,
-    num::NonZeroU32,
     ops::{self, Add, Range, Sub},
     sync::Arc,
 };
@@ -137,7 +136,7 @@ use crate::{
 use block_map::{BlockPointCursor, BlockRow, BlockSnapshot};
 use fold_map::{FoldPointCursor, FoldSnapshot};
 use inlay_map::{BufferOffsetToInlayPointCursor, InlaySnapshot};
-use tab_map::{TabPoint, TabPointCursor, TabSnapshot};
+use tab_map::{PerBufferIndentationSettings, TabPoint, TabPointCursor, TabSnapshot};
 use wrap_map::{WrapMap, WrapPatch, WrapPointCursor};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -222,6 +221,8 @@ pub struct DisplayMap {
     fold_map: FoldMap,
     /// Keeps track of hard tabs in a buffer.
     tab_map: TabMap,
+    indentation_settings: PerBufferIndentationSettings,
+    indentation_settings_dirty: bool,
     /// Handles soft wrapping.
     wrap_map: Entity<WrapMap>,
     /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
@@ -376,7 +377,7 @@ impl DisplayMap {
         diagnostics_max_severity: DiagnosticSeverity,
         cx: &mut Context<Self>,
     ) -> Self {
-        let tab_size = Self::tab_size(&buffer, cx);
+        let indentation_settings = Self::resolve_indentation_settings(&buffer, cx);
         // Important: obtain the snapshot BEFORE creating the subscription.
         // snapshot() may call sync() which publishes edits. If we subscribe first,
         // those edits would be captured but the InlayMap would already be at the
@@ -386,11 +387,27 @@ impl DisplayMap {
         let crease_map = CreaseMap::new(&buffer_snapshot);
         let (inlay_map, snapshot) = InlayMap::new(buffer_snapshot);
         let (fold_map, snapshot) = FoldMap::new(snapshot);
-        let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
+        let (tab_map, snapshot) =
+            TabMap::new_with_indentation_settings(snapshot, indentation_settings.clone());
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
         let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
 
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
+        cx.observe(&buffer, |this, _, cx| {
+            this.indentation_settings_dirty = true;
+            cx.notify();
+        })
+        .detach();
+        cx.subscribe(&buffer, |this, _, _, cx| {
+            this.indentation_settings_dirty = true;
+            cx.notify();
+        })
+        .detach();
+        cx.observe_global::<SettingsStore>(|this, cx| {
+            this.indentation_settings_dirty = true;
+            cx.notify();
+        })
+        .detach();
 
         DisplayMap {
             entity_id: cx.entity_id(),
@@ -399,6 +416,8 @@ impl DisplayMap {
             fold_map,
             inlay_map,
             tab_map,
+            indentation_settings,
+            indentation_settings_dirty: false,
             wrap_map,
             block_map,
             crease_map,
@@ -454,16 +473,22 @@ impl DisplayMap {
         let snapshot = {
             let edits = self.buffer_subscription.consume();
             let snapshot = self.buffer.read(cx).snapshot(cx);
-            let tab_size = Self::tab_size(&self.buffer, cx);
+            let indentation_settings = self.indentation_settings(cx);
             let (snapshot, edits) = self.inlay_map.sync(snapshot, edits.into_inner());
             let (mut writer, snapshot, edits) = self.fold_map.write(snapshot, edits);
-            let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+            let (snapshot, edits) = self.tab_map.sync_with_indentation_settings(
+                snapshot,
+                edits,
+                indentation_settings.clone(),
+            );
             let (_snapshot, _edits) = self
                 .wrap_map
                 .update(cx, |wrap_map, cx| wrap_map.sync(snapshot, edits, cx));
 
             let (snapshot, edits) = writer.unfold_intersecting([Anchor::Min..Anchor::Max], true);
-            let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+            let (snapshot, edits) =
+                self.tab_map
+                    .sync_with_indentation_settings(snapshot, edits, indentation_settings);
             let (snapshot, _edits) = self
                 .wrap_map
                 .update(cx, |wrap_map, cx| wrap_map.sync(snapshot, edits, cx));
@@ -557,13 +582,15 @@ impl DisplayMap {
     }
 
     fn sync_through_wrap(&mut self, cx: &mut App) -> (WrapSnapshot, WrapPatch) {
-        let tab_size = Self::tab_size(&self.buffer, cx);
+        let indentation_settings = self.indentation_settings(cx);
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
 
         let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) =
+            self.tab_map
+                .sync_with_indentation_settings(snapshot, edits, indentation_settings);
         self.wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx))
     }
@@ -724,11 +751,15 @@ impl DisplayMap {
 
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
+        let indentation_settings = self.indentation_settings(cx);
 
         let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot.clone(), edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.tab_map.sync_with_indentation_settings(
+            snapshot,
+            edits,
+            indentation_settings.clone(),
+        );
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -746,7 +777,9 @@ impl DisplayMap {
         });
         let (snapshot, edits) = fold_map.fold(inline);
 
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) =
+            self.tab_map
+                .sync_with_indentation_settings(snapshot, edits, indentation_settings);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -799,18 +832,24 @@ impl DisplayMap {
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
+        let indentation_settings = self.indentation_settings(cx);
 
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.tab_map.sync_with_indentation_settings(
+            snapshot,
+            edits,
+            indentation_settings.clone(),
+        );
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits, None);
 
         let (snapshot, edits) = fold_map.remove_folds(ranges, type_id);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) =
+            self.tab_map
+                .sync_with_indentation_settings(snapshot, edits, indentation_settings);
         let (self_new_wrap_snapshot, self_new_wrap_edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -833,11 +872,15 @@ impl DisplayMap {
             .map(|range| range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot))
             .collect::<Vec<_>>();
         let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
+        let indentation_settings = self.indentation_settings(cx);
 
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.tab_map.sync_with_indentation_settings(
+            snapshot,
+            edits,
+            indentation_settings.clone(),
+        );
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -845,7 +888,9 @@ impl DisplayMap {
 
         let (snapshot, edits) =
             fold_map.unfold_intersecting(offset_ranges.iter().cloned(), inclusive);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) =
+            self.tab_map
+                .sync_with_indentation_settings(snapshot, edits, indentation_settings);
         let (self_new_wrap_snapshot, self_new_wrap_edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -1256,11 +1301,15 @@ impl DisplayMap {
     ) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
+        let indentation_settings = self.indentation_settings(cx);
 
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.tab_map.sync_with_indentation_settings(
+            snapshot,
+            edits,
+            indentation_settings.clone(),
+        );
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -1268,7 +1317,9 @@ impl DisplayMap {
 
         let (snapshot, edits) = fold_map.update_fold_widths(widths);
         let widths_changed = !edits.is_empty();
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) =
+            self.tab_map
+                .sync_with_indentation_settings(snapshot, edits, indentation_settings);
         let (self_new_wrap_snapshot, self_new_wrap_edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -1295,7 +1346,7 @@ impl DisplayMap {
         }
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
+        let indentation_settings = self.indentation_settings(cx);
 
         let companion_wrap_data = self.companion.as_ref().and_then(|(companion_dm, _)| {
             companion_dm
@@ -1305,7 +1356,11 @@ impl DisplayMap {
 
         let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.tab_map.sync_with_indentation_settings(
+            snapshot,
+            edits,
+            indentation_settings.clone(),
+        );
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -1322,7 +1377,9 @@ impl DisplayMap {
 
         let (snapshot, edits) = self.inlay_map.splice(to_remove, to_insert);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) =
+            self.tab_map
+                .sync_with_indentation_settings(snapshot, edits, indentation_settings);
         let (self_new_wrap_snapshot, self_new_wrap_edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -1363,12 +1420,21 @@ impl DisplayMap {
     }
 
     #[instrument(skip_all)]
-    fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
-        if let Some(buffer) = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx)) {
-            LanguageSettings::for_buffer(buffer, cx).tab_size
-        } else {
-            AllLanguageSettings::get_global(cx).defaults.tab_size
+    fn indentation_settings(&mut self, cx: &App) -> PerBufferIndentationSettings {
+        if self.indentation_settings_dirty {
+            self.indentation_settings = Self::resolve_indentation_settings(&self.buffer, cx);
+            self.indentation_settings_dirty = false;
         }
+        self.indentation_settings.clone()
+    }
+
+    fn resolve_indentation_settings(
+        buffer: &Entity<MultiBuffer>,
+        cx: &App,
+    ) -> PerBufferIndentationSettings {
+        let buffer = buffer.read(cx);
+        let (default, by_buffer) = buffer.indentation_settings(cx);
+        (default, Arc::new(by_buffer))
     }
 
     pub fn is_rewrapping(&self, cx: &gpui::App) -> bool {
@@ -2226,6 +2292,13 @@ impl DisplaySnapshot {
         self.buffer_snapshot().line_indent_for_row(buffer_row)
     }
 
+    fn indentation_column_for_buffer_row(&self, buffer_row: MultiBufferRow) -> u32 {
+        let indent = self.line_indent_for_buffer_row(buffer_row);
+        Point::new(buffer_row.0, indent.raw_len())
+            .to_display_point(self)
+            .column()
+    }
+
     pub fn line_len(&self, row: DisplayRow) -> u32 {
         self.block_snapshot.line_len(BlockRow(row.0))
     }
@@ -2250,11 +2323,14 @@ impl DisplaySnapshot {
         if line_indent.is_line_blank() {
             return false;
         }
+        let indentation_column = self.indentation_column_for_buffer_row(buffer_row);
 
         (buffer_row.0 + 1..=max_row.0)
             .find_map(|next_row| {
                 let next_line_indent = self.line_indent_for_buffer_row(MultiBufferRow(next_row));
-                if next_line_indent.raw_len() > line_indent.raw_len() {
+                if self.indentation_column_for_buffer_row(MultiBufferRow(next_row))
+                    > indentation_column
+                {
                     Some(true)
                 } else if !next_line_indent.is_line_blank() {
                     Some(false)
@@ -2330,7 +2406,7 @@ impl DisplaySnapshot {
             && self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
-            let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
+            let start_indent_column = self.indentation_column_for_buffer_row(buffer_row);
             let snapshot = self.buffer_snapshot();
             let max_point = snapshot.max_point();
             let mut closing_row = None;
@@ -2350,7 +2426,8 @@ impl DisplaySnapshot {
             for row in (buffer_row.0 + 1)..=max_point.row {
                 let line_indent = self.line_indent_for_buffer_row(MultiBufferRow(row));
                 if !line_indent.is_line_blank()
-                    && line_indent.raw_len() <= start_line_indent.raw_len()
+                    && self.indentation_column_for_buffer_row(MultiBufferRow(row))
+                        <= start_indent_column
                 {
                     let in_string_or_comment_scope = snapshot
                         .language_scope_at(Point::new(row, 0))
@@ -2697,20 +2774,21 @@ pub mod tests {
     };
     use Bias::*;
     use block_map::BlockPlacement;
+    use buffer_diff::BufferDiff;
     use gpui::{
         App, AppContext as _, BorrowAppContext, Element, Hsla, Rgba, div, font, observe, px,
     };
     use language::{
-        Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageConfig,
-        LanguageMatcher,
+        Buffer, Capability, Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageConfig,
+        LanguageMatcher, ModelineSettings,
     };
     use lsp::LanguageServerId;
 
     use futures::stream::StreamExt;
     use multi_buffer::PathKey;
     use rand::{Rng, prelude::*};
-    use settings::{SettingsContent, SettingsStore};
-    use std::{env, sync::Arc};
+    use settings::SettingsContent;
+    use std::{env, num::NonZeroU32, sync::Arc};
     use text::PointUtf16;
     use theme::{LoadThemes, SyntaxTheme};
     use unindent::Unindent as _;
@@ -3971,6 +4049,207 @@ pub mod tests {
 
             map
         });
+    }
+
+    #[gpui::test]
+    fn test_indent_folding_uses_display_columns(cx: &mut gpui::App) {
+        init_test(cx, &|settings| {
+            settings.project.all_languages.defaults.tab_size = NonZeroU32::new(4);
+        });
+
+        let buffer = MultiBuffer::build_simple("    parent\n\t child\nnext", cx);
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Helvetica"),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+
+        assert!(snapshot.starts_indent(MultiBufferRow(0)));
+    }
+
+    #[gpui::test]
+    fn test_literal_tabs_use_per_buffer_tab_widths(cx: &mut gpui::App) {
+        init_test(cx, &|settings| {
+            settings.project.all_languages.defaults.tab_size = NonZeroU32::new(4);
+        });
+
+        let buffer_with_indentation_settings = |text, indent_size, tab_width, cx: &mut App| {
+            cx.new(|cx| {
+                let mut buffer = Buffer::local(text, cx);
+                buffer.set_modeline(Some(ModelineSettings {
+                    tab_size: NonZeroU32::new(tab_width),
+                    indent_size: NonZeroU32::new(indent_size),
+                    ..Default::default()
+                }));
+                buffer
+            })
+        };
+        let narrow_buffer = buffer_with_indentation_settings("x\tnarrow", 8, 2, cx);
+        let wide_buffer = buffer_with_indentation_settings("x\twide", 2, 8, cx);
+        let multi_buffer = cx.new(|cx| {
+            let mut multi_buffer = MultiBuffer::without_headers(Capability::ReadOnly);
+            multi_buffer.set_excerpts_for_path(
+                multi_buffer::PathKey::sorted(0),
+                narrow_buffer.clone(),
+                [Point::zero()..narrow_buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+            multi_buffer.set_excerpts_for_path(
+                multi_buffer::PathKey::sorted(1),
+                wide_buffer.clone(),
+                [Point::zero()..wide_buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+            multi_buffer
+        });
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                multi_buffer,
+                font("Helvetica"),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+
+        assert_eq!(
+            snapshot
+                .tab_snapshot()
+                .text()
+                .lines()
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>(),
+            ["x narrow", "x       wide"]
+        );
+        let wide_buffer_id = wide_buffer.read(cx).remote_id();
+        let wide_row = snapshot
+            .buffer_snapshot()
+            .row_infos(MultiBufferRow(0))
+            .find_map(|row| {
+                (row.buffer_id == Some(wide_buffer_id))
+                    .then_some(row.multibuffer_row)
+                    .flatten()
+            })
+            .expect("wide buffer should have a multibuffer row");
+        let wide_display_point =
+            snapshot.point_to_display_point(MultiBufferPoint::new(wide_row.0, 2), Bias::Left);
+        assert_eq!(wide_display_point.column(), 8);
+        assert_eq!(
+            snapshot.display_point_to_point(wide_display_point, Bias::Right),
+            MultiBufferPoint::new(wide_row.0, 2),
+        );
+
+        wide_buffer.update(cx, |buffer, cx| {
+            if buffer.set_modeline(Some(ModelineSettings {
+                tab_size: NonZeroU32::new(4),
+                indent_size: NonZeroU32::new(2),
+                ..Default::default()
+            })) {
+                cx.notify();
+            }
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        assert_eq!(
+            snapshot
+                .tab_snapshot()
+                .text()
+                .lines()
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>(),
+            ["x narrow", "x   wide"]
+        );
+    }
+
+    #[gpui::test]
+    fn test_literal_tabs_use_per_buffer_width_in_singleton_inverted_diff(cx: &mut gpui::App) {
+        init_test(cx, &|settings| {
+            settings.project.all_languages.defaults.tab_size = NonZeroU32::new(4);
+        });
+
+        let main_buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local("\ttext", cx);
+            buffer.set_modeline(Some(ModelineSettings {
+                tab_size: NonZeroU32::new(8),
+                indent_size: NonZeroU32::new(2),
+                ..Default::default()
+            }));
+            buffer
+        });
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text("\ttext", &main_buffer.read(cx).text_snapshot(), cx)
+        });
+        let base_buffer = diff.read(cx).base_text_buffer().clone();
+        let multi_buffer = cx.new(|cx| {
+            let mut multi_buffer = MultiBuffer::singleton(base_buffer, cx);
+            multi_buffer.add_inverted_diff(diff, main_buffer, cx);
+            multi_buffer
+        });
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                multi_buffer,
+                font("Helvetica"),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+
+        assert_eq!(
+            map.update(cx, |map, cx| map.snapshot(cx))
+                .tab_snapshot()
+                .text(),
+            "        text",
+        );
+    }
+
+    #[gpui::test]
+    fn test_literal_tabs_use_tab_width(cx: &mut gpui::App) {
+        init_test(cx, &|settings| {
+            settings.project.all_languages.defaults.tab_size = NonZeroU32::new(4);
+            settings.project.all_languages.defaults.tab_width = NonZeroU32::new(8);
+        });
+
+        let buffer = MultiBuffer::build_simple("\ttext\n    \ttext", cx);
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Helvetica"),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+
+        assert_eq!(snapshot.text(), "        text\n        text");
+        assert_eq!(
+            snapshot.point_to_display_point(MultiBufferPoint::new(0, 1), Bias::Left),
+            DisplayPoint::new(DisplayRow(0), 8),
+        );
     }
 
     #[gpui::test]
