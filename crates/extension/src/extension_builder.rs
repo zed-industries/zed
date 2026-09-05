@@ -28,20 +28,18 @@ use wasmparser::Parser;
 /// Currently, we compile with Rust's `wasm32-wasip2` target, which works with WASI `preview2` and the component model.
 const RUST_TARGET: &str = "wasm32-wasip2";
 
-/// Compiling Tree-sitter parsers from C to WASM requires Clang 17, and a WASM build of libc
-/// and clang's runtime library. The `wasi-sdk` provides these binaries.
-///
-/// Once Clang 17 and its wasm target are available via system package managers, we won't need
-/// to download this.
-const WASI_SDK_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/";
+/// Compiling Tree-sitter parsers from C to WebAssembly requires a compiler,
+/// a WASI sysroot, and compiler runtime libraries, provided by `wasi-sdk`.
+const WASI_SDK_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/";
 const WASI_SDK_ASSET_NAME: Option<&str> = cfg_select! {
-    all(target_os = "macos", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-macos.tar.gz"),
-    all(target_os = "macos", target_arch = "aarch64") => Some("wasi-sdk-25.0-arm64-macos.tar.gz"),
-    all(target_os = "linux", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-linux.tar.gz"),
-    all(target_os = "linux", target_arch = "aarch64") => Some("wasi-sdk-25.0-arm64-linux.tar.gz"),
-    all(target_os = "freebsd", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-linux.tar.gz"),
-    all(target_os = "freebsd", target_arch = "aarch64") => Some("wasi-sdk-25.0-arm64-linux.tar.gz"),
-    all(target_os = "windows", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-windows.tar.gz"),
+    all(target_os = "macos", target_arch = "x86_64") => Some("wasi-sdk-34.0-x86_64-macos.tar.gz"),
+    all(target_os = "macos", target_arch = "aarch64") => Some("wasi-sdk-34.0-arm64-macos.tar.gz"),
+    all(target_os = "linux", target_arch = "x86_64") => Some("wasi-sdk-34.0-x86_64-linux.tar.gz"),
+    all(target_os = "linux", target_arch = "aarch64") => Some("wasi-sdk-34.0-arm64-linux.tar.gz"),
+    all(target_os = "freebsd", target_arch = "x86_64") => Some("wasi-sdk-34.0-x86_64-linux.tar.gz"),
+    all(target_os = "freebsd", target_arch = "aarch64") => Some("wasi-sdk-34.0-arm64-linux.tar.gz"),
+    all(target_os = "windows", target_arch = "x86_64") => Some("wasi-sdk-34.0-x86_64-windows.tar.gz"),
+    all(target_os = "windows", target_arch = "aarch64") => Some("wasi-sdk-34.0-arm64-windows.tar.gz"),
     _ => None
 };
 
