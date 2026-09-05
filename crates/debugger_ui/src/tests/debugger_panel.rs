@@ -1028,6 +1028,79 @@ async fn test_continue_thread_action_only_resumes_selected_thread(
 }
 
 #[gpui::test]
+async fn test_step_requests_allow_other_threads_to_run(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let step_request_count = Arc::new(AtomicUsize::new(0));
+
+    let session = start_debug_session(&workspace, cx, |client| {
+        client.on_request::<dap::requests::Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(true),
+                supports_single_thread_execution_requests: Some(true),
+                ..Default::default()
+            })
+        });
+    })
+    .unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client.on_request::<Next, _>({
+        let step_request_count = step_request_count.clone();
+        move |_, args| {
+            assert_eq!(args.single_thread, None);
+            step_request_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    });
+    client.on_request::<StepIn, _>({
+        let step_request_count = step_request_count.clone();
+        move |_, args| {
+            assert_eq!(args.single_thread, None);
+            step_request_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    });
+    client.on_request::<StepOut, _>({
+        let step_request_count = step_request_count.clone();
+        move |_, args| {
+            assert_eq!(args.single_thread, None);
+            step_request_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    });
+    client.on_request::<StepBack, _>({
+        let step_request_count = step_request_count.clone();
+        move |_, args| {
+            assert_eq!(args.single_thread, None);
+            step_request_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    });
+
+    session.update(cx, |session, cx| {
+        let thread_id = ThreadId(1);
+        session.step_over(thread_id, dap::SteppingGranularity::Statement, cx);
+        session.step_in(thread_id, dap::SteppingGranularity::Statement, cx);
+        session.step_out(thread_id, dap::SteppingGranularity::Statement, cx);
+        session.step_back(thread_id, dap::SteppingGranularity::Statement, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(step_request_count.load(Ordering::SeqCst), 4);
+}
+
+#[gpui::test]
 async fn test_debug_panel_item_thread_status_reset_on_failure(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
