@@ -99,3 +99,19 @@ To allow a specific npm package (e.g., `typescript`) to be installed:
 ```toml
 { kind = "npm:install", package = "typescript" }
 ```
+
+### `network:tcp-local`
+
+The `network:tcp-local` capability permits an extension to open a TCP connection to an explicit loopback host. It is intended for tools such as language REPLs that publish a loopback port. Remote hosts are deliberately not supported.
+
+The extension must declare the same endpoint in its `extension.toml`, and the user must grant it in their settings.
+
+#### Example
+
+To permit an nREPL server listening locally on port 7888:
+
+```toml
+{ kind = "network:tcp-local", host = "localhost", port = 7888 }
+```
+
+Supported hosts are `localhost`, `127.0.0.1`, and `::1`. When `port` is present it must match exactly; omit it for a service, such as nREPL, that chooses a port dynamically.

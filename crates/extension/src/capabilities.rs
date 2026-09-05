@@ -1,10 +1,12 @@
 mod download_file_capability;
 mod npm_install_package_capability;
 mod process_exec_capability;
+mod tcp_connect_capability;
 
 pub use download_file_capability::*;
 pub use npm_install_package_capability::*;
 pub use process_exec_capability::*;
+pub use tcp_connect_capability::*;
 
 use serde::{Deserialize, Serialize};
 
@@ -17,4 +19,6 @@ pub enum ExtensionCapability {
     DownloadFile(DownloadFileCapability),
     #[serde(rename = "npm:install")]
     NpmInstallPackage(NpmInstallPackageCapability),
+    #[serde(rename = "network:tcp-local")]
+    TcpConnect(TcpConnectCapability),
 }

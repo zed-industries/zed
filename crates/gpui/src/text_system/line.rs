@@ -534,7 +534,11 @@ fn paint_line(
                 let content_mask = window.content_mask();
                 if max_glyph_bounds.intersects(&content_mask.bounds) {
                     let vertical_offset = point(px(0.0), glyph.position.y);
-                    if glyph.is_emoji {
+                    // macOS 26 can crash inside CoreText's color-emoji image
+                    // rasterizer (CopyEmojiImage) while rendering terminal text.
+                    // Rendering through the regular glyph path is a safe fallback;
+                    // it may be monochrome but keeps the editor process alive.
+                    if glyph.is_emoji && !cfg!(target_os = "macos") {
                         window.paint_emoji(
                             glyph_origin + baseline_offset + vertical_offset,
                             run.font_id,

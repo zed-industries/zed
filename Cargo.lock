@@ -6181,6 +6181,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-compression",
+ "async-net",
  "async-tar",
  "async-trait",
  "client",
@@ -11457,6 +11458,30 @@ version = "2.1.0"
 source = "git+https://github.com/zed-industries/notify?rev=0890bbb8ca40a4b5d1f67031698dd7918b37d991#0890bbb8ca40a4b5d1f67031698dd7918b37d991"
 dependencies = [
  "bitflags 2.13.1",
+]
+
+[[package]]
+name = "nrepl"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "command_palette_hooks",
+ "editor",
+ "futures 0.3.32",
+ "gpui",
+ "language",
+ "log",
+ "multi_buffer",
+ "parking_lot",
+ "project",
+ "serde_json",
+ "settings",
+ "smol",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -22234,6 +22259,7 @@ dependencies = [
  "component",
  "db",
  "dirs",
+ "extension",
  "fs",
  "futures 0.3.32",
  "futures-lite 2.6.1",
@@ -22813,6 +22839,7 @@ dependencies = [
  "miniprofiler_ui",
  "node_runtime",
  "notifications",
+ "nrepl",
  "onboarding",
  "outline",
  "outline_panel",

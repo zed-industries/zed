@@ -17,7 +17,8 @@ use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
     ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
     ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
-    ExtensionLanguageServerProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
+    ExtensionLanguageServerProxy, ExtensionPanelAction, ExtensionPanelActionProxy,
+    ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::future::{Shared, join_all};
@@ -318,11 +319,14 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
+    ExtensionSettings::register(cx);
+
+    let store_proxy = extension_host_proxy.clone();
     let store = cx.new(move |cx| {
         ExtensionStore::new(
             paths::extensions_dir().clone(),
             None,
-            extension_host_proxy,
+            store_proxy,
             fs,
             client.http_client(),
             client.http_client(),
@@ -330,6 +334,10 @@ pub fn init(
             node_runtime,
             cx,
         )
+    });
+
+    extension_host_proxy.register_panel_action_proxy(ExtensionPanelActionDispatcher {
+        store: store.downgrade(),
     });
 
     cx.on_action(|_: &ReloadExtensions, cx| {
@@ -348,6 +356,47 @@ pub fn init(
         }
     })
     .detach();
+}
+
+/// Routes a host-rendered panel action back into the Wasm extension that owns
+/// the panel. The weak store prevents the process-global proxy from keeping an
+/// extension host alive after application shutdown.
+struct ExtensionPanelActionDispatcher {
+    store: WeakEntity<ExtensionStore>,
+}
+
+impl ExtensionPanelActionProxy for ExtensionPanelActionDispatcher {
+    fn dispatch_panel_action(
+        &self,
+        action: ExtensionPanelAction,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let Some(store) = self.store.upgrade() else {
+            return Task::ready(Err(anyhow!("the extension host is no longer available")));
+        };
+        let Some(extension) = store
+            .read(cx)
+            .wasm_extensions
+            .iter()
+            .find(|(manifest, _)| manifest.id == action.panel.extension_id)
+            .map(|(_, extension)| extension.clone())
+        else {
+            return Task::ready(Err(anyhow!(
+                "extension {} is not loaded",
+                action.panel.extension_id
+            )));
+        };
+
+        cx.spawn(async move |_| {
+            extension
+                .panel_action(
+                    action.panel.panel_id.to_string(),
+                    action.action.to_string(),
+                    action.payload,
+                )
+                .await
+        })
+    }
 }
 
 impl ExtensionStore {

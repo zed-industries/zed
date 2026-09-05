@@ -42,4 +42,12 @@ pub enum ExtensionCapabilityContent {
     NpmInstallPackage {
         package: String,
     },
+    #[serde(rename = "network:tcp-local")]
+    TcpConnect {
+        /// A loopback host: `localhost`, `127.0.0.1`, or `::1`.
+        host: String,
+        /// An optional exact TCP port. Omit this to grant access to any port on
+        /// the named loopback host.
+        port: Option<u16>,
+    },
 }

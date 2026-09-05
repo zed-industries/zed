@@ -11,9 +11,11 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use extension::{
-    ExtensionLanguageServerProxy, KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
+    ExtensionLanguageServerProxy, ExtensionPanelActionDescriptor, ExtensionPanelDescriptor,
+    ExtensionPanelEvent, ExtensionPanelId, ExtensionPanelLocation, ExtensionPanelUiProxy,
+    KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
 };
-use futures::{AsyncReadExt, lock::Mutex};
+use futures::{AsyncReadExt, AsyncWriteExt, lock::Mutex};
 use futures::{FutureExt as _, io::BufReader};
 use gpui::{BackgroundExecutor, SharedString};
 use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
@@ -21,7 +23,7 @@ use project::project_settings::ProjectSettings;
 use semver::Version;
 use std::{
     env,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, OnceLock},
@@ -48,7 +50,8 @@ wasmtime::component::bindgen!({
          "worktree": ExtensionWorktree,
          "project": ExtensionProject,
          "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/http-client.http-response-stream": ExtensionHttpResponseStream
+         "zed:extension/http-client.http-response-stream": ExtensionHttpResponseStream,
+         "zed:extension/tcp.tcp-stream": ExtensionTcpStream
     },
 });
 
@@ -63,6 +66,7 @@ pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
 pub type ExtensionProject = Arc<dyn ProjectDelegate>;
 pub type ExtensionKeyValueStore = Arc<dyn KeyValueStoreDelegate>;
 pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
+pub type ExtensionTcpStream = Arc<Mutex<async_net::TcpStream>>;
 
 pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
@@ -629,6 +633,166 @@ impl HostWorktree for WasmState {
 }
 
 impl common::Host for WasmState {}
+
+impl panel::Host for WasmState {
+    async fn open_panel(
+        &mut self,
+        descriptor: panel::PanelDescriptor,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let location = match descriptor.location {
+            panel::PanelLocation::Right => ExtensionPanelLocation::Right,
+            panel::PanelLocation::Bottom => ExtensionPanelLocation::Bottom,
+        };
+        let descriptor = ExtensionPanelDescriptor {
+            id: ExtensionPanelId {
+                extension_id: self.manifest.id.clone(),
+                panel_id: descriptor.panel_id.into(),
+            },
+            title: descriptor.title,
+            location,
+            actions: descriptor
+                .actions
+                .into_iter()
+                .map(|action| ExtensionPanelActionDescriptor {
+                    id: action.id.into(),
+                    label: action.label,
+                    requires_input: action.requires_input,
+                })
+                .collect(),
+        };
+
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.open_panel(descriptor, cx)) }.boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn send_event(
+        &mut self,
+        panel_id: String,
+        kind: String,
+        payload: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let payload = match serde_json::from_str::<serde_json::Value>(&payload) {
+            Ok(payload) if payload.is_object() => payload,
+            Ok(_) => {
+                return Ok(Err(
+                    "extension panel event payload must be a JSON object".into()
+                ));
+            }
+            Err(error) => {
+                return Ok(Err(format!(
+                    "invalid extension panel event payload: {error}"
+                )));
+            }
+        };
+        let panel = ExtensionPanelId {
+            extension_id: self.manifest.id.clone(),
+            panel_id: panel_id.into(),
+        };
+        let event = ExtensionPanelEvent {
+            kind: kind.into(),
+            payload,
+        };
+
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.send_panel_event(panel, event, cx)) }
+                    .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn active_worktree_root(&mut self) -> wasmtime::Result<Result<String, String>> {
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.active_worktree_root(cx)) }.boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn read_active_worktree_file(
+        &mut self,
+        path: String,
+    ) -> wasmtime::Result<Result<String, String>> {
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.read_active_worktree_file(&path, cx)) }
+                    .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+}
+
+impl tcp::Host for WasmState {
+    async fn connect(
+        &mut self,
+        host: String,
+        port: u16,
+    ) -> wasmtime::Result<Result<Resource<ExtensionTcpStream>, String>> {
+        maybe!(async {
+            self.capability_granter.grant_tcp_connect(&host, port)?;
+
+            let address = match host.as_str() {
+                "localhost" | "127.0.0.1" => SocketAddr::from(([127, 0, 0, 1], port)),
+                "::1" => SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port)),
+                _ => bail!("network:tcp-local only permits loopback hosts"),
+            };
+            let stream = Arc::new(Mutex::new(async_net::TcpStream::connect(address).await?));
+            Ok(self.table.push(stream)?)
+        })
+        .await
+        .to_wasmtime_result()
+    }
+}
+
+impl tcp::HostTcpStream for WasmState {
+    async fn read(
+        &mut self,
+        stream: Resource<ExtensionTcpStream>,
+        max_bytes: u32,
+    ) -> wasmtime::Result<Result<Vec<u8>, String>> {
+        let stream = self.table.get(&stream)?.clone();
+        maybe!(async move {
+            let mut buffer = vec![0; max_bytes.min(1024 * 1024) as usize];
+            let bytes_read = stream.lock().await.read(&mut buffer).await?;
+            buffer.truncate(bytes_read);
+            Ok(buffer)
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn write(
+        &mut self,
+        stream: Resource<ExtensionTcpStream>,
+        data: Vec<u8>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let stream = self.table.get(&stream)?.clone();
+        maybe!(async move {
+            let mut stream = stream.lock().await;
+            stream.write_all(&data).await?;
+            stream.flush().await?;
+            Ok(())
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn drop(&mut self, stream: Resource<ExtensionTcpStream>) -> wasmtime::Result<()> {
+        self.table.delete(stream)?;
+        Ok(())
+    }
+}
 
 impl http_client::Host for WasmState {
     async fn fetch(

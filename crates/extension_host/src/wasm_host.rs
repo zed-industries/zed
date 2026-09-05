@@ -69,12 +69,6 @@ pub struct WasmExtension {
     _task: Arc<Task<Result<(), gpui_tokio::JoinError>>>,
 }
 
-impl Drop for WasmExtension {
-    fn drop(&mut self) {
-        self.tx.close_channel();
-    }
-}
-
 #[async_trait]
 impl extension::Extension for WasmExtension {
     fn manifest(&self) -> Arc<ExtensionManifest> {
@@ -856,6 +850,26 @@ fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<Version> {
 }
 
 impl WasmExtension {
+    pub async fn panel_action(
+        &self,
+        panel_id: String,
+        action: String,
+        payload: serde_json::Value,
+    ) -> Result<()> {
+        let payload = serde_json::to_string(&payload)?;
+        self.call(|extension, store| {
+            async move {
+                extension
+                    .call_panel_action(store, &panel_id, &action, &payload)
+                    .await?
+                    .map_err(|error| store.data().extension_error(error))?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?
+    }
+
     pub async fn load(
         extension_dir: &Path,
         manifest: &Arc<ExtensionManifest>,
