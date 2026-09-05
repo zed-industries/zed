@@ -567,19 +567,19 @@ impl LanguageModel for OpenCodeLanguageModel {
 
     fn supports_thinking(&self) -> bool {
         self.model
-            .supported_reasoning_effort_levels()
+            .supported_reasoning_effort_levels(self.subscription)
             .is_some_and(|levels| levels.iter().any(|effort| *effort != ReasoningEffort::None))
     }
 
     fn supports_disabling_thinking(&self) -> bool {
         self.model
-            .supported_reasoning_effort_levels()
+            .supported_reasoning_effort_levels(self.subscription)
             .is_some_and(|levels| levels.contains(&ReasoningEffort::None))
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         self.model
-            .supported_reasoning_effort_levels()
+            .supported_reasoning_effort_levels(self.subscription)
             .map(|levels| {
                 let levels = levels
                     .into_iter()
@@ -702,7 +702,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     self.model.max_output_tokens(self.subscription),
                     ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                     reasoning_effort,
-                    self.model.interleaved_reasoning(),
+                    self.model.interleaved_reasoning(self.subscription),
                 ) {
                     Ok(request) => request,
                     Err(error) => return async move { Err(error.into()) }.boxed(),
@@ -722,7 +722,7 @@ impl LanguageModel for OpenCodeLanguageModel {
             ApiProtocol::OpenAiResponses => {
                 let supports_none_reasoning_effort = self
                     .model
-                    .supported_reasoning_effort_levels()
+                    .supported_reasoning_effort_levels(self.subscription)
                     .is_some_and(|levels| levels.contains(&ReasoningEffort::None));
                 let response_request = match into_open_ai_response(
                     request,
