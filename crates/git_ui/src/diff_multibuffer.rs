@@ -727,10 +727,16 @@ impl DiffMultibuffer {
         let buffer = multibuffer.buffer(text_anchor.buffer_id)?;
 
         let file = buffer.read(cx).file()?;
-        Some(ProjectPath {
+        let project_path = ProjectPath {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
-        })
+        };
+        let current_repo = self.repo(cx)?;
+        let git_store = current_repo.read(cx).git_store()?;
+        let (path_repo, _) = git_store
+            .read(cx)
+            .repository_and_path_for_project_path(&project_path, cx)?;
+        (path_repo == current_repo).then_some(project_path)
     }
 
     pub(crate) fn added_to_workspace(

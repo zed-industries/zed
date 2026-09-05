@@ -6653,49 +6653,51 @@ impl Repository {
                     return Ok(());
                 };
 
-                let repo_diff_state_updates = this.update(&mut cx, |this, cx| {
-                    git_store.update(cx, |git_store, cx| {
-                        git_store
-                            .diffs
-                            .iter()
-                            .filter_map(|(buffer_id, diff_state)| {
-                                let buffer_store = git_store.buffer_store.read(cx);
-                                let buffer = buffer_store.get(*buffer_id)?;
-                                let file = File::from_dyn(buffer.read(cx).file())?;
-                                let abs_path = file.worktree.read(cx).absolutize(&file.path);
-                                let repo_path = this.abs_path_to_repo_path(&abs_path)?;
-                                let is_symlink = GitStore::file_is_symlink(file, cx);
-                                log::debug!(
-                                    "start reload diff bases for repo path {}",
-                                    repo_path.as_unix_str()
-                                );
-                                diff_state.update(cx, |diff_state, _| {
-                                    let has_unstaged_diff = diff_state
-                                        .unstaged_diff
-                                        .as_ref()
-                                        .is_some_and(|diff| diff.is_upgradable());
-                                    let has_staged_diff = diff_state
-                                        .staged_diff
-                                        .as_ref()
-                                        .is_some_and(|(diff, _)| diff.is_upgradable());
-                                    let has_uncommitted_diff = diff_state
-                                        .uncommitted_diff
-                                        .as_ref()
-                                        .is_some_and(|set| set.is_upgradable());
+                let repo_diff_state_updates = git_store.update(&mut cx, |git_store, cx| {
+                    git_store
+                        .diffs
+                        .iter()
+                        .filter_map(|(buffer_id, diff_state)| {
+                            let (repository, repo_path) =
+                                git_store.repository_and_path_for_buffer_id(*buffer_id, cx)?;
+                            if repository != this {
+                                return None;
+                            }
 
-                                    Some((
-                                        buffer,
-                                        repo_path,
-                                        is_symlink,
-                                        (has_unstaged_diff || has_staged_diff)
-                                            .then(|| diff_state.index_text.clone()),
-                                        (has_staged_diff || has_uncommitted_diff)
-                                            .then(|| diff_state.head_text.clone()),
-                                    ))
-                                })
+                            let buffer_store = git_store.buffer_store.read(cx);
+                            let buffer = buffer_store.get(*buffer_id)?;
+                            let file = File::from_dyn(buffer.read(cx).file())?;
+                            let is_symlink = GitStore::file_is_symlink(file, cx);
+                            log::debug!(
+                                "start reload diff bases for repo path {}",
+                                repo_path.as_unix_str()
+                            );
+                            diff_state.update(cx, |diff_state, _| {
+                                let has_unstaged_diff = diff_state
+                                    .unstaged_diff
+                                    .as_ref()
+                                    .is_some_and(|diff| diff.is_upgradable());
+                                let has_staged_diff = diff_state
+                                    .staged_diff
+                                    .as_ref()
+                                    .is_some_and(|(diff, _)| diff.is_upgradable());
+                                let has_uncommitted_diff = diff_state
+                                    .uncommitted_diff
+                                    .as_ref()
+                                    .is_some_and(|set| set.is_upgradable());
+
+                                Some((
+                                    buffer,
+                                    repo_path,
+                                    is_symlink,
+                                    (has_unstaged_diff || has_staged_diff)
+                                        .then(|| diff_state.index_text.clone()),
+                                    (has_staged_diff || has_uncommitted_diff)
+                                        .then(|| diff_state.head_text.clone()),
+                                ))
                             })
-                            .collect::<Vec<_>>()
-                    })
+                        })
+                        .collect::<Vec<_>>()
                 })?;
 
                 let buffer_diff_base_changes = cx
@@ -6781,6 +6783,14 @@ impl Repository {
                     for (buffer, diff_bases_change) in buffer_diff_base_changes {
                         let buffer_snapshot = buffer.read(cx).text_snapshot();
                         let buffer_id = buffer_snapshot.remote_id();
+                        let Some((repository, _)) =
+                            git_store.repository_and_path_for_buffer_id(buffer_id, cx)
+                        else {
+                            continue;
+                        };
+                        if repository != this {
+                            continue;
+                        }
                         let Some(diff_state) = git_store.diffs.get(&buffer_id) else {
                             continue;
                         };
@@ -11742,6 +11752,90 @@ mod tests {
                 "regular file should have a git diff base"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_parent_repository_does_not_reload_submodule_diff_base(cx: &mut TestAppContext) {
+        use util::rel_path::rel_path;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {
+                    "modules": {
+                        "nested": {},
+                    },
+                },
+                "parent.txt": "parent\n",
+                "nested": {
+                    ".git": "gitdir: ../.git/modules/nested\n",
+                    "nested.txt": "working tree\n",
+                },
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new("/project/.git"),
+            &[("parent.txt", "parent\n".into())],
+        );
+        fs.set_head_and_index_for_repo(
+            Path::new("/project/nested/.git"),
+            &[("nested.txt", "committed\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+
+        let (worktree_id, git_store) = project.read_with(cx, |project, cx| {
+            (
+                project.worktrees(cx).next().unwrap().read(cx).id(),
+                project.git_store().clone(),
+            )
+        });
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("nested/nested.txt")), cx)
+            })
+            .await
+            .unwrap();
+        let diff = project
+            .update(cx, |project, cx| {
+                project.open_uncommitted_diff(buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            diff.read_with(cx, |diff, cx| diff.base_text_string(cx)),
+            Some("committed\n".to_string())
+        );
+
+        let parent_repository = git_store.read_with(cx, |git_store, cx| {
+            git_store
+                .repositories()
+                .values()
+                .find(|repository| {
+                    repository.read(cx).work_directory_abs_path.as_ref() == Path::new("/project")
+                })
+                .cloned()
+                .unwrap()
+        });
+        parent_repository.update(cx, |repository, cx| {
+            repository.reload_buffer_diff_bases(cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            diff.read_with(cx, |diff, cx| diff.base_text_string(cx)),
+            Some("committed\n".to_string()),
+            "refreshing the parent repository must not clear a submodule's diff base"
+        );
     }
 
     #[gpui::test]
