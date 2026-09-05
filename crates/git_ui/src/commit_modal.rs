@@ -285,7 +285,7 @@ impl CommitModal {
                 move |window, cx| {
                     let git_panel = git_panel_entity.read(cx);
                     let amend_enabled = git_panel.amend_pending();
-                    let signoff_enabled = git_panel.signoff_enabled();
+                    let signoff_enabled = git_panel.signoff_should_be_enabled();
                     let skip_hooks_enabled = git_panel.skip_hooks_enabled();
                     let has_previous_commit = git_panel.head_commit(cx).is_some();
 
