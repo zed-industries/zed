@@ -12087,8 +12087,10 @@ name = "ollama"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "futures 0.3.32",
  "http_client",
+ "percent-encoding",
  "schemars 1.0.4",
  "serde",
  "serde_json",

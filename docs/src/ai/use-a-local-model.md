@@ -132,7 +132,36 @@ Set a context length for all Ollama models:
 
 You can also configure context length per model with `max_tokens` in `available_models`.
 
-If your Ollama server requires a key, enter the key in the provider UI or set `OLLAMA_API_KEY`. For remote Ollama services such as Ollama Turbo, set the API URL to the remote endpoint and provide an API key.
+### Ollama Authentication {#ollama-auth}
+
+How you authenticate depends on how the Ollama server is exposed:
+
+- **API key (Bearer):** enter the key in the Ollama provider UI or set `OLLAMA_API_KEY`. Use this for remote services such as Ollama Turbo (set `api_url` to the remote endpoint and provide a key).
+- **HTTP Basic Auth:** put credentials in the API URL. Zed sends `Authorization: Basic …` and strips the credentials from the request URL:
+
+```json [settings]
+{
+  "language_models": {
+    "ollama": {
+      "api_url": "https://username:password@ollama.example.com"
+    }
+  }
+}
+```
+
+If the username or password contains reserved URL characters (`@`, `:`, `/`, `#`, `%`, etc.), percent-encode them. For example, password `p@ss:word` becomes `p%40ss%3Aword`:
+
+```json [settings]
+{
+  "language_models": {
+    "ollama": {
+      "api_url": "https://user:p%40ss%3Aword@ollama.example.com"
+    }
+  }
+}
+```
+
+If the URL includes userinfo **and** an API key is also set, **Basic credentials from the URL take precedence** (the API key is not sent as Bearer). Use an API key alone when the server expects Bearer authentication, not Basic.
 
 ## LM Studio {#lm-studio}
 
