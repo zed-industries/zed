@@ -8281,6 +8281,63 @@ async fn test_collapse_selected_entry_and_children_action(cx: &mut gpui::TestApp
 }
 
 #[gpui::test]
+async fn test_collapse_selected_entry_moves_selection_to_collapsed_dir(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "parent_dir": {
+                "file_a.txt": "",
+                "file_b.txt": "",
+                "file_c.txt": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/parent_dir", cx);
+    select_path(&panel, "root/parent_dir/file_b.txt", cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    v parent_dir",
+            "          file_a.txt",
+            "          file_b.txt  <== selected",
+            "          file_c.txt",
+        ],
+        "Initial state: parent_dir expanded, file_b selected"
+    );
+
+    // Collapse the parent of the selected file; selection should follow.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_selected_entry(&CollapseSelectedEntry {}, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > parent_dir  <== selected",],
+        "After Left Arrow on a file: parent_dir collapsed, selection moved to it"
+    );
+}
+
+#[gpui::test]
 async fn test_collapse_root_single_worktree(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
