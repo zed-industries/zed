@@ -1902,11 +1902,15 @@ impl Editor {
             .scroll_manager
             .native_anchor(display_snapshot, cx)
             .anchor;
-        let Some(buffer_snapshot) = multi_buffer.as_singleton() else {
+        let scroll_offset = scroll_anchor.to_offset(&multi_buffer);
+        let Some((buffer_snapshot, excerpt_range)) =
+            multi_buffer.excerpt_containing(scroll_offset..scroll_offset)
+        else {
             return;
         };
 
         let buffer = buffer_snapshot.clone();
+        let excerpt_end = excerpt_range.context.end;
         let Some((buffer_visible_start, _)) = multi_buffer.anchor_to_buffer_anchor(scroll_anchor)
         else {
             return;
@@ -1918,6 +1922,18 @@ impl Editor {
 
         let syntax = self.style(cx).syntax.clone();
         let background_task = cx.background_spawn(async move {
+            let anchor_range = |range: Range<text::Anchor>| -> Option<Range<Anchor>> {
+                let start = multi_buffer.anchor_in_excerpt(range.start)?;
+                let end = multi_buffer
+                    .anchor_in_excerpt(range.end)
+                    .or_else(|| multi_buffer.anchor_in_excerpt(excerpt_end))?;
+                if end.cmp(&start, &multi_buffer).is_lt() {
+                    return None;
+                }
+
+                Some(start..end)
+            };
+
             buffer
                 .outline_items_containing(
                     Point::new(start_row, 0)..Point::new(end_row, 0),
@@ -1928,22 +1944,14 @@ impl Editor {
                 .filter_map(|outline_item| {
                     Some(OutlineItem {
                         depth: outline_item.depth,
-                        range: multi_buffer
-                            .buffer_anchor_range_to_anchor_range(outline_item.range)?,
-                        selection_range: multi_buffer
-                            .buffer_anchor_range_to_anchor_range(outline_item.selection_range)?,
-                        source_range_for_text: multi_buffer.buffer_anchor_range_to_anchor_range(
-                            outline_item.source_range_for_text,
-                        )?,
+                        range: anchor_range(outline_item.range)?,
+                        selection_range: anchor_range(outline_item.selection_range)?,
+                        source_range_for_text: anchor_range(outline_item.source_range_for_text)?,
                         text: outline_item.text,
                         highlight_ranges: outline_item.highlight_ranges,
                         name_ranges: outline_item.name_ranges,
-                        body_range: outline_item.body_range.and_then(|range| {
-                            multi_buffer.buffer_anchor_range_to_anchor_range(range)
-                        }),
-                        annotation_range: outline_item.annotation_range.and_then(|range| {
-                            multi_buffer.buffer_anchor_range_to_anchor_range(range)
-                        }),
+                        body_range: outline_item.body_range.and_then(&anchor_range),
+                        annotation_range: outline_item.annotation_range.and_then(&anchor_range),
                     })
                 })
                 .collect()
