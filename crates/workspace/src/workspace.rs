@@ -1,32 +1,56 @@
 pub mod active_file_name;
+
 pub mod dock;
+
 pub mod history_manager;
+
 pub mod invalid_item_view;
+
 pub mod item;
+
 mod modal_layer;
+
 mod multi_workspace;
+
 #[cfg(test)]
 mod multi_workspace_tests;
+
 pub mod notifications;
+
 pub mod pane;
+
 pub mod pane_group;
+
 pub mod path_list {
     pub use util::path_list::{PathList, SerializedPathList};
 }
+
 pub mod path_link;
+
 mod persistence;
+
 pub mod searchable;
+
 pub mod security_modal;
+
 pub mod shared_screen;
 pub use shared_screen::SharedScreen;
 pub mod focus_follows_mouse;
+
 mod status_bar;
+
 pub mod tasks;
+
 mod theme_preview;
+
 mod toast_layer;
+
 mod toolbar;
+
 pub mod welcome;
+
 pub mod workspace_error;
+
 mod workspace_settings;
 
 pub use dock::Panel;
@@ -174,6 +198,7 @@ use crate::{
 };
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
+
 pub const MAX_RECENT_SELECTIONS: usize = 20;
 
 /// Which optional window-title variables are actually referenced by the active
@@ -868,11 +893,13 @@ impl WorkspaceId {
 }
 
 impl StaticColumnCount for WorkspaceId {}
+
 impl Bind for WorkspaceId {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         self.0.bind(statement, start_index)
     }
 }
+
 impl Column for WorkspaceId {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         i64::column(statement, start_index)
@@ -880,6 +907,7 @@ impl Column for WorkspaceId {
             .with_context(|| format!("Failed to read WorkspaceId at index {start_index}"))
     }
 }
+
 impl From<WorkspaceId> for i64 {
     fn from(val: WorkspaceId) -> Self {
         val.0
@@ -1699,6 +1727,13 @@ pub enum OpenMode {
     /// Add to the window's multi workspace and activate it.
     #[default]
     Activate,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FocusedSurface {
+    PaneGroup,
+    Dock(DockPosition),
+    Sidebar,
 }
 
 impl Workspace {
@@ -2560,9 +2595,7 @@ impl Workspace {
             (DockPosition::Bottom, &self.bottom_dock),
         ]
         .into_iter()
-        .find(|(_, dock)| {
-            dock.read(cx).is_open() && dock.focus_handle(cx).contains_focused(window, cx)
-        })
+        .find(|(_, dock)| dock_has_focus(dock, window, cx))
         .map(|(position, _)| position)
     }
 
@@ -3609,7 +3642,7 @@ impl Workspace {
         let docks = self.all_docks();
         let active_dock = docks
             .into_iter()
-            .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
+            .find(|dock| dock_has_focus(dock, window, cx));
 
         if let Some(dock) = active_dock {
             dock.update(cx, |dock, cx| {
@@ -4583,9 +4616,9 @@ impl Workspace {
     }
 
     fn active_dock(&self, window: &Window, cx: &Context<Self>) -> Option<&Entity<Dock>> {
-        self.all_docks().into_iter().find(|&dock| {
-            dock.read(cx).is_open() && dock.focus_handle(cx).contains_focused(window, cx)
-        })
+        self.all_docks()
+            .into_iter()
+            .find(|&dock| dock_has_focus(dock, window, cx))
     }
 
     fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
@@ -5698,7 +5731,7 @@ impl Workspace {
             ]
             .into_iter()
             .find_map(|(dock, origin)| {
-                if dock.focus_handle(cx).contains_focused(window, cx) && dock.read(cx).is_open() {
+                if dock_has_focus(dock, window, cx) {
                     Some(origin)
                 } else {
                     None
@@ -5857,8 +5890,8 @@ impl Workspace {
                 // Defer this to avoid a panic when the dock's active panel is already on the stack.
                 window.defer(cx, move |window, cx| {
                     let dock = dock.read(cx);
-                    if let Some(panel) = dock.active_panel() {
-                        panel.activation_focus_handle(cx).focus(window, cx);
+                    if dock.active_panel().is_some() {
+                        dock.focus_handle(cx).focus(window, cx);
                     } else {
                         log::error!("Could not find a focus target when in switching focus in {direction} direction for a {:?} dock", dock.position());
                     }
@@ -5959,7 +5992,7 @@ impl Workspace {
         let docks = self.all_docks();
         let active_dock = docks
             .into_iter()
-            .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
+            .find(|dock| dock_has_focus(dock, window, cx));
 
         if let Some(dock_entity) = active_dock {
             let dock = dock_entity.read(cx);
@@ -6343,7 +6376,7 @@ impl Workspace {
 
     pub fn focused_pane(&self, window: &Window, cx: &App) -> Entity<Pane> {
         for dock in self.all_docks() {
-            if dock.focus_handle(cx).contains_focused(window, cx)
+            if dock_has_focus(&dock, window, cx)
                 && let Some(pane) = dock
                     .read(cx)
                     .active_panel()
@@ -7276,7 +7309,7 @@ impl Workspace {
         let mut active_item = None;
         let mut panel_id = None;
         for dock in self.all_docks() {
-            if dock.focus_handle(cx).contains_focused(window, cx)
+            if dock_has_focus(&dock, window, cx)
                 && let Some(panel) = dock.read(cx).active_panel()
                 && let Some(pane) = panel.pane(cx)
                 && let Some(item) = pane.read(cx).active_item()
@@ -8643,6 +8676,35 @@ impl Workspace {
             )
     }
 
+    pub(crate) fn focused_surface(&self, window: &Window, cx: &App) -> Option<FocusedSurface> {
+        if self
+            .sidebar_focus_handle
+            .as_ref()
+            .is_some_and(|focus_handle| focus_handle.contains_focused(window, cx))
+        {
+            return Some(FocusedSurface::Sidebar);
+        }
+
+        if self
+            .center
+            .panes()
+            .iter()
+            .any(|pane| pane.focus_handle(cx).contains_focused(window, cx))
+        {
+            return Some(FocusedSurface::PaneGroup);
+        }
+
+        [
+            (&self.left_dock, DockPosition::Left),
+            (&self.right_dock, DockPosition::Right),
+            (&self.bottom_dock, DockPosition::Bottom),
+        ]
+        .into_iter()
+        .find_map(|(dock, position)| {
+            dock_has_focus(dock, window, cx).then_some(FocusedSurface::Dock(position))
+        })
+    }
+
     fn render_dock(
         &self,
         position: DockPosition,
@@ -8659,6 +8721,18 @@ impl Workspace {
             let follower_states = &self.follower_states;
             leader_border_for_pane(follower_states, &pane, window, cx)
         });
+
+        let panel_highlight = dock
+            .read(cx)
+            .is_open()
+            .then(|| {
+                panel_highlight_overlay(
+                    self.focused_surface(window, cx),
+                    FocusedSurface::Dock(position),
+                    cx,
+                )
+            })
+            .flatten();
 
         // Expose each open dock as a landmark region so assistive technology
         // can navigate to it, and so region navigation announces it. While a
@@ -8688,7 +8762,8 @@ impl Workspace {
             .overflow_hidden()
             .flex_none()
             .child(dock.clone())
-            .children(leader_border);
+            .children(leader_border)
+            .children(panel_highlight);
 
         // Apply sizing only when the dock is open. When closed the dock is still
         // included in the element tree so its focus handle remains mounted — without
@@ -9161,6 +9236,7 @@ pub trait AnyActiveCall {
 
 #[derive(Clone)]
 pub struct GlobalAnyActiveCall(pub Arc<dyn AnyActiveCall>);
+
 impl Global for GlobalAnyActiveCall {}
 
 impl GlobalAnyActiveCall {
@@ -9197,6 +9273,7 @@ impl ParticipantLocation {
         }
     }
 }
+
 /// Workspace-local view of a remote collaborator's state.
 /// This is the subset of `call::RemoteParticipant` that workspace needs.
 #[derive(Clone)]
@@ -9213,6 +9290,63 @@ pub enum ActiveCallEvent {
     LocalScreenShareStarted,
     LocalScreenShareStopped,
     RoomLeft,
+}
+
+fn dock_has_focus(dock: &Entity<Dock>, window: &Window, cx: &App) -> bool {
+    let dock = dock.read(cx);
+    if !dock.is_open() {
+        return false;
+    }
+
+    dock.focus_handle(cx).contains_focused(window, cx)
+        || dock
+            .visible_panel()
+            .is_some_and(|panel| panel.panel_focus_handle(cx).contains_focused(window, cx))
+}
+
+pub(crate) fn panel_highlight_overlay(
+    focused_surface: Option<FocusedSurface>,
+    surface: FocusedSurface,
+    cx: &App,
+) -> Option<Div> {
+    let modifiers = WorkspaceSettings::get_global(cx).active_panel_modifiers;
+
+    let overlay_opacity = modifiers
+        .inactive_opacity
+        .map(|value| value.0.clamp(0.0, 1.0))
+        .and_then(|value| (value < 1.).then_some(value));
+    let overlay_border = modifiers
+        .border_size
+        .and_then(|value| (value > 0.).then_some(value));
+
+    if focused_surface == Some(surface) {
+        let border = overlay_border?;
+        return Some(
+            div()
+                .absolute()
+                .size_full()
+                .left_0()
+                .top_0()
+                .border(px(border))
+                .border_color(cx.theme().colors().border_selected),
+        );
+    }
+
+    if focused_surface.is_none() {
+        return None;
+    }
+
+    let opacity = overlay_opacity?;
+    let mut overlay_background = cx.theme().colors().panel_background;
+    overlay_background.fade_out(opacity);
+    Some(
+        div()
+            .absolute()
+            .size_full()
+            .left_0()
+            .top_0()
+            .bg(overlay_background),
+    )
 }
 
 fn leader_border_for_pane(
@@ -9506,7 +9640,7 @@ fn adjust_active_dock_size_by_px(
     let Some(active_dock) = workspace
         .all_docks()
         .into_iter()
-        .find(|dock| dock.focus_handle(cx).contains_focused(window, cx))
+        .find(|dock| dock_has_focus(dock, window, cx))
     else {
         return;
     };
@@ -15513,7 +15647,10 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             assert_eq!(workspace.active_pane(), &second_pane);
             let result = render_center_group(workspace, window, cx);
-            assert!(result.contains_active_pane);
+            assert!(
+                !result.contains_active_pane,
+                "a group with no truly-focused pane should not report one"
+            );
             assert_eq!(
                 result.decorated_pane_ix, None,
                 "an unfocused group should not decorate its active pane"
@@ -15529,6 +15666,90 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             let result = render_center_group(workspace, window, cx);
             assert_eq!(result.decorated_pane_ix, Some(1));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_activate_pane_in_direction_keeps_focus_in_empty_dock_panel(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel =
+                cx.new(|cx| TestPanel::new_without_tracked_focus(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            panel
+        });
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            window.focus(&pane.read(cx).focus_handle(cx), cx);
+            workspace.activate_pane_in_direction(SplitDirection::Right, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.right_dock.focus_handle(cx).is_focused(window));
+            assert!(!panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+            assert_eq!(
+                workspace.focused_surface(window, cx),
+                Some(FocusedSurface::Dock(DockPosition::Right)),
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panel_highlight_overlay(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.active_panel_modifiers =
+                        Some(settings::settings_content::ActivePanelModifiers {
+                            border_size: Some(2.0),
+                            inactive_opacity: Some(settings::settings_content::InactiveOpacity(
+                                0.5,
+                            )),
+                        });
+                });
+            });
+
+            assert!(
+                panel_highlight_overlay(
+                    Some(FocusedSurface::Dock(DockPosition::Left)),
+                    FocusedSurface::Dock(DockPosition::Left),
+                    cx,
+                )
+                .is_some(),
+                "the focused dock should get a border overlay"
+            );
+
+            assert!(
+                panel_highlight_overlay(
+                    Some(FocusedSurface::Dock(DockPosition::Right)),
+                    FocusedSurface::Dock(DockPosition::Left),
+                    cx,
+                )
+                .is_some(),
+                "an unfocused dock should get a dimming overlay when something else has focus"
+            );
+
+            assert!(
+                panel_highlight_overlay(None, FocusedSurface::Dock(DockPosition::Left), cx)
+                    .is_none(),
+                "no overlay should be drawn when nothing in the workspace has focus"
+            );
         });
     }
 
