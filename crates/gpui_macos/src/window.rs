@@ -60,6 +60,7 @@ use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::{
+    borrow::Cow,
     cell::Cell,
     ffi::{CStr, CString, c_void},
     mem,
@@ -3090,10 +3091,44 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
 
         let text = text.to_str();
         let replacement_range = replacement_range.to_range();
+
+        // AppKit routes a keystroke here as text whenever it believes an input
+        // session is active. That belief outlives a composition the editor
+        // abandoned on losing focus, so backspace can arrive as U+0008 instead
+        // of being dispatched as an action.
+        let text = filter_disallowed_control_characters(text);
+        if text.is_empty() {
+            return;
+        }
+
         with_input_handler(this, |input_handler| {
-            input_handler.replace_text_in_range(replacement_range, text)
+            input_handler.replace_text_in_range(replacement_range, &text)
         });
     }
+}
+
+/// Removes control characters that must never reach a text buffer.
+///
+/// Tab, line feed and carriage return are preserved as a precaution, so that a
+/// source delivering them as text is not silently stripped. Key events do not
+/// take this path: they carry a `key_char`, and `is_ime_printable_key` excludes
+/// control characters, so tab and enter are dispatched as actions instead.
+/// Paste does not either, as `EntityInputHandler::paste` calls
+/// `replace_text_in_range` directly.
+///
+/// Everything else covers the control-character portion of the set the editor
+/// treats as invisible, see `editor::display_map::invisibles::is_invisible`,
+/// which is broader and also includes Unicode spaces and format characters.
+fn filter_disallowed_control_characters(text: &str) -> Cow<'_, str> {
+    fn is_disallowed(character: char) -> bool {
+        character.is_control() && !matches!(character, '\t' | '\n' | '\r')
+    }
+
+    if !text.contains(is_disallowed) {
+        return Cow::Borrowed(text);
+    }
+
+    Cow::Owned(text.replace(is_disallowed, ""))
 }
 
 extern "C" fn set_marked_text(
@@ -3584,5 +3619,39 @@ mod tests {
     #[test]
     fn display_id_for_screen_returns_none_for_null_screen() {
         assert_eq!(display_id_for_screen(nil), None);
+    }
+
+    #[test]
+    fn filter_disallowed_control_characters_keeps_ordinary_text() {
+        assert!(matches!(
+            filter_disallowed_control_characters("hello"),
+            Cow::Borrowed("hello")
+        ));
+        assert!(matches!(
+            filter_disallowed_control_characters("\u{d55c}\u{ae00}"),
+            Cow::Borrowed("\u{d55c}\u{ae00}")
+        ));
+    }
+
+    #[test]
+    fn filter_disallowed_control_characters_keeps_tab_and_newlines() {
+        assert!(matches!(
+            filter_disallowed_control_characters("a\tb\nc\r\nd"),
+            Cow::Borrowed("a\tb\nc\r\nd")
+        ));
+    }
+
+    #[test]
+    fn filter_disallowed_control_characters_drops_backspace() {
+        assert_eq!(filter_disallowed_control_characters("\u{8}"), "");
+        assert_eq!(filter_disallowed_control_characters("\u{ba48}\u{8}"), "\u{ba48}");
+    }
+
+    #[test]
+    fn filter_disallowed_control_characters_drops_remaining_controls() {
+        assert_eq!(filter_disallowed_control_characters("a\u{0}b"), "ab");
+        assert_eq!(filter_disallowed_control_characters("a\u{1b}b"), "ab");
+        assert_eq!(filter_disallowed_control_characters("a\u{7f}b"), "ab");
+        assert_eq!(filter_disallowed_control_characters("a\u{85}b"), "ab");
     }
 }
