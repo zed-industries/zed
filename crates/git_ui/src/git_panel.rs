@@ -8979,10 +8979,17 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::collapse_selected_entry))
             .on_action(cx.listener(Self::expand_selected_entry))
-            .on_action(cx.listener(Self::select_first))
-            .on_action(cx.listener(Self::select_next))
-            .on_action(cx.listener(Self::select_previous))
-            .on_action(cx.listener(Self::select_last))
+            // The `menu::Select*` handlers only apply while the changes list is
+            // focused. While the commit editor is focused they must stay
+            // unregistered, so that keys like `ctrl-p` (bound to
+            // `menu::SelectPrevious` in the base keymap) can fall through to
+            // lower-precedence bindings such as `file_finder::Toggle`.
+            .when(!self.commit_editor.read(cx).is_focused(window), |this| {
+                this.on_action(cx.listener(Self::select_first))
+                    .on_action(cx.listener(Self::select_next))
+                    .on_action(cx.listener(Self::select_previous))
+                    .on_action(cx.listener(Self::select_last))
+            })
             .on_action(cx.listener(Self::first_entry))
             .on_action(cx.listener(Self::next_entry))
             .on_action(cx.listener(Self::previous_entry))
@@ -9886,6 +9893,74 @@ mod tests {
         await_git_panel_entries(&panel, &mut cx).await;
 
         (fs, project, workspace, panel, cx)
+    }
+
+    #[gpui::test]
+    async fn test_menu_navigation_ignored_while_commit_editor_is_focused(cx: &mut TestAppContext) {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        gpui::actions!(git_panel_tests, [FileFinderProbe]);
+
+        init_test(cx);
+        let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "a.txt": "modified\n",
+                "b.txt": "modified\n",
+            }),
+            &[
+                ("a.txt", StatusCode::Modified),
+                ("b.txt", StatusCode::Modified),
+            ],
+        )
+        .await;
+
+        // Reproduce the Windows/Linux binding stack for `ctrl-p`: a base
+        // binding to `menu::SelectPrevious` and a `Workspace`-level binding
+        // that stands in for `file_finder::Toggle`.
+        let file_finder_opened = Arc::new(AtomicBool::new(false));
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.open_panel::<GitPanel>(window, cx);
+            workspace.register_action({
+                let file_finder_opened = file_finder_opened.clone();
+                move |_, _: &FileFinderProbe, _, _| {
+                    file_finder_opened.store(true, Ordering::SeqCst);
+                }
+            });
+            cx.bind_keys([
+                gpui::KeyBinding::new("ctrl-p", menu::SelectPrevious, None),
+                gpui::KeyBinding::new("ctrl-p", FileFinderProbe, Some("Workspace")),
+            ]);
+        });
+
+        let selected_entry =
+            |cx: &VisualTestContext| panel.read_with(cx, |panel, _| panel.selected_entry);
+
+        // With the changes list focused, `ctrl-p` navigates the list and must
+        // not reach the workspace binding.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.focus_handle.focus(window, cx);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let initial_selection = selected_entry(&cx);
+        cx.dispatch_action(menu::SelectNext);
+        assert_ne!(selected_entry(&cx), initial_selection);
+        cx.simulate_keystrokes("ctrl-p");
+        assert_eq!(selected_entry(&cx), initial_selection);
+        assert!(!file_finder_opened.load(Ordering::SeqCst));
+
+        // With the commit editor focused, `ctrl-p` must fall through to the
+        // workspace binding instead.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.commit_editor.focus_handle(cx).focus(window, cx);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_keystrokes("ctrl-p");
+        assert!(file_finder_opened.load(Ordering::SeqCst));
+        assert_eq!(selected_entry(&cx), initial_selection);
     }
 
     #[gpui::test]
