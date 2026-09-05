@@ -237,40 +237,12 @@ impl RunningMode {
         &self.worktree
     }
 
-    /// gdb-dap runs gdb with its cwd at the worktree root and matches
-    /// breakpoint sources against the paths gdb derives from DWARF (relative
-    /// to the compilation directory). An absolute Windows path doesn't match,
-    /// so gdb sets the breakpoint as pending; send the worktree-relative path
-    /// instead so it resolves immediately.
-    fn breakpoint_source(&self, abs_path: &Path, cx: &App) -> dap::Source {
-        if self.adapter.to_string() == "GDB"
-            && let Some(worktree) = self.worktree.upgrade()
-        {
-            let root = worktree.read(cx).abs_path();
-            if let Ok(relative) = abs_path.strip_prefix(root.as_ref()) {
-                return dap::Source {
-                    name: relative
-                        .file_name()
-                        .map(|filename| filename.to_string_lossy().into_owned()),
-                    path: Some(relative.to_string_lossy().replace('\\', "/")),
-                    source_reference: None,
-                    presentation_hint: None,
-                    origin: None,
-                    sources: None,
-                    adapter_data: None,
-                    checksums: None,
-                };
-            }
-        }
-        client_source(abs_path)
-    }
-
     fn unset_breakpoints_from_paths(&self, paths: &Vec<Arc<Path>>, cx: &mut App) -> Task<()> {
         let tasks: Vec<_> = paths
             .iter()
             .map(|path| {
                 self.request(dap_command::SetBreakpoints {
-                    source: self.breakpoint_source(path, cx),
+                    source: client_source(path),
                     source_modified: None,
                     breakpoints: vec![],
                 })
@@ -337,7 +309,7 @@ impl RunningMode {
             .collect::<Vec<_>>();
 
         let task = self.request(dap_command::SetBreakpoints {
-            source: self.breakpoint_source(&abs_path, cx),
+            source: client_source(&abs_path),
             source_modified: Some(matches!(reason, BreakpointUpdatedReason::FileSaved)),
             breakpoints,
         });
@@ -419,7 +391,7 @@ impl RunningMode {
             let error_path = path.clone();
             let send_request = self
                 .request(dap_command::SetBreakpoints {
-                    source: self.breakpoint_source(&path, cx),
+                    source: client_source(&path),
                     source_modified: Some(false),
                     breakpoints,
                 })
