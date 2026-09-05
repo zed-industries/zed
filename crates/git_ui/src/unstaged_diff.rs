@@ -1,12 +1,13 @@
 use crate::{
     diff_multibuffer::DiffMultibuffer,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
+    project_diff::render_send_review_to_agent_button,
 };
 use anyhow::{Context as _, Result};
 use buffer_diff::DiffHunkStatus;
 use editor::{
     DiffHunkRenderer, Editor, EditorEvent, SplittableEditor,
-    actions::{GoToHunk, GoToPreviousHunk},
+    actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
 };
 use git::{StageAll, StageAndNext};
 use gpui::{
@@ -659,6 +660,7 @@ impl Render for UnstagedDiffToolbar {
         let diff = unstaged_diff.read(cx).diff.read(cx);
         let (additions, deletions) = diff.calculate_changed_lines(cx);
         let is_multibuffer_empty = diff.multibuffer().read(cx).is_empty();
+        let review_count = diff.total_review_comment_count();
 
         h_flex()
             .my_neg_1()
@@ -673,6 +675,16 @@ impl Render for UnstagedDiffToolbar {
                     deletions as usize,
                 ))
                 .child(Divider::vertical().ml_1())
+            })
+            .when(review_count > 0, |this| {
+                this.child(
+                    render_send_review_to_agent_button(review_count, &focus_handle).on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.dispatch_action(&SendReviewToAgent, window, cx)
+                        }),
+                    ),
+                )
+                .child(Divider::vertical())
             })
             // n.b. the only reason these arrows are here is because we don't
             // support "undo" for staging so we need a way to go back.
