@@ -38,6 +38,7 @@ use heapless::Vec as ArrayVec;
 use language_model::{
     FastModeConfirmation, LanguageModel, LanguageModelEffortLevel, LanguageModelId,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Speed,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use notifications::status_toast::StatusToast;
 use settings::{update_settings_file, update_settings_file_with_completion};
@@ -1864,11 +1865,10 @@ impl ThreadView {
     fn emit_thread_error_telemetry(&self, error: &ThreadError, cx: &mut Context<Self>) {
         let (error_kind, acp_error_code, message): (&str, Option<SharedString>, SharedString) =
             match error {
-                ThreadError::PaymentRequired => (
+                ThreadError::PaymentRequired { provider } => (
                     "payment_required",
                     None,
-                    "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
-                        .into(),
+                    Self::payment_required_error_message(provider, self.uses_zed_provider(cx)),
                 ),
                 ThreadError::Refusal => {
                     let model_or_agent_name = self.current_model_name(cx);
@@ -11030,7 +11030,9 @@ impl ThreadView {
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
             }
-            ThreadError::PaymentRequired => self.render_payment_required_error(cx),
+            ThreadError::PaymentRequired { provider } => {
+                self.render_payment_required_error(provider, cx)
+            }
             ThreadError::RateLimitExceeded { provider } => self.render_error_callout(
                 "Rate Limit Reached",
                 format!(
@@ -11163,22 +11165,49 @@ impl ThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
-    fn render_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
-        const ERROR_MESSAGE: &str =
-            "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
+    fn render_payment_required_error(
+        &self,
+        provider: &SharedString,
+        cx: &mut Context<Self>,
+    ) -> Callout {
+        let uses_zed_provider = self.uses_zed_provider(cx);
+        let message = Self::payment_required_error_message(provider, uses_zed_provider);
+        if uses_zed_provider {
+            Callout::new()
+                .severity(Severity::Error)
+                .icon(IconName::XCircle)
+                .title("Free Usage Exceeded")
+                .description(message.clone())
+                .actions_slot(
+                    h_flex()
+                        .gap_0p5()
+                        .child(self.upgrade_button(cx))
+                        .child(self.create_copy_button(message)),
+                )
+                .dismiss_action(self.dismiss_error_button(cx))
+        } else {
+            self.render_error_callout("Payment Required", message, true, true, cx)
+        }
+    }
 
-        Callout::new()
-            .severity(Severity::Error)
-            .icon(IconName::XCircle)
-            .title("Free Usage Exceeded")
-            .description(ERROR_MESSAGE)
-            .actions_slot(
-                h_flex()
-                    .gap_0p5()
-                    .child(self.upgrade_button(cx))
-                    .child(self.create_copy_button(ERROR_MESSAGE)),
+    fn payment_required_error_message(
+        provider: &SharedString,
+        uses_zed_provider: bool,
+    ) -> SharedString {
+        if uses_zed_provider {
+            "You reached your free usage limit. Upgrade to Zed Pro for more prompts.".into()
+        } else {
+            format!(
+                "{provider} requires additional credits. Add credits to your {provider} account or switch models."
             )
-            .dismiss_action(self.dismiss_error_button(cx))
+            .into()
+        }
+    }
+
+    fn uses_zed_provider(&self, cx: &App) -> bool {
+        self.as_native_thread(cx)
+            .and_then(|thread| thread.read(cx).model())
+            .map_or(false, |model| model.provider_id() == ZED_CLOUD_PROVIDER_ID)
     }
 
     fn render_error_callout(
