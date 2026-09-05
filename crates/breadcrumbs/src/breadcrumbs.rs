@@ -13,7 +13,6 @@ type RenderBreadcrumbTextFn = fn(
     Option<AnyElement>,
     &dyn ItemHandle,
     bool,
-    &mut Window,
     &App,
 ) -> AnyElement;
 
@@ -50,8 +49,9 @@ impl Render for Breadcrumbs {
         let element = h_flex()
             .id("breadcrumb-container")
             .flex_grow_1()
+            .min_w_0()
             .h_8()
-            .overflow_x_scroll()
+            .overflow_hidden()
             .text_ui(cx);
 
         let Some(active_item) = self.active_item.as_ref() else {
@@ -71,7 +71,6 @@ impl Render for Breadcrumbs {
                 prefix_element,
                 active_item.as_ref(),
                 false,
-                window,
                 cx,
             )
         } else {

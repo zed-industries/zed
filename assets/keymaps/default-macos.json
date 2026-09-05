@@ -167,6 +167,7 @@
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
       "alt-enter": "editor::OpenSelectionsInMultibuffer",
       "alt-cmd-f": "text_finder::Toggle",
+      "cmd-alt-shift-p": "editor::OpenBreadcrumbNavigation",
     },
   },
   {
@@ -1280,6 +1281,8 @@
       // ToggleActionsMenu) live in keymaps/specific-overrides-macos.json, which
       // is loaded after the base keymap so they win over conflicting base-keymap
       // Editor bindings.
+      // Breadcrumb menu bindings (SelectParent/SelectChild/SelectFirst/SelectLast)
+      // live in keymaps/specific-overrides-macos.json for the same reason.
     },
   },
   {

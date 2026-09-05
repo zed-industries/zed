@@ -5595,6 +5595,67 @@ mod tests {
         );
     }
 
+    /// Both halves of owning a chord. It has to survive every context-less binding that comes
+    /// later in the same file - a context-less match sits at the deepest depth and a tie goes to
+    /// the later-added binding, which is how `dev::ToggleFpsOverlay` once swallowed the old chord
+    /// whenever an editor was focused. And it has to not do the same to anybody else: winning
+    /// from `Editor && mode == full` beats any shallower context, so a chord that is already
+    /// spoken for is retired wherever an editor is focused - which the first assertion is happy
+    /// to watch happen. `alt-shift-b` on Windows was exactly that, already `branches::OpenRecent`
+    /// at `Workspace`.
+    #[gpui::test]
+    fn test_breadcrumb_navigation_chord_is_not_shadowed(cx: &mut TestAppContext) {
+        init_keymap_test(cx);
+
+        for (asset, keystroke) in [
+            ("keymaps/default-linux.json", "alt-shift-b"),
+            ("keymaps/default-windows.json", "alt-shift-."),
+            ("keymaps/default-macos.json", "cmd-alt-shift-p"),
+        ] {
+            let (resolved, collisions) = cx.update(|cx| {
+                let mut bindings =
+                    settings::KeymapFile::load_asset_allow_partial_failure(asset, cx).unwrap();
+                for binding in &mut bindings {
+                    binding.set_meta(settings::KeybindSource::Default.meta());
+                }
+                let chord = gpui::Keystroke::parse(keystroke).unwrap();
+                // Compared through the parsed keystroke, so modifier order does not hide one.
+                let collisions = bindings
+                    .iter()
+                    .filter(|binding| {
+                        binding.action().name() != "editor::OpenBreadcrumbNavigation"
+                            && binding.keystrokes().len() == 1
+                            && binding.keystrokes()[0].inner() == &chord
+                    })
+                    .map(|binding| binding.action().name().to_string())
+                    .collect::<Vec<_>>();
+                let resolved = gpui::Keymap::new(bindings)
+                    .bindings_for_input(
+                        &[chord],
+                        &[
+                            gpui::KeyContext::parse("Workspace").unwrap(),
+                            gpui::KeyContext::parse("Pane").unwrap(),
+                            gpui::KeyContext::parse("Editor mode=full").unwrap(),
+                        ],
+                    )
+                    .0
+                    .iter()
+                    .map(|binding| binding.action().name().to_string())
+                    .collect::<Vec<_>>();
+                (resolved, collisions)
+            });
+            assert_eq!(
+                resolved.first().map(String::as_str),
+                Some("editor::OpenBreadcrumbNavigation"),
+                "{asset}: {keystroke} must open breadcrumb navigation with an editor focused,                  got {resolved:?}"
+            );
+            assert!(
+                collisions.is_empty(),
+                "{asset}: {keystroke} already belongs to {collisions:?}, which an                  editor-context binding retires wherever an editor is focused"
+            );
+        }
+    }
+
     #[gpui::test]
     async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
         let executor = cx.executor();

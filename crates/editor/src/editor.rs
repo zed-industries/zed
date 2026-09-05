@@ -105,6 +105,7 @@ pub use editor_settings::{
     ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
     ui_scrollbar_settings_from_raw,
 };
+use element::{BreadcrumbListing, BreadcrumbNavigationMenu};
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     file_status_label_color, render_breadcrumb_text,
@@ -1159,6 +1160,8 @@ pub struct Editor {
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
+    breadcrumb_navigation_menu: Option<Entity<BreadcrumbNavigationMenu>>,
+    _breadcrumb_navigation_menu_subscription: Option<Subscription>,
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: TypeIdHashMap<Box<dyn Addon>>,
@@ -2511,6 +2514,8 @@ impl Editor {
             in_project_search: false,
             previous_search_ranges: None,
             breadcrumb_header: None,
+            breadcrumb_navigation_menu: None,
+            _breadcrumb_navigation_menu_subscription: None,
             focused_block: None,
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: Default::default(),
@@ -10212,6 +10217,9 @@ impl Editor {
         }
 
         if old_breadcrumbs_visible != self.breadcrumbs_visible() {
+            if !self.breadcrumbs_visible() {
+                self.dismiss_breadcrumb_navigation(window, cx);
+            }
             cx.emit(EditorEvent::BreadcrumbsChanged);
         }
 
@@ -11377,6 +11385,175 @@ impl Editor {
             unnecessary_code_fade: settings.unnecessary_code_fade,
             show_underlines: self.diagnostics_enabled(),
         }
+    }
+
+    pub(crate) fn breadcrumb_navigation_menu(&self) -> Option<&Entity<BreadcrumbNavigationMenu>> {
+        self.breadcrumb_navigation_menu.as_ref()
+    }
+
+    pub(crate) fn open_breadcrumb_navigation(
+        &mut self,
+        listing: BreadcrumbListing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let active_file_path = self.active_project_path(cx).map(|path| path.path);
+        let workspace = self.workspace().map(|workspace| workspace.downgrade());
+        let Some(workspace) = workspace else {
+            // An open menu holds a workspace handle it can no longer resolve, so opening a
+            // file from it would silently do nothing. Close it rather than leave it there.
+            self.dismiss_breadcrumb_navigation(window, cx);
+            return;
+        };
+
+        if let Some(menu) = self.breadcrumb_navigation_menu.clone() {
+            // set_listing runs under this editor.update; it must not re-enter the editor.
+            menu.update(cx, |menu, cx| {
+                menu.set_listing(listing, active_file_path, false, window, cx);
+            });
+            cx.emit(EditorEvent::BreadcrumbsChanged);
+            cx.notify();
+            return;
+        }
+
+        let editor = cx.entity().downgrade();
+        let menu = BreadcrumbNavigationMenu::new(
+            editor,
+            workspace,
+            listing,
+            active_file_path,
+            false,
+            window,
+            cx,
+        );
+        let subscription = cx.subscribe_in(
+            &menu,
+            window,
+            |this, menu, _: &gpui::DismissEvent, window, cx| {
+                let menu_had_focus = menu.focus_handle(cx).contains_focused(window, cx);
+                this.breadcrumb_navigation_menu = None;
+                this._breadcrumb_navigation_menu_subscription = None;
+                if menu_had_focus {
+                    window.focus(&this.focus_handle, cx);
+                }
+                cx.emit(EditorEvent::BreadcrumbsChanged);
+                cx.notify();
+            },
+        );
+        self.breadcrumb_navigation_menu = Some(menu);
+        self._breadcrumb_navigation_menu_subscription = Some(subscription);
+        cx.emit(EditorEvent::BreadcrumbsChanged);
+        cx.notify();
+    }
+
+    pub(crate) fn open_or_toggle_breadcrumb_listing(
+        &mut self,
+        target: element::BreadcrumbSegmentTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let listing = match target {
+            element::BreadcrumbSegmentTarget::Directory {
+                worktree_id, path, ..
+            } => BreadcrumbListing::Directory { worktree_id, path },
+            element::BreadcrumbSegmentTarget::Symbol { buffer_id, item } => {
+                BreadcrumbListing::Symbols {
+                    buffer_id,
+                    parent: item,
+                }
+            }
+        };
+
+        if let Some(menu) = self.breadcrumb_navigation_menu.clone()
+            && menu.read(cx).listing() == &listing
+        {
+            self.dismiss_breadcrumb_navigation(window, cx);
+            return;
+        }
+
+        self.open_breadcrumb_navigation(listing, window, cx);
+    }
+
+    pub(crate) fn dismiss_breadcrumb_navigation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(menu) = self.breadcrumb_navigation_menu.take() {
+            self._breadcrumb_navigation_menu_subscription = None;
+            if menu.focus_handle(cx).contains_focused(window, cx) {
+                window.focus(&self.focus_handle, cx);
+            }
+            cx.emit(EditorEvent::BreadcrumbsChanged);
+            cx.notify();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_workspace_for_test(&mut self, workspace: WeakEntity<Workspace>) {
+        self.workspace = Some((workspace, None));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_workspace_for_test(&mut self) {
+        self.workspace = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_or_toggle_breadcrumb_listing_for_test(
+        &mut self,
+        listing: BreadcrumbListing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let target = match listing {
+            BreadcrumbListing::Directory { worktree_id, path } => {
+                element::BreadcrumbSegmentTarget::Directory { worktree_id, path }
+            }
+            BreadcrumbListing::Symbols { buffer_id, parent } => {
+                element::BreadcrumbSegmentTarget::Symbol {
+                    buffer_id,
+                    item: parent,
+                }
+            }
+        };
+        self.open_or_toggle_breadcrumb_listing(target, window, cx);
+    }
+
+    pub fn open_breadcrumb_navigation_action(
+        &mut self,
+        _: &OpenBreadcrumbNavigation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let toggle_outline = |window: &mut Window, cx: &mut Context<Self>| {
+            if let Some(callback) = zed_actions::outline::TOGGLE_OUTLINE.get() {
+                callback(cx.entity().to_any_view(), window, cx);
+            }
+        };
+
+        if !self.breadcrumbs_visible() || self.workspace().is_none() {
+            toggle_outline(window, cx);
+            return;
+        }
+
+        let Some(buffer) = self.buffer().read(cx).as_singleton() else {
+            toggle_outline(window, cx);
+            return;
+        };
+        let buffer_id = buffer.read(cx).remote_id();
+
+        // Opens the file's outline: the cursor is in code, so the symbols of the current file
+        // are what this navigates. The directory segments in the bar open their own listings on
+        // click; the chord is the outline entry point.
+        self.open_breadcrumb_navigation(
+            BreadcrumbListing::Symbols {
+                buffer_id,
+                parent: None,
+            },
+            window,
+            cx,
+        );
     }
 
     fn breadcrumbs_inner(&self, cx: &App) -> Option<Vec<HighlightedText>> {

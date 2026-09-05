@@ -47,4 +47,16 @@
       "ctrl-shift-enter": "text_finder::ToggleFoldAll",
     },
   },
+  {
+    // Only the four the menu has to take from the query editor beneath it: the arrows walk
+    // the tree instead of the caret, and Home/End reach the ends of the list rather than the
+    // ends of the query. Up/Down/Enter/Escape already reach it through `Picker > Editor`.
+    "context": "BreadcrumbNavigationMenu > Editor",
+    "bindings": {
+      "left": "menu::SelectParent",
+      "right": "menu::SelectChild",
+      "home": "menu::SelectFirst",
+      "end": "menu::SelectLast",
+    },
+  },
 ]
