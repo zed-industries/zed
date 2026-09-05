@@ -80,7 +80,7 @@ use super::entry_view_state::EntryViewState;
 use crate::ModeSelector;
 use crate::ModelSelectorPopover;
 use crate::agent_connection_store::{
-    AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionStore,
+    AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionLease, AgentConnectionStore,
 };
 use crate::agent_diff::AgentDiff;
 use crate::completion_provider::{AgentContextSelection, AvailableSkill};
@@ -286,6 +286,9 @@ pub(crate) struct Conversation {
 
 impl Conversation {
     pub fn register_thread(&mut self, thread: Entity<AcpThread>, cx: &mut Context<Self>) {
+        // Registration counts as activity, otherwise a thread that is opened
+        // and left alone reads as idle since the beginning of time.
+        self.updated_at = Some(Instant::now());
         let session_id = thread.read(cx).session_id().clone();
         let subscription = cx.subscribe(&thread, {
             let session_id = session_id.clone();
@@ -740,6 +743,7 @@ enum ServerState {
         _loading: Entity<LoadingView>,
         connection: Option<Rc<dyn AgentConnection>>,
         _request_elicitation_subscription: Option<Subscription>,
+        _lease: AgentConnectionLease,
     },
     LoadError {
         error: LoadError,
@@ -757,6 +761,7 @@ pub struct ConnectedServerState {
     conversation: Entity<Conversation>,
     _connection_entry_subscription: Subscription,
     _request_elicitation_subscription: Option<Subscription>,
+    _lease: AgentConnectionLease,
 }
 
 enum AuthState {
@@ -1066,9 +1071,10 @@ impl ConversationView {
         }
         let session_work_dirs = work_dirs.unwrap_or_else(|| project.read(cx).default_path_list(cx));
 
-        let connection_entry = connection_store.update(cx, |store, cx| {
+        let (connection_entry, lease) = connection_store.update(cx, |store, cx| {
             store.request_connection(connection_key, agent.clone(), cx)
         });
+        let connected_lease = lease.clone();
 
         let connection_entry_subscription =
             cx.subscribe(&connection_entry, |this, _entry, event, cx| match event {
@@ -1217,6 +1223,7 @@ impl ConversationView {
                         this.set_server_state(
                             ServerState::Connected(ConnectedServerState {
                                 connection,
+                                _lease: connected_lease,
                                 auth_state: AuthState::Ok,
                                 active_id: Some(root_session_id.clone()),
                                 threads: HashMap::from_iter([(root_session_id, current)]),
@@ -1247,6 +1254,7 @@ impl ConversationView {
             _loading: loading_view,
             connection: None,
             _request_elicitation_subscription: None,
+            _lease: lease,
         }
     }
 
@@ -1481,6 +1489,12 @@ impl ConversationView {
             } else {
                 let request_elicitation_subscription =
                     Self::request_elicitation_subscription(&connection, cx);
+                let connection_store = this.connection_store.clone();
+                let connection_key = this.connection_key.clone();
+                let agent = this.agent.clone();
+                let lease = connection_store.update(cx, |store, cx| {
+                    store.request_connection(connection_key, agent, cx).1
+                });
                 this.set_server_state(
                     ServerState::Connected(ConnectedServerState {
                         auth_state,
@@ -1490,6 +1504,7 @@ impl ConversationView {
                         conversation: cx.new(|_cx| Conversation::default()),
                         _connection_entry_subscription: Subscription::new(|| {}),
                         _request_elicitation_subscription: request_elicitation_subscription,
+                        _lease: lease,
                     }),
                     cx,
                 );
@@ -11104,6 +11119,208 @@ pub(crate) mod tests {
             closed_count > 0,
             "close_session should have been called for each thread"
         );
+    }
+
+    #[gpui::test]
+    async fn test_reaps_connection_after_last_conversation_drops(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(CloseCapableConnection::new()), cx).await;
+        cx.run_until_parked();
+
+        let connection_store =
+            conversation_view.read_with(cx, |view, _cx| view.connection_store.clone());
+        let connection_key = conversation_view.read_with(cx, |view, _cx| view.agent_key().clone());
+
+        connection_store.read_with(cx, |store, cx| {
+            assert_eq!(
+                store.connection_status(&connection_key, cx),
+                crate::agent_connection_store::AgentConnectionStatus::Connected,
+            );
+            assert_eq!(store.lease_count(&connection_key), 1);
+        });
+
+        drop(conversation_view);
+        // Entity release is deferred to the end of the effect cycle, so the
+        // lease is not gone until one has run.
+        cx.update(|_window, _cx| {});
+        cx.run_until_parked();
+
+        connection_store.read_with(cx, |store, _cx| {
+            assert_eq!(
+                store.lease_count(&connection_key),
+                0,
+                "dropping the view should release its lease",
+            );
+        });
+
+        let now = Instant::now();
+        let long_enough = Duration::from_secs(60 * 60);
+        connection_store.update(cx, |store, cx| store.reap_unused_connections(now, cx));
+        connection_store.read_with(cx, |store, cx| {
+            assert_eq!(
+                store.connection_status(&connection_key, cx),
+                crate::agent_connection_store::AgentConnectionStatus::Connected,
+                "the first pass only observes that the connection is unused",
+            );
+        });
+
+        connection_store.update(cx, |store, cx| {
+            store.reap_unused_connections(now + long_enough, cx)
+        });
+        connection_store.read_with(cx, |store, cx| {
+            assert_eq!(
+                store.connection_status(&connection_key, cx),
+                crate::agent_connection_store::AgentConnectionStatus::Disconnected,
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_keeps_connection_while_another_holder_has_a_lease(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(CloseCapableConnection::new()), cx).await;
+        cx.run_until_parked();
+
+        let connection_store =
+            conversation_view.read_with(cx, |view, _cx| view.connection_store.clone());
+        let connection_key = conversation_view.read_with(cx, |view, _cx| view.agent_key().clone());
+
+        let server: Rc<dyn AgentServer> =
+            Rc::new(StubAgentServer::new(CloseCapableConnection::new()));
+        let lease = connection_store.update(cx, |store, cx| {
+            store
+                .request_connection(connection_key.clone(), server, cx)
+                .1
+        });
+
+        drop(conversation_view);
+        cx.run_until_parked();
+
+        let now = Instant::now();
+        let long_enough = Duration::from_secs(60 * 60);
+        connection_store.update(cx, |store, cx| store.reap_unused_connections(now, cx));
+        connection_store.update(cx, |store, cx| {
+            store.reap_unused_connections(now + long_enough, cx)
+        });
+        connection_store.read_with(cx, |store, cx| {
+            assert_eq!(
+                store.lease_count(&connection_key),
+                1,
+                "the outstanding lease should still be counted",
+            );
+            assert_eq!(
+                store.connection_status(&connection_key, cx),
+                crate::agent_connection_store::AgentConnectionStatus::Connected,
+                "a connection with an outstanding lease must not be reaped",
+            );
+        });
+
+        drop(lease);
+        connection_store.update(cx, |store, cx| store.reap_unused_connections(now, cx));
+        connection_store.update(cx, |store, cx| {
+            store.reap_unused_connections(now + long_enough, cx)
+        });
+        connection_store.read_with(cx, |store, cx| {
+            assert_eq!(
+                store.connection_status(&connection_key, cx),
+                crate::agent_connection_store::AgentConnectionStatus::Disconnected,
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_unconfigured_agent_keeps_its_entry_until_leases_are_released(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(CloseCapableConnection::new()), cx).await;
+        cx.run_until_parked();
+
+        let connection_store =
+            conversation_view.read_with(cx, |view, _cx| view.connection_store.clone());
+        let connection_key = conversation_view.read_with(cx, |view, _cx| view.agent_key().clone());
+
+        // The agent is removed from settings while a view is still using it.
+        connection_store.update(cx, |store, _cx| store.retain_configured_agents(|_| false));
+
+        connection_store.read_with(cx, |store, cx| {
+            assert_eq!(
+                store.lease_count(&connection_key),
+                1,
+                "the live view's lease should still be counted",
+            );
+            assert_eq!(
+                store.connection_status(&connection_key, cx),
+                crate::agent_connection_store::AgentConnectionStatus::Connected,
+                "an entry with outstanding leases must not be dropped from the map",
+            );
+        });
+
+        drop(conversation_view);
+        cx.update(|_window, _cx| {});
+        cx.run_until_parked();
+
+        let now = Instant::now();
+        let long_enough = Duration::from_secs(60 * 60);
+        connection_store.update(cx, |store, cx| store.reap_unused_connections(now, cx));
+        connection_store.update(cx, |store, cx| {
+            store.reap_unused_connections(now + long_enough, cx)
+        });
+        connection_store.read_with(cx, |store, cx| {
+            assert_eq!(
+                store.connection_status(&connection_key, cx),
+                crate::agent_connection_store::AgentConnectionStatus::Disconnected,
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_lease_survives_reconnect(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(CloseCapableConnection::new()), cx).await;
+        cx.run_until_parked();
+
+        let connection_store =
+            conversation_view.read_with(cx, |view, _cx| view.connection_store.clone());
+        let connection_key = conversation_view.read_with(cx, |view, _cx| view.agent_key().clone());
+
+        // The view is still using the agent, so its lease has to carry over to
+        // the replacement entry.
+        let server: Rc<dyn AgentServer> =
+            Rc::new(StubAgentServer::new(CloseCapableConnection::new()));
+        connection_store.update(cx, |store, cx| {
+            store.restart_connection(connection_key.clone(), server, cx)
+        });
+        cx.run_until_parked();
+
+        let now = Instant::now();
+        let long_enough = Duration::from_secs(60 * 60);
+        connection_store.update(cx, |store, cx| store.reap_unused_connections(now, cx));
+        connection_store.update(cx, |store, cx| {
+            store.reap_unused_connections(now + long_enough, cx)
+        });
+
+        connection_store.read_with(cx, |store, cx| {
+            assert_eq!(
+                store.lease_count(&connection_key),
+                1,
+                "the live view's lease should carry over to the new connection",
+            );
+            assert_eq!(
+                store.connection_status(&connection_key, cx),
+                crate::agent_connection_store::AgentConnectionStatus::Connected,
+            );
+        });
+
+        drop(conversation_view);
     }
 
     #[gpui::test]

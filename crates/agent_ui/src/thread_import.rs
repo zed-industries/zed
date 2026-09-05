@@ -693,6 +693,7 @@ fn fetch_sessions_for_agent(
     cx: &mut App,
 ) -> Task<AgentSessionFetchResult> {
     let mut wait_for_connection_tasks = Vec::new();
+    let mut leases = Vec::new();
 
     for store in stores {
         let remote_connection = store
@@ -702,7 +703,9 @@ fn fetch_sessions_for_agent(
             .remote_connection_options(cx);
         let agent = Agent::from(agent_id.clone());
         let server = agent.server(<dyn Fs>::global(cx), ThreadStore::global(cx));
-        let entry = store.update(cx, |store, cx| store.request_connection(agent, server, cx));
+        let (entry, lease) =
+            store.update(cx, |store, cx| store.request_connection(agent, server, cx));
+        leases.push(lease);
 
         wait_for_connection_tasks.push(entry.read(cx).wait_for_connection().map({
             let agent_id = agent_id.clone();
@@ -712,6 +715,8 @@ fn fetch_sessions_for_agent(
     }
 
     cx.spawn(async move |cx| {
+        // Held so the connections survive until every page is listed.
+        let _leases = leases;
         let mut stats = AgentSessionFetchStats::default();
         let results = futures::future::join_all(wait_for_connection_tasks).await;
 

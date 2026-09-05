@@ -820,13 +820,17 @@ impl ThreadsArchiveView {
         };
         let fs = <dyn Fs>::global(cx);
 
-        let task = agent_connection_store.update(cx, |store, cx| {
-            store
-                .request_connection(agent.clone(), agent.server(fs, ThreadStore::global(cx)), cx)
-                .read(cx)
-                .wait_for_connection()
+        let (task, lease) = agent_connection_store.update(cx, |store, cx| {
+            let (entry, lease) = store.request_connection(
+                agent.clone(),
+                agent.server(fs, ThreadStore::global(cx)),
+                cx,
+            );
+            (entry.read(cx).wait_for_connection(), lease)
         });
         cx.spawn(async move |_this, cx| {
+            // Held so the connection survives until the session is deleted.
+            let _lease = lease;
             crate::thread_worktree_archive::cleanup_thread_archived_worktrees(thread_id, cx).await;
 
             let state = task.await?;
