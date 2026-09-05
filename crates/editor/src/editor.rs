@@ -1048,6 +1048,7 @@ pub struct Editor {
     debounced_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     debounced_selection_highlight_complete: bool,
     last_selection_from_search: bool,
+    suppress_selected_text_highlight: bool,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
@@ -1058,6 +1059,7 @@ pub struct Editor {
     /// Whether the cursor is offset one character to the left when something is
     /// selected (needed for vim visual mode)
     cursor_offset_on_selection: bool,
+    highlight_primary_local_selection: bool,
     current_line_highlight: Option<CurrentLineHighlight>,
     /// Whether to collapse search match ranges to just their start position.
     /// When true, navigating to a match positions the cursor at the match
@@ -1363,6 +1365,7 @@ pub struct SelectionEffects {
     completions: bool,
     scroll: Option<Autoscroll>,
     from_search: bool,
+    suppress_selected_text_highlight: bool,
 }
 
 impl Default for SelectionEffects {
@@ -1372,6 +1375,7 @@ impl Default for SelectionEffects {
             completions: true,
             scroll: Some(Autoscroll::fit()),
             from_search: false,
+            suppress_selected_text_highlight: false,
         }
     }
 }
@@ -1407,6 +1411,13 @@ impl SelectionEffects {
     pub fn from_search(self, from_search: bool) -> Self {
         Self {
             from_search,
+            ..self
+        }
+    }
+
+    pub fn suppress_selected_text_highlight(self, suppress_selected_text_highlight: bool) -> Self {
+        Self {
+            suppress_selected_text_highlight,
             ..self
         }
     }
@@ -2397,6 +2408,7 @@ impl Editor {
             debounced_selection_highlight_task: None,
             debounced_selection_highlight_complete: false,
             last_selection_from_search: false,
+            suppress_selected_text_highlight: false,
             document_highlights_task: None,
             linked_editing_range_task: None,
             pending_rename: None,
@@ -2406,6 +2418,7 @@ impl Editor {
                 .cursor_shape
                 .unwrap_or_default(),
             cursor_offset_on_selection: false,
+            highlight_primary_local_selection: false,
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
@@ -3302,6 +3315,17 @@ impl Editor {
         self.cursor_offset_on_selection = set_cursor_offset_on_selection;
     }
 
+    pub fn set_highlight_primary_local_selection(
+        &mut self,
+        highlight_primary_local_selection: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.highlight_primary_local_selection != highlight_primary_local_selection {
+            self.highlight_primary_local_selection = highlight_primary_local_selection;
+            cx.notify();
+        }
+    }
+
     /// Returns the anchor to use as the rename target for a selection.
     ///
     /// In selection-based modes, like vim's visual mode and helix, the rendered
@@ -3804,6 +3828,9 @@ impl Editor {
         if self.last_selection_from_search
             && self.has_background_highlights(HighlightKey::BufferSearchHighlights)
         {
+            return None;
+        }
+        if self.suppress_selected_text_highlight {
             return None;
         }
         if self.selections.count() != 1 || self.selections.line_mode() {
