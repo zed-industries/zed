@@ -70,3 +70,39 @@ best starting point for new applications:
 - `ownership_post` supports the ownership and data-flow documentation.
 - `paths_bench` is a path rendering benchmark.
 - `tree` renders a deep tree of nested elements.
+
+## Node engine boundary lab
+
+```sh
+GPUI_EXPERIMENTAL_NODE_ENGINE=0 cargo run -p gpui --example node_engine_boundaries
+```
+
+This desktop example runs with either engine. A and B are keyed `Component`
+values with `use_keyed_state`. The lower panels are ordinary entity views;
+retained rendering caches them automatically. Terminal traces report element
+layout, prepaint, and paint calls. The window displays retained scope and layout
+counts from the preceding frame. Instrumentation does not schedule frames.
+
+| Exercise | Expected behavior |
+| --- | --- |
+| Increment A, then B | Each component has its own count and mount identity. |
+| Swap A / B | Counts, mount identities, and focus follow the keys. |
+| Remove A, then reinsert | A receives a new mount identity and count zero. |
+| Change parent input, then print captured input | Displayed props and callback captures update. |
+| Increment to focus, then press Enter | Only the focused card increments. |
+| Hover a strip, then leave | Its color changes and returns. |
+| Toggle A width | B moves when it follows A; hit targets follow geometry. |
+| Toggle inherited text size | All views receive the new text style. |
+| Notify one entity | Its count updates; inspect clean sibling reuse. |
+| Notify shared dependency | Both lower views display the new value. |
+| Toggle deferred overlay | It paints above the red strip; closing removes its hit targets. |
+| Shrink and scroll the window | Clipping and hit targets follow visible content. |
+
+Launch a second instance with `GPUI_EXPERIMENTAL_NODE_ENGINE=1` for comparison.
+The engine is experimental. Differential tests compare scenes for selected
+mutations and separately exercise callbacks, state lifetime, and dependency
+replacement. This manual lab does not cover IME or accessibility. Deferred
+painting, accessibility, inspection, and explicit window refresh conservatively
+rebuild scopes. Custom measured-layout callbacks also rebuild; only GPUI's text
+measurement currently opts into retaining its callback. GPU presentation still
+submits the full scene; scope reuse reduces CPU work, not submitted damage regions.

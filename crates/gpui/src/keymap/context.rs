@@ -6,8 +6,18 @@ use std::fmt;
 /// at this point in the element tree. Contains a set of identifiers
 /// and/or key value pairs representing the current context for the
 /// keymap.
-#[derive(Clone, Default, Eq, PartialEq, Hash)]
+#[derive(Default, Eq, PartialEq, Hash)]
 pub struct KeyContext(Vec<ContextEntry>);
+
+impl Clone for KeyContext {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.0.clone_from(&source.0);
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 /// An entry in a KeyContext
