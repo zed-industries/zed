@@ -1163,7 +1163,11 @@ impl KeymapEditor {
                         Tooltip::with_meta(
                             "View conflicts",
                             Some(&ToggleConflictFilter),
-                            "Use alt+click to show all conflicts",
+                            if cfg!(target_os = "macos") {
+                                "Use option+click to show all conflicts"
+                            } else {
+                                "Use alt+click to show all conflicts"
+                            },
                             cx,
                         )
                     })
@@ -1197,7 +1201,11 @@ impl KeymapEditor {
                         Tooltip::with_meta(
                             "Show matching keybinds",
                             Some(&ShowMatchingKeybinds),
-                            "This binding is overridden by other bindings.\nUse alt+click to edit this binding",
+                            if cfg!(target_os = "macos") {
+                                "This binding is overridden by other bindings.\nUse option+click to edit this binding"
+                            } else {
+                                "This binding is overridden by other bindings.\nUse alt+click to edit this binding"
+                            },
                             cx,
                         )
                     })
