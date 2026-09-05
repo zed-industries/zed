@@ -5465,43 +5465,51 @@ impl BackgroundScanner {
             if job.is_external {
                 child_entry.is_external = true;
             } else if child_metadata.is_symlink {
-                let canonical_path = match self.fs.canonicalize(&child_abs_path).await {
-                    Ok(path) => path,
-                    Err(err) => {
-                        log::error!("error reading target of symlink {child_abs_path:?}: {err:#}",);
-                        continue;
-                    }
-                };
+                match self.fs.canonicalize(&child_abs_path).await {
+                    Ok(canonical_path) => {
+                        // lazily canonicalize the root path in order to determine if
+                        // symlinks point outside of the worktree.
+                        let root_canonical_path = match &root_canonical_path {
+                            Some(path) => path,
+                            None => match self.fs.canonicalize(&root_abs_path).await {
+                                Ok(path) => root_canonical_path.insert(path),
+                                Err(err) => {
+                                    log::error!(
+                                        "error canonicalizing root {:?}: {:?}",
+                                        root_abs_path,
+                                        err
+                                    );
+                                    continue;
+                                }
+                            },
+                        };
 
-                // lazily canonicalize the root path in order to determine if
-                // symlinks point outside of the worktree.
-                let root_canonical_path = match &root_canonical_path {
-                    Some(path) => path,
-                    None => match self.fs.canonicalize(&root_abs_path).await {
-                        Ok(path) => root_canonical_path.insert(path),
-                        Err(err) => {
-                            log::error!("error canonicalizing root {:?}: {:?}", root_abs_path, err);
-                            continue;
+                        if !canonical_path.starts_with(root_canonical_path) {
+                            child_entry.is_external = true;
                         }
-                    },
-                };
 
-                if !canonical_path.starts_with(root_canonical_path) {
-                    child_entry.is_external = true;
-                }
+                        if child_metadata.is_dir {
+                            let mut state = self.state.lock().await;
+                            let paths = state
+                                .symlink_paths_by_target
+                                .entry(Arc::from(canonical_path.clone()))
+                                .or_default();
+                            if !paths.iter().any(|path| path == &child_path) {
+                                paths.push(child_path.clone());
+                            }
+                        }
 
-                if child_metadata.is_dir {
-                    let mut state = self.state.lock().await;
-                    let paths = state
-                        .symlink_paths_by_target
-                        .entry(Arc::from(canonical_path.clone()))
-                        .or_default();
-                    if !paths.iter().any(|path| path == &child_path) {
-                        paths.push(child_path.clone());
+                        child_entry.canonical_path = Some(canonical_path.into());
+                    }
+                    Err(err) => {
+                        // Keep dangling symlinks in the snapshot. Otherwise they are
+                        // invisible in the project panel and can cause hidden filename
+                        // collisions when their target is later created.
+                        log::debug!(
+                            "unable to resolve target of symlink {child_abs_path:?}: {err:#}"
+                        );
                     }
                 }
-
-                child_entry.canonical_path = Some(canonical_path.into());
             }
 
             if child_entry.is_dir() {
@@ -5648,7 +5656,16 @@ impl BackgroundScanner {
                 .map(|abs_path| async move {
                     let metadata = self.fs.metadata(abs_path).await?;
                     if let Some(metadata) = metadata {
-                        let canonical_path = self.fs.canonicalize(abs_path).await?;
+                        let canonical_path = match self.fs.canonicalize(abs_path).await {
+                            Ok(path) => Some(SanitizedPath::new_arc(&path)),
+                            Err(err) if metadata.is_symlink => {
+                                log::debug!(
+                                    "unable to resolve target of symlink {abs_path:?}: {err:#}"
+                                );
+                                None
+                            }
+                            Err(err) => return Err(err),
+                        };
 
                         // If we're on a case-insensitive filesystem (default on macOS), we want
                         // to only ignore metadata for non-symlink files if their absolute-path matches
@@ -5657,14 +5674,15 @@ impl BackgroundScanner {
                         // and we want to ignore the metadata for the old path (`test.txt`) so it's
                         // treated as removed.
                         if !self.fs_case_sensitive && !metadata.is_symlink {
-                            let canonical_file_name = canonical_path.file_name();
+                            let canonical_file_name =
+                                canonical_path.as_ref().and_then(|path| path.file_name());
                             let file_name = abs_path.file_name();
                             if canonical_file_name != file_name {
                                 return Ok(None);
                             }
                         }
 
-                        anyhow::Ok(Some((metadata, SanitizedPath::new_arc(&canonical_path))))
+                        anyhow::Ok(Some((metadata, canonical_path)))
                     } else {
                         Ok(None)
                     }
@@ -5705,7 +5723,9 @@ impl BackgroundScanner {
                         .snapshot
                         .ignore_stack_for_abs_path(&abs_path, metadata.is_dir, self.fs.as_ref())
                         .await;
-                    let is_external = !canonical_path.starts_with(&root_canonical_path);
+                    let is_external = canonical_path
+                        .as_ref()
+                        .is_some_and(|path| !path.starts_with(&root_canonical_path));
                     let entry_id = state.entry_id_for(self.next_entry_id.as_ref(), path, &metadata);
                     let mut fs_entry = Entry::new(
                         path.clone(),
@@ -5713,7 +5733,9 @@ impl BackgroundScanner {
                         entry_id,
                         state.snapshot.root_char_bag,
                         if metadata.is_symlink {
-                            Some(canonical_path.as_path().to_path_buf().into())
+                            canonical_path
+                                .as_ref()
+                                .map(|path| path.as_path().to_path_buf().into())
                         } else {
                             None
                         },
