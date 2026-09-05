@@ -155,7 +155,7 @@ impl Editor {
         let buffers_to_query = self
             .visible_buffers(cx)
             .into_iter()
-            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
+            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx), cx))
             .filter_map(|buffer| {
                 let id = buffer.read(cx).remote_id();
                 if for_buffer.is_none_or(|target| target == id)
