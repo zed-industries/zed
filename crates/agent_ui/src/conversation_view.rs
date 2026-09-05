@@ -1228,11 +1228,17 @@ impl ConversationView {
                         );
                     }
                     Err(err) => {
-                        this.handle_load_error(
-                            LoadError::Other(err.to_string().into()),
-                            window,
-                            cx,
-                        );
+                        let error = match err.downcast::<LoadError>() {
+                            Ok(load_error) => load_error,
+                            Err(err) => {
+                                log::error!("failed to create agent session: {err:?}");
+                                // `{:#}` keeps the whole context chain; `to_string`
+                                // would keep only the outermost message and hide
+                                // the root cause.
+                                LoadError::Other(format!("{err:#}").into())
+                            }
+                        };
+                        this.handle_load_error(error, window, cx);
                     }
                 };
             })
