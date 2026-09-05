@@ -1495,6 +1495,113 @@ async fn test_discard_clears_delegate_completion(cx: &mut gpui::TestAppContext) 
     });
 }
 
+async fn inline_only_test_context(
+    cx: &mut gpui::TestAppContext,
+) -> (EditorTestContext, Entity<FakeEditPredictionDelegate>) {
+    init_test(cx, |_| {});
+    update_test_language_settings(cx, &|settings| {
+        settings.edit_predictions.get_or_insert_default().mode =
+            Some(EditPredictionsMode::InlineOnly);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    (cx, provider)
+}
+
+#[gpui::test]
+async fn test_inline_only_accepts_one_line_per_tab(cx: &mut gpui::TestAppContext) {
+    let (mut cx, provider) = inline_only_test_context(cx).await;
+    cx.set_state("fn main() {\nˇ\n}");
+
+    propose_edits(
+        &provider,
+        vec![(12..12, "one();\ntwo();\nthree();")],
+        &mut cx,
+    );
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    // The whole suggestion is offered as ghost text, not chopped into pieces.
+    assert_editor_active_edit_completion(&mut cx, |_, edits| {
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].1.as_ref(), "one();\ntwo();\nthree();");
+    });
+
+    // Accepting takes only the first line of it.
+    accept_completion(&mut cx);
+    cx.run_until_parked();
+    cx.assert_editor_state("fn main() {\none();\nˇ\n}");
+}
+
+#[gpui::test]
+async fn test_inline_only_requests_next_prediction_after_accepting(cx: &mut gpui::TestAppContext) {
+    let (mut cx, provider) = inline_only_test_context(cx).await;
+    cx.set_state("fn main() {\nˇ\n}");
+
+    propose_edits(
+        &provider,
+        vec![(12..12, "one();\ntwo();\nthree();")],
+        &mut cx,
+    );
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    let refreshes_before = provider.read_with(&cx.cx, |provider, _| {
+        provider.refresh_count.load(atomic::Ordering::SeqCst)
+    });
+
+    accept_completion(&mut cx);
+    cx.run_until_parked();
+
+    let refreshes_after = provider.read_with(&cx.cx, |provider, _| {
+        provider.refresh_count.load(atomic::Ordering::SeqCst)
+    });
+    assert!(
+        refreshes_after > refreshes_before,
+        "provider was never asked what comes after the accepted line \
+         (before: {refreshes_before}, after: {refreshes_after})"
+    );
+}
+
+#[gpui::test]
+async fn test_inline_only_skips_predictions_needing_a_diff_popover(cx: &mut gpui::TestAppContext) {
+    let (mut cx, provider) = inline_only_test_context(cx).await;
+    cx.set_state("let pi = ˇ\"foo\";");
+
+    // A replacement cannot be drawn as ghost text, so InlineOnly declines it.
+    propose_edits(&provider, vec![(9..14, "3.14159")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            editor.active_edit_prediction.is_none(),
+            "replacement prediction should be skipped in InlineOnly mode"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_eager_mode_still_accepts_whole_prediction(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("fn main() {\nˇ\n}");
+
+    propose_edits(
+        &provider,
+        vec![(12..12, "one();\ntwo();\nthree();")],
+        &mut cx,
+    );
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    accept_completion(&mut cx);
+    cx.run_until_parked();
+    cx.assert_editor_state("fn main() {\none();\ntwo();\nthree();ˇ\n}");
+}
+
+
 fn accept_completion(cx: &mut EditorTestContext) {
     cx.update_editor(|editor, window, cx| {
         editor.accept_edit_prediction(&crate::AcceptEditPrediction, window, cx)
@@ -1749,6 +1856,7 @@ impl CompletionProvider for FakeCompletionMenuProvider {
 pub struct FakeEditPredictionDelegate {
     pub completion: Option<edit_prediction_types::EditPrediction>,
     pub refresh_count: Arc<AtomicUsize>,
+    pub accept_count: Arc<AtomicUsize>,
 }
 
 impl FakeEditPredictionDelegate {
@@ -1805,7 +1913,11 @@ impl EditPredictionDelegate for FakeEditPredictionDelegate {
         self.refresh_count.fetch_add(1, atomic::Ordering::SeqCst);
     }
 
-    fn accept(&mut self, _cx: &mut gpui::Context<Self>) {}
+    fn accept(&mut self, _cx: &mut gpui::Context<Self>) {
+        self.accept_count.fetch_add(1, atomic::Ordering::SeqCst);
+        // Mirrors the real delegates, which take their current prediction on accept.
+        self.completion.take();
+    }
 
     fn discard(
         &mut self,

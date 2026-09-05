@@ -796,6 +796,7 @@ impl EditPredictionButton {
         let current_mode = settings.edit_predictions_mode();
         let subtle_mode = matches!(current_mode, EditPredictionsMode::Subtle);
         let eager_mode = matches!(current_mode, EditPredictionsMode::Eager);
+        let inline_only_mode = matches!(current_mode, EditPredictionsMode::InlineOnly);
 
         menu = menu
                 .separator()
@@ -833,6 +834,24 @@ impl EditPredictionButton {
                                     value = "subtle",
                                 );
                                 toggle_edit_prediction_mode(fs.clone(), EditPredictionsMode::Subtle, cx)
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Inline Only")
+                        .toggleable(IconPosition::Start, inline_only_mode)
+                        .documentation_aside(DocumentationSide::Left, move |_| {
+                            Label::new("Only show ghost text at the cursor, accepted one line at a time. Predictions that need a diff popover are skipped.").into_any_element()
+                        })
+                        .handler({
+                            let fs = fs.clone();
+                            move |_, cx| {
+                                telemetry::event!(
+                                    "Edit Prediction Setting Changed",
+                                    setting = "mode",
+                                    value = "inline_only",
+                                );
+                                toggle_edit_prediction_mode(fs.clone(), EditPredictionsMode::InlineOnly, cx)
                             }
                         }),
                 );
