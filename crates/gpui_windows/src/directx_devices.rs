@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use gpui_util::ResultExt;
-use itertools::Itertools;
 use windows::Win32::{
     Foundation::HMODULE,
     Graphics::{
@@ -20,20 +19,6 @@ use windows::Win32::{
     },
 };
 use windows::core::Interface;
-
-pub(crate) fn try_to_recover_from_device_lost<T>(mut f: impl FnMut() -> Result<T>) -> Result<T> {
-    (0..5)
-        .map(|i| {
-            if i > 0 {
-                // Add a small delay before retrying
-                std::thread::sleep(std::time::Duration::from_millis(100 + i * 10));
-            }
-            f()
-        })
-        .find_or_last(Result::is_ok)
-        .unwrap()
-        .context("DirectXRenderer failed to recover from lost device after multiple attempts")
-}
 
 #[derive(Clone)]
 pub(crate) struct DirectXDevices {

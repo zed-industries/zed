@@ -8,13 +8,14 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot::{self, Receiver};
 use gpui_util::{ResultExt, get_powershell, new_std_command};
 use itertools::Itertools;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use smallvec::SmallVec;
 use windows::{
     UI::ViewManagement::UISettings,
@@ -45,12 +46,157 @@ pub struct WindowsPlatform {
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
     invalidate_devices: Arc<AtomicBool>,
+    device_recovery: Arc<Mutex<SharedDeviceRecovery>>,
     handle: HWND,
     suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
     disable_direct_composition: bool,
     has_package_identity: bool,
     app_identity: RefCell<Option<(String, String)>>,
     system_notifications: RefCell<SystemNotificationState>,
+}
+
+#[derive(Default)]
+struct SharedDeviceRecovery {
+    generation: u64,
+    last_generation: u64,
+    new_windows: Vec<SafeHwnd>,
+}
+
+#[derive(Clone)]
+pub(crate) enum WindowDeviceRecoveryAction {
+    Suspend,
+    Recover(DirectXDevices),
+}
+
+pub(crate) struct WindowDeviceRecoveryRequest {
+    pub(crate) generation: u64,
+    pub(crate) action: WindowDeviceRecoveryAction,
+    pub(crate) outcome: Option<WindowDeviceRecoveryOutcome>,
+}
+
+#[derive(Debug)]
+pub(crate) enum WindowDeviceRecoveryOutcome {
+    Suspended,
+    Active,
+    Deferred,
+    Stale,
+    Destroyed,
+    Failed(String),
+}
+
+struct GlobalDeviceRecoveryRequest {
+    directx_devices: DirectXDevices,
+    text_system: Arc<DirectWriteTextSystem>,
+    gpu_state: Option<GPUState>,
+    published: bool,
+}
+
+const DEVICE_RECOVERY_RETRY_DELAYS_MS: [u64; 8] = [0, 100, 250, 500, 1000, 2000, 4000, 8000];
+
+#[cfg(any(debug_assertions, test))]
+fn parse_injected_device_loss_vsyncs(value: &str) -> Vec<u64> {
+    value
+        .split(',')
+        .filter_map(|value| value.trim().parse::<u64>().ok())
+        .collect()
+}
+
+fn window_recovery_retry_delay(attempts: usize) -> Option<Duration> {
+    DEVICE_RECOVERY_RETRY_DELAYS_MS
+        .get(attempts)
+        .copied()
+        .map(Duration::from_millis)
+}
+
+fn take_device_invalidation(recovery_active: bool, invalidate_devices: &AtomicBool) -> bool {
+    !recovery_active && invalidate_devices.fetch_and(false, Ordering::Acquire)
+}
+
+struct DeviceRecovery {
+    generation: u64,
+    started_at: Instant,
+    phase: DeviceRecoveryPhase,
+    windows: Vec<DeviceRecoveryWindow>,
+}
+
+enum DeviceRecoveryPhase {
+    Suspending,
+    RecreateGlobal {
+        attempts: usize,
+        next_attempt: Instant,
+    },
+    RecoverWindows {
+        devices: DirectXDevices,
+    },
+}
+
+struct DeviceRecoveryWindow {
+    hwnd: SafeHwnd,
+    suspended: bool,
+    attempts: usize,
+    next_attempt: Instant,
+    outcome: DeviceRecoveryWindowOutcome,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeviceRecoveryWindowOutcome {
+    Pending,
+    Active,
+    Destroyed,
+    Exhausted,
+}
+
+impl DeviceRecoveryWindow {
+    fn new(hwnd: SafeHwnd, suspended: bool, now: Instant) -> Self {
+        Self {
+            hwnd,
+            suspended,
+            attempts: 0,
+            next_attempt: now,
+            outcome: DeviceRecoveryWindowOutcome::Pending,
+        }
+    }
+
+    fn is_terminal(&self) -> bool {
+        matches!(
+            self.outcome,
+            DeviceRecoveryWindowOutcome::Active
+                | DeviceRecoveryWindowOutcome::Destroyed
+                | DeviceRecoveryWindowOutcome::Exhausted
+        )
+    }
+
+    fn next_attempt_number(&self) -> usize {
+        self.attempts + 1
+    }
+
+    fn record_active(&mut self) {
+        self.attempts += 1;
+        self.outcome = DeviceRecoveryWindowOutcome::Active;
+    }
+
+    fn record_destroyed(&mut self) {
+        self.outcome = DeviceRecoveryWindowOutcome::Destroyed;
+    }
+
+    fn record_deferred(&mut self, now: Instant) {
+        self.next_attempt = now;
+    }
+
+    fn record_retryable_failure(&mut self, now: Instant) -> bool {
+        self.attempts += 1;
+        let Some(delay) = window_recovery_retry_delay(self.attempts) else {
+            self.outcome = DeviceRecoveryWindowOutcome::Exhausted;
+            return true;
+        };
+        self.next_attempt = now + delay;
+        false
+    }
+
+    fn reset_for_recovery(&mut self, now: Instant) {
+        self.attempts = 0;
+        self.next_attempt = now;
+    }
 }
 
 struct WindowsPlatformInner {
@@ -208,6 +354,7 @@ impl WindowsPlatform {
             has_package_identity: has_package_identity(),
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
+            device_recovery: Arc::new(Mutex::new(SharedDeviceRecovery::default())),
             app_identity: RefCell::new(None),
             system_notifications: RefCell::new(SystemNotificationState::new()),
         })
@@ -231,7 +378,7 @@ impl WindowsPlatform {
             });
     }
 
-    fn generate_creation_info(&self) -> WindowCreationInfo {
+    fn generate_creation_info(&self, recovery_generation: u64) -> WindowCreationInfo {
         WindowCreationInfo {
             icon: self.icon,
             executor: self.foreground_executor.clone(),
@@ -242,7 +389,12 @@ impl WindowsPlatform {
             main_receiver: self.inner.main_receiver.clone(),
             platform_window_handle: self.handle,
             disable_direct_composition: self.disable_direct_composition,
-            directx_devices: self.inner.state.directx_devices.borrow().clone().unwrap(),
+            directx_devices: if recovery_generation == 0 {
+                self.inner.state.directx_devices.borrow().clone()
+            } else {
+                None
+            },
+            recovery_generation,
             invalidate_devices: self.invalidate_devices.clone(),
             draw_coordinator: self.inner.state.draw_coordinator.clone(),
         }
@@ -322,25 +474,65 @@ impl WindowsPlatform {
         let all_windows = Arc::downgrade(&self.raw_window_handles);
         let text_system = Arc::downgrade(direct_write_text_system);
         let invalidate_devices = self.invalidate_devices.clone();
+        let shared_recovery = self.device_recovery.clone();
+        #[cfg(debug_assertions)]
+        let injected_device_loss_vsyncs = std::env::var("GPUI_TEST_DEVICE_LOSS_AT_VSYNCS")
+            .ok()
+            .map(|value| parse_injected_device_loss_vsyncs(&value))
+            .unwrap_or_default();
 
         std::thread::Builder::new()
             .name("VSyncProvider".to_owned())
             .spawn(move || {
                 let vsync_provider = VSyncProvider::new();
+                let mut recovery = None;
+                #[cfg(debug_assertions)]
+                let mut vsync_count = 0u64;
                 loop {
                     vsync_provider.wait_for_vsync();
-                    if check_device_lost(&directx_device.device)
-                        || invalidate_devices.fetch_and(false, Ordering::Acquire)
+                    #[cfg(debug_assertions)]
+                    let inject_device_loss = {
+                        vsync_count += 1;
+                        injected_device_loss_vsyncs.contains(&vsync_count)
+                    };
+                    #[cfg(not(debug_assertions))]
+                    let inject_device_loss = false;
+                    #[cfg(debug_assertions)]
+                    if inject_device_loss {
+                        log::warn!(
+                            "injecting synthetic DirectX device-loss recovery at vsync {vsync_count}"
+                        );
+                    }
+                    // Preserve resize failures raised during recovery. Once
+                    // the active generation completes, the retained flag
+                    // starts a follow-up generation rather than leaving a
+                    // window suspended indefinitely.
+                    let devices_invalidated =
+                        take_device_invalidation(recovery.is_some(), &invalidate_devices);
+                    if recovery.is_none()
+                        && (check_device_lost(&directx_device.device)
+                            || devices_invalidated
+                            || inject_device_loss)
                     {
-                        if let Err(err) = handle_gpu_device_lost(
-                            &mut directx_device,
+                        recovery = DeviceRecovery::start(
+                            &shared_recovery,
+                            &all_windows,
+                            &directx_device,
+                            Instant::now(),
+                        );
+                    }
+                    if recovery.as_mut().is_some_and(|recovery| {
+                        recovery.advance(
                             platform_window.as_raw(),
                             validation_number,
                             &all_windows,
                             &text_system,
-                        ) {
-                            panic!("Device lost: {err}");
-                        }
+                            &shared_recovery,
+                            &mut directx_device,
+                            Instant::now(),
+                        )
+                    }) {
+                        recovery = None;
                     }
                     let Some(all_windows) = all_windows.upgrade() else {
                         break;
@@ -580,9 +772,18 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
+        let mut device_recovery = self.device_recovery.lock();
+        let recovery_generation = device_recovery.generation;
+        let window = WindowsWindow::new(
+            handle,
+            options,
+            self.generate_creation_info(recovery_generation),
+        )?;
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle.into());
+        if recovery_generation != 0 {
+            device_recovery.new_windows.push(handle.into());
+        }
 
         Ok(Box::new(window))
     }
@@ -1030,7 +1231,7 @@ impl WindowsPlatformInner {
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
-            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            WM_GPUI_GPU_DEVICE_LOST => self.publish_device_recovery(lparam),
             WM_GPUI_END_SESSION => self.handle_end_session(),
             _ => unreachable!(),
         }
@@ -1170,12 +1371,33 @@ impl WindowsPlatformInner {
         Some(1)
     }
 
-    fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
-        let directx_devices = lparam.0 as *const DirectXDevices;
-        let directx_devices = unsafe { &*directx_devices };
-        self.state.directx_devices.borrow_mut().take();
-        *self.state.directx_devices.borrow_mut() = Some(directx_devices.clone());
+    fn publish_device_recovery(&self, lparam: LPARAM) -> Option<isize> {
+        if lparam.0 == 0 {
+            log::error!("gpui_device_loss invalid global recovery message");
+            return Some(0);
+        }
+        let request = lparam.0 as *mut GlobalDeviceRecoveryRequest;
+        // SAFETY: the platform coordinator sends this live stack request with
+        // synchronous `SendMessageW`; the call cannot return until this
+        // handler releases the borrow.
+        let (directx_devices, text_system, gpu_state) = unsafe {
+            let request = &mut *request;
+            (
+                request.directx_devices.clone(),
+                request.text_system.clone(),
+                request.gpu_state.take(),
+            )
+        };
+        let Some(gpu_state) = gpu_state else {
+            log::error!("gpui_device_loss missing DirectWrite recovery candidate");
+            return Some(0);
+        };
 
+        text_system.commit_gpu_recovery(gpu_state);
+        *self.state.directx_devices.borrow_mut() = Some(directx_devices);
+        // SAFETY: this is the same live synchronous request validated above;
+        // the sender reads `published` only after the handler returns.
+        unsafe { (*request).published = true };
         Some(0)
     }
 }
@@ -1205,7 +1427,8 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) disable_direct_composition: bool,
-    pub(crate) directx_devices: DirectXDevices,
+    pub(crate) directx_devices: Option<DirectXDevices>,
+    pub(crate) recovery_generation: u64,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
     pub(crate) invalidate_devices: Arc<AtomicBool>,
@@ -1429,65 +1652,393 @@ fn check_device_lost(device: &ID3D11Device) -> bool {
     match device_state {
         Ok(_) => false,
         Err(err) => {
-            log::error!("DirectX device lost detected: {:?}", err);
+            log::error!(
+                "gpui_device_loss removed_hresult=0x{:08x} error={err:?}",
+                err.code().0 as u32
+            );
             true
         }
     }
 }
 
-fn handle_gpu_device_lost(
-    directx_devices: &mut DirectXDevices,
+fn adapter_diagnostics(devices: &DirectXDevices) -> String {
+    // SAFETY: `adapter` is an owned COM interface and `GetDesc1` writes into
+    // the result value managed by the Windows binding.
+    let Ok(description) = (unsafe { devices.adapter.GetDesc1() }) else {
+        return "adapter=unknown".to_owned();
+    };
+    let name = String::from_utf16_lossy(&description.Description)
+        .trim_matches(char::from(0))
+        .to_owned();
+    format!(
+        "adapter={name:?} vendor=0x{:04x} device=0x{:04x} luid={:08x}:{:08x}",
+        description.VendorId,
+        description.DeviceId,
+        description.AdapterLuid.HighPart as u32,
+        description.AdapterLuid.LowPart,
+    )
+}
+
+impl DeviceRecovery {
+    fn start(
+        shared_recovery: &Arc<Mutex<SharedDeviceRecovery>>,
+        all_windows: &std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+        current_devices: &DirectXDevices,
+        now: Instant,
+    ) -> Option<Self> {
+        let all_windows = all_windows.upgrade()?;
+        let mut shared = shared_recovery.lock();
+        shared.last_generation = shared.last_generation.wrapping_add(1).max(1);
+        shared.generation = shared.last_generation;
+        shared.new_windows.clear();
+        let generation = shared.generation;
+        let windows = all_windows
+            .read()
+            .iter()
+            .copied()
+            .map(|hwnd| DeviceRecoveryWindow::new(hwnd, false, now))
+            .collect::<Vec<_>>();
+        drop(shared);
+
+        log::error!(
+            "gpui_device_loss generation={generation} detected windows={} {}",
+            windows.len(),
+            adapter_diagnostics(current_devices),
+        );
+        Some(Self {
+            generation,
+            started_at: now,
+            phase: DeviceRecoveryPhase::Suspending,
+            windows,
+        })
+    }
+
+    fn advance(
+        &mut self,
+        platform_window: HWND,
+        validation_number: usize,
+        all_windows: &std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+        text_system: &std::sync::Weak<DirectWriteTextSystem>,
+        shared_recovery: &Arc<Mutex<SharedDeviceRecovery>>,
+        current_devices: &mut DirectXDevices,
+        now: Instant,
+    ) -> bool {
+        self.add_new_windows(shared_recovery, now);
+        let Some(all_windows) = all_windows.upgrade() else {
+            self.finish(shared_recovery);
+            return true;
+        };
+        let live_windows = all_windows
+            .read()
+            .iter()
+            .map(|window| window.as_raw())
+            .collect::<Vec<_>>();
+        for window in &mut self.windows {
+            if !live_windows.contains(&window.hwnd.as_raw()) {
+                window.record_destroyed();
+            }
+        }
+        drop(all_windows);
+
+        if matches!(self.phase, DeviceRecoveryPhase::Suspending) {
+            for window in &mut self.windows {
+                if window.suspended || window.outcome == DeviceRecoveryWindowOutcome::Destroyed {
+                    continue;
+                }
+                match send_window_device_recovery(
+                    window.hwnd,
+                    validation_number,
+                    self.generation,
+                    WindowDeviceRecoveryAction::Suspend,
+                ) {
+                    WindowDeviceRecoveryOutcome::Suspended => window.suspended = true,
+                    WindowDeviceRecoveryOutcome::Destroyed => window.record_destroyed(),
+                    WindowDeviceRecoveryOutcome::Deferred => {}
+                    outcome => log::warn!(
+                        "gpui_device_loss generation={} window={:?} suspend={outcome:?}",
+                        self.generation,
+                        window.hwnd.as_raw()
+                    ),
+                }
+            }
+            if self.windows.iter().all(|window| {
+                window.suspended || window.outcome == DeviceRecoveryWindowOutcome::Destroyed
+            }) {
+                self.phase = DeviceRecoveryPhase::RecreateGlobal {
+                    attempts: 0,
+                    next_attempt: now,
+                };
+            }
+        }
+
+        let should_recreate_global = match &self.phase {
+            DeviceRecoveryPhase::RecreateGlobal { next_attempt, .. } => now >= *next_attempt,
+            _ => false,
+        };
+        if should_recreate_global {
+            let attempt = match &self.phase {
+                DeviceRecoveryPhase::RecreateGlobal { attempts, .. } => *attempts + 1,
+                _ => unreachable!(),
+            };
+            let candidate = DirectXDevices::new()
+                .context("recreating global DirectX devices")
+                .and_then(|devices| {
+                    DirectWriteTextSystem::build_gpu_recovery_candidate(&devices)
+                        .map(|gpu_state| (devices, gpu_state))
+                });
+
+            match candidate {
+                Ok((devices, gpu_state)) => {
+                    let Some(text_system) = text_system.upgrade() else {
+                        self.finish(shared_recovery);
+                        return true;
+                    };
+                    if publish_global_device_recovery(
+                        platform_window,
+                        validation_number,
+                        devices.clone(),
+                        text_system,
+                        gpu_state,
+                    ) {
+                        log::info!(
+                            "gpui_device_loss generation={} global_attempt={} active elapsed_ms={} {}",
+                            self.generation,
+                            attempt,
+                            self.started_at.elapsed().as_millis(),
+                            adapter_diagnostics(&devices),
+                        );
+                        *current_devices = devices.clone();
+                        for window in &mut self.windows {
+                            window.reset_for_recovery(now);
+                        }
+                        self.phase = DeviceRecoveryPhase::RecoverWindows { devices };
+                    } else {
+                        self.schedule_global_retry(now, attempt);
+                    }
+                }
+                Err(error) => {
+                    log::error!(
+                        "gpui_device_loss generation={} global_attempt={} failed: {error:#}",
+                        self.generation,
+                        attempt
+                    );
+                    self.schedule_global_retry(now, attempt);
+                }
+            }
+        }
+
+        let recovery_devices = match &self.phase {
+            DeviceRecoveryPhase::RecoverWindows { devices } => Some(devices.clone()),
+            _ => None,
+        };
+        if let Some(devices) = recovery_devices {
+            for window in &mut self.windows {
+                if window.outcome != DeviceRecoveryWindowOutcome::Pending
+                    || now < window.next_attempt
+                {
+                    continue;
+                }
+
+                let attempt = window.next_attempt_number();
+                let outcome = send_window_device_recovery(
+                    window.hwnd,
+                    validation_number,
+                    self.generation,
+                    WindowDeviceRecoveryAction::Recover(devices.clone()),
+                );
+                match outcome {
+                    WindowDeviceRecoveryOutcome::Active => {
+                        window.record_active();
+                        #[cfg(debug_assertions)]
+                        if std::env::var_os("GPUI_TEST_DEVICE_RECOVERY_FAILURE").is_some() {
+                            eprintln!(
+                                "gpui_device_loss_test generation={} window={:?} attempt={} result=active",
+                                self.generation,
+                                window.hwnd.as_raw(),
+                                attempt
+                            );
+                        }
+                        log::info!(
+                            "gpui_device_loss generation={} window={:?} attempt={} active",
+                            self.generation,
+                            window.hwnd.as_raw(),
+                            attempt
+                        );
+                    }
+                    WindowDeviceRecoveryOutcome::Destroyed => window.record_destroyed(),
+                    WindowDeviceRecoveryOutcome::Deferred => window.record_deferred(now),
+                    WindowDeviceRecoveryOutcome::Failed(error) => {
+                        log::error!(
+                            "gpui_device_loss generation={} window={:?} attempt={} failed: {}",
+                            self.generation,
+                            window.hwnd.as_raw(),
+                            attempt,
+                            error
+                        );
+                        if window.record_retryable_failure(now) {
+                            log::error!(
+                                "gpui_device_loss generation={} window={:?} attempt={} exhausted",
+                                self.generation,
+                                window.hwnd.as_raw(),
+                                attempt
+                            );
+                            #[cfg(debug_assertions)]
+                            if std::env::var_os("GPUI_TEST_DEVICE_RECOVERY_FAILURE").is_some() {
+                                eprintln!(
+                                    "gpui_device_loss_test generation={} window={:?} attempt={} result=exhausted",
+                                    self.generation,
+                                    window.hwnd.as_raw(),
+                                    attempt
+                                );
+                            }
+                        }
+                    }
+                    WindowDeviceRecoveryOutcome::Stale => {
+                        log::warn!(
+                            "gpui_device_loss generation={} window={:?} attempt={} stale candidate",
+                            self.generation,
+                            window.hwnd.as_raw(),
+                            attempt
+                        );
+                        // A live resize or generation race invalidates this
+                        // candidate without proving the replacement device is
+                        // bad. Retry on the next vsync without consuming one of
+                        // the eight device-recovery attempts.
+                        window.record_deferred(now);
+                    }
+                    WindowDeviceRecoveryOutcome::Suspended => {}
+                }
+            }
+
+            if self.windows.iter().all(DeviceRecoveryWindow::is_terminal) {
+                let mut shared = shared_recovery.lock();
+                if shared.generation != self.generation {
+                    return true;
+                }
+                if shared.new_windows.is_empty() {
+                    shared.generation = 0;
+                    log::info!(
+                        "gpui_device_loss generation={} complete elapsed_ms={}",
+                        self.generation,
+                        self.started_at.elapsed().as_millis()
+                    );
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn add_new_windows(
+        &mut self,
+        shared_recovery: &Arc<Mutex<SharedDeviceRecovery>>,
+        now: Instant,
+    ) {
+        let new_windows = {
+            let mut shared = shared_recovery.lock();
+            if shared.generation != self.generation {
+                return;
+            }
+            std::mem::take(&mut shared.new_windows)
+        };
+        for hwnd in new_windows {
+            if let Some(window) = self
+                .windows
+                .iter_mut()
+                .find(|window| window.hwnd.as_raw() == hwnd.as_raw())
+            {
+                // Windows can recycle a destroyed HWND before this recovery
+                // generation finishes. A queued new window with the same raw
+                // handle owns a new suspended renderer, so replace the old
+                // terminal record instead of discarding it as a duplicate.
+                if window.is_terminal() {
+                    *window = DeviceRecoveryWindow::new(hwnd, true, now);
+                }
+                continue;
+            }
+            self.windows
+                .push(DeviceRecoveryWindow::new(hwnd, true, now));
+        }
+    }
+
+    fn schedule_global_retry(&mut self, now: Instant, attempt: usize) {
+        let delay_index = attempt.min(DEVICE_RECOVERY_RETRY_DELAYS_MS.len() - 1);
+        self.phase = DeviceRecoveryPhase::RecreateGlobal {
+            attempts: attempt,
+            next_attempt: now + Duration::from_millis(DEVICE_RECOVERY_RETRY_DELAYS_MS[delay_index]),
+        };
+    }
+
+    fn finish(&self, shared_recovery: &Arc<Mutex<SharedDeviceRecovery>>) {
+        let mut shared = shared_recovery.lock();
+        if shared.generation == self.generation {
+            shared.generation = 0;
+            shared.new_windows.clear();
+        }
+    }
+}
+
+fn send_window_device_recovery(
+    hwnd: SafeHwnd,
+    validation_number: usize,
+    generation: u64,
+    action: WindowDeviceRecoveryAction,
+) -> WindowDeviceRecoveryOutcome {
+    // SAFETY: the raw handle is used only as an identifier for the Win32
+    // validity query; no application memory is dereferenced.
+    if !unsafe { IsWindow(Some(hwnd.as_raw())).as_bool() } {
+        return WindowDeviceRecoveryOutcome::Destroyed;
+    }
+    let mut request = WindowDeviceRecoveryRequest {
+        generation,
+        action,
+        outcome: None,
+    };
+    // SAFETY: `SendMessageW` is synchronous, so `request` remains live while
+    // the validated GPUI window procedure reads it and writes its outcome.
+    unsafe {
+        SendMessageW(
+            hwnd.as_raw(),
+            WM_GPUI_GPU_DEVICE_LOST,
+            Some(WPARAM(validation_number)),
+            Some(LPARAM(&raw mut request as *mut _ as isize)),
+        );
+    }
+    request.outcome.unwrap_or_else(|| {
+        // SAFETY: the raw handle is used only for a validity query after the
+        // synchronous send; no application memory is dereferenced.
+        if unsafe { IsWindow(Some(hwnd.as_raw())).as_bool() } {
+            WindowDeviceRecoveryOutcome::Deferred
+        } else {
+            WindowDeviceRecoveryOutcome::Destroyed
+        }
+    })
+}
+
+fn publish_global_device_recovery(
     platform_window: HWND,
     validation_number: usize,
-    all_windows: &std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
-    text_system: &std::sync::Weak<DirectWriteTextSystem>,
-) -> Result<()> {
-    // Here we wait a bit to ensure the system has time to recover from the device lost state.
-    // If we don't wait, the final drawing result will be blank.
-    std::thread::sleep(std::time::Duration::from_millis(350));
-
-    *directx_devices = try_to_recover_from_device_lost(|| {
-        DirectXDevices::new().context("Failed to recreate new DirectX devices after device lost")
-    })?;
-    log::info!("DirectX devices successfully recreated.");
-
-    let lparam = LPARAM(directx_devices as *const _ as _);
+    directx_devices: DirectXDevices,
+    text_system: Arc<DirectWriteTextSystem>,
+    gpu_state: GPUState,
+) -> bool {
+    let mut request = GlobalDeviceRecoveryRequest {
+        directx_devices,
+        text_system,
+        gpu_state: Some(gpu_state),
+        published: false,
+    };
+    // SAFETY: `SendMessageW` is synchronous, so `request` remains live while
+    // the validated platform window procedure consumes its candidate state.
     unsafe {
         SendMessageW(
             platform_window,
             WM_GPUI_GPU_DEVICE_LOST,
             Some(WPARAM(validation_number)),
-            Some(lparam),
+            Some(LPARAM(&raw mut request as *mut _ as isize)),
         );
     }
-
-    if let Some(text_system) = text_system.upgrade() {
-        text_system.handle_gpu_lost(&directx_devices)?;
-    }
-    if let Some(all_windows) = all_windows.upgrade() {
-        for window in all_windows.read().iter() {
-            unsafe {
-                SendMessageW(
-                    window.as_raw(),
-                    WM_GPUI_GPU_DEVICE_LOST,
-                    Some(WPARAM(validation_number)),
-                    Some(lparam),
-                );
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        for window in all_windows.read().iter() {
-            unsafe {
-                SendMessageW(
-                    window.as_raw(),
-                    WM_GPUI_FORCE_UPDATE_WINDOW,
-                    Some(WPARAM(validation_number)),
-                    None,
-                );
-            }
-        }
-    }
-    Ok(())
+    request.published
 }
 
 const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
@@ -1566,11 +2117,20 @@ unsafe extern "system" fn window_procedure(
 #[cfg(test)]
 mod tests {
     use std::ffi::{OsStr, OsString};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
 
     use crate::{read_from_clipboard, write_to_clipboard};
     use gpui::ClipboardItem;
+    use parking_lot::Mutex;
+    use windows::Win32::Foundation::HWND;
 
-    use super::encode_restart_arguments;
+    use super::{
+        DeviceRecovery, DeviceRecoveryPhase, DeviceRecoveryWindow, DeviceRecoveryWindowOutcome,
+        SafeHwnd, SharedDeviceRecovery, encode_restart_arguments,
+        parse_injected_device_loss_vsyncs, take_device_invalidation, window_recovery_retry_delay,
+    };
 
     #[test]
     fn test_encode_restart_arguments() {
@@ -1586,6 +2146,113 @@ mod tests {
             encode_restart_arguments(&[OsString::from(r"C:\")]),
             OsStr::new(r#""C:\\""#)
         );
+    }
+
+    #[test]
+    fn parses_synthetic_device_loss_vsyncs() {
+        assert_eq!(
+            parse_injected_device_loss_vsyncs("30, 90,broken,120"),
+            [30, 90, 120]
+        );
+    }
+
+    #[test]
+    fn window_recovery_has_eight_bounded_attempts() {
+        let delays = (0..8)
+            .map(|attempts| window_recovery_retry_delay(attempts).unwrap().as_millis())
+            .collect::<Vec<_>>();
+        assert_eq!(delays, [0, 100, 250, 500, 1000, 2000, 4000, 8000]);
+        assert!(window_recovery_retry_delay(8).is_none());
+    }
+    #[test]
+    fn retryable_window_failure_exhausts_on_attempt_eight() {
+        let now = Instant::now();
+        let mut window = DeviceRecoveryWindow::new(SafeHwnd::from(HWND::default()), true, now);
+
+        for attempt in 1..8 {
+            assert_eq!(window.next_attempt_number(), attempt);
+            assert!(!window.record_retryable_failure(now));
+            assert_eq!(window.attempts, attempt);
+            assert_eq!(window.outcome, DeviceRecoveryWindowOutcome::Pending);
+            assert_eq!(
+                window.next_attempt,
+                now + window_recovery_retry_delay(attempt).unwrap()
+            );
+        }
+
+        assert_eq!(window.next_attempt_number(), 8);
+        assert!(window.record_retryable_failure(now));
+        assert_eq!(window.attempts, 8);
+        assert_eq!(window.outcome, DeviceRecoveryWindowOutcome::Exhausted);
+        assert!(window.is_terminal());
+    }
+
+    #[test]
+    fn deferred_window_recovery_does_not_consume_an_attempt() {
+        let now = Instant::now();
+        let later = now + Duration::from_secs(1);
+        let mut window = DeviceRecoveryWindow::new(SafeHwnd::from(HWND::default()), true, now);
+        assert!(!window.record_retryable_failure(now));
+        assert_eq!(window.attempts, 1);
+
+        window.record_deferred(later);
+
+        assert_eq!(window.attempts, 1);
+        assert_eq!(window.next_attempt, later);
+        assert_eq!(window.outcome, DeviceRecoveryWindowOutcome::Pending);
+    }
+
+    #[test]
+    fn device_invalidation_is_retained_until_recovery_finishes() {
+        let invalidated = AtomicBool::new(true);
+
+        assert!(!take_device_invalidation(true, &invalidated));
+        assert!(invalidated.load(Ordering::Acquire));
+        assert!(take_device_invalidation(false, &invalidated));
+        assert!(!invalidated.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn active_and_destroyed_windows_are_terminal() {
+        let now = Instant::now();
+        let mut active = DeviceRecoveryWindow::new(SafeHwnd::from(HWND::default()), true, now);
+        active.record_active();
+        assert_eq!(active.attempts, 1);
+        assert_eq!(active.outcome, DeviceRecoveryWindowOutcome::Active);
+        assert!(active.is_terminal());
+
+        let mut destroyed = DeviceRecoveryWindow::new(SafeHwnd::from(HWND::default()), true, now);
+        destroyed.record_destroyed();
+        assert_eq!(destroyed.attempts, 0);
+        assert_eq!(destroyed.outcome, DeviceRecoveryWindowOutcome::Destroyed);
+        assert!(destroyed.is_terminal());
+    }
+
+    #[test]
+    fn recycled_window_handle_replaces_terminal_recovery_record() {
+        let now = Instant::now();
+        let hwnd = SafeHwnd::from(HWND::default());
+        let mut old_window = DeviceRecoveryWindow::new(hwnd, true, now);
+        old_window.record_active();
+        let mut recovery = DeviceRecovery {
+            generation: 7,
+            started_at: now,
+            phase: DeviceRecoveryPhase::Suspending,
+            windows: vec![old_window],
+        };
+        let shared = Arc::new(Mutex::new(SharedDeviceRecovery {
+            generation: 7,
+            last_generation: 7,
+            new_windows: vec![hwnd],
+        }));
+
+        recovery.add_new_windows(&shared, now + Duration::from_secs(1));
+
+        assert_eq!(recovery.windows.len(), 1);
+        let replacement = &recovery.windows[0];
+        assert!(replacement.suspended);
+        assert_eq!(replacement.attempts, 0);
+        assert_eq!(replacement.outcome, DeviceRecoveryWindowOutcome::Pending);
     }
 
     #[test]
