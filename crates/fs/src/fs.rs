@@ -2766,7 +2766,11 @@ impl FakeFs {
                 None
             }
             btree_map::Entry::Occupied(mut entry) => {
-                entry.get_mut().file_content(&path)?;
+                // A symlink is unlinked without being followed, so only a real
+                // directory is beyond the reach of `remove_file`.
+                if !entry.get().is_symlink() {
+                    entry.get_mut().file_content(&path)?;
+                }
                 Some(entry.remove())
             }
         };

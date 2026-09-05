@@ -3805,7 +3805,19 @@ impl LocalLspStore {
                             ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
                         })
                         .unwrap_or_default();
-                    if abs_path.ends_with("/") {
+                    // A URI does not say whether it names a file or a directory,
+                    // and `Path::ends_with` compares whole components, so it never
+                    // matches a trailing slash. Ask the filesystem instead, or
+                    // deleting a directory tries to unlink it and fails. A symlink
+                    // is unlinked even when it points at a directory, so that the
+                    // directory it names survives.
+                    let is_dir = fs
+                        .metadata(&abs_path)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some_and(|metadata| metadata.is_dir && !metadata.is_symlink);
+                    if is_dir {
                         fs.remove_dir(&abs_path, options).await?;
                     } else {
                         fs.remove_file(&abs_path, options).await?;

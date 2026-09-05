@@ -706,6 +706,62 @@ async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
     // don't care about len or mtime on symlinks?
 }
 
+// `remove_file` unlinks a symlink rather than following it, so a symlink to a
+// directory is removed while the directory it names stays where it is.
+#[gpui::test]
+#[cfg(unix)]
+async fn test_realfs_remove_file_unlinks_a_symlink_to_a_directory(executor: BackgroundExecutor) {
+    let tempdir = TempDir::new().unwrap();
+    let fs = RealFs::new(None, executor);
+    let target = tempdir.path().join("target");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(target.join("kept.txt"), "kept").unwrap();
+    let link = tempdir.path().join("link");
+    gpui::block_on(fs.create_symlink(&link, target.clone())).unwrap();
+
+    gpui::block_on(fs.remove_file(&link, RemoveOptions::default()))
+        .expect("a symlink should be removable as a file");
+
+    assert!(fs.metadata(&link).await.unwrap().is_none());
+    assert_eq!(
+        std::fs::read_to_string(target.join("kept.txt")).unwrap(),
+        "kept"
+    );
+}
+
+#[gpui::test]
+async fn test_fake_fs_remove_file_unlinks_a_symlink_to_a_directory(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "target": {
+                "kept.txt": "kept",
+            },
+        }),
+    )
+    .await;
+    fs.insert_symlink(path!("/root/link"), path!("/root/target").into())
+        .await;
+
+    fs.remove_file(Path::new(path!("/root/link")), RemoveOptions::default())
+        .await
+        .expect("a symlink should be removable as a file");
+
+    assert!(
+        fs.metadata(Path::new(path!("/root/link")))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        fs.load(Path::new(path!("/root/target/kept.txt")))
+            .await
+            .unwrap(),
+        "kept"
+    );
+}
+
 #[gpui::test]
 async fn test_fake_fs_trash(executor: BackgroundExecutor) {
     let fs = FakeFs::new(executor.clone());
