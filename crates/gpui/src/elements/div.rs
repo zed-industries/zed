@@ -2726,7 +2726,7 @@ impl Interactivity {
                     .and_then(|state| state.hover_state.as_ref())
                     .cloned()
             });
-            let current_view = window.current_invalidation_target();
+            let current_view = window.current_view();
 
             window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                 let hovered = hitbox.is_hovered(window);
@@ -2748,7 +2748,7 @@ impl Interactivity {
                     .as_ref()
                     .and_then(|element| element.hover_state.as_ref())
                     .cloned();
-                let current_view = window.current_invalidation_target();
+                let current_view = window.current_view();
 
                 window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                     let group_hovered = group_hitbox_id.is_hovered(window);
@@ -3201,7 +3201,7 @@ impl Interactivity {
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
-            let current_view = window.current_invalidation_target();
+            let current_view = window.current_view();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();

@@ -743,10 +743,6 @@ pub struct App {
 
     // below is plain data, the drop order is insignificant here
     render_notifications: Vec<FxHashSet<EntityId>>,
-    render_notification_queue: Vec<EntityId>,
-    render_notification_visited: FxHashSet<EntityId>,
-    render_dependencies: FxHashMap<EntityId, FxHashSet<EntityId>>,
-    render_consumers: FxHashMap<EntityId, FxHashSet<EntityId>>,
     pub(crate) pending_notifications: FxHashSet<EntityId>,
     pub(crate) pending_global_notifications: TypeIdHashSet,
     pub(crate) restart_path: Option<PathBuf>,
@@ -839,10 +835,6 @@ impl App {
                 global_action_listeners: Default::default(),
                 pending_effects: VecDeque::new(),
                 render_notifications: Vec::new(),
-                render_notification_queue: Vec::new(),
-                render_notification_visited: FxHashSet::default(),
-                render_dependencies: FxHashMap::default(),
-                render_consumers: FxHashMap::default(),
                 pending_notifications: FxHashSet::default(),
                 pending_global_notifications: Default::default(),
                 observers: SubscriberSet::new(),
@@ -1700,8 +1692,6 @@ impl App {
             }
 
             for (entity_id, mut entity) in dropped {
-                self.remove_render_dependencies(entity_id);
-                self.render_consumers.remove(&entity_id);
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
                 self.window_invalidators_by_entity.remove(&entity_id);
@@ -2633,92 +2623,33 @@ impl App {
         FocusHandle::new(&self.focus_handles)
     }
 
+    /// Starts collecting the entities notified while a window draws. Entities notified
+    /// mid-draw have no chance to dirty the frame being built, so the window records them
+    /// for its next requested frame instead.
     pub(crate) fn begin_render_notifications(&mut self) {
         self.render_notifications.push(FxHashSet::default());
     }
 
+    /// Returns the entities notified since the matching [`Self::begin_render_notifications`]
+    /// that the finished frame also read. Returns an empty set if tracking was not begun.
     pub(crate) fn end_render_notifications(&mut self) -> FxHashSet<EntityId> {
-        let sources = self
-            .render_notifications
-            .pop()
-            .expect("balanced frame notification tracking");
-        let mut dirty = FxHashSet::default();
-        for source in sources {
-            if self.entities.accessed_entities.borrow().contains(&source) {
-                dirty.insert(source);
-                dirty.extend(self.render_consumers_of(source));
-            }
-        }
-        dirty
-    }
-
-    pub(crate) fn render_consumers_of(&self, source: EntityId) -> FxHashSet<EntityId> {
-        self.render_consumers
-            .get(&source)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    pub(crate) fn replace_render_dependencies(
-        &mut self,
-        consumer: EntityId,
-        sources: &FxHashSet<EntityId>,
-    ) {
-        if self.render_dependencies.get(&consumer) == Some(sources) {
-            return;
-        }
-        self.remove_render_dependencies(consumer);
-        for source in sources {
-            if *source != consumer {
-                self.render_consumers
-                    .entry(*source)
-                    .or_default()
-                    .insert(consumer);
-            }
-        }
-        self.render_dependencies.insert(consumer, sources.clone());
-    }
-
-    pub(crate) fn remove_render_dependencies(&mut self, consumer: EntityId) {
-        if let Some(sources) = self.render_dependencies.remove(&consumer) {
-            for source in sources {
-                if let Some(consumers) = self.render_consumers.get_mut(&source) {
-                    consumers.remove(&consumer);
-                    if consumers.is_empty() {
-                        self.render_consumers.remove(&source);
-                    }
-                }
-            }
-        }
+        let mut sources = self.render_notifications.pop().unwrap_or_default();
+        let accessed_entities = self.entities.accessed_entities.borrow();
+        sources.retain(|source| accessed_entities.contains(source));
+        sources
     }
 
     /// Tell GPUI that an entity has changed and observers of it should be notified.
+    ///
+    /// Notification stops at `entity_id`: windows that read it during rendering are marked
+    /// dirty and the entity's observers run. Views and retained render nodes whose output was
+    /// computed from this entity are not notified; the window's draw engine works that out
+    /// from the recorded reads when it next draws.
     pub fn notify(&mut self, entity_id: EntityId) {
         for notifications in &mut self.render_notifications {
             notifications.insert(entity_id);
         }
-        if !self.render_consumers.contains_key(&entity_id) {
-            self.notify_entity(entity_id);
-            return;
-        }
-        let mut pending = mem::take(&mut self.render_notification_queue);
-        pending.push(entity_id);
-        let mut visited = mem::take(&mut self.render_notification_visited);
-        while let Some(entity_id) = pending.pop() {
-            if !visited.insert(entity_id) {
-                continue;
-            }
-            if let Some(consumers) = self.render_consumers.get(&entity_id) {
-                pending.extend(consumers.iter().copied());
-            }
-            self.notify_entity(entity_id);
-        }
-        visited.clear();
-        self.render_notification_queue = pending;
-        self.render_notification_visited = visited;
-    }
 
-    fn notify_entity(&mut self, entity_id: EntityId) {
         let window_invalidators = mem::take(
             self.window_invalidators_by_entity
                 .entry(entity_id)

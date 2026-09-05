@@ -47,6 +47,10 @@ pub(crate) struct NodeEngine {
     frame_stats: RetainedNodeStats,
     pub(crate) last_frame_stats: RetainedNodeStats,
     nodes: FxHashMap<ViewNodeId, Entity<ViewNode>>,
+    /// Reverse of each node's `accessed_entities`: the nodes whose recorded output was
+    /// computed from a read of the keyed entity. Keys include node ids, since a parent's
+    /// output contains its children's.
+    consumers: FxHashMap<EntityId, FxHashSet<ViewNodeId>>,
     occurrences: FxHashMap<GlobalElementId, ViewNodeId>,
     dirty_nodes: FxHashSet<ViewNodeId>,
     frame_bound_nodes: FxHashSet<ViewNodeId>,
@@ -118,6 +122,7 @@ impl NodeEngine {
             frame_stats: RetainedNodeStats::default(),
             last_frame_stats: RetainedNodeStats::default(),
             nodes: FxHashMap::default(),
+            consumers: FxHashMap::default(),
             occurrences: FxHashMap::default(),
             dirty_nodes: FxHashSet::default(),
             frame_bound_nodes: FxHashSet::default(),
@@ -213,27 +218,59 @@ impl NodeEngine {
         }
     }
 
-    pub(crate) fn invalidate_entities(&mut self, entities: &FxHashSet<EntityId>, cx: &App) {
-        let pending = &mut self.invalidation_queue;
-        pending.clear();
-        if !entities.is_empty()
-            && !entities
-                .iter()
-                .any(|entity| self.nodes.contains_key(entity))
-        {
-            self.dirty_nodes.extend(self.nodes.keys().copied());
-        }
-        for entity_id in entities {
-            if self.nodes.contains_key(entity_id) {
-                pending.push(*entity_id);
+    /// Marks dirty every node whose recorded output was computed from a read of one of
+    /// `sources`, directly or through a descendant. Reads only establish dirtiness; the
+    /// sources' observers are not involved and no node is notified.
+    pub(crate) fn invalidate_entities(&mut self, sources: &FxHashSet<EntityId>) {
+        for source in sources {
+            if !self.consumers.contains_key(source) {
+                // Nothing recorded a read of this entity, so nothing says which output
+                // depends on it. Rebuild everything rather than reuse stale output.
+                self.dirty_nodes.extend(self.nodes.keys().copied());
+                return;
             }
         }
+        for source in sources {
+            self.invalidate_consumers(*source);
+        }
+    }
+
+    /// Marks dirty the nodes that read `source`, and transitively their ancestors. Does
+    /// nothing when no node has read `source`.
+    pub(crate) fn invalidate_consumers(&mut self, source: EntityId) {
+        let pending = &mut self.invalidation_queue;
+        pending.clear();
+        pending.extend(self.consumers.get(&source).into_iter().flatten().copied());
         while let Some(node_id) = pending.pop() {
-            if self.dirty_nodes.insert(node_id)
-                && let Some(node) = self.nodes.get(&node_id)
-                && let Some(parent) = node.read(cx).parent
-            {
-                pending.push(parent);
+            if self.dirty_nodes.insert(node_id) {
+                pending.extend(self.consumers.get(&node_id).into_iter().flatten().copied());
+            }
+        }
+    }
+
+    fn replace_dependencies(
+        consumers: &mut FxHashMap<EntityId, FxHashSet<ViewNodeId>>,
+        node_id: ViewNodeId,
+        previous: &FxHashSet<EntityId>,
+        current: &FxHashSet<EntityId>,
+    ) {
+        for source in previous.difference(current) {
+            Self::remove_dependency(consumers, node_id, *source);
+        }
+        for source in current.difference(previous) {
+            consumers.entry(*source).or_default().insert(node_id);
+        }
+    }
+
+    fn remove_dependency(
+        consumers: &mut FxHashMap<EntityId, FxHashSet<ViewNodeId>>,
+        node_id: ViewNodeId,
+        source: EntityId,
+    ) {
+        if let Some(nodes) = consumers.get_mut(&source) {
+            nodes.remove(&node_id);
+            if nodes.is_empty() {
+                consumers.remove(&source);
             }
         }
     }
@@ -404,11 +441,11 @@ impl NodeEngine {
         let node = node.read(cx);
         let old_bounds = node.previous_bounds;
         let new_bounds = cache_key.bounds;
-        let own_entity_id = node.view.entity_id();
-        accessed_entities.insert(own_entity_id);
-        accessed_entities.insert(node_id);
-
-        cx.replace_render_dependencies(node_id, &accessed_entities);
+        accessed_entities.insert(node.view.entity_id());
+        // A parent's output contains its children's, so a dirty child dirties its ancestors
+        // through the same graph as any other dependency.
+        accessed_entities.extend(node.children.iter().copied());
+        accessed_entities.remove(&node_id);
 
         if let Some(node) = self.nodes.get(&node_id) {
             let previous_accesses = node.update(cx, |node, cx| {
@@ -433,6 +470,12 @@ impl NodeEngine {
                     .retain(|key, _| node.accessed_local_state.contains(key));
                 previous_accesses
             });
+            Self::replace_dependencies(
+                &mut self.consumers,
+                node_id,
+                &previous_accesses,
+                &node.read(cx).accessed_entities,
+            );
             cx.entities.recycle_access_scope(previous_accesses);
         }
 
@@ -476,11 +519,9 @@ impl NodeEngine {
     }
 
     #[cfg(test)]
-    pub(crate) fn clear(&mut self, cx: &mut App) {
-        for node_id in self.nodes.keys() {
-            cx.remove_render_dependencies(*node_id);
-        }
+    pub(crate) fn clear(&mut self) {
         self.nodes.clear();
+        self.consumers.clear();
         self.scene_children.clear();
         self.invalidation_queue.clear();
         self.occurrences.clear();
@@ -538,18 +579,20 @@ impl NodeEngine {
         let Some(node) = self.nodes.remove(&node_id) else {
             return;
         };
-        let (bounds, children, occurrence) = node.update(cx, |node, _| {
+        let (bounds, children, occurrence, accessed_entities) = node.update(cx, |node, _| {
             node.recording = None;
             node.local_state.clear();
-            {
-                node.accessed_entities.clear();
-                (
-                    node.previous_bounds,
-                    std::mem::take(&mut node.children),
-                    node.occurrence.clone(),
-                )
-            }
+            (
+                node.previous_bounds,
+                std::mem::take(&mut node.children),
+                node.occurrence.clone(),
+                std::mem::take(&mut node.accessed_entities),
+            )
         });
+        for source in &accessed_entities {
+            Self::remove_dependency(&mut self.consumers, node_id, *source);
+        }
+        cx.entities.recycle_access_scope(accessed_entities);
         self.include_changed_bounds(bounds);
         for child_id in children {
             self.remove_subtree(child_id, cx);
@@ -557,6 +600,5 @@ impl NodeEngine {
         self.occurrences.remove(&occurrence);
         self.frame_bound_nodes.remove(&node_id);
         self.dirty_nodes.remove(&node_id);
-        cx.remove_render_dependencies(node_id);
     }
 }

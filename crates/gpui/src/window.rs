@@ -2834,7 +2834,7 @@ impl Window {
         // This ensures that multiple test Apps have isolated arenas.
         let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
-        self.invalidate_entities(cx);
+        self.invalidate_entities();
         let previous_access_tracking = cx.entities.suspend_access_tracking();
         cx.begin_render_notifications();
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -2980,20 +2980,13 @@ impl Window {
         mem::swap(&mut entities, entities_ref.deref_mut());
     }
 
-    fn invalidate_entities(&mut self, cx: &mut App) {
+    fn invalidate_entities(&mut self) {
         let mut views = self.invalidator.take_views();
-        match &mut self.draw_engine {
-            DrawEngine::Legacy => {
-                for entity in views.drain() {
-                    self.mark_view_dirty(entity);
-                }
-            }
-            DrawEngine::Node(node_engine) => {
-                node_engine.invalidate_entities(&views, cx);
-                for entity in views.drain() {
-                    self.mark_view_dirty(entity);
-                }
-            }
+        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
+            node_engine.invalidate_entities(&views);
+        }
+        for entity in views.drain() {
+            self.mark_view_dirty(entity);
         }
         self.invalidator.replace_views(views);
     }
@@ -3397,19 +3390,10 @@ impl Window {
     }
 
     #[cfg(test)]
-    pub(crate) fn clear_view_nodes_for_test(&mut self, cx: &mut App) {
+    pub(crate) fn clear_view_nodes_for_test(&mut self) {
         if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.clear(cx);
+            node_engine.clear();
         }
-    }
-
-    pub(crate) fn current_invalidation_target(&self) -> EntityId {
-        if let DrawEngine::Node(engine) = &self.draw_engine
-            && let Some(node) = engine.current_node()
-        {
-            return node.entity_id();
-        }
-        self.current_view()
     }
 
     pub(crate) fn view_node_key(&self, bounds: Bounds<Pixels>) -> ViewNodeCacheKey {
@@ -3431,10 +3415,10 @@ impl Window {
         }
     }
 
-    pub(crate) fn invalidate_component(&mut self, source: EntityId, cx: &App) {
+    pub(crate) fn invalidate_component(&mut self, source: EntityId) {
         self.mark_view_dirty(source);
         if let DrawEngine::Node(engine) = &mut self.draw_engine {
-            engine.invalidate_entities(&cx.render_consumers_of(source), cx);
+            engine.invalidate_consumers(source);
         }
     }
 

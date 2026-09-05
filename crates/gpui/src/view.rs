@@ -812,7 +812,7 @@ impl<C: Component> RenderOnce for ComponentView<C> {
         });
         if let Some(value) = value {
             instance.update(cx, |instance, _| instance.value = value);
-            window.invalidate_component(instance.entity_id(), cx);
+            window.invalidate_component(instance.entity_id());
         }
         instance
     }
@@ -1061,8 +1061,8 @@ mod tests {
             })
             .expect("test window should remain open");
         window
-            .update(cx, |_, window, cx| {
-                window.clear_view_nodes_for_test(cx);
+            .update(cx, |_, window, _| {
+                window.clear_view_nodes_for_test();
                 window.refresh();
             })
             .expect("test window should remain open");
@@ -2186,6 +2186,43 @@ mod tests {
                 })
                 .expect("window open");
         }
+    }
+
+    #[gpui::test]
+    fn node_engine_dependency_changes_dirty_views_without_notifying_them(
+        cx: &mut TestAppContext,
+    ) {
+        let dependency = cx.new(|_| Dependency);
+        let renders = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(100.), px(100.)), |window, _| {
+            window.draw_engine = DrawEngine::Node(crate::NodeEngine::new());
+            CountingLeaf {
+                render_count: renders.clone(),
+                dependency: Some(dependency.clone()),
+                color: 0x225599,
+            }
+        });
+        cx.run_until_parked();
+        let view = window.update(cx, |_, _, cx| cx.entity()).expect("window open");
+        let observer_calls = Rc::new(Cell::new(0));
+        let _subscription = cx.update({
+            let observer_calls = observer_calls.clone();
+            |cx| cx.observe(&view, move |_, _| observer_calls.set(observer_calls.get() + 1))
+        });
+
+        dependency.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(renders.get(), 2, "a changed dependency must rebuild the view's output");
+        assert_eq!(
+            observer_calls.get(),
+            0,
+            "reading an entity during render must not make the view's observers run when it changes"
+        );
+
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(renders.get(), 3);
+        assert_eq!(observer_calls.get(), 1, "notifying the view itself still reaches its observers");
     }
 
     #[gpui::test]
