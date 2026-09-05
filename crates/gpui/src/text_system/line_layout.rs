@@ -478,10 +478,34 @@ struct FrameCache {
 
 #[derive(Default)]
 pub(crate) struct LineLayoutRecording {
-    lines: Vec<(Arc<CacheKey>, Arc<LineLayout>)>,
-    wrapped_lines: Vec<(Arc<CacheKey>, Arc<WrappedLineLayout>)>,
-    lines_by_hash: Vec<(Arc<HashedCacheKey>, Arc<LineLayout>)>,
-    wrapped_lines_by_hash: Vec<(Arc<HashedCacheKey>, Arc<WrappedLineLayout>)>,
+    lines: crate::view_node::RecordedMetadata<(Arc<CacheKey>, Arc<LineLayout>)>,
+    wrapped_lines: crate::view_node::RecordedMetadata<(Arc<CacheKey>, Arc<WrappedLineLayout>)>,
+    lines_by_hash: crate::view_node::RecordedMetadata<(Arc<HashedCacheKey>, Arc<LineLayout>)>,
+    wrapped_lines_by_hash:
+        crate::view_node::RecordedMetadata<(Arc<HashedCacheKey>, Arc<WrappedLineLayout>)>,
+}
+
+impl LineLayoutRecording {
+    fn clear(&mut self) {
+        self.lines.local.clear();
+        self.lines.children.clear();
+        self.wrapped_lines.local.clear();
+        self.wrapped_lines.children.clear();
+        self.lines_by_hash.local.clear();
+        self.lines_by_hash.children.clear();
+        self.wrapped_lines_by_hash.local.clear();
+        self.wrapped_lines_by_hash.children.clear();
+    }
+
+    pub(crate) fn set_frame_range(&mut self, range: Range<LineLayoutIndex>) {
+        self.lines.frame_range = range.start.lines_index..range.end.lines_index;
+        self.wrapped_lines.frame_range =
+            range.start.wrapped_lines_index..range.end.wrapped_lines_index;
+        self.lines_by_hash.frame_range =
+            range.start.lines_by_hash_index..range.end.lines_by_hash_index;
+        self.wrapped_lines_by_hash.frame_range =
+            range.start.wrapped_lines_by_hash_index..range.end.wrapped_lines_by_hash_index;
+    }
 }
 
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -515,49 +539,76 @@ impl LineLayoutCache {
         &self,
         range: Range<LineLayoutIndex>,
         recording: &mut LineLayoutRecording,
+        children: &[(
+            crate::node_engine::ViewNodeId,
+            &crate::view_node::ViewNodeRecording,
+        )],
     ) {
         if range.start == range.end {
-            recording.lines.clear();
-            recording.wrapped_lines.clear();
-            recording.lines_by_hash.clear();
-            recording.wrapped_lines_by_hash.clear();
+            recording.clear();
+            recording.set_frame_range(range);
             return;
         }
         let frame = self.current_frame.read();
-        Self::record_entries(
-            &frame.used_lines[range.start.lines_index..range.end.lines_index],
-            &frame.lines,
-            &mut recording.lines,
+        recording.lines.record(
+            range.start.lines_index..range.end.lines_index,
+            children.iter().copied(),
+            |recording, phase| Some(&recording.text(phase).lines),
+            |range, target, start| {
+                Self::capture_entries(&frame.used_lines[range], &frame.lines, target, start)
+            },
         );
-        Self::record_entries(
-            &frame.used_wrapped_lines
-                [range.start.wrapped_lines_index..range.end.wrapped_lines_index],
-            &frame.wrapped_lines,
-            &mut recording.wrapped_lines,
+        recording.wrapped_lines.record(
+            range.start.wrapped_lines_index..range.end.wrapped_lines_index,
+            children.iter().copied(),
+            |recording, phase| Some(&recording.text(phase).wrapped_lines),
+            |range, target, start| {
+                Self::capture_entries(
+                    &frame.used_wrapped_lines[range],
+                    &frame.wrapped_lines,
+                    target,
+                    start,
+                )
+            },
         );
-        Self::record_entries(
-            &frame.used_lines_by_hash
-                [range.start.lines_by_hash_index..range.end.lines_by_hash_index],
-            &frame.lines_by_hash,
-            &mut recording.lines_by_hash,
+        recording.lines_by_hash.record(
+            range.start.lines_by_hash_index..range.end.lines_by_hash_index,
+            children.iter().copied(),
+            |recording, phase| Some(&recording.text(phase).lines_by_hash),
+            |range, target, start| {
+                Self::capture_entries(
+                    &frame.used_lines_by_hash[range],
+                    &frame.lines_by_hash,
+                    target,
+                    start,
+                )
+            },
         );
-        Self::record_entries(
-            &frame.used_wrapped_lines_by_hash
-                [range.start.wrapped_lines_by_hash_index..range.end.wrapped_lines_by_hash_index],
-            &frame.wrapped_lines_by_hash,
-            &mut recording.wrapped_lines_by_hash,
+        recording.wrapped_lines_by_hash.record(
+            range.start.wrapped_lines_by_hash_index..range.end.wrapped_lines_by_hash_index,
+            children.iter().copied(),
+            |recording, phase| Some(&recording.text(phase).wrapped_lines_by_hash),
+            |range, target, start| {
+                Self::capture_entries(
+                    &frame.used_wrapped_lines_by_hash[range],
+                    &frame.wrapped_lines_by_hash,
+                    target,
+                    start,
+                )
+            },
         );
     }
 
-    fn record_entries<K: Eq + Hash, V>(
+    fn capture_entries<K: Eq + Hash, V>(
         keys: &[Arc<K>],
         layouts: &FxHashMap<Arc<K>, Arc<V>>,
         recording: &mut Vec<(Arc<K>, Arc<V>)>,
+        start: usize,
     ) {
         recording.reserve(keys.len().saturating_sub(recording.len()));
         for (index, key) in keys.iter().enumerate() {
             let layout = layouts.get(key).expect("used layout exists");
-            if let Some((previous_key, previous_layout)) = recording.get_mut(index) {
+            if let Some((previous_key, previous_layout)) = recording.get_mut(start + index) {
                 // Stable slots already own these leases; avoid redundant atomic refcount updates.
                 if !Arc::ptr_eq(previous_key, key) {
                     *previous_key = key.clone();
@@ -569,29 +620,71 @@ impl LineLayoutCache {
                 recording.push((key.clone(), layout.clone()));
             }
         }
+    }
+
+    #[cfg(test)]
+    fn record_entries<K: Eq + Hash, V>(
+        keys: &[Arc<K>],
+        layouts: &FxHashMap<Arc<K>, Arc<V>>,
+        recording: &mut Vec<(Arc<K>, Arc<V>)>,
+    ) {
+        Self::capture_entries(keys, layouts, recording, 0);
         recording.truncate(keys.len());
     }
 
-    pub(crate) fn replay_layouts(&self, recording: &LineLayoutRecording) {
+    pub(crate) fn replay_layouts(
+        &self,
+        recording: &LineLayoutRecording,
+        engine: &crate::node_engine::NodeEngine,
+        cx: &crate::App,
+    ) {
         let mut frame = self.current_frame.write();
-        for (key, layout) in &recording.lines {
-            frame.lines.insert(key.clone(), layout.clone());
-            frame.used_lines.push(key.clone());
-        }
-        for (key, layout) in &recording.wrapped_lines {
-            frame.wrapped_lines.insert(key.clone(), layout.clone());
-            frame.used_wrapped_lines.push(key.clone());
-        }
-        for (key, layout) in &recording.lines_by_hash {
-            frame.lines_by_hash.insert(key.clone(), layout.clone());
-            frame.used_lines_by_hash.push(key.clone());
-        }
-        for (key, layout) in &recording.wrapped_lines_by_hash {
-            frame
-                .wrapped_lines_by_hash
-                .insert(key.clone(), layout.clone());
-            frame.used_wrapped_lines_by_hash.push(key.clone());
-        }
+        recording.lines.replay(
+            engine,
+            cx,
+            &|recording, phase| Some(&recording.text(phase).lines),
+            &mut |entries| {
+                for (key, layout) in entries {
+                    frame.lines.insert(key.clone(), layout.clone());
+                    frame.used_lines.push(key.clone());
+                }
+            },
+        );
+        recording.wrapped_lines.replay(
+            engine,
+            cx,
+            &|recording, phase| Some(&recording.text(phase).wrapped_lines),
+            &mut |entries| {
+                for (key, layout) in entries {
+                    frame.wrapped_lines.insert(key.clone(), layout.clone());
+                    frame.used_wrapped_lines.push(key.clone());
+                }
+            },
+        );
+        recording.lines_by_hash.replay(
+            engine,
+            cx,
+            &|recording, phase| Some(&recording.text(phase).lines_by_hash),
+            &mut |entries| {
+                for (key, layout) in entries {
+                    frame.lines_by_hash.insert(key.clone(), layout.clone());
+                    frame.used_lines_by_hash.push(key.clone());
+                }
+            },
+        );
+        recording.wrapped_lines_by_hash.replay(
+            engine,
+            cx,
+            &|recording, phase| Some(&recording.text(phase).wrapped_lines_by_hash),
+            &mut |entries| {
+                for (key, layout) in entries {
+                    frame
+                        .wrapped_lines_by_hash
+                        .insert(key.clone(), layout.clone());
+                    frame.used_wrapped_lines_by_hash.push(key.clone());
+                }
+            },
+        );
     }
 
     pub fn reuse_layouts(&self, range: Range<LineLayoutIndex>) {

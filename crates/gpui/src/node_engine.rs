@@ -142,6 +142,26 @@ impl NodeEngine {
             .update(cx, |node, _| node.recording.take())
     }
 
+    #[cfg(test)]
+    pub(crate) fn recordings<'a>(
+        &'a self,
+        cx: &'a App,
+    ) -> impl Iterator<Item = &'a ViewNodeRecording> {
+        self.nodes
+            .values()
+            .filter_map(move |node| node.read(cx).recording.as_ref())
+    }
+
+    pub(crate) fn recording<'a>(&self, node_id: ViewNodeId, cx: &'a App) -> &'a ViewNodeRecording {
+        self.nodes
+            .get(&node_id)
+            .expect("recorded child is mounted")
+            .read(cx)
+            .recording
+            .as_ref()
+            .expect("recorded child has finished painting")
+    }
+
     pub(crate) fn replay_scene(&self, node_id: ViewNodeId, scene: &mut crate::Scene, cx: &App) {
         let node = self
             .nodes

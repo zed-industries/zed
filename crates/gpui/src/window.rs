@@ -3675,6 +3675,41 @@ impl Window {
         self.rendered_frame.scene.snapshot_for_test()
     }
 
+    #[cfg(test)]
+    pub(crate) fn assert_metadata_unique(&self, cx: &App) {
+        let DrawEngine::Node(engine) = &self.draw_engine else {
+            return;
+        };
+        macro_rules! check {
+            ($field:ident, $total:expr) => {
+                assert!(
+                    engine
+                        .recordings(cx)
+                        .map(|recording| recording.$field.local.len())
+                        .sum::<usize>()
+                        <= $total,
+                    "ancestor recordings duplicated {}",
+                    stringify!($field)
+                );
+            };
+        }
+        check!(mouse_listeners, self.rendered_frame.mouse_listeners.len());
+        check!(dispatch_nodes, self.rendered_frame.dispatch_tree.len());
+        check!(hitboxes, self.rendered_frame.hitboxes.len());
+        check!(input_handlers, self.rendered_frame.input_handlers.len());
+        check!(tooltip_requests, self.rendered_frame.tooltip_requests.len());
+        check!(cursor_styles, self.rendered_frame.cursor_styles.len());
+        assert!(
+            engine
+                .recordings(cx)
+                .map(|recording| recording.layout_states.local.len()
+                    + recording.prepaint_states.local.len()
+                    + recording.paint_states.local.len())
+                .sum::<usize>()
+                <= self.rendered_frame.accessed_element_states.len()
+        );
+    }
+
     pub(crate) fn node_engine_enabled(&self) -> bool {
         matches!(self.draw_engine, DrawEngine::Node(_))
     }
@@ -3726,15 +3761,33 @@ impl Window {
 
     pub(crate) fn graft_view_node_layout(
         &mut self,
-        recording: &ViewNodeRecording,
+        recording: &mut ViewNodeRecording,
+        cx: &App,
     ) -> Option<Range<PrepaintStateIndex>> {
         recording.has_layout.then(|| {
             let start = self.prepaint_index();
-            self.next_frame
-                .accessed_element_states
-                .extend(recording.layout_states.iter().cloned());
-            self.text_system.replay_layouts(&recording.layout_text);
-            start..self.prepaint_index()
+            let DrawEngine::Node(engine) = &self.draw_engine else {
+                unreachable!()
+            };
+            recording.layout_states.replay(
+                engine,
+                cx,
+                &|recording, phase| Some(recording.states(phase)),
+                &mut |states| {
+                    self.next_frame
+                        .accessed_element_states
+                        .extend_from_slice(states)
+                },
+            );
+            self.text_system
+                .replay_layouts(&recording.layout_text, engine, cx);
+            let end = self.prepaint_index();
+            recording.layout_states.frame_range =
+                start.accessed_element_states_index..end.accessed_element_states_index;
+            recording
+                .layout_text
+                .set_frame_range(start.line_layout_index.clone()..end.line_layout_index.clone());
+            start..end
         })
     }
 
@@ -3844,128 +3897,311 @@ impl Window {
         layout_range: Option<Range<PrepaintStateIndex>>,
         prepaint_range: Range<PrepaintStateIndex>,
         paint_range: Range<PaintIndex>,
+        cx: &App,
     ) -> ViewNodeRecording {
+        use crate::view_node::{MetadataPhase, capture_metadata};
         recording.scene = self.next_frame.scene.finish_node_scene(node_id);
-        let record_states = |range: &Range<PrepaintStateIndex>, target: &mut Vec<_>| {
-            self.next_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .clone_into(target);
+        let DrawEngine::Node(engine) = &self.draw_engine else {
+            unreachable!()
         };
+        // Prepaint can visit children that are never painted and have no completed recording.
+        let children: smallvec::SmallVec<[_; 16]> = recording
+            .scene
+            .children()
+            .map(|child| (child, engine.recording(child, cx)))
+            .collect();
         recording.has_layout = layout_range.is_some();
-        if let Some(range) = &layout_range {
-            record_states(range, &mut recording.layout_states);
-            self.text_system.record_layouts(
-                range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
-                &mut recording.layout_text,
-            );
-        } else {
-            recording.layout_states.clear();
-            recording.layout_text = Default::default();
-        }
-        record_states(&prepaint_range, &mut recording.prepaint_states);
-        self.next_frame.accessed_element_states[paint_range.start.accessed_element_states_index
-            ..paint_range.end.accessed_element_states_index]
-            .clone_into(&mut recording.paint_states);
+        let layout_range = layout_range.unwrap_or_default();
+        recording.layout_states.record(
+            layout_range.start.accessed_element_states_index
+                ..layout_range.end.accessed_element_states_index,
+            children.iter().copied(),
+            |recording, phase| Some(recording.states(phase)),
+            |range, target, start| {
+                capture_metadata(
+                    &self.next_frame.accessed_element_states[range],
+                    target,
+                    start,
+                )
+            },
+        );
+        self.text_system.record_layouts(
+            layout_range.start.line_layout_index..layout_range.end.line_layout_index,
+            &mut recording.layout_text,
+            &children,
+        );
+        recording.prepaint_states.record(
+            prepaint_range.start.accessed_element_states_index
+                ..prepaint_range.end.accessed_element_states_index,
+            children.iter().copied(),
+            |recording, phase| Some(recording.states(phase)),
+            |range, target, start| {
+                capture_metadata(
+                    &self.next_frame.accessed_element_states[range],
+                    target,
+                    start,
+                )
+            },
+        );
         self.text_system.record_layouts(
             prepaint_range.start.line_layout_index.clone()
                 ..prepaint_range.end.line_layout_index.clone(),
             &mut recording.prepaint_text,
+            &children,
+        );
+        recording.paint_states.record(
+            paint_range.start.accessed_element_states_index
+                ..paint_range.end.accessed_element_states_index,
+            children.iter().copied(),
+            |recording, phase| Some(recording.states(phase)),
+            |range, target, start| {
+                capture_metadata(
+                    &self.next_frame.accessed_element_states[range],
+                    target,
+                    start,
+                )
+            },
         );
         self.text_system.record_layouts(
             paint_range.start.line_layout_index.clone()..paint_range.end.line_layout_index.clone(),
             &mut recording.paint_text,
+            &children,
         );
-        self.next_frame.tab_stops.insertion_history
-            [paint_range.start.tab_handle_index..paint_range.end.tab_handle_index]
-            .clone_into(&mut recording.tab_stops);
-        self.next_frame.window_control_hitboxes
-            [paint_range.start.window_controls_index..paint_range.end.window_controls_index]
-            .clone_into(&mut recording.window_controls);
-        self.next_frame.mouse_listeners
-            [paint_range.start.mouse_listeners_index..paint_range.end.mouse_listeners_index]
-            .clone_into(&mut recording.mouse_listeners);
-        self.next_frame.input_handlers
-            [paint_range.start.input_handlers_index..paint_range.end.input_handlers_index]
-            .clone_into(&mut recording.input_handlers);
-        self.next_frame.dispatch_tree.record_subtree(
+        recording.tab_stops.record(
+            paint_range.start.tab_handle_index..paint_range.end.tab_handle_index,
+            children.iter().copied(),
+            |recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.tab_stops),
+            |range, target, start| {
+                capture_metadata(
+                    &self.next_frame.tab_stops.insertion_history[range],
+                    target,
+                    start,
+                )
+            },
+        );
+        recording.window_controls.record(
+            paint_range.start.window_controls_index..paint_range.end.window_controls_index,
+            children.iter().copied(),
+            |recording, phase| {
+                (phase == MetadataPhase::Paint).then_some(&recording.window_controls)
+            },
+            |range, target, start| {
+                capture_metadata(
+                    &self.next_frame.window_control_hitboxes[range],
+                    target,
+                    start,
+                )
+            },
+        );
+        recording.mouse_listeners.record(
+            paint_range.start.mouse_listeners_index..paint_range.end.mouse_listeners_index,
+            children.iter().copied(),
+            |recording, phase| {
+                (phase == MetadataPhase::Paint).then_some(&recording.mouse_listeners)
+            },
+            |range, target, start| {
+                capture_metadata(&self.next_frame.mouse_listeners[range], target, start)
+            },
+        );
+        recording.input_handlers.record(
+            paint_range.start.input_handlers_index..paint_range.end.input_handlers_index,
+            children.iter().copied(),
+            |recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.input_handlers),
+            |range, target, start| {
+                capture_metadata(&self.next_frame.input_handlers[range], target, start)
+            },
+        );
+        recording.hitboxes.record(
+            prepaint_range.start.hitboxes_index..prepaint_range.end.hitboxes_index,
+            children.iter().copied(),
+            |recording, phase| (phase == MetadataPhase::Prepaint).then_some(&recording.hitboxes),
+            |range, target, start| {
+                capture_metadata(&self.next_frame.hitboxes[range], target, start)
+            },
+        );
+        recording.tooltip_requests.record(
+            prepaint_range.start.tooltips_index..prepaint_range.end.tooltips_index,
+            children.iter().copied(),
+            |recording, phase| {
+                (phase == MetadataPhase::Prepaint).then_some(&recording.tooltip_requests)
+            },
+            |range, target, start| {
+                capture_metadata(&self.next_frame.tooltip_requests[range], target, start)
+            },
+        );
+        recording.cursor_styles.record(
+            paint_range.start.cursor_styles_index..paint_range.end.cursor_styles_index,
+            children.iter().copied(),
+            |recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.cursor_styles),
+            |range, target, start| {
+                capture_metadata(&self.next_frame.cursor_styles[range], target, start)
+            },
+        );
+        #[cfg(any(test, feature = "test-support"))]
+        recording.debug_bounds.record(
+            paint_range.start.debug_bounds_index..paint_range.end.debug_bounds_index,
+            children.iter().copied(),
+            |recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.debug_bounds),
+            |range, target, start| {
+                capture_metadata(&self.next_frame.debug_bounds_history[range], target, start)
+            },
+        );
+        self.next_frame.dispatch_tree.record_retained_subtree(
             prepaint_range.start.dispatch_tree_index..prepaint_range.end.dispatch_tree_index,
             &mut recording.dispatch_nodes,
+            &children,
         );
         recording.dispatch_start = prepaint_range.start.dispatch_tree_index;
-        self.next_frame.hitboxes
-            [prepaint_range.start.hitboxes_index..prepaint_range.end.hitboxes_index]
-            .clone_into(&mut recording.hitboxes);
-        self.next_frame.tooltip_requests
-            [prepaint_range.start.tooltips_index..prepaint_range.end.tooltips_index]
-            .clone_into(&mut recording.tooltip_requests);
-        self.next_frame.cursor_styles
-            [paint_range.start.cursor_styles_index..paint_range.end.cursor_styles_index]
-            .clone_into(&mut recording.cursor_styles);
-        #[cfg(any(test, feature = "test-support"))]
-        self.next_frame.debug_bounds_history
-            [paint_range.start.debug_bounds_index..paint_range.end.debug_bounds_index]
-            .clone_into(&mut recording.debug_bounds);
         recording
     }
 
     pub(crate) fn graft_view_node_prepaint(
         &mut self,
-        recording: &ViewNodeRecording,
+        recording: &mut ViewNodeRecording,
+        cx: &App,
     ) -> Range<PrepaintStateIndex> {
+        use crate::view_node::MetadataPhase;
         let start = self.prepaint_index();
-        self.next_frame
-            .hitboxes
-            .extend(recording.hitboxes.iter().cloned());
-        self.next_frame
-            .tooltip_requests
-            .extend(recording.tooltip_requests.iter().cloned());
-        self.next_frame
-            .accessed_element_states
-            .extend(recording.prepaint_states.iter().cloned());
-        self.text_system.replay_layouts(&recording.prepaint_text);
-        let subtree = self.next_frame.dispatch_tree.replay_subtree(
-            &recording.dispatch_nodes,
-            recording.dispatch_start,
-            self.focus,
+        let DrawEngine::Node(engine) = &self.draw_engine else {
+            unreachable!()
+        };
+        recording.prepaint_states.replay(
+            engine,
+            cx,
+            &|recording, phase| Some(recording.states(phase)),
+            &mut |states| {
+                self.next_frame
+                    .accessed_element_states
+                    .extend_from_slice(states)
+            },
         );
-        if subtree.contains_focus() {
+        self.text_system
+            .replay_layouts(&recording.prepaint_text, engine, cx);
+        recording.hitboxes.replay(
+            engine,
+            cx,
+            &|recording, phase| (phase == MetadataPhase::Prepaint).then_some(&recording.hitboxes),
+            &mut |items| self.next_frame.hitboxes.extend_from_slice(items),
+        );
+        recording.tooltip_requests.replay(
+            engine,
+            cx,
+            &|recording, phase| {
+                (phase == MetadataPhase::Prepaint).then_some(&recording.tooltip_requests)
+            },
+            &mut |items| self.next_frame.tooltip_requests.extend_from_slice(items),
+        );
+        if self
+            .next_frame
+            .dispatch_tree
+            .replay_retained_subtree(recording, engine, cx, self.focus)
+        {
             self.next_frame.focus = self.focus;
         }
-        start..self.prepaint_index()
+        let end = self.prepaint_index();
+        recording.prepaint_states.frame_range =
+            start.accessed_element_states_index..end.accessed_element_states_index;
+        recording
+            .prepaint_text
+            .set_frame_range(start.line_layout_index.clone()..end.line_layout_index.clone());
+        recording.hitboxes.frame_range = start.hitboxes_index..end.hitboxes_index;
+        recording.tooltip_requests.frame_range = start.tooltips_index..end.tooltips_index;
+        recording.dispatch_nodes.frame_range = start.dispatch_tree_index..end.dispatch_tree_index;
+        start..end
     }
 
     pub(crate) fn graft_view_node_paint(
         &mut self,
         node_id: ViewNodeId,
-        recording: &ViewNodeRecording,
+        recording: &mut ViewNodeRecording,
         cx: &App,
     ) {
+        use crate::view_node::MetadataPhase;
+        let start = self.paint_index();
+        let DrawEngine::Node(engine) = &self.draw_engine else {
+            unreachable!()
+        };
+        recording.paint_states.replay(
+            engine,
+            cx,
+            &|recording, phase| Some(recording.states(phase)),
+            &mut |states| {
+                self.next_frame
+                    .accessed_element_states
+                    .extend_from_slice(states)
+            },
+        );
+        self.text_system
+            .replay_layouts(&recording.paint_text, engine, cx);
+        recording.tab_stops.replay(
+            engine,
+            cx,
+            &|recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.tab_stops),
+            &mut |items| self.next_frame.tab_stops.replay(items),
+        );
+        recording.window_controls.replay(
+            engine,
+            cx,
+            &|recording, phase| {
+                (phase == MetadataPhase::Paint).then_some(&recording.window_controls)
+            },
+            &mut |items| {
+                self.next_frame
+                    .window_control_hitboxes
+                    .extend_from_slice(items)
+            },
+        );
+        recording.mouse_listeners.replay(
+            engine,
+            cx,
+            &|recording, phase| {
+                (phase == MetadataPhase::Paint).then_some(&recording.mouse_listeners)
+            },
+            &mut |items| self.next_frame.mouse_listeners.extend_from_slice(items),
+        );
+        recording.input_handlers.replay(
+            engine,
+            cx,
+            &|recording, phase| {
+                (phase == MetadataPhase::Paint).then_some(&recording.input_handlers)
+            },
+            &mut |items| self.next_frame.input_handlers.extend_from_slice(items),
+        );
+        recording.cursor_styles.replay(
+            engine,
+            cx,
+            &|recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.cursor_styles),
+            &mut |items| self.next_frame.cursor_styles.extend_from_slice(items),
+        );
         #[cfg(any(test, feature = "test-support"))]
-        self.next_frame.replay_debug_bounds(&recording.debug_bounds);
-        self.next_frame
-            .cursor_styles
-            .extend(recording.cursor_styles.iter().cloned());
-        self.next_frame
-            .input_handlers
-            .extend(recording.input_handlers.iter().cloned());
-        self.next_frame
-            .mouse_listeners
-            .extend(recording.mouse_listeners.iter().cloned());
-        self.next_frame
-            .accessed_element_states
-            .extend(recording.paint_states.iter().cloned());
-        self.next_frame
-            .window_control_hitboxes
-            .extend(recording.window_controls.iter().cloned());
-        self.next_frame.tab_stops.replay(&recording.tab_stops);
-        self.text_system.replay_layouts(&recording.paint_text);
+        recording.debug_bounds.replay(
+            engine,
+            cx,
+            &|recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.debug_bounds),
+            &mut |items| self.next_frame.replay_debug_bounds(items),
+        );
         let parent = self.next_frame.scene.suspend_node_scene();
-        if let DrawEngine::Node(engine) = &self.draw_engine {
-            recording
-                .scene
-                .replay(&mut self.next_frame.scene, engine, cx);
-        }
+        recording
+            .scene
+            .replay(&mut self.next_frame.scene, engine, cx);
         self.next_frame.scene.restore_node_scene(parent, node_id);
+        let end = self.paint_index();
+        recording.paint_states.frame_range =
+            start.accessed_element_states_index..end.accessed_element_states_index;
+        recording
+            .paint_text
+            .set_frame_range(start.line_layout_index.clone()..end.line_layout_index.clone());
+        recording.tab_stops.frame_range = start.tab_handle_index..end.tab_handle_index;
+        recording.window_controls.frame_range =
+            start.window_controls_index..end.window_controls_index;
+        recording.mouse_listeners.frame_range =
+            start.mouse_listeners_index..end.mouse_listeners_index;
+        recording.input_handlers.frame_range = start.input_handlers_index..end.input_handlers_index;
+        recording.cursor_styles.frame_range = start.cursor_styles_index..end.cursor_styles_index;
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            recording.debug_bounds.frame_range = start.debug_bounds_index..end.debug_bounds_index;
+        }
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {

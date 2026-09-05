@@ -66,8 +66,13 @@ vector capacities; owned path payloads move into their slots. Normal retained
 frames allocate no flat paint-operation log, including deferred frames. Explicit
 prepaint primitive submission preserves its frame log for compatibility.
 GPU primitive arrays and the bounds tree are still assembled each frame, and the
-submitted scene remains flat and contiguous. Other effect metadata still gets
-captured from frame ranges, including descendant effects in parent recordings.
+submitted scene remains flat and contiguous. Metadata capture copies only local
+gaps between child ranges. Each category interleaves those local entries with
+child-node references; layout spans are also eligible during parent prepaint.
+Grafts update frame coordinates without changing the recording's dispatch-ID
+space. Dispatch replay maps each child's external parent into its containing
+recording and rebuilds the frame's focus and view maps. Only children that
+completed paint are referenced; prepaint-only effects remain locally owned.
 Unchanged dependency sets keep their existing graph edges. Retained replay does
 not depend on the preceding frame's listener or text indices.
 
@@ -152,10 +157,10 @@ and that replay matches the source scene as geometry changes.
 
 Performance and ownership:
 
-- [ ] Give every recorded effect local fragments and child-node references, as scene
-  operations already have. Parent recordings currently duplicate descendants'
-  hitboxes, dispatch nodes, callback handles, text-layout references, and state
-  keys. Preserve phase order and dispatch-ID remapping while removing duplication.
+- [x] Give recorded effects local fragments and child-node references. Capture
+  excludes descendant hitboxes, dispatch nodes, callback handles, text-layout
+  references, and state keys from parent storage. Replay preserves phase order
+  and remaps dispatch IDs across recordings from different frames.
 - [ ] Audit path-heavy scenes. `Path::clone` copies its vertex vector; scene
   insertion and replay can duplicate geometry. Measure copied bytes and
   allocation counts with paths, then reduce payload copies and retain nested
@@ -360,9 +365,9 @@ updates and empty locks, without claiming a demonstrated full-redraw speedup.
 The cleanup passes 254 GPUI tests under each engine, 13 node tests across 20
 scheduler iterations, the real-workspace stress and platform-handler IME tests,
 and `./script/clippy -p gpui -p benchmarks`. All seven release benchmark fixtures
-pass their scene and Metal pixel comparisons under both engines. Parent metadata
-recordings still duplicate descendant effects; that ownership change remains on
-the follow-up checklist.
+pass their scene and Metal pixel comparisons under both engines. These results
+predate local metadata ownership; ancestor recordings still duplicated descendant
+effects at that point.
 
 A temporary diagnostic omitted all non-scene recording capture in the fully
 dirty workbench while still building the normal frame and node scene output.
@@ -379,9 +384,8 @@ This estimates the cost of all remaining capture in that workload, not the
 saving achievable by removing only redundant ancestor copies. Omitting capture
 also changes resource lifetimes, so it is not an additive attribution of the
 whole retained/legacy gap. It is not a valid general rendering mode; the
-diagnostic switch was removed. Ordered local metadata fragments with child-node
-references remain the next ownership candidate, with dispatch parent/focus
-remapping and phase-specific ordering preserved.
+diagnostic switch was removed. This motivated the local metadata ownership
+change, which preserves dispatch parent/focus remapping and phase-specific order.
 
 ## Historical measurements before direct node scene storage
 

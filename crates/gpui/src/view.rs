@@ -376,7 +376,7 @@ impl<V: View> Element for ViewElement<V> {
                 | NodeRenderDecision::Render { node_id } => *node_id,
             };
             if let NodeRenderDecision::Graft {
-                recording,
+                mut recording,
                 accessed_entities,
                 ..
             } = decision
@@ -384,7 +384,7 @@ impl<V: View> Element for ViewElement<V> {
             {
                 cx.entities.extend_accessed(&accessed_entities);
                 window.finish_view_node_prepaint(node_id, false, cx);
-                let layout_range = window.graft_view_node_layout(&recording);
+                let layout_range = window.graft_view_node_layout(&mut recording, cx);
                 self.retained_layout = Some(RetainedViewLayout {
                     layout,
                     layout_range,
@@ -470,11 +470,11 @@ impl<V: View> Element for ViewElement<V> {
             window.set_view_id(entity_id);
             window.enter_view_node_prepaint(node_id);
             return window.with_rendered_view(entity_id, |window| {
-                if let Some(recording) = retained.recording
+                if let Some(mut recording) = retained.recording
                     && window.view_node_cache_key(node_id, cx).as_ref() == Some(&cache_key)
                     && window.retained_layout_unchanged(retained.layout)
                 {
-                    window.graft_view_node_prepaint(&recording);
+                    window.graft_view_node_prepaint(&mut recording, cx);
                     cx.entities.extend_accessed(&retained.accessed_entities);
                     cx.entities.recycle_access_scope(retained.accessed_entities);
                     window.finish_view_node_prepaint(node_id, false, cx);
@@ -539,10 +539,10 @@ impl<V: View> Element for ViewElement<V> {
                 return window.with_rendered_view(entity_id, |window| match decision {
                     NodeRenderDecision::Graft {
                         node_id,
-                        recording,
+                        mut recording,
                         accessed_entities,
                     } => {
-                        window.graft_view_node_prepaint(&recording);
+                        window.graft_view_node_prepaint(&mut recording, cx);
                         cx.entities.extend_accessed(&accessed_entities);
                         cx.entities.recycle_access_scope(accessed_entities);
                         window.finish_view_node_prepaint(node_id, false, cx);
@@ -686,8 +686,11 @@ impl<V: View> Element for ViewElement<V> {
             window.enter_view_node_prepaint(node_id);
             if let Some(entity_id) = self.entity_id {
                 window.with_rendered_view(entity_id, |window| match node {
-                    ViewNodePrepaintState::Graft { node_id, recording } => {
-                        window.graft_view_node_paint(node_id, &recording, cx);
+                    ViewNodePrepaintState::Graft {
+                        node_id,
+                        mut recording,
+                    } => {
+                        window.graft_view_node_paint(node_id, &mut recording, cx);
                         window.store_grafted_view_node(node_id, recording, cx);
                     }
                     ViewNodePrepaintState::Render {
@@ -714,6 +717,7 @@ impl<V: View> Element for ViewElement<V> {
                             layout_range,
                             prepaint_range,
                             paint_range,
+                            cx,
                         );
                         window.store_rendered_view_node(
                             node_id,
@@ -1523,6 +1527,247 @@ mod tests {
                 assert_eq!(leaf.keys, 2, "focus and key listeners must survive reuse");
             })
             .expect("window open");
+    }
+
+    struct MetadataLeaf {
+        focus: crate::FocusHandle,
+        events: Rc<std::cell::RefCell<Vec<&'static str>>>,
+    }
+
+    impl Render for MetadataLeaf {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("leaf")
+                .track_focus(&self.focus)
+                .key_context("MetadataLeaf")
+                .w(px(100.))
+                .h(px(40.))
+                .child("retained text")
+                .on_key_down(cx.listener(|this, _, _, _| this.events.borrow_mut().push("leaf")))
+        }
+    }
+
+    struct MetadataBranch {
+        focus: crate::FocusHandle,
+        leaf: Entity<MetadataLeaf>,
+        events: Rc<std::cell::RefCell<Vec<&'static str>>>,
+    }
+
+    impl Render for MetadataBranch {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("branch")
+                .track_focus(&self.focus)
+                .key_context("MetadataBranch")
+                .child(self.leaf.clone())
+                .on_key_down(cx.listener(|this, _, _, _| this.events.borrow_mut().push("branch")))
+        }
+    }
+
+    struct MetadataRoot {
+        prefix_count: usize,
+        branch: Entity<MetadataBranch>,
+        events: Rc<std::cell::RefCell<Vec<&'static str>>>,
+    }
+
+    impl Render for MetadataRoot {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("root")
+                .key_context("MetadataRoot")
+                .children(
+                    (0..self.prefix_count).map(|index| div().id(index).absolute().child("prefix")),
+                )
+                .child(self.branch.clone())
+                .on_key_down(cx.listener(|this, _, _, _| this.events.borrow_mut().push("root")))
+        }
+    }
+
+    #[gpui::test]
+    fn node_engine_replays_nested_metadata_from_different_frames(cx: &mut TestAppContext) {
+        let build = |engine| {
+            move |window: &mut Window, cx: &mut Context<MetadataRoot>| {
+                window.draw_engine = engine;
+                let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+                let leaf = cx.new(|cx| MetadataLeaf {
+                    focus: cx.focus_handle(),
+                    events: events.clone(),
+                });
+                leaf.read(cx).focus.clone().focus(window, cx);
+                let branch = cx.new(|cx| MetadataBranch {
+                    focus: cx.focus_handle(),
+                    leaf,
+                    events: events.clone(),
+                });
+                MetadataRoot {
+                    prefix_count: 0,
+                    branch,
+                    events,
+                }
+            }
+        };
+        let legacy = cx.open_window(size(px(300.), px(100.)), build(DrawEngine::Legacy));
+        let retained = cx.open_window(
+            size(px(300.), px(100.)),
+            build(DrawEngine::Node(crate::NodeEngine::new())),
+        );
+        cx.run_until_parked();
+        for step in 0..12 {
+            for handle in [legacy, retained] {
+                handle
+                    .update(cx, |root, _, cx| {
+                        root.events.borrow_mut().clear();
+                        if step % 3 == 1 {
+                            root.branch.update(cx, |_, cx| cx.notify());
+                        } else {
+                            root.prefix_count = (step * 7) % 5;
+                            cx.notify();
+                        }
+                    })
+                    .expect("window open");
+            }
+            cx.run_until_parked();
+            for handle in [legacy, retained] {
+                crate::VisualTestContext::from_window(handle.into(), cx)
+                    .simulate_keystrokes("enter");
+            }
+            cx.run_until_parked();
+            let snapshot = |handle: crate::WindowHandle<MetadataRoot>, cx: &mut TestAppContext| {
+                handle
+                    .update(cx, |root, window, cx| {
+                        let branch = root.branch.read(cx);
+                        assert!(branch.focus.contains_focused(window, cx));
+                        assert!(branch.leaf.read(cx).focus.is_focused(window));
+                        assert_eq!(&*root.events.borrow(), &["leaf", "branch", "root"]);
+                        window.assert_metadata_unique(cx);
+                        window.rendered_frame.scene.snapshot_for_test()
+                    })
+                    .expect("window open")
+            };
+            assert_eq!(
+                snapshot(legacy, cx),
+                snapshot(retained, cx),
+                "metadata frame {step}"
+            );
+        }
+    }
+
+    struct OptionalPaint {
+        child: crate::AnyElement,
+        paint_child: bool,
+    }
+
+    impl IntoElement for OptionalPaint {
+        type Element = Self;
+        fn into_element(self) -> Self {
+            self
+        }
+    }
+
+    impl crate::Element for OptionalPaint {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+        fn id(&self) -> Option<crate::ElementId> {
+            None
+        }
+        fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+            None
+        }
+        fn request_layout(
+            &mut self,
+            _: Option<&crate::GlobalElementId>,
+            _: Option<&crate::InspectorElementId>,
+            window: &mut Window,
+            cx: &mut crate::App,
+        ) -> (crate::LayoutId, ()) {
+            (self.child.request_layout(window, cx), ())
+        }
+        fn prepaint(
+            &mut self,
+            _: Option<&crate::GlobalElementId>,
+            _: Option<&crate::InspectorElementId>,
+            _: crate::Bounds<crate::Pixels>,
+            _: &mut (),
+            window: &mut Window,
+            cx: &mut crate::App,
+        ) {
+            self.child.prepaint(window, cx);
+        }
+        fn paint(
+            &mut self,
+            _: Option<&crate::GlobalElementId>,
+            _: Option<&crate::InspectorElementId>,
+            _: crate::Bounds<crate::Pixels>,
+            _: &mut (),
+            _: &mut (),
+            window: &mut Window,
+            cx: &mut crate::App,
+        ) {
+            if self.paint_child {
+                self.child.paint(window, cx);
+            }
+        }
+    }
+
+    struct OptionalPaintRoot {
+        leaf: Entity<InteractiveLeaf>,
+        paint_child: bool,
+    }
+
+    impl Render for OptionalPaintRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().child(OptionalPaint {
+                child: self.leaf.clone().into_any_element(),
+                paint_child: self.paint_child,
+            })
+        }
+    }
+
+    #[gpui::test]
+    fn node_engine_captures_children_that_prepaint_without_paint(cx: &mut TestAppContext) {
+        let build = |engine| {
+            move |window: &mut Window, cx: &mut Context<OptionalPaintRoot>| {
+                window.draw_engine = engine;
+                OptionalPaintRoot {
+                    leaf: cx.new(|cx| InteractiveLeaf {
+                        focus: cx.focus_handle(),
+                        clicks: 0,
+                        keys: 0,
+                    }),
+                    paint_child: false,
+                }
+            }
+        };
+        let legacy = cx.open_window(size(px(300.), px(100.)), build(DrawEngine::Legacy));
+        let retained = cx.open_window(
+            size(px(300.), px(100.)),
+            build(DrawEngine::Node(crate::NodeEngine::new())),
+        );
+        cx.run_until_parked();
+        for step in 0..8 {
+            for handle in [legacy, retained] {
+                handle
+                    .update(cx, |root, _, cx| {
+                        root.paint_child = step % 2 == 0;
+                        cx.notify();
+                    })
+                    .expect("window open");
+            }
+            cx.run_until_parked();
+            let snapshot = |handle: crate::WindowHandle<OptionalPaintRoot>,
+                            cx: &mut TestAppContext| {
+                handle
+                    .update(cx, |_, window, _| {
+                        window.rendered_frame.scene.snapshot_for_test()
+                    })
+                    .expect("window open")
+            };
+            assert_eq!(
+                snapshot(legacy, cx),
+                snapshot(retained, cx),
+                "optional paint {step}"
+            );
+        }
     }
 
     struct ArenaMeasuredElement {

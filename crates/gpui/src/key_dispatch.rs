@@ -287,39 +287,119 @@ impl DispatchTree {
         target.modifiers_changed_listeners = mem::take(&mut source.modifiers_changed_listeners);
     }
 
-    pub(crate) fn record_subtree(&self, range: Range<usize>, nodes: &mut Vec<DispatchNode>) {
-        self.nodes[range].clone_into(nodes);
+    pub(crate) fn record_retained_subtree(
+        &self,
+        range: Range<usize>,
+        recording: &mut crate::view_node::RecordedMetadata<DispatchNode>,
+        children: &[(
+            crate::node_engine::ViewNodeId,
+            &crate::view_node::ViewNodeRecording,
+        )],
+    ) {
+        let mut cursor = range.start;
+        recording.record(
+            range,
+            children.iter().copied(),
+            |recording, phase| {
+                (phase == crate::view_node::MetadataPhase::Prepaint)
+                    .then_some(&recording.dispatch_nodes)
+            },
+            |range, target, start| {
+                crate::view_node::capture_metadata(&self.nodes[range], target, start)
+            },
+        );
+        let mut local_start = 0;
+        for child in &mut recording.children {
+            cursor += child.local_end - local_start;
+            child.dispatch_parent = self.nodes[cursor]
+                .parent
+                .and_then(|parent| std::num::NonZeroUsize::new(parent.0 + 1));
+            cursor += child.len;
+            local_start = child.local_end;
+        }
     }
 
-    pub(crate) fn replay_subtree(
+    pub(crate) fn replay_retained_subtree(
+        &mut self,
+        recording: &crate::view_node::ViewNodeRecording,
+        engine: &crate::node_engine::NodeEngine,
+        cx: &App,
+        focus: Option<FocusId>,
+    ) -> bool {
+        self.replay_recorded_nodes(
+            recording,
+            engine,
+            cx,
+            focus,
+            self.node_stack.last().copied(),
+        )
+    }
+
+    fn replay_recorded_nodes(
+        &mut self,
+        recording: &crate::view_node::ViewNodeRecording,
+        engine: &crate::node_engine::NodeEngine,
+        cx: &App,
+        focus: Option<FocusId>,
+        parent: Option<DispatchNodeId>,
+    ) -> bool {
+        let nodes = &recording.dispatch_nodes;
+        let old_start = recording.dispatch_start;
+        let old_end = old_start + nodes.frame_range.len();
+        let new_start = self.nodes.len();
+        // Each child can retain IDs from a different frame; only its external parent
+        // belongs to the containing recording's coordinate space.
+        let map_parent = |source: Option<DispatchNodeId>| {
+            source
+                .filter(|source| source.0 >= old_start && source.0 < old_end)
+                .map(|source| DispatchNodeId(new_start + source.0 - old_start))
+                .or(parent)
+        };
+        let mut contains_focus = false;
+        let mut local_start = 0;
+        for child in &nodes.children {
+            contains_focus |= self.append_recorded_nodes(
+                &nodes.local[local_start..child.local_end],
+                focus,
+                &map_parent,
+            );
+            contains_focus |= self.replay_recorded_nodes(
+                engine.recording(child.node, cx),
+                engine,
+                cx,
+                focus,
+                map_parent(
+                    child
+                        .dispatch_parent
+                        .map(|parent| DispatchNodeId(parent.get() - 1)),
+                ),
+            );
+            local_start = child.local_end;
+        }
+        contains_focus | self.append_recorded_nodes(&nodes.local[local_start..], focus, &map_parent)
+    }
+
+    fn append_recorded_nodes(
         &mut self,
         nodes: &[DispatchNode],
-        old_start: usize,
         focus: Option<FocusId>,
-    ) -> ReusedSubtree {
-        let new_range = self.nodes.len()..self.nodes.len() + nodes.len();
-        let mut source_stack = Vec::new();
+        map_parent: &impl Fn(Option<DispatchNodeId>) -> Option<DispatchNodeId>,
+    ) -> bool {
         let mut contains_focus = false;
-        for (offset, source) in nodes.iter().enumerate() {
-            while let Some(ancestor) = source_stack.last() {
-                if source.parent == Some(*ancestor) {
-                    break;
-                }
-                source_stack.pop();
-                self.pop_node();
+        for source in nodes {
+            let mut node = source.clone();
+            node.parent = map_parent(node.parent);
+            let id = DispatchNodeId(self.nodes.len());
+            if let Some(focus_id) = node.focus_id {
+                self.focusable_node_ids.insert(focus_id, id);
+                contains_focus |= Some(focus_id) == focus;
             }
-            source_stack.push(DispatchNodeId(old_start + offset));
-            contains_focus |= source.focus_id.is_some() && source.focus_id == focus;
-            self.move_node(&mut source.clone());
+            if let Some(view_id) = node.view_id {
+                self.view_node_ids.insert(view_id, id);
+            }
+            self.nodes.push(node);
         }
-        while source_stack.pop().is_some() {
-            self.pop_node();
-        }
-        ReusedSubtree {
-            old_range: old_start..old_start + nodes.len(),
-            new_range,
-            contains_focus,
-        }
+        contains_focus
     }
 
     pub fn reuse_subtree(

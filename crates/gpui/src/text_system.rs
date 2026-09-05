@@ -400,12 +400,22 @@ impl WindowTextSystem {
         &self,
         range: Range<LineLayoutIndex>,
         recording: &mut LineLayoutRecording,
+        children: &[(
+            crate::node_engine::ViewNodeId,
+            &crate::view_node::ViewNodeRecording,
+        )],
     ) {
-        self.line_layout_cache.record_layouts(range, recording);
+        self.line_layout_cache
+            .record_layouts(range, recording, children);
     }
 
-    pub(crate) fn replay_layouts(&self, recording: &LineLayoutRecording) {
-        self.line_layout_cache.replay_layouts(recording);
+    pub(crate) fn replay_layouts(
+        &self,
+        recording: &LineLayoutRecording,
+        engine: &crate::node_engine::NodeEngine,
+        cx: &crate::App,
+    ) {
+        self.line_layout_cache.replay_layouts(recording, engine, cx);
     }
 
     pub(crate) fn reuse_layouts(&self, index: Range<LineLayoutIndex>) {
