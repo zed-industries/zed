@@ -661,6 +661,21 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                         step + 1,
                         crate::memory::live_bytes()
                     );
+                    self.with_window(view.entity_id(), |window, cx| {
+                        let frame_operations = (window.rendered_frame.scene.paint_operations.capacity()
+                            + window.next_frame.scene.paint_operations.capacity())
+                            * std::mem::size_of::<crate::scene::PaintOperation>();
+                        let recorded_operations = match &window.draw_engine {
+                            crate::node_engine::DrawEngine::Legacy => 0,
+                            crate::node_engine::DrawEngine::Node(engine) => {
+                                engine.recorded_operation_buffer_bytes(cx)
+                            }
+                        };
+                        eprintln!(
+                            "paint-operation buffer bytes: frames={frame_operations} recordings={recorded_operations}"
+                        );
+                    })
+                    .expect("benchmark window");
                 }
             }
             if validate {

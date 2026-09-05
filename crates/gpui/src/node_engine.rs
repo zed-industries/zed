@@ -102,7 +102,7 @@ impl Drop for NodeEngineTestGuard {
 }
 
 impl NodeEngine {
-    #[cfg(all(test, target_os = "macos"))]
+    #[cfg(any(all(test, target_os = "macos"), feature = "test-memory"))]
     pub(crate) fn recorded_operation_buffer_bytes(&self, cx: &App) -> usize {
         self.nodes
             .values()

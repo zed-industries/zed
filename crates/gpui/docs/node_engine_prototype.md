@@ -158,8 +158,11 @@ Performance and ownership:
   Regression tests cover changed geometry, shrinking paths, operation-type
   replacement, child-range compaction, and removal. This removes repeated vertex
   allocation during stable capture; it does not remove the vertex copies.
-- [ ] Evaluate writing effects directly into retained storage, avoiding the active
-  frame-to-recording capture pass while preserving existing frame/replay APIs.
+- [ ] Make retained scene storage the primary representation and reduce the
+  additional operation buffers, while preserving existing frame/replay APIs.
+  Extra recording capacities account for about 93% of the measured pane heap
+  increase; capacity reuse alone does not remove this duplication. Avoid the
+  active frame-to-recording capture pass where ownership permits.
 - [ ] Benchmark deeper nesting, many callbacks, large paths, mixed dirty scopes,
   scrolling, and representative Zed windows. Measure CPU phases, copied bytes,
   allocations, and retained-memory high-water marks across mount/unmount cycles.
@@ -391,6 +394,34 @@ should not be interpreted as a precise leak measurement. The editor/workbench
 results demonstrate a memory cost unlike the original text microbenchmark's net
 savings. Attribution to scene recordings, layout contexts, text caches, and other
 allocation sites remains outstanding.
+
+A subsequent capacity audit makes part of the memory cost explicit. Memory mode
+also prints `paint-operation buffer bytes`, distinguishing the two flat frames
+from retained node recordings. One fresh process per engine/workload sampled
+capacities after each 100 updates through 500; all five capacities matched in
+each run:
+
+| Workload | Both flat frames, either engine | Additional node recordings |
+| --- | ---: | ---: |
+| Existing editor benchmark | 0.328 MiB | 0.164 MiB |
+| One editor pane | 1.3125 MiB | 0.65625 MiB |
+| Three editor panes | 2.625 MiB | 1.96875 MiB |
+| Workbench, each update mode | 1.3125 MiB | 0.60242 MiB |
+
+These are requested vector capacities, not a full heap census; path vertex
+buffers, typed primitive lanes, and other metadata are excluded. The flat-frame
+operation capacities are identical between engines. Node operation buffers alone
+equal about 93% of the extra warm heap in the pane fixtures, and about 51–69% in
+the workbench fixtures. They scale with retained scene content and capacity growth,
+not just the number of node entities. This is additional storage alongside the
+flat frames, rather than the same allocation moving to a different owner.
+
+A three-second macOS CPU sample of each fully dirty workbench engine also shows
+retained recording capture, including operation and dispatch-node copying, in
+the retained stacks. The sample includes benchmark activity and inlined code;
+it does not reliably allocate the 0.128 ms timing gap among individual costs.
+It identifies copying as a target, not proof that removing it eliminates the
+whole penalty. This audit changes diagnostics only and claims no optimization.
 
 All seven workloads pass 24 scene and Metal pixel comparisons under each engine
 (336 comparisons of each kind in total). The retained run records reuse in the
