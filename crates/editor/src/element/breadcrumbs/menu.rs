@@ -1022,11 +1022,17 @@ impl BreadcrumbNavigationMenu {
         if !keep_previous_rows {
             self.directory_entries.clear();
             self.entries_listing = None;
-            self.filter_candidates = Arc::new(Vec::new());
             if matches!(self.listing, BreadcrumbListing::Directory { .. }) {
                 self.all_symbol_items.clear();
                 self.symbol_parents.clear();
                 self.listed_symbol_indices.clear();
+            }
+            // The candidates index whatever the rows are drawn from, so they go with it. A
+            // symbol listing that keeps its outline keeps them: `spawn_symbols_load` re-windows
+            // the loaded items without rebuilding either, so clearing here would leave the new
+            // level searchable against nothing and answer every query with no matches.
+            if self.all_symbol_items.is_empty() {
+                self.filter_candidates = Arc::new(Vec::new());
             }
         }
         cx.notify();
@@ -1332,6 +1338,10 @@ impl BreadcrumbNavigationMenu {
         self.publish_rows(cx);
         self.apply_symbol_parent(parent, cx);
         if self.filter_is_empty() {
+            // Nothing ranks an empty query, so the epoch a reload bumped has to be retired
+            // here. Left behind it would hold `rank_pending` on for the rest of the menu's
+            // life, and the drill reads that as a rank still owed and refuses to move.
+            self.ranked_epoch = self.filter_epoch;
             self.apply_initial_selection_if_needed(cx);
         } else {
             self.ranked_matches.clear();

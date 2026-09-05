@@ -573,9 +573,8 @@ impl BreadcrumbStrip {
             .child(div().px(px(SEGMENT_TRIGGER_PADDING_X)).child(label))
             .when(!menu_open, |this| {
                 this.tooltip(move |_, cx| {
-                    // The chord opens the active file's parent directory, so it only belongs on
-                    // directory segments; the file and symbol segments would advertise a shortcut
-                    // that never opens their own listing.
+                    // Only the file segment names the chord, because only its listing is the
+                    // one the chord opens; see `segment_tooltip_shows_navigation_chord`.
                     let title: SharedString = match tooltip_target.as_ref() {
                         BreadcrumbSegmentTarget::Directory { path, .. } => {
                             if path.is_empty() {
