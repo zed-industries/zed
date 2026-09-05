@@ -382,8 +382,17 @@ impl AgentDebuggerApi {
                 let result = wait_for_stop_or_timeout(stop_wait, timeout, cx).await?;
                 match result.status {
                     AgentDebuggerWaitStatus::Stopped => {
-                        if wait_for_stack_trace(&session, result.stopped_thread_id, cx).await {
-                            return Ok(result);
+                        // Some adapters (Debugpy) emit a stop without a thread id
+                        // (`preserve_focus_hint` or an omitted thread). Fall back
+                        // to the thread the caller asked to pause so the stack
+                        // trace check can actually run against a thread.
+                        let stopped_thread_id = result.stopped_thread_id.or(Some(thread_id));
+                        if wait_for_stack_trace(&session, stopped_thread_id, cx).await {
+                            return Ok(AgentDebuggerControlResult {
+                                status: AgentDebuggerWaitStatus::Stopped,
+                                stopped_thread_id,
+                                notes: Vec::new(),
+                            });
                         }
                         last_result = Some(result);
                     }
