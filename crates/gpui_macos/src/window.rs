@@ -1978,9 +1978,21 @@ impl PlatformWindow for MacWindow {
                                 }
                             }
                             "Fill" => {
-                                // There is no documented API for "Fill" action, so we'll just zoom the window
                                 if is_resizable {
-                                    window.zoom_(nil);
+                                    // `zoom:` resizes the window to the screen's visible frame,
+                                    // which is not what "Fill" does: the system tiling path insets
+                                    // the frame when "Tiled windows have margins" is enabled in
+                                    // System Settings > Desktop & Dock. AppKit implements that
+                                    // action as `_zoomFill:`, the same selector the Window >
+                                    // Move & Resize > Fill menu item uses, so prefer it and fall
+                                    // back to `zoom:` when it is unavailable.
+                                    let responds_to_zoom_fill: BOOL =
+                                        msg_send![window, respondsToSelector: sel!(_zoomFill:)];
+                                    if responds_to_zoom_fill == YES {
+                                        let _: () = msg_send![window, _zoomFill: nil];
+                                    } else {
+                                        window.zoom_(nil);
+                                    }
                                 }
                             }
                             _ => {
