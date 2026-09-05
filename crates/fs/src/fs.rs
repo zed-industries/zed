@@ -161,6 +161,16 @@ pub trait Fs: Send + Sync {
         abs_dot_git: &Path,
         system_git_binary_path: Option<&Path>,
     ) -> Result<Arc<dyn GitRepository>>;
+    /// Opens (initializing if needed) a checkpoint repository whose git
+    /// directory lives at `git_dir_abs_path`, separate from its working tree at
+    /// `work_directory_abs_path`. Used to snapshot the agent's edits in projects
+    /// that are not under version control.
+    async fn open_checkpoint_repo(
+        &self,
+        git_dir_abs_path: &Path,
+        work_directory_abs_path: &Path,
+        system_git_binary_path: Option<&Path>,
+    ) -> Result<Arc<dyn GitRepository>>;
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
     async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()>;
@@ -1217,6 +1227,26 @@ impl Fs for RealFs {
             system_git_binary_path.map(|path| path.to_path_buf()),
             self.executor.clone(),
         )?))
+    }
+
+    async fn open_checkpoint_repo(
+        &self,
+        git_dir_abs_path: &Path,
+        work_directory_abs_path: &Path,
+        system_git_binary_path: Option<&Path>,
+    ) -> Result<Arc<dyn GitRepository>> {
+        if let Some(parent) = git_dir_abs_path.parent() {
+            smol::fs::create_dir_all(parent).await?;
+        }
+        let repository = RealGitRepository::open_checkpoint(
+            git_dir_abs_path.to_path_buf(),
+            work_directory_abs_path.to_path_buf(),
+            self.bundled_git_binary_path.clone(),
+            system_git_binary_path.map(|path| path.to_path_buf()),
+            self.executor.clone(),
+        )?;
+        repository.initialize_checkpoint().await?;
+        Ok(Arc::new(repository))
     }
 
     async fn git_init(
@@ -3378,6 +3408,15 @@ impl Fs for FakeFs {
                 }) as _
             },
         )
+    }
+
+    async fn open_checkpoint_repo(
+        &self,
+        _git_dir_abs_path: &Path,
+        _work_directory_abs_path: &Path,
+        _system_git_binary_path: Option<&Path>,
+    ) -> Result<Arc<dyn GitRepository>> {
+        anyhow::bail!("checkpoint repositories are not supported in fake Fs")
     }
 
     async fn git_init(
