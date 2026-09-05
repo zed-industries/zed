@@ -103,6 +103,126 @@ mod tests {
     use std::cell::RefCell;
     use std::time::Duration;
 
+    #[cfg(all(feature = "test-support", feature = "font-kit"))]
+    #[test]
+    #[ignore = "requires a Metal device"]
+    fn retained_scene_matches_full_refresh_pixels() {
+        use gpui::{
+            Context, Entity, HeadlessAppContext, IntoElement, ParentElement, Render, Styled,
+            Window, div, px, rgb, size,
+        };
+
+        struct Tile(u32);
+        impl Render for Tile {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w(px(140.))
+                    .h(px(90.))
+                    .rounded_lg()
+                    .border_2()
+                    .border_color(rgb(0xffffff))
+                    .bg(rgb(self.0))
+                    .opacity(0.8)
+                    .text_color(rgb(0xffffff))
+                    .child("Retained λ")
+                    .child(
+                        gpui::canvas(
+                            |_, _, _| (),
+                            |bounds, _, window, _| {
+                                let mut path = gpui::PathBuilder::fill();
+                                path.move_to(bounds.origin);
+                                path.line_to(bounds.bottom_right());
+                                path.line_to(bounds.bottom_left());
+                                path.close();
+                                window.paint_path(path.build().expect("triangle"), rgb(0xffbb22));
+                            },
+                        )
+                        .w(px(80.))
+                        .h(px(30.)),
+                    )
+            }
+        }
+        struct Root(Vec<Entity<Tile>>);
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .bg(rgb(0x182030))
+                    .flex()
+                    .gap_3()
+                    .overflow_hidden()
+                    .children(self.0.iter().cloned())
+            }
+        }
+        let mut cx = HeadlessAppContext::with_platform(
+            current_platform(true).text_system(),
+            std::sync::Arc::new(()),
+            current_headless_renderer,
+        );
+        let first = cx.new(|_| Tile(0x883344));
+        let second = cx.new(|_| Tile(0x338844));
+        let window = cx
+            .open_window(size(px(400.), px(200.)), |_, cx| {
+                cx.new(|_| Root(vec![first.clone(), second]))
+            })
+            .expect("offscreen window");
+        cx.run_until_parked();
+        let mut reused = 0;
+        for step in 0..8 {
+            first.update(&mut cx, |tile, cx| {
+                tile.0 += 0x030201;
+                cx.notify();
+            });
+            window
+                .update(&mut cx, |root, window, cx| {
+                    if step == 3 {
+                        root.0.reverse();
+                        cx.notify();
+                    }
+                    if step == 5 {
+                        window.resize(size(px(220.), px(140.)));
+                    }
+                    if step == 7 {
+                        root.0.retain(|tile| tile != &first);
+                        cx.notify();
+                    }
+                })
+                .expect("update tiles");
+            cx.run_until_parked();
+            cx.update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                if let Some(stats) = window.retained_node_stats() {
+                    reused += stats.reused_subtrees;
+                }
+            })
+            .expect("draw incremental scene");
+            let incremental = cx
+                .capture_screenshot(window.into())
+                .expect("Metal readback");
+            assert!(
+                incremental
+                    .pixels()
+                    .any(|pixel| pixel != incremental.get_pixel(0, 0)),
+                "nontrivial GPU output"
+            );
+            cx.update_window(window.into(), |_, window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            })
+            .expect("draw reference scene");
+            let reference = cx
+                .capture_screenshot(window.into())
+                .expect("reference Metal readback");
+            assert!(incremental == reference, "GPU pixels differ at step {step}");
+        }
+        cx.update_window(window.into(), |_, window, _| {
+            if window.retained_node_stats().is_some() {
+                assert!(reused > 0, "pixel oracle must exercise retained reuse");
+            }
+        })
+        .expect("verify reuse");
+    }
+
     // Note: All VisualTestAppContext tests are ignored by default because they require
     // the macOS main thread. Standard Rust tests run on worker threads, which causes
     // SIGABRT when interacting with macOS AppKit/Cocoa APIs.

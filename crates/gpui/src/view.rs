@@ -1728,6 +1728,59 @@ mod tests {
     #[gpui::test]
     #[ignore = "manual CPU benchmark; run with --release --ignored --nocapture"]
     fn node_engine_update_benchmark(cx: &mut TestAppContext) {
+        #[cfg(feature = "test-memory")]
+        eprintln!(
+            "test-memory counts live Rust allocations; timing includes allocator instrumentation"
+        );
+        #[cfg(not(target_os = "macos"))]
+        assert!(
+            std::env::var_os("GPUI_BENCH_MEMORY").is_none(),
+            "malloc-zone memory sampling requires macOS"
+        );
+        let cycles = std::env::var("GPUI_BENCH_MEMORY_CYCLES").map_or(1, |value| {
+            value.parse::<usize>().expect("memory cycle count")
+        });
+        assert!(cycles > 0);
+        assert!(cycles == 1 || std::env::var_os("GPUI_BENCH_MEMORY").is_some());
+        for cycle in 0..cycles {
+            eprintln!("mount cycle {cycle}");
+            run_node_engine_update_benchmark(cx);
+        }
+    }
+
+    fn run_node_engine_update_benchmark(cx: &mut TestAppContext) {
+        #[cfg(target_os = "macos")]
+        fn heap_bytes() -> usize {
+            #[repr(C)]
+            struct MallocStatistics {
+                blocks_in_use: u32,
+                size_in_use: usize,
+                max_size_in_use: usize,
+                size_allocated: usize,
+            }
+            unsafe extern "C" {
+                fn malloc_zone_statistics(
+                    zone: *mut std::ffi::c_void,
+                    statistics: *mut MallocStatistics,
+                );
+            }
+            let mut statistics = MallocStatistics {
+                blocks_in_use: 0,
+                size_in_use: 0,
+                max_size_in_use: 0,
+                size_allocated: 0,
+            };
+            // A null zone sums all malloc zones, including native framework allocations.
+            unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut statistics) };
+            #[cfg(feature = "test-memory")]
+            eprintln!(
+                "Rust live requested bytes: {}",
+                crate::test::memory::live_bytes()
+            );
+            statistics.size_in_use
+        }
+        #[cfg(target_os = "macos")]
+        let memory_baseline = std::env::var_os("GPUI_BENCH_MEMORY").map(|_| heap_bytes());
         let dirty_all = std::env::var_os("GPUI_BENCH_ALL_DIRTY").is_some();
         eprintln!(
             "workload: {}",
@@ -1748,6 +1801,11 @@ mod tests {
             }
         };
         let selected = std::env::var("GPUI_BENCH_ENGINE").ok();
+        #[cfg(target_os = "macos")]
+        assert!(
+            memory_baseline.is_none() || selected.is_some(),
+            "memory measurements require a single engine per process"
+        );
         let engines: Vec<_> = ["legacy", "retained"]
             .into_iter()
             .filter(|name| selected.as_deref().is_none_or(|selected| selected == *name))
@@ -1768,6 +1826,14 @@ mod tests {
             })
             .collect();
         cx.run_until_parked();
+        #[cfg(target_os = "macos")]
+        if let Some(baseline) = memory_baseline {
+            let live = heap_bytes();
+            eprintln!(
+                "memory after mount: baseline={baseline} live={live} delta={}",
+                live as i128 - baseline as i128
+            );
+        }
         let mut samples = vec![Vec::new(); windows.len()];
         let mut previous_layout_count = None;
         for round in 0..5 {
@@ -1819,10 +1885,45 @@ mod tests {
                     })
                     .expect("window open");
             }
+            #[cfg(target_os = "macos")]
+            if let Some(baseline) = memory_baseline {
+                let live = heap_bytes();
+                eprintln!(
+                    "memory round {round}: live={live} delta={}",
+                    live as i128 - baseline as i128
+                );
+                for window in &windows {
+                    window.update(cx, |_, window, cx| {
+                        let frame_operations = (window.rendered_frame.scene.paint_operations.capacity()
+                            + window.next_frame.scene.paint_operations.capacity())
+                            * std::mem::size_of::<crate::scene::PaintOperation>();
+                        let recorded_operations = match &window.draw_engine {
+                            DrawEngine::Legacy => 0,
+                            DrawEngine::Node(engine) => engine.recorded_operation_buffer_bytes(cx),
+                        };
+                        let arena_bytes = cx.element_arena.borrow().capacity();
+                        eprintln!("paint-operation buffer bytes: frames={frame_operations} recordings={recorded_operations}; element arena bytes={arena_bytes}");
+                    }).expect("window open");
+                }
+            }
         }
         for (name, mut samples) in engines.into_iter().zip(samples) {
             samples.sort_by(f64::total_cmp);
             eprintln!("{name}: microseconds/update {samples:?}");
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(baseline) = memory_baseline {
+            for window in windows {
+                window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .expect("window open");
+            }
+            cx.run_until_parked();
+            let live = heap_bytes();
+            eprintln!(
+                "memory after unmount: live={live} delta={}",
+                live as i128 - baseline as i128
+            );
         }
     }
 

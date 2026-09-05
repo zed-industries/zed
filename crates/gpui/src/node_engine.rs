@@ -98,6 +98,19 @@ impl Drop for NodeEngineTestGuard {
 }
 
 impl NodeEngine {
+    #[cfg(all(test, target_os = "macos"))]
+    pub(crate) fn recorded_operation_buffer_bytes(&self, cx: &App) -> usize {
+        self.nodes
+            .values()
+            .map(|node| {
+                node.read(cx)
+                    .recording
+                    .as_ref()
+                    .map_or(0, |recording| recording.scene.operation_buffer_bytes())
+            })
+            .sum()
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             invalidation_queue: Vec::new(),

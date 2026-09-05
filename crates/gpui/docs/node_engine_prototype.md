@@ -161,11 +161,32 @@ Performance and ownership:
 - [ ] Benchmark deeper nesting, many callbacks, large paths, mixed dirty scopes,
   scrolling, and representative Zed windows. Measure CPU phases, copied bytes,
   allocations, and retained-memory high-water marks across mount/unmount cycles.
+- [x] Add live-heap sampling to the original 64-view text microbenchmark on
+  macOS. Use `GPUI_BENCH_MEMORY=1 GPUI_BENCH_ENGINE=legacy` or `retained` with
+  `node_engine_update_benchmark`; run each engine in a separate process. Add
+  `GPUI_BENCH_ALL_DIRTY=1` for dense updates and `GPUI_BENCH_MEMORY_CYCLES=6`
+  for repeated mounting/unmounting. Samples include startup, mount, each batch
+  of 100 frames, and unmount. `malloc_zone_statistics` reports live heap across
+  all malloc zones, including native framework allocations; this excludes GPU
+  memory, code pages, and stacks and is distinct from allocation traffic or RSS.
+  Paint-operation vector capacities are reported separately for both frame
+  buffers and node recordings; these are a partial breakdown, not total heap.
+  Add `--features test-memory` to count live requested bytes through Rust's
+  global allocator separately from native caches and allocator overhead. The
+  counter is compiled only into GPUI's unit-test executable. Do not use its
+  timing output for CPU comparisons: allocation instrumentation adds overhead.
 - [ ] Measure repeated root-layout computation when several cached scopes change
   geometry in one frame; avoid repeated whole-tree work where semantics permit.
 
 Correctness and integration before considering default enablement:
 
+- [x] Drive the real editor through the installed platform input handler after
+  retained replay. Cover composition updates, UTF-16 selection and replacement
+  ranges (including emoji), candidate bounds against a forced refresh, commit,
+  unmark, resize/scroll, and removal during composition. Run
+  `GPUI_EXPERIMENTAL_NODE_ENGINE=1 cargo test -p editor
+  test_ime_platform_handler_across_retained_frames --lib` (use `=0` for legacy).
+  This checks platform callbacks, not the native input-method frontend.
 - [ ] Exercise native IME composition: marked text, replacement/selection ranges,
   UTF-16 offsets, candidate-window geometry, commit/cancel, and focus changes or
   subtree removal during composition. Include scrolling/resizing during
@@ -197,14 +218,80 @@ Correctness and integration before considering default enablement:
 - [ ] Run the validation matrix on supported native backends. Current measured
   performance and local validation are from macOS.
 
-Damage tracking and backend work:
+GPU validation:
+
+- [x] Compare offscreen Metal pixels after retained replay with a forced full
+  refresh, including text, paths, clipping, opacity, reorder, resize, and removal.
+  `retained_scene_matches_full_refresh_pixels` passes under both engines on macOS.
+  Run with `GPUI_EXPERIMENTAL_NODE_ENGINE=1 cargo test -p gpui_platform
+  --features test-support,font-kit retained_scene_matches_full_refresh_pixels
+  -- --ignored --nocapture` (use `=0` for legacy). This uses an offscreen Metal
+  target and readback; it does not exercise the window compositor.
+- [ ] Measure GPU work and presentation cost on representative Zed workloads.
+  CPU frame timings do not establish GPU or battery gains.
+
+Damage tracking (deferred to a follow-up):
 
 - [ ] Compute conservative old/new damage extents for movement, removal, reorder,
   clipping, shadows, paths/antialiasing, opacity, and overlapping content.
 - [ ] Integrate damage with renderer submission and presentation, including
   backend buffer-age/preservation requirements; validate against full rendering.
-- [ ] Measure GPU work, presentation cost, and battery impact. CPU frame timings
-  and diagnostic changed bounds do not establish those gains.
+- [ ] Measure battery impact after backend damage integration.
+
+## Editor and memory measurements
+
+On the Apple M4 Max, three release runs per engine (order legacy, retained,
+retained, legacy, legacy, retained) produced these medians of Criterion point
+estimates. Each run used 20 samples, one second of warmup, and three seconds of
+measurement. Allocation instrumentation was disabled.
+
+| Workload | Legacy | Retained | Difference |
+| --- | ---: | ---: | ---: |
+| Existing `editor_render` benchmark | 0.763 ms | 0.783 ms | +2.6% |
+| One editor pane, 1,000 lines | 1.128 ms | 1.170 ms | +3.7% |
+| Three editor panes, one cursor moving | 3.323 ms | 1.761 ms | 47.0% less time |
+
+The pane benchmark uses real Editor/MultiBuffer instances, native text shaping,
+and offscreen Metal encoding and submission. Eight setup updates settle initial
+invalidations; the three-pane retained case then rebuilds two scopes and reuses
+two inactive editor scopes. It excludes workspace chrome, project services,
+GPU completion time, compositor presentation, and vsync. These measurements do
+not establish full-workspace performance or battery savings.
+
+Build with `CARGO_PROFILE_BENCH_DEBUG=0 cargo bench -p benchmarks --bench
+editor_render --no-run`. Run the resulting executable with
+`GPUI_EXPERIMENTAL_NODE_ENGINE=0` or `1` and arguments
+`'^(editor_render|Editor panes)' --bench --sample-size 20 --warm-up-time 1
+--measurement-time 3 --noplot`.
+
+The original 64-view, eight-text-rows-per-view microbenchmark was also measured
+in release mode with `--features test-memory`. The following are total live
+requested Rust heap bytes, expressed in MiB, including the shared test runtime
+(2.016 MiB before mounting). Warm figures are medians of 15 snapshots: five
+100-frame batches in each of three mount/unmount cycles in a single process per
+engine/workload. Native allocations and allocator rounding are excluded.
+
+| Memory stage | Legacy | Retained |
+| --- | ---: | ---: |
+| First mount | 7.250 MiB | 8.183 MiB |
+| Warm, one leaf dirty | 9.662 MiB | 9.065 MiB |
+| Warm, all leaves dirty | 9.656 MiB | 9.041 MiB |
+
+Retained adds 0.933 MiB at initial mount; warmed live Rust heap is about 6% lower
+in this fixture. This does not mean that recordings are free: both engines keep
+672 KiB of frame paint-operation vector capacity, and retained adds another
+336 KiB in node recordings. These figures exclude typed primitive lanes and
+other metadata. Native malloc-zone totals fluctuate with framework caches and
+are not used for the percentage comparison.
+The element arena reserves 1 MiB in both engines. The net reduction has not
+been attributed to individual allocation sites; it should not be extrapolated
+to other workloads.
+
+After the third unmount, live requested bytes return to 2,182,846 (legacy) and
+2,256,672 (retained) for sparse updates; dense updates return to 2,183,962 and
+2,245,296. The final two unmount totals match within each run. This bounds growth
+in this fixture; it does not establish memory behavior for path-heavy scenes,
+deep nesting, native GPU resources, or a full Zed workspace.
 
 ## Review validation
 
