@@ -4,6 +4,9 @@ use http_client::{
     FakeHttpClient, Response,
     http::{HeaderName, HeaderValue},
 };
+use language_model_core::{
+    LanguageModelCompletionError, LanguageModelProviderName, ProviderErrorCategory,
+};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 
@@ -62,13 +65,13 @@ fn streaming_transport_serializes_custom_requests_and_reports_done() {
         .expect("stream events")
     });
 
-    assert_eq!(
-        events,
-        vec![
-            ChatCompletionStreamEvent::Data(json!({"chunk": 1})),
+    match events.as_slice() {
+        [
+            ChatCompletionStreamEvent::Data(data),
             ChatCompletionStreamEvent::Done,
-        ]
-    );
+        ] => assert_eq!(data.get(), r#"{"chunk":1}"#),
+        events => panic!("unexpected events: {events:?}"),
+    }
     assert_eq!(
         captured_request
             .lock()
@@ -109,10 +112,63 @@ fn streaming_transport_does_not_synthesize_done_at_eof() {
         .expect("stream events")
     });
 
-    assert_eq!(
-        events,
-        vec![ChatCompletionStreamEvent::Data(json!({"chunk": 1}))]
-    );
+    match events.as_slice() {
+        [ChatCompletionStreamEvent::Data(data)] => assert_eq!(data.get(), r#"{"chunk":1}"#),
+        events => panic!("unexpected events: {events:?}"),
+    }
+}
+
+#[test]
+fn streaming_transport_preserves_usage_limit_errors() {
+    let client = FakeHttpClient::create(|_| async move {
+        Ok(Response::builder()
+            .status(200)
+            .body(AsyncBody::from(concat!(
+                "data: {\"error\":{\"type\":\"usage_limit_reached\",",
+                "\"message\":\"The usage limit has been reached\"}}\n\n"
+            )))?)
+    });
+    let request = serde_json::from_value(json!({
+        "model": "custom/model",
+        "messages": [],
+        "stream": true
+    }))
+    .expect("valid chat completion request");
+
+    let error = block_on(async {
+        stream_completion(
+            client.as_ref(),
+            "Compatible Provider",
+            "https://example.com/v1",
+            "secret",
+            request,
+            &CustomHeaders::default(),
+        )
+        .await
+        .expect("streaming request")
+        .next()
+        .await
+        .expect("provider error event")
+        .expect_err("usage limit should reject the completion")
+    });
+    let error = error
+        .downcast_ref::<LanguageModelCompletionError>()
+        .expect("typed provider rejection");
+
+    assert!(!error.is_transient());
+    assert!(matches!(
+        error,
+        LanguageModelCompletionError::ProviderRejection {
+            provider,
+            status: None,
+            code: Some(code),
+            message,
+            category: ProviderErrorCategory::PaymentRequired,
+            ..
+        } if provider == &LanguageModelProviderName::from("Compatible Provider".to_string())
+            && code == "usage_limit_reached"
+            && message == "The usage limit has been reached"
+    ));
 }
 
 #[test]

@@ -26,6 +26,8 @@ mod toolchain;
 
 #[cfg(test)]
 pub mod buffer_tests;
+#[cfg(test)]
+mod proto_diagnostics_tests;
 
 pub use crate::language_settings::{
     AutoIndentMode, EditPredictionPromptFormat, EditPredictionsMode, IndentGuideSettings,
@@ -37,7 +39,7 @@ use collections::{HashMap, HashSet};
 use futures::Future;
 use futures::future::LocalBoxFuture;
 use futures::lock::OwnedMutexGuard;
-use gpui::{App, AsyncApp, Entity};
+use gpui::{App, AsyncApp, Entity, EntityId};
 use http_client::HttpClient;
 
 pub use language_core::{
@@ -100,7 +102,9 @@ use util::rel_path::RelPath;
 pub use available_languages::AvailableLanguage;
 pub use buffer::Operation;
 pub use buffer::*;
-pub use diagnostic::{Diagnostic, DiagnosticSourceKind, RelatedInformation, RelatedLocation};
+pub use diagnostic::{
+    Diagnostic, DiagnosticMessage, DiagnosticSourceKind, RelatedInformation, RelatedLocation,
+};
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
 pub use file_content::{
     ByteContent, DecodedText, FILE_ANALYSIS_BYTES, analyze_byte_content, decode_text, encode_text,
@@ -488,6 +492,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
     fn resolve_relative_path(&self, path: PathBuf) -> PathBuf;
+    fn status_source_id(&self) -> EntityId;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;

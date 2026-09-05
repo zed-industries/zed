@@ -26,7 +26,9 @@ test-support = [
     "x11",
     "proptest",
 ]
-bench = ["test-support", "profiler", "dep:criterion"]
+bench-support = ["profiler", "dep:criterion"]
+# Preserve the published feature name while consumers migrate to `bench-support`.
+bench = ["bench-support"]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
 wayland = []
@@ -147,12 +149,13 @@ reqwest_client = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 wasm-bindgen = { workspace = true }
+web-sys = { version = "0.3", features = ["console"] }
 
 [build-dependencies]
 embed-resource = { version = "3.0", optional = true }
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.71"
+bindgen = "0.72"
 
 [package.metadata.cargo-shear]
 ignored = [

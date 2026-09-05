@@ -44,9 +44,9 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, ProviderErrorCategory, ProviderSettingsView, RateLimiter,
-    Role, SubPageProviderSettings, TokenUsage, env_var,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    ProviderErrorCategory, ProviderSettingsView, RateLimiter, Role, SubPageProviderSettings,
+    TokenUsage, env_var,
 };
 use open_ai::responses::Request as OpenAiResponseRequest;
 use open_ai::responses::{ResponseOutputItem, StreamEvent as OpenAiResponseStreamEvent};
@@ -66,11 +66,14 @@ use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 use crate::provider::open_ai::{
-    ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
+    ChatCompletionMaxTokensParameter, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response,
 };
+use language_model::chat_completion::{
+    ChatCompletionEventMapper, ResponseStreamEvent, ResponseStreamResult,
+};
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
-use open_ai::{ReasoningEffort, RequestError, ResponseStreamEvent};
+use open_ai::{ReasoningEffort, RequestError};
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -977,6 +980,7 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let display_name = self.model.display_name().to_string();
+        let executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
             let response = request.await.map_err(|err| match err {
                 BedrockError::Validation(ref msg) => {
@@ -1043,7 +1047,10 @@ impl LanguageModel for BedrockModel {
                 }
                 other => LanguageModelCompletionError::Other(anyhow!(other)),
             })?;
-            let events = map_to_language_model_completion_events(response);
+            let events = language_model::stream_in_background(
+                map_to_language_model_completion_events(response).boxed(),
+                executor,
+            );
 
             if deny_tool_calls {
                 Ok(deny_tool_use_events(events).boxed())
@@ -1206,22 +1213,10 @@ async fn resolve_mantle_auth(
     }
 }
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum MantleChatStreamResult {
-    Ok(ResponseStreamEvent),
-    Err { error: MantleChatStreamError },
-}
-
-#[derive(Deserialize)]
-struct MantleChatStreamError {
-    message: String,
-}
-
 fn parse_mantle_chat_stream_line(line: &str) -> Result<ResponseStreamEvent> {
-    match serde_json::from_str(line) {
-        Ok(MantleChatStreamResult::Ok(response)) => Ok(response),
-        Ok(MantleChatStreamResult::Err { error }) => Err(anyhow!(error.message)),
+    match serde_json::from_str::<ResponseStreamResult>(line) {
+        Ok(ResponseStreamResult::Ok(response)) => Ok(response),
+        Ok(ResponseStreamResult::Err { error }) => Err(anyhow!(error.message)),
         Err(error) => {
             log::error!(
                 "Failed to parse Mantle chat completion stream event: `{}`\nResponse: `{}`",
@@ -1858,10 +1853,6 @@ impl LanguageModel for BedrockMantleModel {
         self.model.supports_tools()
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        LanguageModelToolSchemaFormat::JsonSchemaSubset
-    }
-
     fn supports_images(&self) -> bool {
         self.model.supports_images()
     }
@@ -1945,9 +1936,13 @@ impl LanguageModel for BedrockMantleModel {
                     Err(error) => return async move { Err(error.into()) }.boxed(),
                 };
                 let completions = self.stream_response(request, cx);
+                let executor = cx.background_executor().clone();
                 async move {
                     let mapper = MantleResponseEventMapper::new();
-                    Ok(mapper.map_stream(completions.await?).boxed())
+                    Ok(language_model::stream_in_background(
+                        mapper.map_stream(completions.await?).boxed(),
+                        executor,
+                    ))
                 }
                 .boxed()
             }
@@ -1967,9 +1962,13 @@ impl LanguageModel for BedrockMantleModel {
                     Err(error) => return async move { Err(error.into()) }.boxed(),
                 };
                 let completions = self.stream_completion(request, cx);
+                let executor = cx.background_executor().clone();
                 async move {
-                    let mapper = OpenAiEventMapper::new();
-                    Ok(mapper.map_stream(completions.await?).boxed())
+                    let mapper = ChatCompletionEventMapper::new();
+                    Ok(language_model::stream_in_background(
+                        mapper.map_stream(completions.await?).boxed(),
+                        executor,
+                    ))
                 }
                 .boxed()
             }

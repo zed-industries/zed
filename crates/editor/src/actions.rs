@@ -487,7 +487,7 @@ actions!(
         CopyFileName,
         /// Copies the file name without extension to the clipboard.
         CopyFileNameWithoutExtension,
-        /// Copies a permalink to the current line.
+        /// Copies a permalink to the current line or selection.
         CopyPermalinkToLine,
         /// Cuts selected text to the clipboard.
         Cut,
@@ -711,7 +711,7 @@ actions!(
         OpenProposedChangesEditor,
         /// Opens documentation for the symbol at cursor.
         OpenDocs,
-        /// Opens a permalink to the current line.
+        /// Opens a permalink to the current line or selection.
         OpenPermalinkToLine,
         /// Opens the file whose name is selected in the editor.
         #[action(deprecated_aliases = ["editor::OpenFile"])]
@@ -938,6 +938,8 @@ actions!(
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
         WrapSelectionsInTag,
+        /// Wraps selections in an expanded Emmet abbreviation.
+        WrapWithAbbreviation,
         /// Aligns selections from different rows into the same column
         AlignSelections,
         /// Saves the current location to navigation history.
