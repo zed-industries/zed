@@ -773,6 +773,28 @@ impl Display for ColorSpace {
     }
 }
 
+/// The most color stops one gradient carries. Extra stops are dropped.
+pub const MAX_GRADIENT_STOPS: usize = 8;
+
+/// Where the line of a linear gradient points.
+///
+/// A corner keyword is not a fixed angle. The line for `to top right` is
+/// perpendicular to the diagonal between the two other corners, so it
+/// depends on the size of the box, which only the shader knows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GradientLine {
+    /// Degrees clockwise from `to top`, as in CSS.
+    Angle(f32),
+    /// `to top left`.
+    ToTopLeft,
+    /// `to top right`.
+    ToTopRight,
+    /// `to bottom right`.
+    ToBottomRight,
+    /// `to bottom left`.
+    ToBottomLeft,
+}
+
 /// A background color, which can be either a solid color or a linear gradient.
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
@@ -781,8 +803,17 @@ pub struct Background {
     pub(crate) color_space: ColorSpace,
     pub(crate) solid: Hsla,
     pub(crate) gradient_angle_or_pattern_height: f32,
-    pub(crate) colors: [LinearColorStop; 2],
-    /// Padding for alignment for repr(C) layout.
+    /// The color stops, in order. Only the first `stop_count` are live.
+    pub(crate) colors: [LinearColorStop; MAX_GRADIENT_STOPS],
+    /// How many entries of `colors` are live. The shaders clamp it to 1 to 8.
+    pub(crate) stop_count: u32,
+    /// 0 when `gradient_angle_or_pattern_height` is the angle, else the
+    /// corner the line points at: 1 top left, 2 top right, 3 bottom right,
+    /// 4 bottom left.
+    pub(crate) corner: u32,
+    /// WGSL rounds the stride of an `array<Quad>` up to 8 bytes because
+    /// `Bounds` holds a `vec2<f32>`. Rust packs at 4. This pad keeps every
+    /// record that holds a `Background` at a size that is a multiple of 8.
     pad: u32,
 }
 
@@ -792,8 +823,10 @@ impl std::fmt::Debug for Background {
             BackgroundTag::Solid => write!(f, "Solid({:?})", self.solid),
             BackgroundTag::LinearGradient => write!(
                 f,
-                "LinearGradient({}, {:?}, {:?})",
-                self.gradient_angle_or_pattern_height, self.colors[0], self.colors[1]
+                "LinearGradient({}, corner {}, {:?})",
+                self.gradient_angle_or_pattern_height,
+                self.corner,
+                self.live_stops()
             ),
             BackgroundTag::PatternSlash => write!(
                 f,
@@ -817,7 +850,9 @@ impl Default for Background {
             solid: Hsla::default(),
             color_space: ColorSpace::default(),
             gradient_angle_or_pattern_height: 0.0,
-            colors: [LinearColorStop::default(), LinearColorStop::default()],
+            colors: [LinearColorStop::default(); MAX_GRADIENT_STOPS],
+            stop_count: 0,
+            corner: 0,
             pad: 0,
         }
     }
@@ -867,10 +902,42 @@ pub fn linear_gradient(
     from: impl Into<LinearColorStop>,
     to: impl Into<LinearColorStop>,
 ) -> Background {
+    linear_gradient_stops(GradientLine::Angle(angle), &[from.into(), to.into()])
+}
+
+/// Creates a LinearGradient background with any number of color stops.
+///
+/// Stop positions run from 0.0 to 1.0 along the gradient line and must not
+/// decrease. Fix them up before calling, as CSS Images 3 §3.4.3 describes.
+/// A gradient keeps at most [`MAX_GRADIENT_STOPS`] stops and drops the rest.
+/// One stop paints that color. No stops paint nothing.
+pub fn linear_gradient_stops(line: GradientLine, stops: &[LinearColorStop]) -> Background {
+    if stops.is_empty() {
+        return Background::default();
+    }
+    let (angle, corner) = match line {
+        GradientLine::Angle(angle) => (angle, 0),
+        GradientLine::ToTopLeft => (0.0, 1),
+        GradientLine::ToTopRight => (0.0, 2),
+        GradientLine::ToBottomRight => (0.0, 3),
+        GradientLine::ToBottomLeft => (0.0, 4),
+    };
+    if stops.len() > MAX_GRADIENT_STOPS {
+        log::warn!(
+            "a gradient has {} color stops; only the first {} paint",
+            stops.len(),
+            MAX_GRADIENT_STOPS
+        );
+    }
+    let mut colors = [LinearColorStop::default(); MAX_GRADIENT_STOPS];
+    let kept = stops.len().min(MAX_GRADIENT_STOPS);
+    colors[..kept].copy_from_slice(&stops[..kept]);
     Background {
         tag: BackgroundTag::LinearGradient,
         gradient_angle_or_pattern_height: angle,
-        colors: [from.into(), to.into()],
+        colors,
+        stop_count: kept as u32,
+        corner,
         ..Default::default()
     }
 }
@@ -885,6 +952,11 @@ pub struct LinearColorStop {
     pub color: Hsla,
     /// The percentage of the gradient, in the range 0.0 to 1.0.
     pub percentage: f32,
+    /// Where between this stop and the next the color is half way, as a
+    /// fraction of that span. 0.0 means no hint, which is the same as 0.5.
+    ///
+    /// <https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#color-hint>
+    pub hint: f32,
 }
 
 /// Creates a new linear color stop.
@@ -894,6 +966,7 @@ pub fn linear_color_stop(color: impl Into<Hsla>, percentage: f32) -> LinearColor
     LinearColorStop {
         color: color.into(),
         percentage,
+        hint: 0.0,
     }
 }
 
@@ -901,13 +974,20 @@ impl LinearColorStop {
     /// Returns a new color stop with the same color, but with a modified alpha value.
     pub fn opacity(&self, factor: f32) -> Self {
         Self {
-            percentage: self.percentage,
             color: self.color.opacity(factor),
+            ..*self
         }
     }
 }
 
 impl Background {
+    /// The live color stops. The length clamps to the array, so a
+    /// deserialized `stop_count` past [`MAX_GRADIENT_STOPS`] cannot slice
+    /// out of bounds.
+    pub(crate) fn live_stops(&self) -> &[LinearColorStop] {
+        &self.colors[..(self.stop_count as usize).min(MAX_GRADIENT_STOPS)]
+    }
+
     /// Returns the solid color if this is a solid background, None otherwise.
     pub fn as_solid(&self) -> Option<Hsla> {
         if self.tag == BackgroundTag::Solid {
@@ -929,10 +1009,9 @@ impl Background {
     pub fn opacity(&self, factor: f32) -> Self {
         let mut background = *self;
         background.solid = background.solid.opacity(factor);
-        background.colors = [
-            self.colors[0].opacity(factor),
-            self.colors[1].opacity(factor),
-        ];
+        for stop in &mut background.colors {
+            *stop = stop.opacity(factor);
+        }
         background
     }
 
@@ -940,7 +1019,9 @@ impl Background {
     pub fn is_transparent(&self) -> bool {
         match self.tag {
             BackgroundTag::Solid => self.solid.is_transparent(),
-            BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.is_transparent()),
+            BackgroundTag::LinearGradient => {
+                self.live_stops().iter().all(|c| c.color.is_transparent())
+            }
             BackgroundTag::PatternSlash => self.solid.is_transparent(),
             BackgroundTag::Checkerboard => self.solid.is_transparent(),
         }
@@ -1041,6 +1122,24 @@ mod tests {
         assert_eq!(background.opacity(0.5).colors[1], to.opacity(0.5));
         assert!(!background.is_transparent());
         assert!(background.opacity(0.0).is_transparent());
+    }
+
+    #[test]
+    fn test_empty_stops_make_a_solid_transparent_background() {
+        let background = linear_gradient_stops(GradientLine::Angle(90.0), &[]);
+        assert_eq!(background.tag, BackgroundTag::Solid);
+        assert!(background.is_transparent());
+    }
+
+    #[test]
+    fn test_a_stop_count_past_the_array_cannot_slice_out_of_bounds() {
+        let mut background = linear_gradient_stops(
+            GradientLine::Angle(90.0),
+            &[linear_color_stop(rgba(0xff0000ff), 0.0)],
+        );
+        background.stop_count = 99;
+        assert!(!format!("{background:?}").is_empty());
+        assert!(!background.is_transparent());
     }
 
     #[test]
