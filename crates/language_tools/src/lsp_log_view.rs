@@ -78,10 +78,13 @@ pub fn open(
                                     log_store
                                         .read(cx)
                                         .stopped_language_servers
-                                        .values()
+                                        .iter()
                                         .find(|(_, state)| state.server_id == id)
-                                        .map(|(kind, state)| {
-                                            LanguageServerLogKey::new(kind.clone(), state.server_id)
+                                        .map(|(key, state)| {
+                                            LanguageServerLogKey::new(
+                                                key.kind.clone(),
+                                                state.server_id,
+                                            )
                                         })
                                         .filter(|key| {
                                             key.is_for_project(&weak_project, &weak_lsp_store)
@@ -101,10 +104,13 @@ pub fn open(
                                     log_store
                                         .read(cx)
                                         .stopped_language_servers
-                                        .values()
+                                        .iter()
                                         .find(|(_, state)| state.name.as_ref() == Some(&name))
-                                        .map(|(kind, state)| {
-                                            LanguageServerLogKey::new(kind.clone(), state.server_id)
+                                        .map(|(key, state)| {
+                                            LanguageServerLogKey::new(
+                                                key.kind.clone(),
+                                                state.server_id,
+                                            )
                                         })
                                         .filter(|key| {
                                             key.is_for_project(&weak_project, &weak_lsp_store)
@@ -457,23 +463,11 @@ impl LspLogView {
                 .filter(|(key, _)| key.is_for_project(&project, &lsp_store))
                 .for_each(|(key, state)| rows.push(self.build_row(key, state, false, cx)));
 
-            for ((name, worktree_id), (kind, state)) in log_store.stopped_language_servers.iter() {
-                if kind.is_for_project(&project, &lsp_store) {
-                    let worktree_root_name = worktree_id
-                        .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
-                        .map(|worktree| worktree.read(cx).root_name_str().to_string())
-                        .unwrap_or_else(|| "Unknown worktree".to_string());
+            for (key, state) in log_store.stopped_language_servers.iter() {
+                if key.kind.is_for_project(&project, &lsp_store) {
+                    let key = LanguageServerLogKey::new(key.kind.clone(), state.server_id);
 
-                    rows.push(LogMenuItem {
-                        server_id: state.server_id,
-                        server_name: name.clone(),
-                        server_kind: kind.clone(),
-                        worktree_root_name,
-                        rpc_trace_enabled: state.rpc_state.is_some(),
-                        selected_entry: self.active_entry_kind,
-                        trace_level: lsp::TraceValue::Off,
-                        stopped: true,
-                    });
+                    rows.push(self.build_row(&key, state, true, cx));
                 }
             }
         });
@@ -488,13 +482,23 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let typ = self
-            .log_store
-            .read(cx)
-            .language_servers
-            .get(&key)
-            .map(|v| v.log_level)
-            .unwrap_or(MessageType::LOG);
+        let typ = {
+            let log_store = self.log_store.read(cx);
+            log_store
+                .language_servers
+                .get(&key)
+                .or_else(|| {
+                    log_store
+                        .stopped_language_servers
+                        .iter()
+                        .find(|(stopped_key, state)| {
+                            state.server_id == key.server_id && stopped_key.kind == key.kind
+                        })
+                        .map(|(_, state)| state)
+                })
+                .map(|v| v.log_level)
+                .unwrap_or(MessageType::LOG)
+        };
         let log_contents = self
             .log_store
             .read(cx)

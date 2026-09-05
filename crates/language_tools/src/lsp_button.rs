@@ -347,22 +347,26 @@ impl LanguageServerState {
                     .workspace
                     .upgrade()
                     .map(|w| w.read(cx).project().downgrade());
-                let has_logs = lsp_logs
-                    .read(cx)
-                    .language_server_id_for_name_and_worktree(&server_name, worktree_id)
-                    .map_or(false, |id| {
-                        if let Some(ref project) = project {
+                let has_logs = project.as_ref().map_or(false, |project| {
+                    lsp_logs
+                        .read(cx)
+                        .language_server_id_for_name_and_worktree(
+                            &server_name,
+                            worktree_id,
+                            project,
+                            &self.lsp_store,
+                        )
+                        .map_or(false, |id| {
                             lsp_logs.read(cx).has_server_logs(
                                 &LanguageServerSelector::Id(id),
                                 project,
                                 &self.lsp_store,
                             )
-                        } else {
-                            false
-                        }
-                    });
+                        })
+                });
                 let state = cx.entity().downgrade();
                 let workspace = self.workspace.clone();
+                let lsp_store = self.lsp_store.clone();
                 menu = menu.submenu_with_colored_icon(
                     server_name.0.clone(),
                     IconName::Circle,
@@ -372,6 +376,8 @@ impl LanguageServerState {
                         let server_name = server_name.clone();
                         let workspace = workspace.clone();
                         let lsp_logs = lsp_logs.clone();
+                        let lsp_store = lsp_store.clone();
+                        let project = project.clone();
                         move |menu, _window, _cx| {
                             let mut submenu = menu;
                             let state_for_restart = state.clone();
@@ -391,12 +397,19 @@ impl LanguageServerState {
                                 let workspace_for_logs = workspace.clone();
                                 let server_name_for_logs = server_name.clone();
                                 let lsp_logs_for_logs = lsp_logs.clone();
+                                let lsp_store_for_logs = lsp_store.clone();
+                                let project_for_logs = project.clone();
                                 submenu = submenu.entry("View Logs", None, move |window, cx| {
+                                    let Some(ref project) = project_for_logs else {
+                                        return;
+                                    };
                                     let Some(server_id) = lsp_logs_for_logs
                                         .read(cx)
                                         .language_server_id_for_name_and_worktree(
                                             &server_name_for_logs,
                                             worktree_id,
+                                            project,
+                                            &lsp_store_for_logs,
                                         )
                                     else {
                                         return;
@@ -420,6 +433,7 @@ impl LanguageServerState {
             let Some(server_info) = item.server_info() else {
                 continue;
             };
+            let item_worktree_id = item.worktree_id();
             let server_selector = server_info.server_selector();
             let is_remote = self
                 .lsp_store
@@ -574,10 +588,18 @@ impl LanguageServerState {
                         submenu = submenu.entry("Restart Server", None, move |_window, cx| {
                             state_for_restart
                                 .update(cx, |state, cx| {
-                                    state.restart_server_by_name(
-                                        server_name_for_restart.clone(),
-                                        cx,
-                                    );
+                                    if let Some(worktree_id) = item_worktree_id {
+                                        state.restart_server_for_worktree(
+                                            server_name_for_restart.clone(),
+                                            worktree_id,
+                                            cx,
+                                        );
+                                    } else {
+                                        state.restart_server_by_name(
+                                            server_name_for_restart.clone(),
+                                            cx,
+                                        );
+                                    }
                                 })
                                 .ok();
                         });
@@ -864,11 +886,13 @@ enum ServerData<'a> {
         server_id: LanguageServerId,
         health: &'a LanguageServerHealthStatus,
         binary_status: Option<&'a LanguageServerBinaryStatus>,
+        worktree_id: Option<WorktreeId>,
     },
     WithBinaryStatus {
         server_id: LanguageServerId,
         server_name: &'a LanguageServerName,
         binary_status: &'a LanguageServerBinaryStatus,
+        worktree_id: Option<WorktreeId>,
     },
     WithStoppedStatus {
         server_name: &'a LanguageServerName,
@@ -882,11 +906,13 @@ enum LspMenuItem {
         server_id: LanguageServerId,
         health: LanguageServerHealthStatus,
         binary_status: Option<LanguageServerBinaryStatus>,
+        worktree_id: Option<WorktreeId>,
     },
     WithBinaryStatus {
         server_id: LanguageServerId,
         server_name: LanguageServerName,
         binary_status: LanguageServerBinaryStatus,
+        worktree_id: Option<WorktreeId>,
     },
     WithStoppedStatus {
         server_name: LanguageServerName,
@@ -933,6 +959,15 @@ impl LspMenuItem {
             }),
         }
     }
+
+    fn worktree_id(&self) -> Option<WorktreeId> {
+        match self {
+            Self::WithHealthCheck { worktree_id, .. }
+            | Self::WithBinaryStatus { worktree_id, .. } => *worktree_id,
+            Self::WithStoppedStatus { worktree_id, .. } => Some(*worktree_id),
+            Self::ToggleServersButton { .. } | Self::Header { .. } => None,
+        }
+    }
 }
 
 impl ServerData<'_> {
@@ -942,21 +977,23 @@ impl ServerData<'_> {
                 server_id,
                 health,
                 binary_status,
-                ..
+                worktree_id,
             } => LspMenuItem::WithHealthCheck {
                 server_id,
                 health: health.clone(),
                 binary_status: binary_status.cloned(),
+                worktree_id,
             },
             Self::WithBinaryStatus {
                 server_id,
                 server_name,
                 binary_status,
-                ..
+                worktree_id,
             } => LspMenuItem::WithBinaryStatus {
                 server_id,
                 server_name: server_name.clone(),
                 binary_status: binary_status.clone(),
+                worktree_id,
             },
             Self::WithStoppedStatus {
                 server_name,
@@ -1208,6 +1245,7 @@ impl LspButton {
                         server_id: *server_id,
                         health,
                         binary_status,
+                        worktree_id: Some(worktree.read(cx).id()),
                     });
             }
 
@@ -1231,6 +1269,7 @@ impl LspButton {
                         server_name,
                         binary_status,
                         server_id: *server_id,
+                        worktree_id: Some(worktree.read(cx).id()),
                     });
             }
 
@@ -1959,6 +1998,11 @@ mod tests {
         );
     }
 
+    /// Verifies that restarting a stopped server only affects its worktree.
+    ///
+    /// This test directly exercises the stopped-row submenu's "Restart Server" handler
+    /// to ensure that the UI menu closure correctly invokes `restart_server_for_worktree`
+    /// rather than `restart_server_by_name`.
     #[gpui::test]
     async fn test_lsp_button_restarts_only_the_stopped_worktree_server(cx: &mut TestAppContext) {
         init_test(cx);
@@ -2224,9 +2268,16 @@ mod tests {
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
+        let project_weak = project.downgrade();
+        let lsp_store_ref = project.read_with(cx, |p, _| p.lsp_store().downgrade());
         let server_id = log_store
             .read_with(cx, |store, _| {
-                store.language_server_id_for_name_and_worktree(&name, worktree_id)
+                store.language_server_id_for_name_and_worktree(
+                    &name,
+                    worktree_id,
+                    &project_weak,
+                    &lsp_store_ref,
+                )
             })
             .expect("the running server is tracked by the log store");
 

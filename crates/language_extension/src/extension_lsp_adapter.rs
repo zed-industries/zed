@@ -135,7 +135,7 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
         );
 
         let Some(worktree_id) = worktree_id else {
-            log::error!("worktree_id is set before calling update_language_server_status");
+            log::error!("worktree_id is not set before calling update_language_server_status");
             return;
         };
 

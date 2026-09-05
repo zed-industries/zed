@@ -134,9 +134,9 @@ impl extension::Extension for WasmExtension {
                         &language_name,
                         resource,
                     )
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
+                    .await;
                 store.data_mut().active_worktree_id = None;
+                let options = options?.map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -161,9 +161,9 @@ impl extension::Extension for WasmExtension {
                         &language_server_id,
                         resource,
                     )
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
+                    .await;
                 store.data_mut().active_worktree_id = None;
+                let options = options?.map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -247,9 +247,9 @@ impl extension::Extension for WasmExtension {
                         &target_language_server_id,
                         resource,
                     )
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
+                    .await;
                 store.data_mut().active_worktree_id = None;
+                let options = options?.map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -276,9 +276,9 @@ impl extension::Extension for WasmExtension {
                         &target_language_server_id,
                         resource,
                     )
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
+                    .await;
                 store.data_mut().active_worktree_id = None;
+                let options = options?.map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -484,10 +484,10 @@ impl extension::Extension for WasmExtension {
                 store.data_mut().active_worktree_id = Some(worktree_id);
                 let dap_binary = extension
                     .call_get_dap_binary(store, dap_name, config, user_installed_path, resource)
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
-                let dap_binary = dap_binary.try_into()?;
+                    .await;
                 store.data_mut().active_worktree_id = None;
+                let dap_binary = dap_binary?.map_err(|err| store.data().extension_error(err))?;
+                let dap_binary = dap_binary.try_into()?;
                 Ok(dap_binary)
             }
             .boxed()

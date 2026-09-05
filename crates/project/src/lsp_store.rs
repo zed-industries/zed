@@ -12788,16 +12788,21 @@ impl LspStore {
 
             if let Some(first_key) = first_key {
                 if retain_stopped_status {
-                    local
-                        .stopped_server_ids_to_names_and_worktrees
-                        .insert(server_id, (first_key.name.clone(), stopped_worktree_ids));
+                    local.stopped_server_ids_to_names_and_worktrees.insert(
+                        server_id,
+                        (first_key.name.clone(), stopped_worktree_ids.clone()),
+                    );
                 }
 
-                Some((first_key.name, first_key.worktree_id))
+                Some((first_key.name, stopped_worktree_ids))
             } else {
                 self.language_server_statuses
                     .get(&server_id)
-                    .and_then(|status| status.worktree.map(|wt| (status.name.clone(), wt)))
+                    .and_then(|status| {
+                        status
+                            .worktree
+                            .map(|wt| (status.name.clone(), HashSet::from_iter([wt])))
+                    })
             }
         };
 
@@ -12873,15 +12878,19 @@ impl LspStore {
         self.cleanup_lsp_data(server_id);
         self.language_server_statuses.remove(&server_id);
 
-        if let Some((name, worktree_id)) = server_identifier {
+        // all binary_status_update calls seem to be dead code and seem to be useless.
+        // TODO, verify and change.
+        if let Some((name, worktree_ids)) = server_identifier {
             log::info!("stopping language server {name}");
-            self.as_local_mut()
-                .unwrap()
-                .update_binary_status(BinaryStatusUpdate {
-                    name: name.clone(),
-                    worktree_id,
-                    binary_status: BinaryStatus::Stopping,
-                });
+            for worktree_id in &worktree_ids {
+                self.as_local_mut()
+                    .unwrap()
+                    .update_binary_status(BinaryStatusUpdate {
+                        name: name.clone(),
+                        worktree_id: *worktree_id,
+                        binary_status: BinaryStatus::Stopping,
+                    });
+            }
             cx.emit(LspStoreEvent::LanguageServerUpdate {
                 language_server_id: server_id,
                 name: Some(name.clone()),
@@ -12900,52 +12909,48 @@ impl LspStore {
                 Self::shutdown_language_server(server_state, name.clone(), cx).await;
                 lsp_store
                     .update(cx, |lsp_store, cx| {
+                        if lsp_store.as_local().is_none() {
+                            return;
+                        };
                         let binary_status = if retain_stopped_status {
                             BinaryStatus::Stopped
                         } else {
                             BinaryStatus::None
                         };
-                        let binary_status_update = BinaryStatusUpdate {
-                            name,
-                            worktree_id,
-                            binary_status,
-                        };
-                        if retain_stopped_status {
-                            lsp_store.update_stopped_language_servers(
-                                binary_status_update.name.clone(),
-                                worktree_id,
-                                &binary_status_update.binary_status,
-                            );
-                            cx.emit(LspStoreEvent::LanguageServerUpdate {
-                                language_server_id: server_id,
-                                name: Some(binary_status_update.name.clone()),
-                                message: proto::update_language_server::Variant::StatusUpdate(
-                                    proto::StatusUpdate {
-                                        message: None,
-                                        status: Some(proto::status_update::Status::Binary(
-                                            proto::ServerBinaryStatus::Stopped as i32,
-                                        )),
-                                    },
-                                ),
-                            });
-                        } else {
-                            cx.emit(LspStoreEvent::LanguageServerUpdate {
-                                language_server_id: server_id,
-                                name: Some(binary_status_update.name.clone()),
-                                message: proto::update_language_server::Variant::StatusUpdate(
-                                    proto::StatusUpdate {
-                                        message: None,
-                                        status: Some(proto::status_update::Status::Binary(
-                                            proto::ServerBinaryStatus::None as i32,
-                                        )),
-                                    },
-                                ),
-                            });
+                        for worktree_id in &worktree_ids {
+                            let binary_status_update = BinaryStatusUpdate {
+                                name: name.clone(),
+                                worktree_id: *worktree_id,
+                                binary_status: binary_status.clone(),
+                            };
+                            if retain_stopped_status {
+                                lsp_store.update_stopped_language_servers(
+                                    name.clone(),
+                                    *worktree_id,
+                                    &binary_status,
+                                );
+                            }
+                            lsp_store
+                                .as_local_mut()
+                                .unwrap()
+                                .update_binary_status(binary_status_update);
                         }
-                        lsp_store
-                            .as_local_mut()
-                            .unwrap()
-                            .update_binary_status(binary_status_update);
+                        cx.emit(LspStoreEvent::LanguageServerUpdate {
+                            language_server_id: server_id,
+                            name: Some(name),
+                            message: proto::update_language_server::Variant::StatusUpdate(
+                                proto::StatusUpdate {
+                                    message: None,
+                                    status: Some(proto::status_update::Status::Binary(
+                                        if retain_stopped_status {
+                                            proto::ServerBinaryStatus::Stopped as i32
+                                        } else {
+                                            proto::ServerBinaryStatus::None as i32
+                                        },
+                                    )),
+                                },
+                            ),
+                        });
                         cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
                         cx.notify();
                     })
