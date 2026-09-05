@@ -414,6 +414,14 @@ struct FrameCache {
     used_wrapped_lines_by_hash: Vec<Arc<HashedCacheKey>>,
 }
 
+#[derive(Default)]
+pub(crate) struct LineLayoutRecording {
+    lines: Vec<(Arc<CacheKey>, Arc<LineLayout>)>,
+    wrapped_lines: Vec<(Arc<CacheKey>, Arc<WrappedLineLayout>)>,
+    lines_by_hash: Vec<(Arc<HashedCacheKey>, Arc<LineLayout>)>,
+    wrapped_lines_by_hash: Vec<(Arc<HashedCacheKey>, Arc<WrappedLineLayout>)>,
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct LineLayoutIndex {
     lines_index: usize,
@@ -438,6 +446,95 @@ impl LineLayoutCache {
             wrapped_lines_index: frame.used_wrapped_lines.len(),
             lines_by_hash_index: frame.used_lines_by_hash.len(),
             wrapped_lines_by_hash_index: frame.used_wrapped_lines_by_hash.len(),
+        }
+    }
+
+    pub(crate) fn record_layouts(
+        &self,
+        range: Range<LineLayoutIndex>,
+        recording: &mut LineLayoutRecording,
+    ) {
+        let frame = self.current_frame.read();
+        recording.lines.clear();
+        recording.lines.extend(
+            frame.used_lines[range.start.lines_index..range.end.lines_index]
+                .iter()
+                .map(|key| {
+                    (
+                        key.clone(),
+                        frame.lines.get(key).expect("used layout exists").clone(),
+                    )
+                }),
+        );
+        recording.wrapped_lines.clear();
+        recording.wrapped_lines.extend(
+            frame.used_wrapped_lines
+                [range.start.wrapped_lines_index..range.end.wrapped_lines_index]
+                .iter()
+                .map(|key| {
+                    (
+                        key.clone(),
+                        frame
+                            .wrapped_lines
+                            .get(key)
+                            .expect("used layout exists")
+                            .clone(),
+                    )
+                }),
+        );
+        recording.lines_by_hash.clear();
+        recording.lines_by_hash.extend(
+            frame.used_lines_by_hash
+                [range.start.lines_by_hash_index..range.end.lines_by_hash_index]
+                .iter()
+                .map(|key| {
+                    (
+                        key.clone(),
+                        frame
+                            .lines_by_hash
+                            .get(key)
+                            .expect("used layout exists")
+                            .clone(),
+                    )
+                }),
+        );
+        recording.wrapped_lines_by_hash.clear();
+        recording.wrapped_lines_by_hash.extend(
+            frame.used_wrapped_lines_by_hash
+                [range.start.wrapped_lines_by_hash_index..range.end.wrapped_lines_by_hash_index]
+                .iter()
+                .map(|key| {
+                    (
+                        key.clone(),
+                        frame
+                            .wrapped_lines_by_hash
+                            .get(key)
+                            .expect("used layout exists")
+                            .clone(),
+                    )
+                }),
+        );
+    }
+
+    pub(crate) fn replay_layouts(&self, recording: &LineLayoutRecording) {
+        let mut frame = self.current_frame.write();
+        for (key, layout) in &recording.lines {
+            frame.lines.insert(key.clone(), layout.clone());
+            frame.used_lines.push(key.clone());
+        }
+        for (key, layout) in &recording.wrapped_lines {
+            frame.wrapped_lines.insert(key.clone(), layout.clone());
+            frame.used_wrapped_lines.push(key.clone());
+        }
+        for (key, layout) in &recording.lines_by_hash {
+            frame.lines_by_hash.insert(key.clone(), layout.clone());
+            frame.used_lines_by_hash.push(key.clone());
+        }
+        for (key, layout) in &recording.wrapped_lines_by_hash {
+            frame
+                .wrapped_lines_by_hash
+                .insert(key.clone(), layout.clone());
+            frame.used_wrapped_lines_by_hash.push(key.clone());
         }
     }
 

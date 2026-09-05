@@ -380,6 +380,18 @@ impl WindowTextSystem {
         self.line_layout_cache.layout_index()
     }
 
+    pub(crate) fn record_layouts(
+        &self,
+        range: Range<LineLayoutIndex>,
+        recording: &mut LineLayoutRecording,
+    ) {
+        self.line_layout_cache.record_layouts(range, recording);
+    }
+
+    pub(crate) fn replay_layouts(&self, recording: &LineLayoutRecording) {
+        self.line_layout_cache.replay_layouts(recording);
+    }
+
     pub(crate) fn reuse_layouts(&self, index: Range<LineLayoutIndex>) {
         self.line_layout_cache.reuse_layouts(index)
     }

@@ -644,7 +644,7 @@ impl TextLayout {
         } else {
             vec![text_style.to_run(text.len())]
         };
-        window.request_measured_layout(Default::default(), {
+        window.request_retained_measured_layout(Default::default(), {
             let element_state = self.clone();
 
             move |known_dimensions, available_space, window, cx| {

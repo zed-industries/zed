@@ -702,7 +702,7 @@ pub struct DismissEvent;
 type FrameCallback = Box<dyn FnOnce(&mut Window, &mut App)>;
 
 pub(crate) type AnyMouseListener =
-    Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
+    Rc<RefCell<Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>>>;
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
@@ -980,7 +980,8 @@ pub(crate) struct PrepaintStateIndex {
 
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
-    scene_index: usize,
+    pub(crate) scene_index: usize,
+    window_controls_index: usize,
     mouse_listeners_index: usize,
     input_handlers_index: usize,
     cursor_styles_index: usize,
@@ -2811,8 +2812,9 @@ impl Window {
         // This ensures that multiple test Apps have isolated arenas.
         let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
-        self.invalidate_entities();
-        cx.entities.clear_accessed();
+        self.invalidate_entities(cx);
+        let previous_access_tracking = cx.entities.suspend_access_tracking();
+        cx.begin_render_notifications();
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
@@ -2835,9 +2837,9 @@ impl Window {
             }
         }
         if !cx.mode.skip_drawing() {
-            self.begin_node_engine_frame();
+            self.begin_node_engine_frame(cx);
             self.draw_roots(cx);
-            self.finish_node_engine_frame();
+            self.finish_node_engine_frame(cx);
         }
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
@@ -2857,7 +2859,12 @@ impl Window {
             self.platform_window.set_input_handler(input_handler);
         }
 
-        self.layout_engine.as_mut().unwrap().clear();
+        if let DrawEngine::Node(engine) = &self.draw_engine {
+            let roots = engine.retained_layouts(cx);
+            self.layout_engine.as_mut().unwrap().retain(roots);
+        } else {
+            self.layout_engine.as_mut().unwrap().clear();
+        }
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
 
@@ -2868,6 +2875,7 @@ impl Window {
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
+
         let mut focus_before_listeners = self.focus;
 
         if previous_focus_path != current_focus_path
@@ -2903,6 +2911,18 @@ impl Window {
 
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.record_entities_accessed(cx);
+        let notifications_during_draw = cx.end_render_notifications();
+        if self.node_engine_enabled() {
+            // Keep these invalidations for the next requested frame. Scheduling
+            // here would turn focus-lost fallbacks into self-sustaining draws.
+            self.invalidator
+                .inner
+                .borrow_mut()
+                .dirty_views
+                .extend(notifications_during_draw);
+        }
+        cx.entities
+            .restore_access_tracking(previous_access_tracking);
         self.reset_cursor_style(cx);
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
@@ -2938,7 +2958,7 @@ impl Window {
         mem::swap(&mut entities, entities_ref.deref_mut());
     }
 
-    fn invalidate_entities(&mut self) {
+    fn invalidate_entities(&mut self, cx: &mut App) {
         let mut views = self.invalidator.take_views();
         match &mut self.draw_engine {
             DrawEngine::Legacy => {
@@ -2947,32 +2967,44 @@ impl Window {
                 }
             }
             DrawEngine::Node(node_engine) => {
-                node_engine.invalidate_entities(&views);
-                views.clear();
+                node_engine.invalidate_entities(&views, cx);
+                for entity in views.drain() {
+                    self.mark_view_dirty(entity);
+                }
             }
         }
         self.invalidator.replace_views(views);
     }
 
-    fn begin_node_engine_frame(&mut self) {
+    fn begin_node_engine_frame(&mut self, cx: &mut App) {
         #[cfg(any(feature = "inspector", debug_assertions))]
         let inspector_active = self.inspector.is_some();
         #[cfg(not(any(feature = "inspector", debug_assertions)))]
         let inspector_active = false;
-        let full_damage = self.refreshing
+        #[cfg(any(test, feature = "test-support"))]
+        let has_debug_bounds = !self.rendered_frame.debug_bounds.is_empty();
+        #[cfg(not(any(test, feature = "test-support")))]
+        let has_debug_bounds = false;
+        let full_refresh = has_debug_bounds
+            || self.refreshing
             || !self.rendered_frame.deferred_draws.is_empty()
             || self.prompt.is_some()
             || self.a11y.is_active()
             || inspector_active;
         if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.begin_frame(full_damage);
+            node_engine.begin_frame(full_refresh);
+            // No scope can graft an old layout when every mounted node is dirty.
+            // Keep the newly built tree for subsequent partial updates.
+            if node_engine.discard_dirty_layouts(cx) {
+                self.layout_engine.as_mut().unwrap().clear_retained();
+            }
         }
     }
 
-    fn finish_node_engine_frame(&mut self) {
+    fn finish_node_engine_frame(&mut self, cx: &mut App) {
         if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            let damage_bounds = node_engine.finish_frame();
-            log::info!("GPUI node engine damage: {damage_bounds:?}");
+            let changed_bounds = node_engine.finish_frame(cx);
+            log::trace!("GPUI node engine changed view bounds: {changed_bounds:?}");
         }
     }
 
@@ -3314,14 +3346,126 @@ impl Window {
         sorted_indices
     }
 
+    /// Returns work counters for the experimental retained engine's last completed frame.
+    /// Returns `None` when the window uses the legacy engine.
+    pub fn retained_node_stats(&self) -> Option<crate::RetainedNodeStats> {
+        if let DrawEngine::Node(engine) = &self.draw_engine {
+            let mut stats = engine.last_frame_stats;
+            stats.layout_nodes = self
+                .layout_engine
+                .as_ref()
+                .map_or(0, TaffyLayoutEngine::retained_node_count);
+            Some(stats)
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn node_engine_enabled(&self) -> bool {
         matches!(self.draw_engine, DrawEngine::Node(_))
     }
 
     #[cfg(test)]
-    pub(crate) fn clear_view_nodes_for_test(&mut self) {
+    pub(crate) fn clear_view_nodes_for_test(&mut self, cx: &mut App) {
         if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.clear();
+            node_engine.clear(cx);
+        }
+    }
+
+    pub(crate) fn current_invalidation_target(&self) -> EntityId {
+        if let DrawEngine::Node(engine) = &self.draw_engine
+            && let Some(node) = engine.current_node()
+        {
+            return node.entity_id();
+        }
+        self.current_view()
+    }
+
+    pub(crate) fn view_node_key(&self, bounds: Bounds<Pixels>) -> ViewNodeCacheKey {
+        // Cache keys do not need a freshly allocated empty font-feature set.
+        static DEFAULT_TEXT_STYLE: std::sync::LazyLock<TextStyle> =
+            std::sync::LazyLock::new(TextStyle::default);
+        let mut text_style = DEFAULT_TEXT_STYLE.clone();
+        for refinement in &self.text_style_stack {
+            text_style.refine(refinement);
+        }
+        ViewNodeCacheKey {
+            bounds,
+            content_mask: self.content_mask(),
+            text_style,
+            rem_size: self.rem_size(),
+            scale_factor: self.scale_factor(),
+            opacity: self.element_opacity(),
+            image_cache: self.image_cache_stack.last().map(AnyImageCache::entity_id),
+        }
+    }
+
+    pub(crate) fn invalidate_component(&mut self, source: EntityId, cx: &App) {
+        self.mark_view_dirty(source);
+        if let DrawEngine::Node(engine) = &mut self.draw_engine {
+            engine.invalidate_entities(&cx.render_consumers_of(source), cx);
+        }
+    }
+
+    pub(crate) fn restart_view_node_render(&mut self, node_id: ViewNodeId, cx: &mut App) {
+        if let DrawEngine::Node(engine) = &mut self.draw_engine {
+            engine.restart_render(node_id, cx);
+        }
+    }
+
+    pub(crate) fn enter_view_node_prepaint(&mut self, node_id: ViewNodeId) {
+        if let DrawEngine::Node(engine) = &mut self.draw_engine {
+            engine.enter_prepaint(node_id);
+        }
+    }
+
+    pub(crate) fn graft_view_node_layout(
+        &mut self,
+        recording: &ViewNodeRecording,
+    ) -> Option<Range<PrepaintStateIndex>> {
+        recording.has_layout.then(|| {
+            let start = self.prepaint_index();
+            self.next_frame
+                .accessed_element_states
+                .extend(recording.layout_states.iter().cloned());
+            self.text_system.replay_layouts(&recording.layout_text);
+            start..self.prepaint_index()
+        })
+    }
+
+    pub(crate) fn begin_view_node_layout(
+        &mut self,
+        occurrence: GlobalElementId,
+        view: AnyView,
+        cache_key: ViewNodeCacheKey,
+        cx: &mut App,
+    ) -> (NodeRenderDecision, Option<LayoutId>) {
+        let DrawEngine::Node(engine) = &mut self.draw_engine else {
+            unreachable!()
+        };
+        engine.begin_layout(occurrence, view, cache_key, cx)
+    }
+
+    pub(crate) fn store_view_node_layout(
+        &mut self,
+        node_id: ViewNodeId,
+        layout: LayoutId,
+        cx: &mut App,
+    ) {
+        if let DrawEngine::Node(engine) = &mut self.draw_engine {
+            engine.store_layout(node_id, layout, cx);
+        }
+    }
+
+    pub(crate) fn view_node_cache_key(
+        &self,
+        node_id: ViewNodeId,
+        cx: &App,
+    ) -> Option<ViewNodeCacheKey> {
+        if let DrawEngine::Node(engine) = &self.draw_engine {
+            engine.cache_key(node_id, cx)
+        } else {
+            None
         }
     }
 
@@ -3330,16 +3474,22 @@ impl Window {
         occurrence: GlobalElementId,
         view: AnyView,
         cache_key: ViewNodeCacheKey,
+        cx: &mut App,
     ) -> Option<NodeRenderDecision> {
         let DrawEngine::Node(node_engine) = &mut self.draw_engine else {
             return None;
         };
-        Some(node_engine.begin_occurrence(occurrence, view, cache_key))
+        Some(node_engine.begin_occurrence(occurrence, view, cache_key, cx))
     }
 
-    pub(crate) fn finish_view_node_prepaint(&mut self, node_id: ViewNodeId, rendered: bool) {
+    pub(crate) fn finish_view_node_prepaint(
+        &mut self,
+        node_id: ViewNodeId,
+        rendered: bool,
+        cx: &mut App,
+    ) {
         if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.finish_prepaint(node_id, rendered);
+            node_engine.finish_prepaint(node_id, rendered, cx);
         }
     }
 
@@ -3348,10 +3498,19 @@ impl Window {
         node_id: ViewNodeId,
         cache_key: ViewNodeCacheKey,
         recording: ViewNodeRecording,
+        paint_range: Range<PaintIndex>,
         accessed_entities: FxHashSet<EntityId>,
+        cx: &mut App,
     ) {
         if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.store_render(node_id, cache_key, recording, accessed_entities);
+            node_engine.store_render(
+                node_id,
+                cache_key,
+                recording,
+                paint_range,
+                accessed_entities,
+                cx,
+            );
         }
     }
 
@@ -3359,38 +3518,91 @@ impl Window {
         &mut self,
         node_id: ViewNodeId,
         recording: ViewNodeRecording,
+        paint_range: Range<PaintIndex>,
+        cx: &mut App,
     ) {
         if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.store_graft(node_id, recording);
+            node_engine.store_graft(node_id, recording, paint_range, cx);
         }
     }
 
     pub(crate) fn capture_view_node_recording(
-        &self,
+        &mut self,
+        node_id: ViewNodeId,
+        layout_range: Option<Range<PrepaintStateIndex>>,
         prepaint_range: Range<PrepaintStateIndex>,
         paint_range: Range<PaintIndex>,
+        cx: &mut App,
     ) -> ViewNodeRecording {
-        let scene = self
-            .next_frame
-            .scene
-            .recording(paint_range.start.scene_index..paint_range.end.scene_index);
-        ViewNodeRecording {
-            scene: Rc::new(scene),
-            hitboxes: self.next_frame.hitboxes
-                [prepaint_range.start.hitboxes_index..prepaint_range.end.hitboxes_index]
-                .to_vec()
-                .into(),
-            tooltip_requests: self.next_frame.tooltip_requests
-                [prepaint_range.start.tooltips_index..prepaint_range.end.tooltips_index]
-                .to_vec()
-                .into(),
-            cursor_styles: self.next_frame.cursor_styles
-                [paint_range.start.cursor_styles_index..paint_range.end.cursor_styles_index]
-                .to_vec()
-                .into(),
-            prepaint_range,
-            paint_range,
+        let (mut recording, children) = if let DrawEngine::Node(engine) = &mut self.draw_engine {
+            (
+                engine.take_recording(node_id, cx).unwrap_or_default(),
+                engine.child_scenes(node_id, cx),
+            )
+        } else {
+            (ViewNodeRecording::default(), &mut [][..])
+        };
+        recording.scene.record(
+            &self.next_frame.scene,
+            paint_range.start.scene_index..paint_range.end.scene_index,
+            children,
+        );
+        let record_states = |range: &Range<PrepaintStateIndex>, target: &mut Vec<_>| {
+            self.next_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .clone_into(target);
+        };
+        recording.has_layout = layout_range.is_some();
+        if let Some(range) = &layout_range {
+            record_states(range, &mut recording.layout_states);
+            self.text_system.record_layouts(
+                range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
+                &mut recording.layout_text,
+            );
+        } else {
+            recording.layout_states.clear();
+            recording.layout_text = Default::default();
         }
+        record_states(&prepaint_range, &mut recording.prepaint_states);
+        self.next_frame.accessed_element_states[paint_range.start.accessed_element_states_index
+            ..paint_range.end.accessed_element_states_index]
+            .clone_into(&mut recording.paint_states);
+        self.text_system.record_layouts(
+            prepaint_range.start.line_layout_index.clone()
+                ..prepaint_range.end.line_layout_index.clone(),
+            &mut recording.prepaint_text,
+        );
+        self.text_system.record_layouts(
+            paint_range.start.line_layout_index.clone()..paint_range.end.line_layout_index.clone(),
+            &mut recording.paint_text,
+        );
+        self.next_frame.tab_stops.insertion_history
+            [paint_range.start.tab_handle_index..paint_range.end.tab_handle_index]
+            .clone_into(&mut recording.tab_stops);
+        self.next_frame.window_control_hitboxes
+            [paint_range.start.window_controls_index..paint_range.end.window_controls_index]
+            .clone_into(&mut recording.window_controls);
+        self.next_frame.mouse_listeners
+            [paint_range.start.mouse_listeners_index..paint_range.end.mouse_listeners_index]
+            .clone_into(&mut recording.mouse_listeners);
+        self.next_frame.input_handlers
+            [paint_range.start.input_handlers_index..paint_range.end.input_handlers_index]
+            .clone_into(&mut recording.input_handlers);
+        self.next_frame.dispatch_tree.record_subtree(
+            prepaint_range.start.dispatch_tree_index..prepaint_range.end.dispatch_tree_index,
+            &mut recording.dispatch_nodes,
+        );
+        recording.dispatch_start = prepaint_range.start.dispatch_tree_index;
+        self.next_frame.hitboxes
+            [prepaint_range.start.hitboxes_index..prepaint_range.end.hitboxes_index]
+            .clone_into(&mut recording.hitboxes);
+        self.next_frame.tooltip_requests
+            [prepaint_range.start.tooltips_index..prepaint_range.end.tooltips_index]
+            .clone_into(&mut recording.tooltip_requests);
+        self.next_frame.cursor_styles
+            [paint_range.start.cursor_styles_index..paint_range.end.cursor_styles_index]
+            .clone_into(&mut recording.cursor_styles);
+        recording
     }
 
     pub(crate) fn graft_view_node_prepaint(
@@ -3404,86 +3616,49 @@ impl Window {
         self.next_frame
             .tooltip_requests
             .extend(recording.tooltip_requests.iter().cloned());
-        let range = &recording.prepaint_range;
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .map(|(id, type_id)| (id.clone(), *type_id)),
-        );
-        self.text_system.reuse_layouts(
-            range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
-        );
-
-        let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
-            range.start.dispatch_tree_index..range.end.dispatch_tree_index,
-            &mut self.rendered_frame.dispatch_tree,
+        self.next_frame
+            .accessed_element_states
+            .extend(recording.prepaint_states.iter().cloned());
+        self.text_system.replay_layouts(&recording.prepaint_text);
+        let subtree = self.next_frame.dispatch_tree.replay_subtree(
+            &recording.dispatch_nodes,
+            recording.dispatch_start,
             self.focus,
         );
-        if reused_subtree.contains_focus() {
+        if subtree.contains_focus() {
             self.next_frame.focus = self.focus;
         }
-
-        self.next_frame.deferred_draws.extend(
-            self.rendered_frame.deferred_draws
-                [range.start.deferred_draws_index..range.end.deferred_draws_index]
-                .iter()
-                .map(|deferred_draw| DeferredDraw {
-                    current_view: deferred_draw.current_view,
-                    parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
-                    element_id_stack: deferred_draw.element_id_stack.clone(),
-                    text_style_stack: deferred_draw.text_style_stack.clone(),
-                    content_mask: deferred_draw.content_mask,
-                    rem_size: deferred_draw.rem_size,
-                    priority: deferred_draw.priority,
-                    element: None,
-                    absolute_offset: deferred_draw.absolute_offset,
-                    prepaint_range: deferred_draw.prepaint_range.clone(),
-                    paint_range: deferred_draw.paint_range.clone(),
-                }),
-        );
         start..self.prepaint_index()
     }
 
     pub(crate) fn graft_view_node_paint(
         &mut self,
         recording: &ViewNodeRecording,
+        cx: &App,
     ) -> Range<PaintIndex> {
         let start = self.paint_index();
         self.next_frame
             .cursor_styles
             .extend(recording.cursor_styles.iter().cloned());
-
-        // TODO(node-engine): These lanes contain move-only values whose IDs are
-        // refreshed during replay. Keep using prior-frame ranges until recordings
-        // own stable listener handles and text leases.
-        let range = &recording.paint_range;
-        self.next_frame.input_handlers.extend(
-            self.rendered_frame.input_handlers
-                [range.start.input_handlers_index..range.end.input_handlers_index]
-                .iter_mut()
-                .map(|handler| handler.take()),
-        );
-        self.next_frame.mouse_listeners.extend(
-            self.rendered_frame.mouse_listeners
-                [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
-                .iter_mut()
-                .map(|listener| listener.take()),
-        );
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .map(|(id, type_id)| (id.clone(), *type_id)),
-        );
-        self.next_frame.tab_stops.replay(
-            &self.rendered_frame.tab_stops.insertion_history
-                [range.start.tab_handle_index..range.end.tab_handle_index],
-        );
-        self.text_system.reuse_layouts(
-            range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
-        );
-        self.next_frame.scene.replay_recording(&recording.scene);
+        self.next_frame
+            .input_handlers
+            .extend(recording.input_handlers.iter().cloned());
+        self.next_frame
+            .mouse_listeners
+            .extend(recording.mouse_listeners.iter().cloned());
+        self.next_frame
+            .accessed_element_states
+            .extend(recording.paint_states.iter().cloned());
+        self.next_frame
+            .window_control_hitboxes
+            .extend(recording.window_controls.iter().cloned());
+        self.next_frame.tab_stops.replay(&recording.tab_stops);
+        self.text_system.replay_layouts(&recording.paint_text);
+        if let DrawEngine::Node(engine) = &self.draw_engine {
+            recording
+                .scene
+                .replay(&mut self.next_frame.scene, engine, cx);
+        }
         start..self.paint_index()
     }
 
@@ -3553,6 +3728,7 @@ impl Window {
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
             scene_index: self.next_frame.scene.len(),
+            window_controls_index: self.next_frame.window_control_hitboxes.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
@@ -3857,6 +4033,35 @@ impl Window {
         init: impl FnOnce(&mut Self, &mut Context<S>) -> S,
     ) -> Entity<S> {
         let current_view = self.current_view();
+        if let DrawEngine::Node(engine) = &self.draw_engine
+            && let Some(node) = engine.current_node()
+        {
+            return self.with_global_id(key.into(), |global_id, window| {
+                let key = (global_id.clone(), TypeId::of::<S>());
+                let existing = node.update(cx, |node, _| {
+                    node.accessed_local_state.insert(key.clone());
+                    node.local_state.get(&key).map(|state| state.entity.clone())
+                });
+                if let Some(existing) = existing {
+                    return existing
+                        .downcast::<S>()
+                        .expect("local state is keyed by its type");
+                }
+                let state = cx.new(|cx| init(window, cx));
+                let subscription = cx.observe(&state, move |_, cx| cx.notify(current_view));
+                node.update(cx, |node, _| {
+                    node.local_state.insert(
+                        key,
+                        crate::NodeLocalState {
+                            entity: state.clone().into_any(),
+                            _subscription: subscription,
+                        },
+                    );
+                });
+                state
+            });
+        }
+
         self.with_global_id(key.into(), |global_id, window| {
             window.with_element_state(global_id, |state: Option<Entity<S>>, window| {
                 if let Some(state) = state {
@@ -4780,6 +4985,22 @@ impl Window {
         F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
             + 'static,
     {
+        if let DrawEngine::Node(engine) = &mut self.draw_engine {
+            engine.mark_frame_bound_layout();
+        }
+        self.request_retained_measured_layout(style, measure)
+    }
+
+    // Only callbacks whose captures outlive the element arena can survive a frame.
+    pub(crate) fn request_retained_measured_layout<F>(
+        &mut self,
+        style: Style,
+        measure: F,
+    ) -> LayoutId
+    where
+        F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+            + 'static,
+    {
         self.invalidator.debug_assert_prepaint();
 
         let rem_size = self.rem_size();
@@ -4788,6 +5009,29 @@ impl Window {
             .as_mut()
             .unwrap()
             .request_measured_layout(style, rem_size, scale_factor, measure)
+    }
+
+    pub(crate) fn retained_layout_unchanged(&mut self, layout: LayoutId) -> bool {
+        self.layout_engine
+            .as_mut()
+            .expect("layout engine available outside measurement")
+            .layout_unchanged(layout)
+    }
+
+    pub(crate) fn replace_retained_layout(
+        &mut self,
+        previous: LayoutId,
+        layout: LayoutId,
+        cx: &mut App,
+    ) {
+        let (root, available_space) = self
+            .layout_engine
+            .as_mut()
+            .expect("layout engine available outside measurement")
+            .replace_layout(previous, layout);
+        // Percentage padding and intrinsic sizing depend on the containing tree,
+        // even when a rebuilt scope's outer bounds have not changed.
+        self.compute_layout(root, available_space, cx);
     }
 
     /// Compute the layout for the given id within the given available space.
@@ -4955,13 +5199,15 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        self.next_frame.mouse_listeners.push(Some(Box::new(
-            move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
-                if let Some(event) = event.downcast_ref() {
-                    listener(event, phase, window, cx)
-                }
-            },
-        )));
+        self.next_frame
+            .mouse_listeners
+            .push(Some(Rc::new(RefCell::new(Box::new(
+                move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
+                    if let Some(event) = event.downcast_ref() {
+                        listener(event, phase, window, cx)
+                    }
+                },
+            )))));
     }
 
     /// Register a key event listener on this node for the next frame. The type of event
@@ -5302,7 +5548,7 @@ impl Window {
         // special purposes, such as detecting events outside of a given Bounds.
         for listener in &mut mouse_listeners {
             let listener = listener.as_mut().unwrap();
-            listener(event, DispatchPhase::Capture, self, cx);
+            listener.borrow_mut()(event, DispatchPhase::Capture, self, cx);
             if !cx.propagate_event {
                 break;
             }
@@ -5312,7 +5558,7 @@ impl Window {
         if cx.propagate_event {
             for listener in mouse_listeners.iter_mut().rev() {
                 let listener = listener.as_mut().unwrap();
-                listener(event, DispatchPhase::Bubble, self, cx);
+                listener.borrow_mut()(event, DispatchPhase::Bubble, self, cx);
                 if !cx.propagate_event {
                     break;
                 }

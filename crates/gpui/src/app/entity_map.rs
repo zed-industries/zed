@@ -55,8 +55,10 @@ impl Display for EntityId {
 
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Box<dyn Any>>,
+    revisions: SecondaryMap<EntityId, u64>,
     pub accessed_entities: RefCell<FxHashSet<EntityId>>,
     accessed_entity_scopes: RefCell<Vec<FxHashSet<EntityId>>>,
+    recycled_access_scopes: Vec<FxHashSet<EntityId>>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
@@ -72,8 +74,10 @@ impl EntityMap {
     pub fn new() -> Self {
         Self {
             entities: SecondaryMap::new(),
+            revisions: SecondaryMap::new(),
             accessed_entities: RefCell::new(FxHashSet::default()),
             accessed_entity_scopes: RefCell::new(Vec::new()),
+            recycled_access_scopes: Vec::new(),
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
                 dropped_entity_ids: Vec::new(),
@@ -127,6 +131,7 @@ impl EntityMap {
 
         let handle = slot.0;
         self.entities.insert(handle.entity_id, Box::new(entity));
+        self.revisions.insert(handle.entity_id, 0);
         handle
     }
 
@@ -151,6 +156,13 @@ impl EntityMap {
     /// Returns an entity after moving it to the stack.
     pub fn end_lease<T>(&mut self, mut lease: Lease<T>) {
         self.entities.insert(lease.id, lease.entity.take().unwrap());
+        if let Some(revision) = self.revisions.get_mut(lease.id) {
+            *revision += 1;
+        }
+    }
+
+    pub(crate) fn revision(&self, entity_id: EntityId) -> Option<u64> {
+        self.revisions.get(entity_id).copied()
     }
 
     pub fn read<T: 'static>(&self, entity: &Entity<T>) -> &T {
@@ -179,15 +191,42 @@ impl EntityMap {
         }
     }
 
+    pub(crate) fn suspend_access_tracking(
+        &mut self,
+    ) -> (FxHashSet<EntityId>, Vec<FxHashSet<EntityId>>) {
+        (
+            std::mem::take(self.accessed_entities.get_mut()),
+            std::mem::take(self.accessed_entity_scopes.get_mut()),
+        )
+    }
+
+    pub(crate) fn restore_access_tracking(
+        &mut self,
+        previous: (FxHashSet<EntityId>, Vec<FxHashSet<EntityId>>),
+    ) {
+        debug_assert!(self.accessed_entity_scopes.get_mut().is_empty());
+        *self.accessed_entities.get_mut() = previous.0;
+        *self.accessed_entity_scopes.get_mut() = previous.1;
+    }
+
+    #[cfg(test)]
     pub fn clear_accessed(&mut self) {
         self.accessed_entities.get_mut().clear();
         debug_assert!(self.accessed_entity_scopes.get_mut().is_empty());
     }
 
+    pub(crate) fn take_access_scope(&mut self) -> FxHashSet<EntityId> {
+        self.recycled_access_scopes.pop().unwrap_or_default()
+    }
+
+    pub(crate) fn recycle_access_scope(&mut self, mut scope: FxHashSet<EntityId>) {
+        scope.clear();
+        self.recycled_access_scopes.push(scope);
+    }
+
     pub fn begin_access_scope(&mut self) {
-        self.accessed_entity_scopes
-            .get_mut()
-            .push(FxHashSet::default());
+        let scope = self.take_access_scope();
+        self.accessed_entity_scopes.get_mut().push(scope);
     }
 
     pub fn end_access_scope(&mut self) -> FxHashSet<EntityId> {
@@ -225,6 +264,7 @@ impl EntityMap {
                     "dropped an entity that was referenced"
                 );
                 accessed_entities.remove(&entity_id);
+                self.revisions.remove(entity_id);
                 // If the EntityId was allocated with `Context::reserve`,
                 // the entity may not have been inserted.
                 Some((entity_id, self.entities.remove(entity_id)?))

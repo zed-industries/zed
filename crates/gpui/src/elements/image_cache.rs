@@ -42,6 +42,10 @@ impl<I: ImageCache> From<Entity<I>> for AnyImageCache {
 }
 
 impl AnyImageCache {
+    pub(crate) fn entity_id(&self) -> crate::EntityId {
+        self.image_cache.entity_id()
+    }
+
     /// Load an image given a resource
     /// returns the result of loading the image if it has finished loading, or None if it is still loading
     pub fn load(

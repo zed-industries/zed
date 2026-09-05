@@ -2182,7 +2182,8 @@ impl Interactivity {
                 }
 
                 let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
-                let layout_id = f(style, window, cx);
+                let layout_id =
+                    window.with_element_opacity(style.opacity, |window| f(style, window, cx));
                 (layout_id, element_state)
             },
         )
@@ -2268,22 +2269,24 @@ impl Interactivity {
                     }
                 }
 
-                window.with_text_style(style.text_style().cloned(), |window| {
-                    window.with_content_mask(
-                        style.overflow_mask(bounds, window.rem_size()),
-                        |window| {
-                            let hitbox = if self.should_insert_hitbox(&style, window, cx) {
-                                Some(window.insert_hitbox(bounds, self.hitbox_behavior))
-                            } else {
-                                None
-                            };
+                window.with_element_opacity(style.opacity, |window| {
+                    window.with_text_style(style.text_style().cloned(), |window| {
+                        window.with_content_mask(
+                            style.overflow_mask(bounds, window.rem_size()),
+                            |window| {
+                                let hitbox = if self.should_insert_hitbox(&style, window, cx) {
+                                    Some(window.insert_hitbox(bounds, self.hitbox_behavior))
+                                } else {
+                                    None
+                                };
 
-                            let scroll_offset =
-                                self.clamp_scroll_position(bounds, &style, window, cx);
-                            let result = f(&style, scroll_offset, hitbox, window, cx);
-                            (result, element_state)
-                        },
-                    )
+                                let scroll_offset =
+                                    self.clamp_scroll_position(bounds, &style, window, cx);
+                                let result = f(&style, scroll_offset, hitbox, window, cx);
+                                (result, element_state)
+                            },
+                        )
+                    })
                 })
             },
         )
@@ -2724,7 +2727,7 @@ impl Interactivity {
                     .and_then(|state| state.hover_state.as_ref())
                     .cloned()
             });
-            let current_view = window.current_view();
+            let current_view = window.current_invalidation_target();
 
             window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                 let hovered = hitbox.is_hovered(window);
@@ -2746,7 +2749,7 @@ impl Interactivity {
                     .as_ref()
                     .and_then(|element| element.hover_state.as_ref())
                     .cloned();
-                let current_view = window.current_view();
+                let current_view = window.current_invalidation_target();
 
                 window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                     let group_hovered = group_hitbox_id.is_hovered(window);
@@ -3199,7 +3202,7 @@ impl Interactivity {
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
-            let current_view = window.current_view();
+            let current_view = window.current_invalidation_target();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();

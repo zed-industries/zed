@@ -139,23 +139,21 @@ impl Scene {
     }
 
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
-        for operation in &prev_scene.paint_operations[range] {
+        self.replay_recording(&prev_scene.paint_operations[range]);
+    }
+
+    pub(crate) fn recording(&self, range: Range<usize>, operations: &mut Vec<PaintOperation>) {
+        operations.extend_from_slice(&self.paint_operations[range]);
+    }
+
+    pub(crate) fn replay_recording(&mut self, recording: &[PaintOperation]) {
+        for operation in recording {
             match operation {
                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
         }
-    }
-
-    pub(crate) fn recording(&self, range: Range<usize>) -> Scene {
-        let mut recording = Scene::default();
-        recording.replay(range, self);
-        recording
-    }
-
-    pub(crate) fn replay_recording(&mut self, recording: &Scene) {
-        self.replay(0..recording.len(), recording);
     }
 
     #[cfg(test)]
@@ -238,6 +236,7 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
+#[derive(Clone)]
 pub(crate) enum PaintOperation {
     Primitive(Primitive),
     StartLayer(Bounds<ScaledPixels>),

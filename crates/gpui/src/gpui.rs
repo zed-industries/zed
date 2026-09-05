@@ -138,6 +138,7 @@ pub use inspector::*;
 pub use interactive::*;
 use key_dispatch::*;
 pub use keymap::*;
+pub use node_engine::RetainedNodeStats;
 pub(crate) use node_engine::*;
 pub use path_builder::*;
 pub use platform::*;

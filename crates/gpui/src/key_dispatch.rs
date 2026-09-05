@@ -90,6 +90,32 @@ pub(crate) struct DispatchNode {
     parent: Option<DispatchNodeId>,
 }
 
+impl Clone for DispatchNode {
+    fn clone(&self) -> Self {
+        Self {
+            key_listeners: self.key_listeners.clone(),
+            action_listeners: self.action_listeners.clone(),
+            modifiers_changed_listeners: self.modifiers_changed_listeners.clone(),
+            context: self.context.clone(),
+            focus_id: self.focus_id,
+            view_id: self.view_id,
+            parent: self.parent,
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        // Retained recordings also reuse the listener buffers inside each node.
+        self.key_listeners.clone_from(&source.key_listeners);
+        self.action_listeners.clone_from(&source.action_listeners);
+        self.modifiers_changed_listeners
+            .clone_from(&source.modifiers_changed_listeners);
+        self.context.clone_from(&source.context);
+        self.focus_id = source.focus_id;
+        self.view_id = source.view_id;
+        self.parent = source.parent;
+    }
+}
+
 pub(crate) struct ReusedSubtree {
     old_range: Range<usize>,
     new_range: Range<usize>,
@@ -259,6 +285,41 @@ impl DispatchTree {
         target.key_listeners = mem::take(&mut source.key_listeners);
         target.action_listeners = mem::take(&mut source.action_listeners);
         target.modifiers_changed_listeners = mem::take(&mut source.modifiers_changed_listeners);
+    }
+
+    pub(crate) fn record_subtree(&self, range: Range<usize>, nodes: &mut Vec<DispatchNode>) {
+        self.nodes[range].clone_into(nodes);
+    }
+
+    pub(crate) fn replay_subtree(
+        &mut self,
+        nodes: &[DispatchNode],
+        old_start: usize,
+        focus: Option<FocusId>,
+    ) -> ReusedSubtree {
+        let new_range = self.nodes.len()..self.nodes.len() + nodes.len();
+        let mut source_stack = Vec::new();
+        let mut contains_focus = false;
+        for (offset, source) in nodes.iter().enumerate() {
+            while let Some(ancestor) = source_stack.last() {
+                if source.parent == Some(*ancestor) {
+                    break;
+                }
+                source_stack.pop();
+                self.pop_node();
+            }
+            source_stack.push(DispatchNodeId(old_start + offset));
+            contains_focus |= source.focus_id.is_some() && source.focus_id == focus;
+            self.move_node(&mut source.clone());
+        }
+        while source_stack.pop().is_some() {
+            self.pop_node();
+        }
+        ReusedSubtree {
+            old_range: old_start..old_start + nodes.len(),
+            new_range,
+            contains_focus,
+        }
     }
 
     pub fn reuse_subtree(
