@@ -302,6 +302,13 @@ impl EntryViewState {
                     &mut tool_call.content
                 };
 
+                let live_views = terminals
+                    .iter()
+                    .map(|terminal| terminal.entity_id())
+                    .chain(diffs.iter().map(|diff| diff.entity_id()))
+                    .collect::<HashSet<_>>();
+                views.retain(|entity_id, _| live_views.contains(entity_id));
+
                 let is_tool_call_completed =
                     matches!(tool_call.status, acp_thread::ToolCallStatus::Completed);
 
