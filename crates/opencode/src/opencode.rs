@@ -568,13 +568,7 @@ impl Model {
             | Self::MiniMaxM2_5
             | Self::OmenAlpha => true,
 
-            Self::MiniMaxM2_7 | Self::MiniMaxM3 => {
-                if subscription == OpenCodeSubscription::Zen {
-                    true
-                } else {
-                    false
-                }
-            }
+            Self::MiniMaxM2_7 | Self::MiniMaxM3 => subscription == OpenCodeSubscription::Zen,
 
             Self::Custom {
                 interleaved_reasoning,
