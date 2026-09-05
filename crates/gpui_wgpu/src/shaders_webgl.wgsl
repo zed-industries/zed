@@ -136,7 +136,7 @@ fn read_transformation(cursor: ptr<function, InstanceCursor>) -> TransformationM
 }
 
 fn load_quad(instance_id: u32) -> Quad {
-    var cursor = instance_cursor(instance_id * 40u);
+    var cursor = instance_cursor(instance_id * 44u);
     return Quad(
         read_word(&cursor),
         read_word(&cursor),
@@ -146,6 +146,7 @@ fn load_quad(instance_id: u32) -> Quad {
         read_hsla(&cursor),
         read_corners(&cursor),
         read_edges(&cursor),
+        read_corners(&cursor),
     );
 }
 

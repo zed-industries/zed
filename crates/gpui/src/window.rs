@@ -7,15 +7,15 @@ use crate::profiler;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
-    Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    Capslock, Context, CornerShape, Corners, CursorHideMode, CursorStyle, Decorations,
+    DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
+    Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
+    GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
+    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
@@ -4237,11 +4237,35 @@ impl Window {
     fn largest_border_interior(quad: &Quad) -> Bounds<ScaledPixels> {
         let radii = &quad.corner_radii;
         let widths = &quad.border_widths;
+        let shapes = &quad.corner_shapes;
+        let ends =
+            |radius: ScaledPixels,
+             shape: f32,
+             horizontal_width: ScaledPixels,
+             vertical_width: ScaledPixels| {
+                let (along_horizontal, along_vertical) = crate::CornerShape(shape)
+                    .inner_curve_ends(radius.0, horizontal_width.0, vertical_width.0);
+                (ScaledPixels(along_horizontal), ScaledPixels(along_vertical))
+            };
+        let top_left = ends(radii.top_left, shapes.top_left, widths.top, widths.left);
+        let top_right = ends(radii.top_right, shapes.top_right, widths.top, widths.right);
+        let bottom_left = ends(
+            radii.bottom_left,
+            shapes.bottom_left,
+            widths.bottom,
+            widths.left,
+        );
+        let bottom_right = ends(
+            radii.bottom_right,
+            shapes.bottom_right,
+            widths.bottom,
+            widths.right,
+        );
         let edge_radii = Edges {
-            top: radii.top_left.max(radii.top_right),
-            right: radii.top_right.max(radii.bottom_right),
-            bottom: radii.bottom_left.max(radii.bottom_right),
-            left: radii.top_left.max(radii.bottom_left),
+            top: top_left.1.max(top_right.1),
+            right: top_right.0.max(bottom_right.0),
+            bottom: bottom_left.1.max(bottom_right.1),
+            left: top_left.0.max(bottom_left.0),
         };
 
         let antialias_inset = point(ScaledPixels(1.0), ScaledPixels(1.0));
@@ -4297,6 +4321,7 @@ impl Window {
             corner_radii: quad.corner_radii.scale(self.scale_factor()),
             border_widths: snapped_border_widths,
             border_style: quad.border_style,
+            corner_shapes: quad.corner_shapes.map(|shape| shape.0),
         };
 
         if !quad.background.is_transparent() {
@@ -7293,9 +7318,19 @@ pub struct PaintQuad {
     pub border_color: Hsla,
     /// The style of the quad's borders.
     pub border_style: BorderStyle,
+    /// The shape of the quad's corners.
+    pub corner_shapes: Corners<CornerShape>,
 }
 
 impl PaintQuad {
+    /// Sets the shape of the quad's corners.
+    pub fn corner_shapes(self, corner_shapes: impl Into<Corners<CornerShape>>) -> Self {
+        PaintQuad {
+            corner_shapes: corner_shapes.into(),
+            ..self
+        }
+    }
+
     /// Sets the corner radii of the quad.
     pub fn corner_radii(self, corner_radii: impl Into<Corners<Pixels>>) -> Self {
         PaintQuad {
@@ -7345,6 +7380,7 @@ pub fn quad(
         border_widths: border_widths.into(),
         border_color: border_color.into(),
         border_style,
+        corner_shapes: Corners::default(),
     }
 }
 
@@ -7357,6 +7393,7 @@ pub fn fill(bounds: impl Into<Bounds<Pixels>>, background: impl Into<Background>
         border_widths: (0.).into(),
         border_color: transparent_black(),
         border_style: BorderStyle::default(),
+        corner_shapes: Corners::default(),
     }
 }
 
@@ -7373,6 +7410,7 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+        corner_shapes: Corners::default(),
     }
 }
 
@@ -7390,8 +7428,9 @@ mod tests {
         ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
         InputEvent as _, InteractiveElement as _, IntoElement, LongPressEvent, MouseButton,
         MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
-        StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
-        TouchId, TouchPhase, Window, WindowAppearance, WindowOptions, canvas, div, point, px, size,
+        ScaledPixels, StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent,
+        TouchEvent, TouchId, TouchPhase, Window, WindowAppearance, WindowOptions, canvas, div,
+        point, px, size,
     };
 
     struct EmptyView;
@@ -7425,6 +7464,78 @@ mod tests {
                 // a mid-draw arena clear when painted afterwards.
                 .child(div().child("after"))
         }
+    }
+
+    fn border_only_quad(shape: crate::CornerShape) -> crate::Quad {
+        border_only_quad_with(
+            shape,
+            crate::Edges::all(ScaledPixels(8.)),
+            size(ScaledPixels(120.), ScaledPixels(120.)),
+        )
+    }
+
+    fn border_only_quad_with(
+        shape: crate::CornerShape,
+        border_widths: crate::Edges<ScaledPixels>,
+        size: crate::Size<ScaledPixels>,
+    ) -> crate::Quad {
+        crate::Quad {
+            order: 0,
+            border_style: Default::default(),
+            bounds: Bounds::new(point(ScaledPixels(0.), ScaledPixels(0.)), size),
+            content_mask: Default::default(),
+            background: Default::default(),
+            border_color: Default::default(),
+            corner_radii: crate::Corners::all(ScaledPixels(40.)),
+            border_widths,
+            corner_shapes: crate::Corners::all(shape.0),
+        }
+    }
+
+    #[test]
+    fn test_border_interior_stops_where_the_inner_edge_reaches() {
+        let round = Window::largest_border_interior(&border_only_quad(crate::CornerShape::ROUND));
+        assert_eq!(round.top(), ScaledPixels(41.));
+        assert_eq!(round.left(), ScaledPixels(9.));
+
+        let notch = Window::largest_border_interior(&border_only_quad(crate::CornerShape::NOTCH));
+        assert_eq!(notch.top(), ScaledPixels(49.));
+        assert_eq!(notch.bottom(), ScaledPixels(71.));
+        assert_eq!(notch.left(), ScaledPixels(9.));
+
+        let bevel = Window::largest_border_interior(&border_only_quad(crate::CornerShape::BEVEL));
+        assert!((bevel.top().0 - (41. + 8. / std::f32::consts::SQRT_2)).abs() < 1e-3);
+        assert_eq!(bevel.left(), ScaledPixels(9.));
+    }
+
+    #[test]
+    fn test_border_interior_with_two_border_widths_at_a_corner() {
+        let widths = crate::Edges {
+            top: ScaledPixels(4.),
+            bottom: ScaledPixels(4.),
+            left: ScaledPixels(12.),
+            right: ScaledPixels(12.),
+        };
+        // The tall quad keeps the band between the top and bottom corners, the
+        // wide one the band between the left and right corners.
+        let tall = size(ScaledPixels(120.), ScaledPixels(400.));
+        let wide = size(ScaledPixels(400.), ScaledPixels(120.));
+
+        // A bite moves each end of the curve by the width of the other edge.
+        let notch = crate::CornerShape::NOTCH;
+        let interior = Window::largest_border_interior(&border_only_quad_with(notch, widths, tall));
+        assert_eq!(interior.top(), ScaledPixels(53.));
+        let interior = Window::largest_border_interior(&border_only_quad_with(notch, widths, wide));
+        assert_eq!(interior.left(), ScaledPixels(45.));
+
+        // The bevel's inner line tilts so the border grows from 4 to 12. Its
+        // ends land at 0.8 of the top width along the top edge and 0.6 of the
+        // left width down the left edge.
+        let bevel = crate::CornerShape::BEVEL;
+        let interior = Window::largest_border_interior(&border_only_quad_with(bevel, widths, tall));
+        assert!((interior.top().0 - (41. + 12. * 0.6)).abs() < 1e-3);
+        let interior = Window::largest_border_interior(&border_only_quad_with(bevel, widths, wide));
+        assert!((interior.left().0 - (41. + 4. * 0.8)).abs() < 1e-3);
     }
 
     /// Opening a window synchronously draws it and requests an element arena

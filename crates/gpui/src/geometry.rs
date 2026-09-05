@@ -2249,6 +2249,79 @@ impl Anchor {
     }
 }
 
+/// The shape of one corner, as the curvature of a superellipse.
+///
+/// This is the number CSS `corner-shape: superellipse()` takes. 1 is a
+/// circle, 2 a squircle, 0 a straight bevel and infinity a square corner.
+/// Negative values curve inward: -1 is a scoop and negative infinity a notch.
+/// The corner radius still sets the size; the shape only bends the curve.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[repr(transparent)]
+pub struct CornerShape(pub f32);
+
+impl CornerShape {
+    /// A quarter circle. The default.
+    pub const ROUND: Self = Self(1.0);
+    /// Between round and square.
+    pub const SQUIRCLE: Self = Self(2.0);
+    /// A plain square corner, whatever the radius.
+    pub const SQUARE: Self = Self(f32::INFINITY);
+    /// A straight cut across the corner.
+    pub const BEVEL: Self = Self(0.0);
+    /// A quarter circle bitten out of the corner.
+    pub const SCOOP: Self = Self(-1.0);
+    /// A square bitten out of the corner.
+    pub const NOTCH: Self = Self(f32::NEG_INFINITY);
+
+    /// Where the inner edge of the border meets the two straight inner edges
+    /// at this corner, as distances from the corner along the horizontal edge
+    /// and along the vertical edge.
+    ///
+    /// This follows css-borders-4 "Rendering corner-shape". Each end of the
+    /// curve moves inward along a normal by the width of its own edge, and two
+    /// different widths tilt the normals so the border grows evenly from one
+    /// end to the other. A concave bite therefore moves each end by the width
+    /// of the other edge.
+    pub(crate) fn inner_curve_ends(
+        self,
+        radius: f32,
+        horizontal_width: f32,
+        vertical_width: f32,
+    ) -> (f32, f32) {
+        let mut half_corner = 0.5f32.powf(1.0 / self.0.abs().exp2());
+        if self.0 < 0.0 {
+            half_corner = 1.0 - half_corner;
+        }
+        let control = (half_corner / (std::f32::consts::SQRT_2 - 1.0)
+            - 1.0 / std::f32::consts::SQRT_2)
+            .clamp(0.0, 1.0);
+        let mut start_control = control;
+        let inset_diff = (vertical_width - horizontal_width).clamp(-radius, radius);
+        if inset_diff != 0.0 {
+            let s = (2.0 * radius * radius - inset_diff * inset_diff).sqrt();
+            let bevel_control = (s - inset_diff) / (2.0 * s);
+            start_control = if self.0 < 0.0 {
+                bevel_control * 2.0 * control
+            } else {
+                1.0 - (1.0 - bevel_control) * 2.0 * (1.0 - control)
+            };
+        }
+        let end_control = 2.0 * control - start_control;
+        let start_normal_x = (1.0 - start_control) / (1.0 - start_control).hypot(start_control);
+        let end_normal_y = (1.0 - end_control) / end_control.hypot(1.0 - end_control);
+        (
+            radius + horizontal_width * start_normal_x,
+            radius + vertical_width * end_normal_y,
+        )
+    }
+}
+
+impl Default for CornerShape {
+    fn default() -> Self {
+        Self::ROUND
+    }
+}
+
 /// Represents the corners of a box in a 2D space, such as border radius.
 ///
 /// Each field represents the size of the corner on one side of the box: `top_left`, `top_right`, `bottom_right`, and `bottom_left`.
