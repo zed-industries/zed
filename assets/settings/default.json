@@ -79,12 +79,6 @@
   "agent_buffer_font_size": 12,
   // The default font size for the commit editor in the git panel and commit modal.
   "git_commit_buffer_font_size": 12,
-  // The default font size for the markdown preview. Falls back to the UI font size if unset.
-  "markdown_preview_font_size": null,
-  // The font family for the markdown preview. Falls back to the UI font family if unset.
-  "markdown_preview_font_family": null,
-  // The font family for code blocks in the markdown preview. Falls back to the editor font family if unset.
-  "markdown_preview_code_font_family": null,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -118,6 +112,14 @@
   },
   // Markdown preview settings
   "markdown_preview": {
+    // The default font size for the markdown preview. Falls back to the UI font size if unset.
+    "font_size": null,
+    // The font family for the markdown preview. Falls back to the UI font family if unset.
+    "font_family": null,
+    // The font family for code blocks in the markdown preview. Falls back to the editor font family if unset.
+    "code_font_family": null,
+    // Whether to automatically open Markdown files in the preview.
+    "open_markdown_files_in_preview": false,
     // Whether to limit the width of the rendered markdown content. When
     // enabled, content is constrained to `max_width` and centered
     // horizontally within the preview pane.
@@ -210,6 +212,13 @@
   //  3. Never close the window
   //         "when_closing_with_no_tabs": "keep_window_open",
   "when_closing_with_no_tabs": "platform_default",
+  // What to show when opening a new window.
+  // May take 2 values:
+  //  1. Show an empty untitled buffer
+  //         "on_new_window": "empty_tab"
+  //  2. Show the launchpad with recent projects
+  //         "on_new_window": "launchpad"
+  "on_new_window": "launchpad",
   // What to do when the last window is closed.
   // May take 2 values:
   //  1. Use the current platform's convention
@@ -232,6 +241,23 @@
   //
   // Default: true
   "zoomed_padding": true,
+  // Window title template.
+  // Available variables are ${projectName}, ${fileName}, ${filePath},
+  // ${relativePath}, ${fileStem}, ${remoteName}, ${remoteHost},
+  // ${appName}, ${branch}, and ${separator}.
+  // ${separator} is omitted when adjacent variables are empty,
+  // but literal text is preserved.
+  // The collaboration indicator, when present, is appended after the
+  // rendered template.
+  // If the template renders to nothing, the default template is used instead.
+  //
+  // Default: "${projectName}${separator}${fileName}"
+  "window_title_format": "${projectName}${separator}${fileName}",
+  // String substituted for ${separator} in the window title format.
+  // Include any surrounding whitespace in the value.
+  //
+  // Default: " — "
+  "window_title_separator": " — ",
   // On Linux, what draws Zed's window decorations (titlebar).
   // This setting has no effect on other platforms:
   // 1. Zed draws its own window decorations.
@@ -269,6 +295,12 @@
   //
   // Default: "bar"
   "cursor_shape": "bar",
+  // Cursor movement animation settings.
+  // Enabling this may cause additional editor redraws and increase rendering overhead.
+  "cursor_animation": {
+    // Whether cursor movement animation is enabled.
+    "enabled": false,
+  },
   // Determines when the mouse cursor should be hidden in response to keyboard
   // input.
   //
@@ -828,6 +860,8 @@
     "button": true,
     // Whether to hide the gitignore entries in the project panel.
     "hide_gitignore": false,
+    // Delay in milliseconds before tooltips appear for project panel titles.
+    "title_tooltip_delay": "default",
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
@@ -1920,6 +1954,10 @@
     "line_endings_button": false,
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
+    // Whether to show an indicator with a countdown while timed multi-stroke
+    // input is pending. Hovering the indicator pauses the timeout. Its binding
+    // preview popover is disabled when "which_key.enabled" is true.
+    "pending_keystrokes_indicator": true,
   },
   // Settings specific to the terminal
   "terminal": {
@@ -2742,6 +2780,8 @@
   // Which-key popup settings
   "which_key": {
     // Whether to show the which-key popup when holding down key combinations.
+    // When enabled, the pending keystrokes indicator remains visible, but its
+    // binding preview popover is disabled.
     "enabled": false,
     // Delay in milliseconds before showing the which-key popup.
     "delay_ms": 1000,

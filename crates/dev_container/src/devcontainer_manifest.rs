@@ -2733,6 +2733,9 @@ pub(crate) async fn spawn_dev_container(
     .await?;
 
     devcontainer_manifest.parse_nonremote_vars()?;
+    devcontainer_manifest
+        .dev_container()
+        .validate_environment_names()?;
 
     log::debug!("Checking for existing container");
     if let Some(devcontainer) = devcontainer_manifest
