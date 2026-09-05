@@ -974,33 +974,41 @@ impl KeymapFile {
             let target_action_value = target
                 .action_value()
                 .context("Failed to generate target action JSON value")?;
-            let Some(binding_location) = find_unbind_entry(
-                &keymap,
-                target,
-                &target_action_value,
-                keyboard_mapper,
-                deprecated_aliases,
-            ) else {
+            let mut removed_any = false;
+            loop {
+                let keymap = Self::parse(&keymap_contents).context("Failed to parse keymap")?;
+                let Some(binding_location) = find_unbind_entry(
+                    &keymap,
+                    target,
+                    &target_action_value,
+                    keyboard_mapper,
+                    deprecated_aliases,
+                ) else {
+                    break;
+                };
+                let is_only_binding = binding_location.is_only_entry_in_section(&keymap);
+                let key_path: &[&str] = if is_only_binding {
+                    &[]
+                } else {
+                    &[
+                        binding_location.kind.key_path(),
+                        binding_location.keystrokes_str,
+                    ]
+                };
+                let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
+                    &keymap_contents,
+                    key_path,
+                    None,
+                    None,
+                    binding_location.index,
+                    tab_size,
+                );
+                keymap_contents.replace_range(replace_range, &replace_value);
+                removed_any = true;
+            }
+            if !removed_any {
                 anyhow::bail!("Failed to find unbind entry to remove");
-            };
-            let is_only_binding = binding_location.is_only_entry_in_section(&keymap);
-            let key_path: &[&str] = if is_only_binding {
-                &[]
-            } else {
-                &[
-                    binding_location.kind.key_path(),
-                    binding_location.keystrokes_str,
-                ]
-            };
-            let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
-                &keymap_contents,
-                key_path,
-                None,
-                None,
-                binding_location.index,
-                tab_size,
-            );
-            keymap_contents.replace_range(replace_range, &replace_value);
+            }
 
             return Ok(keymap_contents);
         }
@@ -1186,6 +1194,9 @@ impl KeymapFile {
                     keyboard_mapper,
                     deprecated_aliases,
                     |action| &action.0,
+                    false,
+                    false,
+                    false,
                 ) {
                     return Some(binding_location);
                 }
@@ -1199,6 +1210,9 @@ impl KeymapFile {
                     keyboard_mapper,
                     deprecated_aliases,
                     |action| &action.0,
+                    false,
+                    false,
+                    false,
                 ) {
                     return Some(binding_location);
                 }
@@ -1216,14 +1230,22 @@ impl KeymapFile {
             keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
             deprecated_aliases: &HashMap<&'static str, &'static str>,
         ) -> Option<BindingLocation<'b>> {
-            let target_context_parsed =
-                KeyBindingContextPredicate::parse(target.context.unwrap_or("")).ok();
+            let Ok(target_context) = parse_context_predicate(target.context.unwrap_or("")) else {
+                return None;
+            };
             for (index, section) in keymap.sections().enumerate() {
-                let section_context_parsed =
-                    KeyBindingContextPredicate::parse(&section.context).ok();
-                if section.context.trim() != ""
-                    && section_context_parsed != target_context_parsed
-                {
+                let section_context = match parse_context_predicate(&section.context) {
+                    Ok(context) => context,
+                    Err(()) => continue,
+                };
+                let context_matches = match (&section_context, &target_context) {
+                    (None, _) => true,
+                    (Some(_), None) => false,
+                    (Some(section_predicate), Some(target_predicate)) => {
+                        section_predicate.is_superset(target_predicate)
+                    }
+                };
+                if !context_matches {
                     continue;
                 }
 
@@ -1236,6 +1258,9 @@ impl KeymapFile {
                     keyboard_mapper,
                     deprecated_aliases,
                     |action| &action.0,
+                    keymap.0[index].use_key_equivalents,
+                    true,
+                    true,
                 ) {
                     return Some(binding_location);
                 }
@@ -1252,6 +1277,9 @@ impl KeymapFile {
             keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
             deprecated_aliases: &HashMap<&'static str, &'static str>,
             action_value: impl Fn(&T) -> &Value,
+            use_key_equivalents: bool,
+            action_name_only: bool,
+            keystrokes_exact: bool,
         ) -> Option<BindingLocation<'b>> {
             let entries = entries?;
             for (keystrokes_str, action) in entries {
@@ -1261,7 +1289,7 @@ impl KeymapFile {
                         let keystroke = Keystroke::parse(source)?;
                         Ok(KeybindingKeystroke::new_with_mapper(
                             keystroke,
-                            false,
+                            use_key_equivalents,
                             keyboard_mapper,
                         ))
                     })
@@ -1269,19 +1297,37 @@ impl KeymapFile {
                 else {
                     continue;
                 };
-                if keystrokes.len() != target.keystrokes.len()
-                    || !keystrokes
+                if keystrokes.len() != target.keystrokes.len() {
+                    continue;
+                }
+                let keystrokes_match = if keystrokes_exact {
+                    keystrokes
+                        .iter()
+                        .zip(target.keystrokes)
+                        .all(|(a, b)| a == b)
+                } else {
+                    keystrokes
                         .iter()
                         .zip(target.keystrokes)
                         .all(|(a, b)| a.inner().should_match(b))
-                {
+                };
+                if !keystrokes_match {
                     continue;
                 }
-                if !action_value_matches_target(
-                    action_value(action),
-                    target_action_value,
-                    deprecated_aliases,
-                ) {
+                let action_matches = if action_name_only {
+                    unbind_action_name_matches_target(
+                        action_value(action),
+                        target_action_value,
+                        deprecated_aliases,
+                    )
+                } else {
+                    action_value_matches_target(
+                        action_value(action),
+                        target_action_value,
+                        deprecated_aliases,
+                    )
+                };
+                if !action_matches {
                     continue;
                 }
                 return Some(BindingLocation {
@@ -1325,6 +1371,47 @@ impl KeymapFile {
                 },
                 _ => false,
             }
+        }
+
+        /// Parses a binding-context string for lookup purposes.
+        fn parse_context_predicate(
+            context: &str,
+        ) -> Result<Option<KeyBindingContextPredicate>, ()> {
+            if context.trim().is_empty() {
+                return Ok(None);
+            }
+            KeyBindingContextPredicate::parse(context)
+                .map(Some)
+                .map_err(|_| ())
+        }
+
+        /// Extracts the action name from a keymap action value.
+        fn action_value_name(action_value: &Value) -> Option<&str> {
+            match action_value {
+                Value::String(name) => Some(name.as_str()),
+                Value::Array(items) => match items.as_slice() {
+                    [Value::String(name), _] => Some(name.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+
+        fn unbind_action_name_matches_target(
+            action_value: &Value,
+            target_action_value: &Value,
+            deprecated_aliases: &HashMap<&'static str, &'static str>,
+        ) -> bool {
+            let Some(entry_name) = action_value_name(action_value) else {
+                return false;
+            };
+            let Some(target_name) = action_value_name(target_action_value) else {
+                return false;
+            };
+            let Some(&canonical_entry_name) = deprecated_aliases.get(entry_name) else {
+                return entry_name == target_name;
+            };
+            canonical_entry_name == target_name
         }
 
         #[derive(Copy, Clone)]
@@ -3012,6 +3099,189 @@ mod tests {
               {
                 "bindings": {
                   "a": "foo::bar"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor && vim_mode"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              },
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // All matching unbind entries must be removed, including when some
+        // sections are dropped wholesale and others keep unrelated entries.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              },
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase",
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": "Editor",
+                "unbind": {
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // A malformed section context loads nothing and is inert, so it must
+        // not be matched (or deleted) as though it were the context-less
+        // suppressor of a global binding.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": "Editor &&",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              },
+              {
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": "Editor &&",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
                 }
               }
             ]

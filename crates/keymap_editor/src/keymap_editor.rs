@@ -451,6 +451,7 @@ struct KeymapEditor {
     selected_index: Option<usize>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
+    is_restoring_binding: bool,
     humanized_action_names: HumanizedActionNameCache,
     current_widths: Entity<RedistributableColumnsState>,
     show_hover_menus: bool,
@@ -619,6 +620,7 @@ impl KeymapEditor {
             selected_index: None,
             context_menu: None,
             previous_edit: None,
+            is_restoring_binding: false,
             search_query_debounce: None,
             humanized_action_names: HumanizedActionNameCache::new(cx),
             show_hover_menus: true,
@@ -1155,6 +1157,7 @@ impl KeymapEditor {
     ) -> IconButton {
         if is_unbound_by_unbind {
             base_button_style(index, IconName::RotateCcw)
+                .aria_label("Restore binding")
                 .icon_color(Color::Warning)
                 .tooltip(|_window, cx| {
                     Tooltip::with_meta(
@@ -1164,7 +1167,13 @@ impl KeymapEditor {
                         cx,
                     )
                 })
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                    // A double-click fires this handler once per click. Only
+                    // the first should start a restore, or two concurrent
+                    // file-update tasks could race.
+                    if event.click_count() > 1 {
+                        return;
+                    }
                     this.select_index(index, None, window, cx);
                     this.restore_binding(&RestoreBinding, window, cx);
                     cx.stop_propagation();
@@ -1330,6 +1339,9 @@ impl KeymapEditor {
             return;
         };
         if !create && keybind.is_unbound_by_unbind() {
+            // A suppressed binding can't be edited. The Enter gesture that
+            // normally opens the edit modal instead restores it.
+            self.restore_binding(&RestoreBinding, window, cx);
             return;
         }
         let keybind = keybind.clone();
@@ -1466,6 +1478,9 @@ impl KeymapEditor {
     }
 
     fn restore_binding(&mut self, _: &RestoreBinding, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_restoring_binding {
+            return;
+        }
         let Some(to_restore) = self.selected_binding().cloned() else {
             return;
         };
@@ -1484,14 +1499,19 @@ impl KeymapEditor {
         ));
         let keyboard_mapper = cx.keyboard_mapper().clone();
         let deprecated_aliases = cx.deprecated_actions_to_preferred_actions().clone();
-        cx.spawn(async move |_, _| {
-            restore_keybinding(
+        self.is_restoring_binding = true;
+        cx.spawn(async move |this, cx| {
+            let result = restore_keybinding(
                 to_restore,
                 &fs,
                 keyboard_mapper.as_ref(),
                 &deprecated_aliases,
             )
-            .await
+            .await;
+            let _ = this.update(cx, |this, _cx| {
+                this.is_restoring_binding = false;
+            });
+            result
         })
         .detach_and_notify_err(self.workspace.clone(), window, cx);
     }
@@ -4189,6 +4209,15 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
         let keymap_editor = cx
             .update(|window, cx| cx.new(|cx| KeymapEditor::new(workspace.downgrade(), window, cx)));
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(keymap_editor.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+        });
         cx.run_until_parked();
         (fs, keymap_editor, cx)
     }
@@ -4365,8 +4394,12 @@ mod tests {
 
         keymap_editor.update_in(cx, |editor, window, cx| {
             editor.selected_index = Some(rows[0]);
-            editor.restore_binding(&RestoreBinding, window, cx);
+            window.focus(&editor.focus_handle(cx), cx);
         });
+        let restore_icon_bounds = cx
+            .debug_bounds("ICON-RotateCcw")
+            .expect("the suppressed row should render a restore icon");
+        cx.simulate_click(restore_icon_bounds.center(), gpui::Modifiers::none());
         cx.run_until_parked();
 
         let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
