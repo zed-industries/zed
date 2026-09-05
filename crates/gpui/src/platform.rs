@@ -2065,6 +2065,17 @@ pub struct WindowParams {
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub show: bool,
 
+    /// The background appearance to apply to the window during creation.
+    ///
+    /// Some platforms (Windows) composite windows asynchronously via DWM, and
+    /// applying the background appearance after the window is already visible
+    /// causes a visible flash (e.g. transparent -> blurred). Passing it here
+    /// lets those platforms apply it before the window is first shown. Other
+    /// platforms ignore this and apply the appearance after creation via
+    /// [`PlatformWindow::set_background_appearance`].
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub window_background: WindowBackgroundAppearance,
+
     /// An image to set as the window icon (x11 only)
     #[cfg_attr(feature = "wayland", allow(dead_code))]
     pub icon: Option<Arc<image::RgbaImage>>,

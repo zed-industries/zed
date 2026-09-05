@@ -86,6 +86,16 @@ pub struct WindowsWindowState {
     pub(crate) draw_coordinator: Rc<DrawCoordinator>,
     fullscreen: Cell<Option<StyleAndBounds>>,
     initial_placement: Cell<Option<WindowOpenStatus>>,
+    /// Deferred uncloak for windows created with `show: true`.
+    ///
+    /// DWM composites asynchronously and the acrylic/backdrop accent doesn't
+    /// render before the window's first present, so showing a window
+    /// immediately at creation displays a fully transparent frame (a visible
+    /// transparent -> blurred flash with translucent themes). When set, the
+    /// window is shown as usual (so it receives WM_PAINT and renders) but is
+    /// cloaked via DWM, and uncloaked in [`PlatformWindow::draw`] after the
+    /// first frame is presented.
+    pending_uncloak: Cell<bool>,
     hwnd: HWND,
     pub(crate) a11y: RefCell<Option<A11yState>>,
 }
@@ -151,6 +161,7 @@ impl WindowsWindowState {
         let nc_button_pressed = None;
         let fullscreen = None;
         let initial_placement = None;
+        let pending_uncloak = false;
 
         let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
             .context("initializing Direct Manipulation")?;
@@ -181,6 +192,7 @@ impl WindowsWindowState {
             display: Cell::new(display),
             fullscreen: Cell::new(fullscreen),
             initial_placement: Cell::new(initial_placement),
+            pending_uncloak: Cell::new(pending_uncloak),
             hwnd,
             invalidate_devices,
             draw_coordinator,
@@ -554,11 +566,27 @@ impl WindowsWindow {
         this.state.border_offset.update(hwnd)?;
         let placement =
             retrieve_window_placement(hwnd, display, params.bounds, &this.state.border_offset)?;
+        // Apply the requested background appearance before the window is
+        // shown, so DWM never composites a visible frame without it (see
+        // `apply_background_appearance`).
+        this.state
+            .background_appearance
+            .set(params.window_background);
+        apply_background_appearance(hwnd, params.window_background);
         if params.show {
             let mut placement = placement;
             if !params.focus {
                 placement.showCmd = SW_SHOWNOACTIVATE.0 as u32;
             }
+            // Cloak the window until its first frame is presented. Showing a
+            // window without presented content lets DWM composite a fully
+            // transparent frame first (a transparent -> blurred flash with
+            // translucent themes). A cloaked window is still visible to the
+            // application, so it receives WM_PAINT and renders normally,
+            // while DWM doesn't display it. Uncloaks after the first present,
+            // see `pending_uncloak` and [`PlatformWindow::draw`].
+            dwm_set_window_cloak(hwnd, true);
+            this.state.pending_uncloak.set(true);
             unsafe { SetWindowPlacement(hwnd, &placement)? };
         } else {
             this.state.initial_placement.set(Some(WindowOpenStatus {
@@ -874,29 +902,7 @@ impl PlatformWindow for WindowsWindow {
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         self.state.background_appearance.set(background_appearance);
-        let hwnd = self.0.hwnd;
-
-        // using Dwm APIs for Mica and MicaAlt backdrops.
-        // others follow the set_window_composition_attribute approach
-        match background_appearance {
-            WindowBackgroundAppearance::Opaque => {
-                set_window_composition_attribute(hwnd, None, 0);
-            }
-            WindowBackgroundAppearance::Transparent => {
-                set_window_composition_attribute(hwnd, None, 2);
-            }
-            WindowBackgroundAppearance::Blurred => {
-                set_window_composition_attribute(hwnd, Some((0, 0, 0, 0)), 4);
-            }
-            WindowBackgroundAppearance::MicaBackdrop => {
-                // DWMSBT_MAINWINDOW => MicaBase
-                dwm_set_window_composition_attribute(hwnd, 2);
-            }
-            WindowBackgroundAppearance::MicaAltBackdrop => {
-                // DWMSBT_TABBEDWINDOW => MicaAlt
-                dwm_set_window_composition_attribute(hwnd, 4);
-            }
-        }
+        apply_background_appearance(self.0.hwnd, background_appearance);
     }
 
     fn minimize(&self) {
@@ -984,11 +990,18 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn draw(&self, scene: &Scene) {
-        self.state
+        let draw_result = self
+            .state
             .renderer
             .borrow_mut()
-            .draw(scene, self.state.background_appearance.get())
-            .log_err();
+            .draw(scene, self.state.background_appearance.get());
+        // Uncloak the window now that its first frame has been presented, so
+        // DWM never composites a visible frame without content or backdrop
+        // (see `WindowsWindowState::pending_uncloak`).
+        if draw_result.is_ok() && self.state.pending_uncloak.replace(false) {
+            dwm_set_window_cloak(self.0.hwnd, false);
+        }
+        draw_result.log_err();
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1546,6 +1559,57 @@ fn retrieve_window_placement(
     let bounds = bounds.to_device_pixels(display.scale_factor());
     placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
     Ok(placement)
+}
+
+/// Cloaks or uncloaks the given window.
+///
+/// A cloaked window is still visible to the application (it receives
+/// WM_PAINT and renders normally), but DWM doesn't composite it to the
+/// screen. Used to hide a freshly-shown window until its first frame is
+/// presented, avoiding a transparent flash.
+fn dwm_set_window_cloak(hwnd: HWND, cloak: bool) {
+    let value = BOOL::from(cloak);
+    let result = unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAK,
+            &raw const value as *const _,
+            std::mem::size_of::<BOOL>() as u32,
+        )
+    };
+    if let Err(e) = result  {
+        log::error!("DwmSetWindowAttribute(DWMWA_CLOAK) failed: {e:#}");
+    }
+}
+
+/// Applies the given background appearance to the given window.
+///
+/// Must be called before the window is shown: DWM composites asynchronously,
+/// so applying an accent/backdrop to an already-visible window lets DWM
+/// present frames without it, causing a visible flash (e.g. transparent ->
+/// blurred).
+fn apply_background_appearance(hwnd: HWND, background_appearance: WindowBackgroundAppearance) {
+    // using Dwm APIs for Mica and MicaAlt backdrops.
+    // others follow the set_window_composition_attribute approach
+    match background_appearance {
+        WindowBackgroundAppearance::Opaque => {
+            set_window_composition_attribute(hwnd, None, 0);
+        }
+        WindowBackgroundAppearance::Transparent => {
+            set_window_composition_attribute(hwnd, None, 2);
+        }
+        WindowBackgroundAppearance::Blurred => {
+            set_window_composition_attribute(hwnd, Some((0, 0, 0, 0)), 4);
+        }
+        WindowBackgroundAppearance::MicaBackdrop => {
+            // DWMSBT_MAINWINDOW => MicaBase
+            dwm_set_window_composition_attribute(hwnd, 2);
+        }
+        WindowBackgroundAppearance::MicaAltBackdrop => {
+            // DWMSBT_TABBEDWINDOW => MicaAlt
+            dwm_set_window_composition_attribute(hwnd, 4);
+        }
+    }
 }
 
 fn dwm_set_window_composition_attribute(hwnd: HWND, backdrop_type: u32) {
