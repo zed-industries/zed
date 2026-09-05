@@ -45,9 +45,9 @@ use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
 use parser::{
     MarkdownEvent, MarkdownTag, MarkdownTagEnd, ParsedMetadataBlock, parse_links_only,
-    parse_markdown_with_options,
+    parse_markdown_with_options, parse_options,
 };
-use pulldown_cmark::{Alignment, BlockQuoteKind};
+use pulldown_cmark::{Alignment, BlockQuoteKind, Options, Parser, html::push_html};
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
 use ui::{Checkbox, CopyButton, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
@@ -507,6 +507,7 @@ pub struct Markdown {
     context_menu_link: Option<SharedString>,
     context_menu_selected_text: Option<SharedString>,
     context_menu_selected_markdown: Option<SharedString>,
+    context_menu_selected_html: Option<SharedString>,
     search_highlights: Rc<[Range<usize>]>,
     active_search_highlight: Option<usize>,
 }
@@ -568,7 +569,9 @@ actions!(
         /// Copies the selected text to the clipboard.
         Copy,
         /// Copies the selected text as markdown to the clipboard.
-        CopyAsMarkdown
+        CopyAsMarkdown,
+        /// Copies the selected text as rich text (HTML) to the clipboard.
+        CopyAsHtml
     ]
 );
 
@@ -702,6 +705,7 @@ impl Markdown {
             context_menu_link: None,
             context_menu_selected_text: None,
             context_menu_selected_markdown: None,
+            context_menu_selected_html: None,
             search_highlights: Rc::default(),
             active_search_highlight: None,
         };
@@ -1164,6 +1168,24 @@ impl Markdown {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
+    fn copy_as_html(&mut self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
+        let html = if let Some(html) = self.context_menu_selected_html.take() {
+            html.to_string()
+        } else {
+            self.parsed_markdown
+                .html_for_selection(self.selection.start..self.selection.end)
+        };
+        if html.is_empty() {
+            return;
+        }
+        let plain = if self.selection.end > self.selection.start {
+            text.text_for_range(self.selection.start..self.selection.end)
+        } else {
+            text.text_for_range(0..self.source.len())
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string_with_html(plain, html));
+    }
+
     fn capture_for_context_menu(
         &mut self,
         link: Option<SharedString>,
@@ -1175,12 +1197,16 @@ impl Markdown {
                 self.parsed_markdown
                     .rebalanced_markdown_for_selection(range.clone()),
             ));
+            self.context_menu_selected_html = Some(SharedString::new(
+                self.parsed_markdown.html_for_selection(range.clone()),
+            ));
             self.context_menu_selected_text = rendered_text
                 .map(|text| text.text_for_range(range))
                 .map(SharedString::new)
                 .or_else(|| self.context_menu_selected_markdown.clone());
         } else {
             self.context_menu_selected_markdown = None;
+            self.context_menu_selected_html = None;
             self.context_menu_selected_text = None;
         }
         self.context_menu_link = link;
@@ -1204,6 +1230,13 @@ impl Markdown {
     /// [`ParsedMarkdown::rebalanced_markdown_for_selection`].
     pub fn context_menu_selected_markdown(&self) -> Option<&SharedString> {
         self.context_menu_selected_markdown.as_ref()
+    }
+
+    /// Returns the HTML that was selected when the most recent context
+    /// menu invocation happened, rendered via
+    /// [`ParsedMarkdown::html_for_selection`].
+    pub fn context_menu_selected_html(&self) -> Option<&SharedString> {
+        self.context_menu_selected_html.as_ref()
     }
 
     fn parse(&mut self, cx: &mut Context<Self>) {
@@ -1248,6 +1281,7 @@ impl Markdown {
                     ParsedMarkdown {
                         events: Arc::from(parse_links_only(source.as_ref())),
                         source,
+                        parse_options: parse_options(false),
                         languages_by_name: TreeMap::default(),
                         languages_by_path: TreeMap::default(),
                         root_block_starts: Arc::default(),
@@ -1338,6 +1372,7 @@ impl Markdown {
             (
                 ParsedMarkdown {
                     source,
+                    parse_options: parse_options(should_parse_metadata_blocks),
                     events: Arc::from(events),
                     languages_by_name,
                     languages_by_path,
@@ -1483,9 +1518,12 @@ impl Selection {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ParsedMarkdown {
     pub source: SharedString,
+    /// The pulldown-cmark options this document was parsed with, used to render
+    /// selections as HTML so the output matches what the preview displays.
+    pub(crate) parse_options: Options,
     pub events: Arc<[(Range<usize>, MarkdownEvent)]>,
     pub languages_by_name: TreeMap<SharedString, Arc<Language>>,
     pub languages_by_path: TreeMap<Arc<str>, Arc<Language>>,
@@ -1497,6 +1535,24 @@ pub struct ParsedMarkdown {
     pub footnote_definitions: HashMap<SharedString, usize>,
     pub(crate) link_definition_spans: Arc<[Range<usize>]>,
     pub(crate) fallback_code_block_language: Option<Arc<Language>>,
+}
+
+impl Default for ParsedMarkdown {
+    fn default() -> Self {
+        Self {
+            source: SharedString::default(),
+            parse_options: parse_options(false),
+            events: Arc::default(),
+            languages_by_name: TreeMap::default(),
+            languages_by_path: TreeMap::default(),
+            root_block_starts: Arc::default(),
+            html_blocks: BTreeMap::default(),
+            metadata_blocks: BTreeMap::default(),
+            mermaid_diagrams: BTreeMap::default(),
+            heading_slugs: HashMap::default(),
+            footnote_definitions: HashMap::default(),
+        }
+    }
 }
 
 impl ParsedMarkdown {
@@ -1606,6 +1662,26 @@ impl ParsedMarkdown {
             selection,
         )
     }
+
+    /// Renders a selection as HTML, rebalancing inline delimiters first so
+    /// partial selections of styled spans stay well-formed.
+    ///
+    /// With an empty selection, the entire source is rendered.
+    pub fn html_for_selection(&self, selection: Range<usize>) -> String {
+        let markdown = if selection.is_empty() {
+            self.source.to_string()
+        } else {
+            self.rebalanced_markdown_for_selection(selection)
+        };
+        html_from_markdown(&markdown, self.parse_options)
+    }
+}
+
+fn html_from_markdown(markdown: &str, options: Options) -> String {
+    let parser = Parser::new_ext(markdown, options);
+    let mut html = String::new();
+    push_html(&mut html, parser);
+    html
 }
 
 pub enum AutoscrollBehavior {
@@ -3262,6 +3338,16 @@ impl Element for MarkdownElement {
             move |_, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
                     entity.update(cx, move |this, cx| this.copy_as_markdown(window, cx))
+                }
+            }
+        });
+        window.on_action(std::any::TypeId::of::<crate::CopyAsHtml>(), {
+            let entity = self.markdown.clone();
+            let text = rendered_markdown.text.clone();
+            move |_, phase, window, cx| {
+                let text = text.clone();
+                if phase == DispatchPhase::Bubble {
+                    entity.update(cx, move |this, cx| this.copy_as_html(&text, window, cx))
                 }
             }
         });
@@ -6589,6 +6675,12 @@ mod tests {
                     .map(SharedString::as_ref),
                 Some("text")
             );
+            assert_eq!(
+                markdown
+                    .context_menu_selected_html()
+                    .map(SharedString::as_ref),
+                Some("<p>text</p>\n")
+            );
         });
 
         // Simulates right-clicking on plain text with no selection — everything is cleared
@@ -6603,6 +6695,156 @@ mod tests {
             assert!(markdown.context_menu_selected_markdown().is_none());
             assert!(markdown.context_menu_selected_text().is_none());
         });
+    }
+
+    #[gpui::test]
+    fn test_html_for_selection(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                "# Heading\n\n**bold** and *italic* and `code`\n\n- item\n".into(),
+                None,
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        // An empty selection renders the entire document.
+        cx.update(|_window, cx| {
+            let html = markdown.read(cx).parsed_markdown().html_for_selection(0..0);
+            assert!(html.starts_with("<h1>Heading</h1>"));
+            assert!(html.contains("<strong>bold</strong>"));
+            assert!(html.contains("<em>italic</em>"));
+            assert!(html.contains("<code>code</code>"));
+            assert!(html.contains("<li>item</li>"));
+        });
+
+        // A partial selection of a styled span is rebalanced before rendering.
+        cx.update(|_window, cx| {
+            let bold_start = markdown
+                .read(cx)
+                .parsed_markdown()
+                .source()
+                .find("bold")
+                .unwrap();
+            let html = markdown
+                .read(cx)
+                .parsed_markdown()
+                .html_for_selection(bold_start..bold_start + 2);
+            assert_eq!(html, "<p><strong>bo</strong></p>\n");
+        });
+    }
+
+    #[gpui::test]
+    fn test_html_for_selection_matches_preview_metadata_options(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+
+        // With metadata blocks enabled (as in the preview), YAML frontmatter is
+        // consumed and must not leak into the copied HTML.
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                "---\ntitle: Post\n---\n# Heading\n".into(),
+                None,
+                None,
+                MarkdownOptions {
+                    render_metadata_blocks: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        cx.update(|_window, cx| {
+            let html = markdown.read(cx).parsed_markdown().html_for_selection(0..0);
+            assert!(html.starts_with("<h1>Heading</h1>"), "got: {html}");
+            assert!(
+                !html.contains("title: Post"),
+                "frontmatter should be consumed with metadata blocks enabled, got: {html}"
+            );
+        });
+
+        // Without the option, the frontmatter renders as regular content.
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                "---\ntitle: Post\n---\n# Heading\n".into(),
+                None,
+                None,
+                MarkdownOptions::default(),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        cx.update(|_window, cx| {
+            let html = markdown.read(cx).parsed_markdown().html_for_selection(0..0);
+            assert!(
+                html.contains("title: Post"),
+                "frontmatter should leak without the metadata option, got: {html}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_copy_as_html_writes_to_clipboard(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| Markdown::new("**bold** text\n".into(), None, None, cx));
+        cx.run_until_parked();
+
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let markdown = markdown.clone();
+            let rendered_text = rendered_text.clone();
+            move |_, _| MarkdownTestView {
+                markdown,
+                style: MarkdownStyle::default(),
+                code_span_link: None,
+                rendered_text,
+            }
+        });
+        cx.run_until_parked();
+        let rendered_text = rendered_text
+            .borrow()
+            .clone()
+            .expect("markdown should be rendered in the test view");
+
+        // A selection copies the rendered selection as both plain text and HTML.
+        markdown.update(cx, |md, _| {
+            md.selection.start = 2;
+            md.selection.end = 6;
+        });
+        markdown.update_in(cx, |md, window, cx| {
+            md.copy_as_html(&rendered_text, window, cx)
+        });
+        let clipboard = cx
+            .read_from_clipboard()
+            .expect("clipboard should have content");
+        assert_eq!(clipboard.text().as_deref(), Some("bold"));
+        assert_eq!(
+            clipboard.html().as_deref(),
+            Some("<p><strong>bold</strong></p>\n")
+        );
+
+        // Without a selection, the whole document is copied.
+        markdown.update(cx, |md, _| {
+            md.selection.start = 0;
+            md.selection.end = 0;
+        });
+        markdown.update_in(cx, |md, window, cx| {
+            md.copy_as_html(&rendered_text, window, cx)
+        });
+        let clipboard = cx
+            .read_from_clipboard()
+            .expect("clipboard should have content");
+        assert_eq!(clipboard.text().as_deref(), Some("bold text"));
+        assert!(
+            clipboard
+                .html()
+                .as_deref()
+                .unwrap()
+                .contains("<strong>bold</strong>")
+        );
     }
 
     #[gpui::test]

@@ -1802,13 +1802,20 @@ impl Render for MarkdownPreviewView {
                                         markdown.context_menu_selected_text().cloned();
                                     let selected_markdown =
                                         markdown.context_menu_selected_markdown().cloned();
+                                    let selected_html =
+                                        markdown.context_menu_selected_html().cloned();
                                     if context_menu_link.is_none()
                                         && selected_text.is_none()
                                         && selected_markdown.is_none()
+                                        && selected_html.is_none()
                                     {
                                         return None;
                                     }
                                     Some(ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                        let plain_text_for_html = selected_text
+                                            .clone()
+                                            .map(|text| text.to_string())
+                                            .unwrap_or_default();
                                         menu.when_some(focus, |menu, focus| menu.context(focus))
                                             .when_some(selected_text, |menu, text| {
                                                 menu.entry(
@@ -1831,6 +1838,20 @@ impl Render for MarkdownPreviewView {
                                                         cx.write_to_clipboard(
                                                             ClipboardItem::new_string(
                                                                 text.to_string(),
+                                                            ),
+                                                        );
+                                                    },
+                                                )
+                                            })
+                                            .when_some(selected_html, |menu, html| {
+                                                menu.entry(
+                                                    "Copy as HTML",
+                                                    Some(Box::new(markdown::CopyAsHtml)),
+                                                    move |_, cx| {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string_with_html(
+                                                                plain_text_for_html.clone(),
+                                                                html.to_string(),
                                                             ),
                                                         );
                                                     },

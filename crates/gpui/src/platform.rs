@@ -2486,8 +2486,19 @@ impl ClipboardItem {
         Self {
             entries: vec![ClipboardEntry::String(ClipboardString {
                 text,
+                html: None,
                 metadata: Some(metadata),
             })],
+        }
+    }
+
+    /// Create a new ClipboardItem::String that carries both a plain-text
+    /// fallback and an HTML representation of the same content.
+    pub fn new_string_with_html(text: String, html: String) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::String(
+                ClipboardString::new(text).with_html(html),
+            )],
         }
     }
 
@@ -2513,7 +2524,12 @@ impl ClipboardItem {
         let mut answer = String::new();
 
         for entry in self.entries.iter() {
-            if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry {
+            if let ClipboardEntry::String(ClipboardString {
+                text,
+                html: _,
+                metadata: _,
+            }) = entry
+            {
                 answer.push_str(text);
             }
         }
@@ -2544,6 +2560,31 @@ impl ClipboardItem {
                 clipboard_string.metadata.as_ref()
             }
             _ => None,
+        }
+    }
+
+    /// Concatenates together all the HTML entries in the item.
+    /// Returns None if there were no HTML entries.
+    pub fn html(&self) -> Option<String> {
+        let mut answer = String::new();
+
+        for entry in self.entries.iter() {
+            if let ClipboardEntry::String(ClipboardString {
+                text: _,
+                html,
+                metadata: _,
+            }) = entry
+            {
+                if let Some(html) = html {
+                    answer.push_str(html);
+                }
+            }
+        }
+
+        if !answer.is_empty() {
+            Some(answer)
+        } else {
+            None
         }
     }
 
@@ -2832,6 +2873,8 @@ impl Image {
 pub struct ClipboardString {
     /// The text content.
     pub text: String,
+    /// An HTML representation of the text content, if any.
+    pub html: Option<String>,
     /// Optional metadata associated with this clipboard string.
     pub metadata: Option<String>,
 }
@@ -2841,8 +2884,15 @@ impl ClipboardString {
     pub fn new(text: String) -> Self {
         Self {
             text,
+            html: None,
             metadata: None,
         }
+    }
+
+    /// Return a new clipboard string with the HTML representation replaced by the given HTML.
+    pub fn with_html(mut self, html: String) -> Self {
+        self.html = Some(html);
+        self
     }
 
     /// Return a new clipboard item with the metadata replaced by the given metadata,
@@ -2885,6 +2935,7 @@ impl From<String> for ClipboardString {
     fn from(value: String) -> Self {
         Self {
             text: value,
+            html: None,
             metadata: None,
         }
     }

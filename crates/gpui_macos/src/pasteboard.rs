@@ -137,7 +137,11 @@ impl Pasteboard {
                     }
                 });
 
-            Some(ClipboardEntry::String(ClipboardString { text, metadata }))
+            Some(ClipboardEntry::String(ClipboardString {
+                text,
+                html: None,
+                metadata,
+            }))
         }
     }
 
@@ -180,6 +184,7 @@ impl Pasteboard {
 
                     let mut combined = ClipboardString {
                         text: String::new(),
+                        html: None,
                         metadata: None,
                     };
 
@@ -187,6 +192,9 @@ impl Pasteboard {
                         match entry {
                             ClipboardEntry::String(text) => {
                                 combined.text.push_str(&text.text());
+                                if combined.html.is_none() {
+                                    combined.html = text.html;
+                                }
                                 if combined.metadata.is_none() {
                                     combined.metadata = text.metadata;
                                 }
@@ -212,6 +220,16 @@ impl Pasteboard {
             );
             self.inner
                 .setData_forType(text_bytes, NSPasteboardTypeString);
+
+            if let Some(html) = string.html.as_ref() {
+                let html_bytes = NSData::dataWithBytes_length_(
+                    nil,
+                    html.as_ptr() as *const c_void,
+                    html.len() as u64,
+                );
+                self.inner
+                    .setData_forType(html_bytes, UTType::html().inner_mut());
+            }
 
             if let Some(metadata) = string.metadata.as_ref() {
                 let hash_bytes = ClipboardString::text_hash(&string.text).to_be_bytes();
@@ -318,6 +336,11 @@ impl UTType {
     pub fn pnm() -> Self {
         //https://en.wikipedia.org/w/index.php?title=Netpbm&oldid=1336679433 under Uniform Type Identifier
         Self(unsafe { ns_string("public.pbm") })
+    }
+
+    pub fn html() -> Self {
+        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/html
+        Self(unsafe { ns_string("public.html") })
     }
 
     fn inner(&self) -> *const Object {
