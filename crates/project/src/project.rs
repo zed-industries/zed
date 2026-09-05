@@ -167,8 +167,9 @@ pub use buffer_store::ProjectTransaction;
 pub use lsp_command::{CallHierarchyItem, IncomingCall, OutgoingCall};
 pub use lsp_store::{
     DiagnosticSummary, InvalidationStrategy, LanguageServerLogType, LanguageServerProgress,
-    LanguageServerPromptRequest, LanguageServerStatus, LanguageServerToQuery, LspStore,
-    LspStoreEvent, ProgressToken, SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    LanguageServerPromptRequest, LanguageServerShowDocumentRequest, LanguageServerStatus,
+    LanguageServerToQuery, LspStore, LspStoreEvent, ProgressToken,
+    SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
@@ -363,6 +364,7 @@ pub enum Event {
         notification_id: SharedString,
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
+    LanguageServerShowDocument(LanguageServerShowDocumentRequest),
     LanguageNotFound(Entity<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
@@ -1675,6 +1677,8 @@ impl Project {
             remote_proto.add_entity_message_handler(Self::handle_toast);
             remote_proto.add_entity_message_handler(Self::handle_telemetry_event);
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
+            remote_proto
+                .add_entity_request_handler(Self::handle_language_server_show_document_request);
             remote_proto.add_entity_message_handler(Self::handle_hide_toast);
             remote_proto.add_entity_request_handler(Self::handle_update_buffer_from_remote_server);
             remote_proto.add_entity_request_handler(Self::handle_trust_worktrees);
@@ -3756,6 +3760,9 @@ impl Project {
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
             }
+            LspStoreEvent::LanguageServerShowDocument(request) => {
+                cx.emit(Event::LanguageServerShowDocument(request.clone()))
+            }
             LspStoreEvent::DiskBasedDiagnosticsStarted { language_server_id } => {
                 cx.emit(Event::DiskBasedDiagnosticsStarted {
                     language_server_id: *language_server_id,
@@ -5612,6 +5619,49 @@ impl Project {
                     .map(|index| index as u64)
             }),
         })
+    }
+
+    async fn handle_language_server_show_document_request(
+        project: Entity<Self>,
+        envelope: TypedEnvelope<proto::LanguageServerShowDocumentRequest>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let payload = envelope.payload;
+        let selection = payload.selection_start.zip(payload.selection_end).map(
+            |(selection_start, selection_end)| lsp::Range {
+                start: lsp::Position {
+                    line: selection_start.row,
+                    character: selection_start.column,
+                },
+                end: lsp::Position {
+                    line: selection_end.row,
+                    character: selection_end.column,
+                },
+            },
+        );
+        let uri = lsp::Uri::from_str(&payload.uri)
+            .map_err(|error| anyhow!("invalid show document uri {}: {error:?}", payload.uri))?;
+        let (tx, rx) = async_channel::bounded(1);
+        project.update(&mut cx, |_, cx| {
+            cx.emit(Event::LanguageServerShowDocument(
+                LanguageServerShowDocumentRequest {
+                    uri,
+                    external: payload.external,
+                    take_focus: payload.take_focus,
+                    selection,
+                    response_channel: tx,
+                },
+            ));
+        });
+        drop(project);
+
+        let success = rx.recv().await.unwrap_or(false);
+        anyhow::ensure!(
+            success,
+            "show document request for {} was not handled successfully",
+            payload.uri
+        );
+        Ok(proto::Ack {})
     }
 
     async fn handle_hide_toast(

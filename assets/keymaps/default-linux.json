@@ -1231,6 +1231,12 @@
     },
   },
   {
+    "context": "LspCommandSelector > Picker > Editor",
+    "bindings": {
+      "tab": "lsp_command_selector::ToggleArgumentsFocus",
+    },
+  },
+  {
     "context": "ChannelModal > Picker > Editor",
     "bindings": {
       "tab": "channel_modal::ToggleMode",

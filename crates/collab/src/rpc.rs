@@ -401,6 +401,7 @@ impl Server {
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
             )
             .add_request_handler(forward_mutating_project_request::<proto::ApplyCodeAction>)
+            .add_request_handler(forward_mutating_project_request::<proto::ExecuteLspCommand>)
             .add_request_handler(forward_mutating_project_request::<proto::PrepareRename>)
             .add_request_handler(forward_mutating_project_request::<proto::PerformRename>)
             .add_request_handler(forward_mutating_project_request::<proto::ReloadBuffers>)

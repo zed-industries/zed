@@ -518,7 +518,10 @@ message Envelope {
     GetOutgoingCalls get_outgoing_calls = 486;
     GetOutgoingCallsResponse get_outgoing_calls_response = 487;
     LspExtExpandAbbreviation lsp_ext_expand_abbreviation = 488;
-    LspExtExpandAbbreviationResponse lsp_ext_expand_abbreviation_response = 489; // current max
+    LspExtExpandAbbreviationResponse lsp_ext_expand_abbreviation_response = 489;
+    LanguageServerShowDocumentRequest language_server_show_document_request = 490;
+    ExecuteLspCommand execute_lsp_command = 491;
+    ExecuteLspCommandResponse execute_lsp_command_response = 492; // current max
   }
 
   reserved 87 to 88;
