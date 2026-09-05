@@ -8743,3 +8743,79 @@ async fn test_mid_turn_model_and_settings_refresh(cx: &mut TestAppContext) {
     // Thinking should now be enabled.
     assert!(model_b_completions[0].thinking_allowed);
 }
+
+#[gpui::test]
+async fn test_recv_returns_serde_error_not_generic_message(_cx: &mut TestAppContext) {
+    #[derive(Debug, Deserialize)]
+    struct ToolWithRequiredFields {
+        _command: String,
+        _cd: String,
+    }
+
+    let (mut sender, input): (ToolInputSender, ToolInput<ToolWithRequiredFields>) =
+        ToolInput::test();
+
+    sender.send_full(json!({"_command": "ls"}));
+
+    let error = input.recv().await.expect_err("should fail with missing field");
+    let error_message = error.to_string();
+
+    assert!(
+        error_message.contains("missing field"),
+        "Expected serde error about missing field, got: {error_message}"
+    );
+    assert!(
+        !error_message.contains("tool input was not fully received"),
+        "Should not contain generic error message, got: {error_message}"
+    );
+}
+
+#[gpui::test]
+async fn test_next_returns_serde_error_for_streaming_tools(_cx: &mut TestAppContext) {
+    #[derive(Debug, Deserialize)]
+    struct StreamingToolInput {
+        _text: String,
+        _count: u32,
+    }
+
+    let (mut sender, mut input): (ToolInputSender, ToolInput<StreamingToolInput>) =
+        ToolInput::test();
+
+    sender.send_partial(json!({"_text": "hello"}));
+    sender.send_full(json!({"_text": "hello"}));
+
+    let partial = input.next().await.expect("partial should succeed");
+    assert!(matches!(partial, ToolInputPayload::Partial(_)));
+
+    let error_message = input
+        .next()
+        .await
+        .err()
+        .expect("full with missing field should fail")
+        .to_string();
+
+    assert!(
+        error_message.contains("missing field"),
+        "Expected serde error about missing field, got: {error_message}"
+    );
+}
+
+#[gpui::test]
+async fn test_recv_still_reports_channel_closed_when_no_data(_cx: &mut TestAppContext) {
+    #[derive(Debug, Deserialize)]
+    struct AnyInput {
+        _value: String,
+    }
+
+    let (sender, input): (ToolInputSender, ToolInput<AnyInput>) = ToolInput::test();
+
+    drop(sender);
+
+    let error = input.recv().await.expect_err("should fail when channel closes");
+    let error_message = error.to_string();
+
+    assert!(
+        error_message.contains("tool input was not fully received"),
+        "Expected channel-closed error, got: {error_message}"
+    );
+}
