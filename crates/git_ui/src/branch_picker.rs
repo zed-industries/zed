@@ -883,7 +883,11 @@ impl Render for DeleteBranchTooltip {
             Tooltip::with_meta_in(
                 "Delete Branch",
                 Some(&branch_picker::DeleteBranch),
-                "Hold alt to force delete",
+                if cfg!(target_os = "macos") {
+                    "Hold option to force delete"
+                } else {
+                    "Hold alt to force delete"
+                },
                 &self.focus_handle,
                 cx,
             )

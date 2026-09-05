@@ -413,7 +413,11 @@ impl Render for DeleteWorktreeTooltip {
             Tooltip::with_meta_in(
                 "Delete Worktree",
                 Some(&DeleteWorktree),
-                "Hold alt to force delete",
+                if cfg!(target_os = "macos") {
+                    "Hold option to force delete"
+                } else {
+                    "Hold alt to force delete"
+                },
                 &self.focus_handle,
                 cx,
             )

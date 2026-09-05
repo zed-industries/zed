@@ -822,7 +822,12 @@ impl EditPredictionButton {
                     ContextMenuEntry::new("Subtle")
                         .toggleable(IconPosition::Start, subtle_mode)
                         .documentation_aside(DocumentationSide::Left, move |_| {
-                            Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
+                            Label::new(if cfg!(target_os = "macos") {
+                                "Display predictions inline only when holding a modifier key (option by default)."
+                            } else {
+                                "Display predictions inline only when holding a modifier key (alt by default)."
+                            })
+                            .into_any_element()
                         })
                         .handler({
                             let fs = fs.clone();
