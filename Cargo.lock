@@ -386,7 +386,6 @@ dependencies = [
  "google_ai",
  "gpui",
  "gpui_tokio",
- "http_client",
  "indoc",
  "language_model",
  "log",

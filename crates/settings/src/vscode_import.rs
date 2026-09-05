@@ -216,6 +216,7 @@ impl VsCodeSettings {
             project: self.project_settings_content(),
             project_panel: self.project_panel_settings_content(),
             proxy: self.read_string("http.proxy"),
+            no_proxy: None,
             reduce_motion: self.read_enum("workbench.reduceMotion", |s| match s {
                 "on" => Some(ReduceMotionMode::On),
                 "off" => Some(ReduceMotionMode::Off),
