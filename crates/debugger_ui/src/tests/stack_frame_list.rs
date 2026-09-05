@@ -15,6 +15,7 @@ use editor::{Editor, ToPoint as _};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
 use serde_json::json;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use unindent::Unindent as _;
 use util::{path, rel_path::rel_path};
@@ -1270,4 +1271,133 @@ async fn test_stack_frame_filter_persistence(
             "Filter should be restored from KVP store in new session"
         );
     });
+}
+
+#[gpui::test]
+async fn test_go_to_stack_frame_roots_worktree_at_parent_directory(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.js": "console.log('main');",
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/outside"),
+        json!({
+            "lib.js": "console.log('lib');",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    client.on_request::<Scopes, _>(move |_, _| Ok(dap::ScopesResponse { scopes: vec![] }));
+
+    client.on_request::<Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
+        })
+    });
+
+    let stack_frames = vec![StackFrame {
+        id: 1,
+        name: "External Frame".into(),
+        source: Some(dap::Source {
+            name: Some("lib.js".into()),
+            path: Some(path!("/outside/lib.js").into()),
+            source_reference: None,
+            presentation_hint: None,
+            origin: None,
+            sources: None,
+            adapter_data: None,
+            checksums: None,
+        }),
+        line: 1,
+        column: 1,
+        end_line: None,
+        end_column: None,
+        can_restart: None,
+        instruction_pointer_reference: None,
+        module_id: None,
+        presentation_hint: None,
+    }];
+
+    client.on_request::<StackTrace, _>({
+        let stack_frames = Arc::new(stack_frames.clone());
+        move |_, args| {
+            assert_eq!(1, args.thread_id);
+
+            Ok(dap::StackTraceResponse {
+                stack_frames: (*stack_frames).clone(),
+                total_frames: None,
+            })
+        }
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    // trigger to load threads
+    active_debug_session_panel(workspace, cx).update(cx, |session, cx| {
+        session.running_state().update(cx, |running_state, cx| {
+            running_state
+                .session()
+                .update(cx, |session, cx| session.threads(cx));
+        });
+    });
+
+    cx.run_until_parked();
+
+    // select first thread
+    active_debug_session_panel(workspace, cx).update_in(cx, |session, window, cx| {
+        session.running_state().update(cx, |running_state, cx| {
+            running_state.select_current_thread(
+                &running_state
+                    .session()
+                    .update(cx, |session, cx| session.threads(cx)),
+                window,
+                cx,
+            );
+        });
+    });
+
+    cx.run_until_parked();
+
+    // The frame points at a file outside any worktree. Navigating to it must
+    // root the new worktree at the file's parent directory, never at the file
+    // itself: a single-file worktree root gets persisted as a workspace folder
+    // and makes language servers spawn with a file as their cwd.
+    let (worktree, relative_path) = project
+        .update(cx, |project, cx| project.find_worktree(Path::new(path!("/outside/lib.js")), cx))
+        .expect("worktree containing the frame file should exist");
+
+    assert_eq!(
+        worktree.read_with(cx, |worktree, _| worktree.abs_path()),
+        PathBuf::from(path!("/outside")).into()
+    );
+    assert_eq!(relative_path.as_ref(), rel_path("lib.js"));
 }
