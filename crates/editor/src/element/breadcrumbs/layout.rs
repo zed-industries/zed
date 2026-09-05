@@ -165,9 +165,8 @@ fn hard_cap_kind_run(
     );
 }
 
-/// Bounds what `measure` shapes and what `plan_breadcrumb_layout` re-sums per drop. A file at
-/// the worktree root has no directory run at all, so capping only that run leaves the symbol
-/// trail - and the quadratic case - uncapped.
+/// Caps both the directory run and the symbol trail, which is what `measure` shapes and what
+/// `plan_breadcrumb_layout` re-sums per drop.
 pub(super) fn hard_cap_segment_runs(
     mut segments: Vec<HighlightedText>,
     mut symbol_segments: Vec<Option<BreadcrumbSegmentTarget>>,
@@ -521,8 +520,8 @@ impl BreadcrumbStrip {
             label
         };
 
-        // One deep clone per segment: the tooltip, click and right-click closures each need
-        // the target for the life of the frame, and they repaint on every cursor blink.
+        // One deep clone per segment: the tooltip, click and right-click closures each hold the
+        // target for the life of the frame.
         let content = match (segment.target.clone(), self.editor.clone()) {
             (Some(target), Some(editor)) => self.render_clickable_segment(
                 ("breadcrumb-segment", index).into(),
@@ -549,7 +548,7 @@ impl BreadcrumbStrip {
         cx: &mut App,
     ) -> gpui::AnyElement {
         // The title is built inside the tooltip closure: formatting a path here would allocate
-        // for every segment on every repaint, for a string the user usually never sees.
+        // for a string the user usually never sees.
         let tooltip_target = target.clone();
         let tooltip_editor = editor.clone();
         // A buffer with no file has no path to copy, so neither the tooltip line nor the
@@ -1046,11 +1045,11 @@ enum FinalItem {
     Ellipsis(Range<usize>),
 }
 
-/// The `OpenBreadcrumbNavigation` chord opens the active file's parent directory, so a segment's
-/// tooltip may name it only when that is what activating the segment does - the directory
-/// segments. The file and symbol segments open their own listing by click alone.
+/// The `OpenBreadcrumbNavigation` chord opens the current file's outline, which is what the file
+/// segment opens too, so only that segment names the chord. Directory segments open a directory
+/// and the deeper symbol segments open a symbol's children, neither of which the chord does.
 pub(super) fn segment_tooltip_shows_navigation_chord(target: &BreadcrumbSegmentTarget) -> bool {
-    matches!(target, BreadcrumbSegmentTarget::Directory { .. })
+    matches!(target, BreadcrumbSegmentTarget::Symbol { item: None, .. })
 }
 
 /// Where the tail begins: the sum of every item before it. Each measured width already
@@ -1147,25 +1146,25 @@ mod tests {
     use gpui::px;
 
     #[test]
-    fn test_only_directory_segments_advertise_the_navigation_chord() {
+    fn test_only_the_file_segment_advertises_the_navigation_chord() {
         use util::rel_path::rel_path;
+
+        let file = BreadcrumbSegmentTarget::Symbol {
+            buffer_id: language::BufferId::new(1).unwrap(),
+            item: None,
+        };
+        assert!(
+            segment_tooltip_shows_navigation_chord(&file),
+            "the file segment: the chord opens the file outline it opens too"
+        );
 
         let directory = BreadcrumbSegmentTarget::Directory {
             worktree_id: project::WorktreeId::from_usize(0),
             path: rel_path("src").into_arc(),
         };
         assert!(
-            segment_tooltip_shows_navigation_chord(&directory),
-            "a directory segment: the chord opens its listing"
-        );
-
-        let symbol = BreadcrumbSegmentTarget::Symbol {
-            buffer_id: language::BufferId::new(1).unwrap(),
-            item: None,
-        };
-        assert!(
-            !segment_tooltip_shows_navigation_chord(&symbol),
-            "file and symbol segments: the chord opens the parent directory, not this listing"
+            !segment_tooltip_shows_navigation_chord(&directory),
+            "a directory segment opens a directory, which the chord does not"
         );
     }
 

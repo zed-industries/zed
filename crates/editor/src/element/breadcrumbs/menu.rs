@@ -29,11 +29,6 @@ pub(super) enum ListingPathImpact {
     Dead,
 }
 
-/// A worktree update names the path that changed and never the path it moved to, so renaming or
-/// deleting the listed directory - or any ancestor of it - arrives as an update at that path,
-/// and reloading there would paint "Empty directory" over a path that no longer exists. The
-/// shape of the update cannot tell removal from an ordinary change, so both route to `Dead`,
-/// where looking the path up settles it.
 /// One `String` and `CharBag` per entry, so a large directory is that many allocations; built
 /// off the foreground with the entries rather than on the main thread after each reload.
 fn directory_filter_candidates(entries: &[BreadcrumbDirectoryEntry]) -> Vec<StringMatchCandidate> {
@@ -44,10 +39,9 @@ fn directory_filter_candidates(entries: &[BreadcrumbDirectoryEntry]) -> Vec<Stri
         .collect()
 }
 
-/// Every symbol in the buffer, keyed by outline index: filtering only the level being browsed
-/// reports "No matches" for a symbol that plainly exists, and the bar used to open a picker that
-/// searched the whole file. The set depends only on the outline, so it is built once at load,
-/// never on the Left/Right that only re-window it.
+/// Every symbol in the buffer, keyed by outline index, so a filter reaches a symbol at any
+/// depth rather than only the level being browsed. The set depends only on the outline, so it is
+/// built once at load, not on the Left/Right that only re-window it.
 fn symbol_filter_candidates(items: &[OutlineItem<Anchor>]) -> Vec<StringMatchCandidate> {
     items
         .iter()
@@ -56,6 +50,10 @@ fn symbol_filter_candidates(items: &[OutlineItem<Anchor>]) -> Vec<StringMatchCan
         .collect()
 }
 
+/// A worktree update names the path that changed and never the path it moved to, so renaming or
+/// deleting the listed directory - or any ancestor of it - arrives as an update at that path.
+/// The shape of the update cannot tell a removal from an ordinary change, so both route to
+/// `Dead`, where looking the path up settles it.
 pub(super) fn listing_path_impact(updated: &RelPath, listing: &RelPath) -> ListingPathImpact {
     if updated == listing || listing.is_descendant_of(updated) {
         ListingPathImpact::Dead
@@ -123,6 +121,14 @@ pub struct BreadcrumbNavigationMenu {
     symbol_trail: Vec<OutlineItem<Anchor>>,
     active_file_path: Option<Arc<RelPath>>,
     directory_entries: Vec<BreadcrumbDirectoryEntry>,
+    /// The listing `directory_entries` were loaded for. While a switch is in flight the rows on
+    /// screen still describe the previous directory, and acting on one would pair its path with
+    /// the new listing's worktree.
+    entries_listing: Option<BreadcrumbListing>,
+    /// The load a drill started, while its target is still being expanded. The picker clears the
+    /// query as soon as Right is pressed, so without this the rows would repaint - unfiltered -
+    /// from the directory being left before the switch even installs the new listing.
+    rows_frozen_for_load: Option<u64>,
     all_symbol_items: Vec<OutlineItem<Anchor>>,
     /// Each symbol's parent outline index, cached next to `all_symbol_items` because it depends
     /// only on the outline; recomputing it per publish walked every symbol on each keystroke.
@@ -155,9 +161,7 @@ pub struct BreadcrumbNavigationMenu {
     /// otherwise find nothing left to restore. Anchors survive edits elsewhere in the buffer,
     /// so the range is what still identifies the row across one.
     pending_restore_symbol_range: Option<Range<Anchor>>,
-    /// Held while a rank is in flight. The delegate's `update_matches` task awaits it, so the
-    /// picker's notion of "the update finished" spans the rank and the publish that follows it
-    /// rather than just the handoff.
+    /// Held while a rank is in flight; see [`FilterSettled`].
     filter_settled: FilterSettled,
     filter_match_truncated: bool,
     /// Escape alone reaches the delegate's `dismissed`, the picker's own event, and the blur
@@ -167,6 +171,10 @@ pub struct BreadcrumbNavigationMenu {
     last_listing_settings: BreadcrumbListingSettings,
     #[cfg(test)]
     directory_reload_count: usize,
+    /// Every published row set, in order, so a test can assert what a switch or a reload put on
+    /// screen between two settled states, not merely that something was there.
+    #[cfg(test)]
+    published_row_history: Vec<Vec<SharedString>>,
     _subscriptions: Vec<Subscription>,
     _buffer_subscription: Option<Subscription>,
 }
@@ -196,6 +204,8 @@ impl BreadcrumbNavigationMenu {
                 symbol_trail: Vec::new(),
                 active_file_path,
                 directory_entries: Vec::new(),
+                entries_listing: None,
+                rows_frozen_for_load: None,
                 all_symbol_items: Vec::new(),
                 symbol_parents: Vec::new(),
                 listed_symbol_indices: Vec::new(),
@@ -226,6 +236,8 @@ impl BreadcrumbNavigationMenu {
                 last_listing_settings: *BreadcrumbListingSettings::get_global(cx),
                 #[cfg(test)]
                 directory_reload_count: 0,
+                #[cfg(test)]
+                published_row_history: Vec::new(),
                 _subscriptions: Vec::new(),
                 _buffer_subscription: None,
             }
@@ -342,7 +354,7 @@ impl BreadcrumbNavigationMenu {
                     this.last_listing_settings = settings;
                     this.reload_directory_rows(cx);
                 }));
-            this.reload_listing(window, cx);
+            this.reload_listing(false, window, cx);
             this.focus_menu(window, cx);
         });
         menu
@@ -374,6 +386,9 @@ impl BreadcrumbNavigationMenu {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let keep_previous_rows = matches!(self.listing, BreadcrumbListing::Directory { .. })
+            && matches!(listing, BreadcrumbListing::Directory { .. })
+            && !self.directory_entries.is_empty();
         self.active_file_path = active_file_path;
         self.pending_restore_path = None;
         self.pending_restore_symbol_range = None;
@@ -404,7 +419,7 @@ impl BreadcrumbNavigationMenu {
         self.clear_filter(window, cx);
         self.pending_initial_selection = true;
         self.selected_index = None;
-        self.reload_listing(window, cx);
+        self.reload_listing(keep_previous_rows, window, cx);
         self.focus_menu(window, cx);
         cx.notify();
     }
@@ -424,7 +439,7 @@ impl BreadcrumbNavigationMenu {
         self.filter_query().to_string()
     }
 
-    pub fn rank_pending(&self) -> bool {
+    pub(super) fn rank_pending(&self) -> bool {
         self.ranked_epoch != self.filter_epoch
     }
 
@@ -466,6 +481,16 @@ impl BreadcrumbNavigationMenu {
         let picker = self.picker.as_ref()?;
         let delegate = &picker.read(cx).delegate;
         Some((delegate.show_file_icons, delegate.show_folder_icons))
+    }
+
+    /// The empty-state text the picker was last handed, so a test can tell "No matches" from
+    /// rows that were never replaced.
+    #[cfg(test)]
+    pub fn published_empty_message(&self, cx: &App) -> SharedString {
+        self.picker
+            .as_ref()
+            .map(|picker| picker.read(cx).delegate.empty_message.clone())
+            .unwrap_or_default()
     }
 
     #[cfg(test)]
@@ -524,6 +549,12 @@ impl BreadcrumbNavigationMenu {
         self.directory_reload_count
     }
 
+    /// Drains the published rows recorded since the last call, oldest first.
+    #[cfg(test)]
+    pub fn take_published_row_history(&mut self) -> Vec<Vec<SharedString>> {
+        std::mem::take(&mut self.published_row_history)
+    }
+
     /// The tail of a directory refresh, with the `selected_path` a real refresh would have
     /// derived at its start. Split out so a test can land two refreshes inside the window a
     /// rank leaves open, which no amount of parking can time reliably.
@@ -563,6 +594,8 @@ impl BreadcrumbNavigationMenu {
             symbol_trail: Vec::new(),
             active_file_path: None,
             directory_entries: Vec::new(),
+            entries_listing: None,
+            rows_frozen_for_load: None,
             symbol_parents: outline_parents(
                 &all_items.iter().map(|item| item.depth).collect::<Vec<_>>(),
             ),
@@ -595,6 +628,8 @@ impl BreadcrumbNavigationMenu {
             last_listing_settings: *BreadcrumbListingSettings::get_global(cx),
             #[cfg(test)]
             directory_reload_count: 0,
+            #[cfg(test)]
+            published_row_history: Vec::new(),
             _subscriptions: Vec::new(),
             _buffer_subscription: None,
         });
@@ -741,8 +776,8 @@ impl BreadcrumbNavigationMenu {
         let (listing_before, epoch_before) = (self.listing.clone(), self.load_epoch);
         self.select_child(&menu::SelectChild, window, cx);
         // A directory drill only changes the listing once its load resolves, but it bumps the
-        // load epoch immediately.
-        self.listing != listing_before || self.load_epoch != epoch_before
+        // load epoch immediately; opening a file dismisses instead.
+        self.listing != listing_before || self.load_epoch != epoch_before || self.dismiss_emitted
     }
 
     /// Ungated unlike the drill: the parent comes from the listing, not from rows a rank replaces.
@@ -778,7 +813,36 @@ impl BreadcrumbNavigationMenu {
             return;
         };
         let settings = *BreadcrumbListingSettings::get_global(cx);
+        // A switch keeps what the user was reading, exactly as it was, until the new listing's
+        // entries arrive: repainting from the entries being left would show that directory
+        // again, and unfiltered, because the switch cleared the query.
+        let switching = self.rows_frozen_for_load == Some(self.load_epoch)
+            || self
+                .entries_listing
+                .as_ref()
+                .is_some_and(|loaded| loaded != &self.listing);
+        if switching && !self.rows.is_empty() {
+            return;
+        }
         let filter_active = !self.filter_is_empty();
+        // The query editor takes the keystroke a hop before the menu hears about it, so until
+        // the text and the rank both catch up the rows and the count describe the previous query.
+        let visible_query_settled = !filter_active || picker.read(cx).query(cx) == self.query;
+        let rank_settled = !filter_active || (!self.rank_pending() && visible_query_settled);
+        // Nothing ranked yet for the query on screen: keep the rows the user is reading instead
+        // of blanking to "Searching…" and back. Only while the rank is still pending and has a
+        // task behind it - a settled rank with no matches has to publish "No matches", and a
+        // bumped epoch with no rank behind it must not swallow every later publish. A load is
+        // exempt because it replaces the items the rows resolve through.
+        if filter_active
+            && self.rank_pending()
+            && self.filter_task.is_some()
+            && !self.loading
+            && self.ranked_matches.is_empty()
+            && !self.rows.is_empty()
+        {
+            return;
+        }
         let visible = self.visible_row_count();
         let deepest_current = self.deepest_cursor_symbol_range().cloned();
         let is_directory = matches!(self.listing, BreadcrumbListing::Directory { .. });
@@ -878,22 +942,30 @@ impl BreadcrumbNavigationMenu {
             .is_display_truncated()
             .then(|| SharedString::from(breadcrumb_menu_truncated_label(filter_active)));
 
-        let match_count_label =
-            (filter_active && self.ranked_epoch == self.filter_epoch).then(|| -> SharedString {
-                if self.filter_match_truncated {
-                    format!("{}+ matches", MAX_BREADCRUMB_MENU_ROWS).into()
-                } else if self.ranked_matches.len() == 1 {
-                    "1 match".into()
-                } else {
-                    format!("{} matches", self.ranked_matches.len()).into()
-                }
-            });
+        let match_count_label = (filter_active && rank_settled).then(|| -> SharedString {
+            if self.filter_match_truncated {
+                format!("{}+ matches", MAX_BREADCRUMB_MENU_ROWS).into()
+            } else if self.ranked_matches.len() == 1 {
+                "1 match".into()
+            } else {
+                format!("{} matches", self.ranked_matches.len()).into()
+            }
+        });
 
         let selected_index = self
             .selected_index
             .unwrap_or(0)
             .min(rows.len().saturating_sub(1));
         let scroll_to_selection = std::mem::take(&mut self.scroll_to_selection_pending);
+        #[cfg(test)]
+        self.published_row_history.push(
+            rows.iter()
+                .map(|row| match row {
+                    BreadcrumbMenuRow::Directory { entry, .. } => entry.name.clone(),
+                    BreadcrumbMenuRow::Symbol { item, .. } => item.text.clone(),
+                })
+                .collect(),
+        );
         let rows = Rc::new(rows);
         self.rows = rows.clone();
         picker.update(cx, |picker, cx| {
@@ -935,16 +1007,28 @@ impl BreadcrumbNavigationMenu {
         Some(self.workspace.upgrade()?.read(cx).project().clone())
     }
 
-    fn reload_listing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn reload_listing(
+        &mut self,
+        keep_previous_rows: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.load_epoch = self.load_epoch.wrapping_add(1);
         let epoch = self.load_epoch;
+        // A directory-to-directory switch keeps the rows it is leaving on screen until the new
+        // listing loads, so navigating never blanks to "Loading…"; the first open and every
+        // cross-kind switch still clear, because there is nothing to keep.
         self.loading = true;
-        self.directory_entries.clear();
-        self.filter_candidates = Arc::new(Vec::new());
-        if matches!(self.listing, BreadcrumbListing::Directory { .. }) {
-            self.all_symbol_items.clear();
-            self.symbol_parents.clear();
-            self.listed_symbol_indices.clear();
+        self.rows_frozen_for_load = None;
+        if !keep_previous_rows {
+            self.directory_entries.clear();
+            self.entries_listing = None;
+            self.filter_candidates = Arc::new(Vec::new());
+            if matches!(self.listing, BreadcrumbListing::Directory { .. }) {
+                self.all_symbol_items.clear();
+                self.symbol_parents.clear();
+                self.listed_symbol_indices.clear();
+            }
         }
         cx.notify();
 
@@ -998,6 +1082,7 @@ impl BreadcrumbNavigationMenu {
         });
         let Some((worktree, project)) = self.worktree(worktree_id, cx).zip(self.project(cx)) else {
             self.directory_entries.clear();
+            self.entries_listing = None;
             self.publish_rows(cx);
             cx.notify();
             return;
@@ -1021,6 +1106,7 @@ impl BreadcrumbNavigationMenu {
                     return;
                 }
                 this.directory_entries = entries;
+                this.entries_listing = Some(this.listing.clone());
                 this.filter_candidates = Arc::new(candidates);
                 // `loading` stays owned by the listing load. Expanding an unscanned directory
                 // emits the very entry updates this refresh listens for, so a refresh lands
@@ -1130,6 +1216,7 @@ impl BreadcrumbNavigationMenu {
                     return;
                 }
                 this.directory_entries = entries;
+                this.entries_listing = Some(this.listing.clone());
                 this.filter_candidates = Arc::new(candidates);
                 this.loading = false;
                 this.publish_rows(cx);
@@ -1451,11 +1538,11 @@ impl BreadcrumbNavigationMenu {
         self.listing = BreadcrumbListing::Symbols { buffer_id, parent };
         self.listed_symbol_indices = listed_indices;
         // Candidates are the whole outline, unchanged by re-windowing to this parent's level.
-        self.rebuild_symbol_trail(cx);
+        self.rebuild_symbol_trail();
         self.publish_rows(cx);
     }
 
-    fn rebuild_symbol_trail(&mut self, _cx: &mut Context<Self>) {
+    fn rebuild_symbol_trail(&mut self) {
         let BreadcrumbListing::Symbols {
             parent: Some(parent),
             ..
@@ -1807,6 +1894,8 @@ impl BreadcrumbNavigationMenu {
                         cx,
                     );
                     self.emit_bar_changed(cx);
+                } else {
+                    self.choose_directory_entry(entry, window, cx);
                 }
             }
             BreadcrumbListing::Symbols { .. } => {
@@ -1846,7 +1935,7 @@ impl BreadcrumbNavigationMenu {
         self.listing = BreadcrumbListing::Symbols { buffer_id, parent };
         self.listed_symbol_indices = listed_indices;
         // Candidates are the whole outline, unchanged by re-windowing to this parent's level.
-        self.rebuild_symbol_trail(cx);
+        self.rebuild_symbol_trail();
         self.apply_initial_selection_if_needed(cx);
         self.publish_rows(cx);
         self.emit_bar_changed(cx);
@@ -1953,6 +2042,9 @@ impl BreadcrumbNavigationMenu {
     }
 
     fn selected_directory_entry(&self) -> Option<BreadcrumbDirectoryEntry> {
+        if self.entries_listing.as_ref() != Some(&self.listing) {
+            return None;
+        }
         match self.selected_row()? {
             BreadcrumbMenuRow::Directory { entry, .. } => Some(entry.clone()),
             BreadcrumbMenuRow::Symbol { .. } => None,
@@ -1991,16 +2083,7 @@ impl BreadcrumbNavigationMenu {
         let auto_fold_dirs = BreadcrumbListingSettings::get_global(cx).auto_fold_dirs;
         self.load_epoch = self.load_epoch.wrapping_add(1);
         let generation = self.load_epoch;
-        // Until the load lands the picker would keep painting the listing being left - and
-        // unfiltered, because the drill clears the query - which on a slow expand reads as
-        // "Right cleared my filter and did nothing", then a jump. Blank the rows instead:
-        // every exit from the load installs the new listing, dismisses, or belongs to a later
-        // switch that repaints on its own.
-        self.directory_entries.clear();
-        self.ranked_matches.clear();
-        self.selected_index = None;
-        self.loading = true;
-        self.publish_rows(cx);
+        self.rows_frozen_for_load = Some(generation);
         let expand_task = self.project(cx).and_then(|project| {
             project.update(cx, |project, cx| {
                 project.expand_entry(worktree_id, entry.entry_id, cx)
@@ -2343,7 +2426,7 @@ impl FilterSettled {
     }
 }
 
-pub struct BreadcrumbPickerDelegate {
+pub(super) struct BreadcrumbPickerDelegate {
     menu: WeakEntity<BreadcrumbNavigationMenu>,
     rows: Rc<Vec<BreadcrumbMenuRow>>,
     selected_index: usize,

@@ -265,7 +265,7 @@ use ui::{
     prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
 };
 use ui_input::ErasedEditor;
-use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc, rel_path::RelPath};
+use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry, OpenInTerminal,
     OpenTerminal, Pane, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection,
@@ -11484,11 +11484,7 @@ impl Editor {
     }
 
     #[cfg(test)]
-    pub fn set_workspace_for_test(
-        &mut self,
-        workspace: WeakEntity<Workspace>,
-        _cx: &mut Context<Self>,
-    ) {
+    pub fn set_workspace_for_test(&mut self, workspace: WeakEntity<Workspace>) {
         self.workspace = Some((workspace, None));
     }
 
@@ -11498,7 +11494,7 @@ impl Editor {
     }
 
     #[cfg(test)]
-    pub fn open_or_toggle_breadcrumb_listing_for_test(
+    pub(crate) fn open_or_toggle_breadcrumb_listing_for_test(
         &mut self,
         listing: BreadcrumbListing,
         window: &mut Window,
@@ -11557,36 +11553,9 @@ impl Editor {
         };
         let buffer_id = buffer.read(cx).remote_id();
 
-        let project_path = self.active_project_path(cx);
-        let is_navigable = project_path.as_ref().is_some_and(|project_path| {
-            let is_single_file = self
-                .project()
-                .and_then(|project| {
-                    project
-                        .read(cx)
-                        .worktree_for_id(project_path.worktree_id, cx)
-                })
-                .is_some_and(|worktree| worktree.read(cx).is_single_file());
-            !is_single_file
-        });
-
-        if is_navigable && let Some(project_path) = project_path {
-            let parent_path = project_path
-                .path
-                .parent()
-                .map(|parent| parent.into_arc())
-                .unwrap_or_else(|| RelPath::empty().into_arc());
-            self.open_breadcrumb_navigation(
-                BreadcrumbListing::Directory {
-                    worktree_id: project_path.worktree_id,
-                    path: parent_path,
-                },
-                window,
-                cx,
-            );
-            return;
-        }
-
+        // Opens the file's outline: the cursor is in code, so the symbols of the current file
+        // are what this navigates. The directory segments in the bar open their own listings on
+        // click; the chord is the outline entry point.
         self.open_breadcrumb_navigation(
             BreadcrumbListing::Symbols {
                 buffer_id,

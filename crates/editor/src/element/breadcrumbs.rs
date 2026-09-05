@@ -12,7 +12,7 @@ pub(crate) use menu::{BreadcrumbListing, BreadcrumbNavigationMenu};
 use path::{breadcrumb_file_icon, breadcrumb_path_segments};
 
 #[derive(Clone, Debug)]
-pub enum BreadcrumbSegmentTarget {
+pub(crate) enum BreadcrumbSegmentTarget {
     Symbol {
         buffer_id: BufferId,
         item: Option<OutlineItem<Anchor>>,
@@ -24,9 +24,8 @@ pub enum BreadcrumbSegmentTarget {
 }
 
 impl BreadcrumbSegmentTarget {
-    /// The bar asks this before the hard cap so the cap window centres on the open listing, and
-    /// the layout pass asks it again after, because that index is what prepaint anchors the menu
-    /// to - a second copy that answered differently would silently dismiss the open menu.
+    /// Whether a segment points at the currently open listing. The hard cap centres its window
+    /// on this segment and prepaint anchors the menu to it, so both passes call the one method.
     fn matches_listing(&self, listing: &BreadcrumbListing) -> bool {
         match (self, listing) {
             (
@@ -116,8 +115,7 @@ pub fn render_breadcrumb_text(
                 .map(|menu| menu.read(cx).symbol_trail().to_vec());
             menu_listing = menu.as_ref().map(|menu| menu.read(cx).listing().clone());
 
-            // Resolved once: `worktree_for_id` scans the worktree list, and both the
-            // navigability test and the path split below need this same worktree.
+            // Shared by the navigability test and the path split below.
             let real_worktree = real_project_path.as_ref().and_then(|project_path| {
                 editor_ref
                     .project()?
@@ -301,12 +299,11 @@ pub fn render_breadcrumb_text(
     }
 }
 
-/// Gated on the tab family rather than the panel family the menu rows use: the bar describes
-/// the file that is open, like a tab does, while the menu is a directory listing. Deliberate,
-/// because either family alone would change what one of the two surfaces shows by default.
+/// Gated on the tab family, like the file the bar describes; the menu rows are a directory
+/// listing and follow the panel family instead.
 ///
-/// Takes the status lazily: resolving one walks every repository, and the bar repaints on
-/// every cursor blink, so it must not run when the setting is off.
+/// Takes the status lazily: resolving one walks every repository, so it must not run when the
+/// setting is off.
 pub(super) fn breadcrumb_file_git_status_color(
     status: impl FnOnce() -> Option<git::status::FileStatus>,
     cx: &App,
@@ -875,8 +872,8 @@ mod tests {
             (editor, VisualTestContext::from_window(*window, cx))
         };
         let cx = &mut { editor_cx };
-        editor.update(cx, |editor, cx| {
-            editor.set_workspace_for_test(workspace.downgrade(), cx);
+        editor.update(cx, |editor, _cx| {
+            editor.set_workspace_for_test(workspace.downgrade());
         });
 
         let root_listing = BreadcrumbListing::Directory {
@@ -965,8 +962,8 @@ mod tests {
             (editor, VisualTestContext::from_window(*window, cx))
         };
         let cx = &mut { editor_cx };
-        editor.update(cx, |editor, cx| {
-            editor.set_workspace_for_test(workspace.downgrade(), cx);
+        editor.update(cx, |editor, _cx| {
+            editor.set_workspace_for_test(workspace.downgrade());
         });
 
         let root_listing = BreadcrumbListing::Directory {
@@ -1021,8 +1018,8 @@ mod tests {
             (editor, VisualTestContext::from_window(*window, cx))
         };
         let cx = &mut { editor_cx };
-        editor.update(cx, |editor, cx| {
-            editor.set_workspace_for_test(workspace.downgrade(), cx);
+        editor.update(cx, |editor, _cx| {
+            editor.set_workspace_for_test(workspace.downgrade());
         });
 
         let listing = BreadcrumbListing::Directory {
@@ -1597,8 +1594,8 @@ mod tests {
             let editor = cx.new(|cx| {
                 crate::test::build_editor_with_project(project.clone(), multi_buffer, window, cx)
             });
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             StripHost {
                 editor,
@@ -1716,8 +1713,8 @@ mod tests {
             let editor = cx.new(|cx| {
                 crate::test::build_editor_with_project(project.clone(), multi_buffer, window, cx)
             });
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             StripHost {
                 editor,
@@ -2251,8 +2248,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             StripHost {
                 editor,
@@ -2377,8 +2374,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             let segment = |kind, text: &str, path: &str| PreparedBreadcrumbSegment {
                 kind,
@@ -2506,8 +2503,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             let segment = |kind, text: &str, path: &str| PreparedBreadcrumbSegment {
                 kind,
@@ -2635,8 +2632,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             let segment = |kind, text: &str, path: &str| PreparedBreadcrumbSegment {
                 kind,
@@ -2773,8 +2770,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             StripHost {
                 editor,
@@ -2928,8 +2925,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             StripHost {
                 editor,
@@ -3080,8 +3077,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             StripHost {
                 editor,
@@ -3999,13 +3996,21 @@ mod tests {
         cx.simulate_keystrokes("z z");
         cx.run_until_parked();
 
-        menu.read_with(cx, |menu, _| {
+        menu.read_with(cx, |menu, cx| {
             assert_eq!(menu.filter(), "zz");
             assert_eq!(menu.filtered_entry_names(), Vec::<SharedString>::new());
             assert!(
                 !menu.rank_pending(),
                 "a completed zero-match rank must settle out of the searching state"
             );
+            // What the picker shows, not what the menu knows: a settled rank with no matches has
+            // to replace the rows the user was reading, or Enter confirms one of them.
+            assert_eq!(
+                menu.published_row_labels(cx),
+                Vec::<SharedString>::new(),
+                "the previous rows must not stay on screen after a zero-match rank settles"
+            );
+            assert_eq!(menu.published_empty_message(cx).as_ref(), "No matches");
         });
     }
 
@@ -4409,6 +4414,48 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_a_nested_symbol_segment_does_not_advertise_the_chord(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use language::OutlineItem;
+        use multi_buffer::MultiBufferOffset;
+
+        init_test(cx, |_| {});
+
+        // The predicate's third case needs a real `OutlineItem`, which needs anchors: the file
+        // segment carries `item: None`, a segment for a symbol inside the file carries `Some`.
+        let buffer = cx.new(|cx| {
+            language::Buffer::local(
+                "fn alpha() {}
+",
+                cx,
+            )
+        });
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let snapshot = multi_buffer.read_with(cx, |mb, cx| mb.snapshot(cx));
+        let range = snapshot.anchor_before(MultiBufferOffset(0))
+            ..snapshot.anchor_before(MultiBufferOffset(1));
+        let nested = BreadcrumbSegmentTarget::Symbol {
+            buffer_id: language::BufferId::new(1).unwrap(),
+            item: Some(OutlineItem {
+                depth: 1,
+                range: range.clone(),
+                selection_range: range.clone(),
+                source_range_for_text: range,
+                text: "alpha".into(),
+                highlight_ranges: vec![],
+                name_ranges: vec![],
+                body_range: None,
+                annotation_range: None,
+            }),
+        };
+
+        assert!(
+            !super::layout::segment_tooltip_shows_navigation_chord(&nested),
+            "a nested symbol segment opens that symbol's children, which the chord does not"
+        );
+    }
+
+    #[gpui::test]
     async fn test_filter_names_the_parent_of_an_out_of_level_symbol(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
         use crate::test::build_editor;
@@ -4512,7 +4559,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_a_drill_blanks_the_rows_it_is_leaving(cx: &mut TestAppContext) {
+    async fn test_a_drill_keeps_the_filtered_rows_until_the_target_loads(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
         use crate::test::build_editor;
         use gpui::KeyBinding;
@@ -4600,22 +4647,38 @@ mod tests {
         cx.update(|window, cx| {
             window.draw(cx).clear(cx);
         });
+        // Only "alpha_dir" matches, so the drill acts on the row the filter left showing.
+        menu.read_with(cx, |menu, cx| {
+            assert_eq!(
+                menu.published_row_labels(cx)
+                    .iter()
+                    .map(|n| n.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["alpha_dir"],
+            );
+        });
+        menu.update(cx, |menu, _| {
+            let _ = menu.take_published_row_history();
+        });
 
         cx.update(|window, cx| {
             window.dispatch_keystroke(gpui::Keystroke::parse("right").unwrap(), cx);
         });
-        // Deliberately not parked: the drill's expand is still in flight, and until it lands
-        // the picker would otherwise repaint the listing being left - unfiltered, since the
-        // drill clears the query - as if Right had cleared the filter and done nothing.
-        menu.read_with(cx, |menu, cx| {
-            assert_eq!(
-                menu.published_row_labels(cx),
-                Vec::<SharedString>::new(),
-                "the rows of the listing being left cannot stay up while the drill resolves"
-            );
-        });
-
         cx.run_until_parked();
+
+        // Drilling keeps the rows the user was looking at until the target loads, then swaps:
+        // never blank, and never the previous listing shown unfiltered.
+        let published = menu.update(cx, |menu, _| menu.take_published_row_history());
+        assert!(
+            !published.is_empty() && published.iter().all(|rows| !rows.is_empty()),
+            "a drill must not blank the rows while the target loads; published rows were              {published:?}"
+        );
+        assert!(
+            published
+                .iter()
+                .all(|rows| rows.iter().all(|row| row.as_ref() != "beta.txt")),
+            "and must never repaint the listing being left, unfiltered; published rows were {published:?}"
+        );
         menu.read_with(cx, |menu, cx| {
             let listing_path = match menu.listing() {
                 BreadcrumbListing::Directory { path, .. } => path.as_unix_str().to_string(),
@@ -5017,8 +5080,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             BarHost { editor }
         });
@@ -5130,8 +5193,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             BarHost { editor }
         });
@@ -5174,6 +5237,356 @@ mod tests {
                 ),
                 other => panic!("expected a directory listing, got {other:?}"),
             }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_stepping_left_keeps_rows_until_the_parent_loads(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use gpui::KeyBinding;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new(
+                "left",
+                SelectParent,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            )]);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "outer": { "inner": { "file.rs": "fn main() {}" }, "sibling.rs": "" } }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(multi_buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::new_test("outer/inner").into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        menu.update_in(cx, |menu, window, cx| {
+            window.focus(&menu.focus_handle(cx), cx);
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(
+                menu.entry_names()
+                    .iter()
+                    .map(|n| n.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["file.rs"],
+            );
+        });
+        menu.update(cx, |menu, _| {
+            let _ = menu.take_published_row_history();
+        });
+
+        cx.simulate_keystrokes("left");
+        cx.run_until_parked();
+
+        let published = menu.update(cx, |menu, _| menu.take_published_row_history());
+        assert!(
+            !published.is_empty() && published.iter().all(|rows| !rows.is_empty()),
+            "stepping left must keep the rows on screen until the parent loads, never blank to \
+             Loading; published rows were {published:?}"
+        );
+        menu.read_with(cx, |menu, _| {
+            match menu.listing() {
+                BreadcrumbListing::Directory { path, .. } => {
+                    assert_eq!(path.as_unix_str(), "outer")
+                }
+                other => panic!("left steps to the parent directory, got {other:?}"),
+            }
+            assert_eq!(
+                menu.entry_names()
+                    .iter()
+                    .map(|n| n.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["inner", "sibling.rs"],
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_typing_a_filter_does_not_blank_the_rows(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "alpha.txt": "",
+                "alpine.txt": "",
+                "beta.txt": "",
+                "gamma.txt": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                div().size_full().child(self.menu.clone())
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(multi_buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        menu.update_in(cx, |menu, window, cx| {
+            window.focus(&menu.focus_handle(cx), cx);
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+
+        menu.read_with(cx, |menu, cx| {
+            assert_eq!(
+                menu.published_row_labels(cx).len(),
+                4,
+                "fixture starts with the whole listing on screen"
+            );
+        });
+        menu.update(cx, |menu, _| {
+            let _ = menu.take_published_row_history();
+        });
+
+        // Typing goes through the picker's query editor, which takes the keystroke a hop before
+        // the menu hears about it: the rows must not blank to "Searching…" in that window.
+        cx.simulate_input("alp");
+        cx.run_until_parked();
+
+        let published = menu.update(cx, |menu, _| menu.take_published_row_history());
+        assert!(
+            !published.is_empty() && published.iter().all(|rows| !rows.is_empty()),
+            "typing a filter must never blank the rows between the listing and the results; \
+             published rows were {published:?}"
+        );
+        menu.read_with(cx, |menu, cx| {
+            assert_eq!(
+                menu.published_row_labels(cx)
+                    .iter()
+                    .map(|n| n.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["alpha.txt", "alpine.txt"],
+                "the settled rank replaces them with its matches"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_a_reload_under_a_filter_does_not_flash_the_rows(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "alpha.txt": "",
+                "alpine.txt": "",
+                "beta.txt": "",
+                "gamma.txt": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(multi_buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        menu.update_in(cx, |menu, window, cx| {
+            window.focus(&menu.focus_handle(cx), cx);
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+
+        cx.simulate_input("alp");
+        cx.run_until_parked();
+        menu.read_with(cx, |menu, cx| {
+            let rows: Vec<String> = menu
+                .published_row_labels(cx)
+                .iter()
+                .map(|n| n.as_ref().to_string())
+                .collect();
+            assert_eq!(
+                rows,
+                vec!["alpha.txt", "alpine.txt"],
+                "fixture filters to the alp files"
+            );
+        });
+        menu.update(cx, |menu, _| {
+            let _ = menu.take_published_row_history();
+        });
+
+        fs.insert_file(path!("/root/alps.txt"), Vec::new()).await;
+        cx.run_until_parked();
+
+        let published = menu.update(cx, |menu, _| menu.take_published_row_history());
+        assert!(
+            !published.is_empty() && published.iter().all(|rows| !rows.is_empty()),
+            "a reload under an active filter must not flash empty rows between results; published \
+             rows were {published:?}"
+        );
+        assert!(
+            published
+                .iter()
+                .all(|rows| rows.iter().all(|row| row.as_ref() != "beta.txt")),
+            "and must never repaint the listing being left, unfiltered; published rows were {published:?}"
+        );
+        menu.read_with(cx, |menu, cx| {
+            let rows: Vec<String> = menu
+                .published_row_labels(cx)
+                .iter()
+                .map(|n| n.as_ref().to_string())
+                .collect();
+            assert!(
+                rows.contains(&"alps.txt".to_string()),
+                "the reloaded, still-filtered rows include the new match, got {rows:?}"
+            );
         });
     }
 
@@ -5341,8 +5754,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             BarHost { editor }
         });
@@ -5733,8 +6146,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             let menu = BreadcrumbNavigationMenu::new(
                 editor.downgrade(),
@@ -5842,7 +6255,7 @@ mod tests {
 
         let editor_window = cx.add_window(|window, cx| {
             let mut editor = build_editor_with_project(project.clone(), multi_buffer, window, cx);
-            editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.set_workspace_for_test(workspace.downgrade());
             editor
         });
         let editor = editor_window.root(cx).unwrap();
@@ -5939,7 +6352,7 @@ mod tests {
 
         let editor_window = cx.add_window(|window, cx| {
             let mut editor = build_editor_with_project(project.clone(), multi_buffer, window, cx);
-            editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.set_workspace_for_test(workspace.downgrade());
             editor
         });
         let editor = editor_window.root(cx).unwrap();
@@ -6686,8 +7099,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             let menu = BreadcrumbNavigationMenu::new(
                 editor.downgrade(),
@@ -6801,8 +7214,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             let menu = BreadcrumbNavigationMenu::new(
                 editor.downgrade(),
@@ -6908,8 +7321,8 @@ mod tests {
         let host_window = cx.add_window(|window, cx| {
             let editor =
                 cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
-            editor.update(cx, |editor, cx| {
-                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor.update(cx, |editor, _cx| {
+                editor.set_workspace_for_test(workspace.downgrade());
             });
             let menu = BreadcrumbNavigationMenu::new(
                 editor.downgrade(),
@@ -8077,8 +8490,9 @@ mod tests {
             window.draw(cx).clear(cx);
         });
 
-        // "alpha.txt" is a plain file that is not the open buffer, so Right has nowhere to go.
-        cx.simulate_input("alpha");
+        // A query that matches nothing leaves no row selected, so Right has nowhere to go; the
+        // picker must not take that as its cue to clear what was typed.
+        cx.simulate_input("zzz");
         cx.run_until_parked();
         cx.simulate_keystrokes("right");
         cx.run_until_parked();
@@ -8086,16 +8500,10 @@ mod tests {
         menu.read_with(cx, |menu, _| {
             assert_eq!(
                 menu.filter(),
-                "alpha",
+                "zzz",
                 "a drill that goes nowhere must leave the typed query alone"
             );
-            assert_eq!(
-                menu.filtered_entry_names()
-                    .iter()
-                    .map(|name| name.as_ref())
-                    .collect::<Vec<_>>(),
-                vec!["alpha.txt"],
-            );
+            assert_eq!(menu.filtered_entry_names(), Vec::<SharedString>::new());
         });
     }
 
@@ -9463,6 +9871,141 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_select_child_on_another_file_row_opens_it(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor_with_project;
+        use gpui::KeyBinding;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use util::{path, rel_path::rel_path};
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new(
+                "right",
+                SelectChild,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            )]);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "main.rs": "fn main() {}",
+                "lib.rs": "fn lib() {}",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+            _editor: Entity<Editor>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor =
+                cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                Some(rel_path("main.rs").into_arc()),
+                false,
+                window,
+                cx,
+            );
+            MenuHost {
+                menu,
+                _editor: editor,
+            }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+
+        // Move the selection off the open file and onto the other one.
+        menu.update_in(cx, |menu, window, cx| {
+            window.focus(&menu.focus_handle(cx), cx);
+            let other = menu
+                .entry_names()
+                .iter()
+                .position(|name| name.as_ref() == "lib.rs")
+                .expect("lib.rs is listed");
+            menu.set_selected_row(other, cx);
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        menu.read_with(cx, |menu, _| {
+            let selected = menu.selected_index().expect("selection");
+            assert_eq!(
+                menu.entry_names().get(selected).map(|n| n.as_ref()),
+                Some("lib.rs")
+            );
+        });
+
+        let dismissed = Arc::new(AtomicBool::new(false));
+        let dismiss_sub = cx.update(|_, cx| {
+            let dismissed = dismissed.clone();
+            cx.subscribe(&menu, move |_, _: &DismissEvent, _| {
+                dismissed.store(true, Ordering::SeqCst);
+            })
+        });
+
+        // Right goes deeper; for a file that is the file itself, not a noop.
+        cx.simulate_keystrokes("right");
+        cx.run_until_parked();
+
+        assert!(
+            dismissed.load(Ordering::SeqCst),
+            "Right on another file row opens it and dismisses the menu"
+        );
+        drop(dismiss_sub);
+        drop(menu);
+
+        let active_path = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .map(|path| path.path.as_unix_str().to_string())
+        });
+        assert_eq!(active_path.as_deref(), Some("lib.rs"));
     }
 
     #[gpui::test]
