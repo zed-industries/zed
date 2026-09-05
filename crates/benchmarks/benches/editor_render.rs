@@ -124,6 +124,68 @@ fn editor_render(cx: &mut BenchAppContext) {
     });
 }
 
+#[gpui::bench(inputs = [1usize, 3], group = "Editor panes", input_name = "panes", sample_size = 20)]
+fn editor_render_panes(pane_count: &usize, cx: &mut BenchAppContext) {
+    use gpui::{Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div};
+
+    struct Panes(Vec<Entity<Editor>>);
+    impl Render for Panes {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().flex().children(
+                self.0
+                    .iter()
+                    .map(|editor| div().flex_1().min_w_0().h_full().child(editor.clone())),
+            )
+        }
+    }
+
+    init_context(cx);
+    let text = "fn example(value: usize) -> usize { value + 1 }\n".repeat(1000);
+    let mut window = cx.add_empty_window();
+    let active_editor = window.update(|window, cx| {
+        let editors: Vec<_> = (0..*pane_count)
+            .map(|_| {
+                let buffer = MultiBuffer::build_simple(&text, cx);
+                cx.new(|cx| {
+                    let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+                    editor.set_style(editor::EditorStyle::default(), window, cx);
+                    editor
+                })
+            })
+            .collect();
+        let active = editors.first().expect("at least one pane").clone();
+        window.replace_root(cx, |_, _| Panes(editors));
+        window.focus(&active.focus_handle(cx), cx);
+        active
+    });
+    for step in 0..8 {
+        cx.run_until_idle();
+        window.update(|window, cx| {
+            active_editor.update(cx, |editor, cx| {
+                if step % 2 == 0 {
+                    editor.move_down(&MoveDown, window, cx);
+                } else {
+                    editor.move_up(&MoveUp, window, cx);
+                }
+            });
+        });
+    }
+    window.update(|window, _| {
+        if let Some(stats) = window.retained_node_stats() {
+            eprintln!("editor panes ({pane_count}) after warmup: {stats:?}");
+        }
+    });
+    let mut move_down = true;
+    cx.bench_renderer(active_editor, move |editor, window, cx| {
+        if move_down {
+            editor.move_down(&MoveDown, window, cx);
+        } else {
+            editor.move_up(&MoveUp, window, cx);
+        }
+        move_down = !move_down;
+    });
+}
+
 fn init_context(cx: &mut BenchAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
@@ -146,6 +208,7 @@ gpui::bench_group!(
     benches,
     editor_multi_cursor_input,
     open_editor_with_one_long_line,
-    editor_render
+    editor_render,
+    editor_render_panes
 );
 gpui::bench_main!(benches);

@@ -527,6 +527,15 @@ impl TestAppContext {
         .unwrap();
     }
 
+    /// Returns the currently installed platform input handler for input-method tests.
+    pub fn input_handler(&self, window: AnyWindowHandle) -> Option<crate::PlatformInputHandler> {
+        use crate::PlatformWindow as _;
+        let mut window = self.test_window(window);
+        let handler = window.take_input_handler()?;
+        window.set_input_handler(handler.clone());
+        Some(handler)
+    }
+
     /// Returns the `TestWindow` backing the given handle.
     pub(crate) fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
         self.app

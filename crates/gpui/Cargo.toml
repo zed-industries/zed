@@ -38,6 +38,7 @@ screen-capture = [
 ]
 windows-manifest = ["dep:embed-resource"]
 profiler = ["dep:hdrhistogram"]
+test-memory = []
 
 [lib]
 path = "src/gpui.rs"

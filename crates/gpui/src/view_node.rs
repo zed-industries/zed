@@ -52,6 +52,11 @@ enum ViewNodeSceneSegment {
 }
 
 impl ViewNodeScene {
+    #[cfg(all(test, target_os = "macos"))]
+    pub(crate) fn operation_buffer_bytes(&self) -> usize {
+        self.operations.capacity() * std::mem::size_of::<crate::scene::PaintOperation>()
+    }
+
     pub(crate) fn record(
         &mut self,
         scene: &Scene,

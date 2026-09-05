@@ -547,6 +547,108 @@ fn test_accessibility_keyboard_word_completion(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_ime_platform_handler_across_retained_frames(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let buffer = MultiBuffer::build_simple("abcde\nsecond line", cx);
+        let editor = build_editor(buffer, window, cx);
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+    let handle = cx.update(|window, _| window.window_handle());
+    cx.run_until_parked();
+
+    for text in ["に", "日本😀", "日本語"] {
+        let mut handler = cx
+            .input_handler(handle)
+            .expect("focused editor input handler");
+        let replacement_end = handler.marked_text_range().map_or(1, |range| range.end);
+        handler.replace_and_mark_text_in_range(
+            Some(0..replacement_end),
+            text,
+            Some(text.encode_utf16().count()..text.encode_utf16().count()),
+        );
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|window, _| {
+            if let Some(stats) = window.retained_node_stats() {
+                assert!(
+                    stats.reused_subtrees > 0,
+                    "IME test must replay a cached handler: {stats:?}"
+                );
+            }
+        });
+        let mut handler = cx.input_handler(handle).expect("replayed input handler");
+        assert_eq!(
+            handler.marked_text_range(),
+            Some(0..text.encode_utf16().count())
+        );
+        assert_eq!(
+            handler.text_for_range(0..text.encode_utf16().count(), &mut None),
+            Some(text.to_owned())
+        );
+        let candidate = handler
+            .ime_candidate_bounds()
+            .expect("composition candidate bounds");
+        let selection = handler
+            .selected_text_range(true)
+            .expect("composition selection");
+        let end = text.encode_utf16().count();
+        assert_eq!(selection.range, end..end);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let mut handler = cx.input_handler(handle).expect("rebuilt input handler");
+        assert_eq!(handler.ime_candidate_bounds(), Some(candidate));
+        let rebuilt_selection = handler
+            .selected_text_range(true)
+            .expect("rebuilt selection");
+        assert_eq!(rebuilt_selection.range, selection.range);
+        assert_eq!(rebuilt_selection.reversed, selection.reversed);
+    }
+    let mut handler = cx
+        .input_handler(handle)
+        .expect("input handler before commit");
+    handler.replace_text_in_range(None, "確定");
+    cx.run_until_parked();
+    assert_eq!(handler.marked_text_range(), None);
+    assert_eq!(
+        editor.read_with(cx, |editor, cx| editor.text(cx)),
+        "確定bcde\nsecond line"
+    );
+    handler.replace_and_mark_text_in_range(Some(0..2), "未確定", Some(3..3));
+    cx.run_until_parked();
+    cx.simulate_window_resize(handle, size(px(500.), px(250.)));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.scroll_screen(&ScrollAmount::Page(0.5), window, cx);
+    });
+    cx.run_until_parked();
+    let mut handler = cx
+        .input_handler(handle)
+        .expect("input handler after geometry change");
+    assert_eq!(handler.marked_text_range(), Some(0..3));
+    let candidate = handler.ime_candidate_bounds();
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    let mut handler = cx
+        .input_handler(handle)
+        .expect("input handler after refresh");
+    assert_eq!(handler.ime_candidate_bounds(), candidate);
+    handler.unmark_text();
+    assert_eq!(handler.marked_text_range(), None);
+    handler.replace_and_mark_text_in_range(Some(0..3), "途中", Some(2..2));
+    cx.run_until_parked();
+    assert_eq!(handler.marked_text_range(), Some(0..2));
+    cx.update(|window, cx| {
+        window.replace_root(cx, |_, _| gpui::Empty);
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.input_handler(handle).is_none(),
+        "removed editor must relinquish platform input"
+    );
+}
+
+#[gpui::test]
 fn test_ime_composition(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
