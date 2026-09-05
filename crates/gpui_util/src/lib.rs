@@ -94,8 +94,12 @@ pub fn get_powershell() -> Option<String> {
     }
 
     fn find_pwsh_in_scoop() -> Option<PathBuf> {
-        let pwsh_exe =
-            PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\pwsh.exe");
+        // Scoop can be installed to a custom location; $SCOOP points at the
+        // scoop root in that case and defaults to %USERPROFILE%\scoop otherwise.
+        let scoop_dir = std::env::var_os("SCOOP").map(PathBuf::from).or_else(|| {
+            std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("scoop"))
+        })?;
+        let pwsh_exe = scoop_dir.join("shims").join("pwsh.exe");
         pwsh_exe.is_file().then_some(pwsh_exe)
     }
 
