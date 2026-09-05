@@ -867,7 +867,7 @@ async fn wait_for_stack_trace(
     let Some(thread_id) = thread_id else {
         return false;
     };
-    for _ in 0..30 {
+    for _ in 0..50 {
         if session
             .update(cx, |session, _| {
                 session.agent_fetch_stack_frames(thread_id, 1)
