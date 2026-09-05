@@ -74,7 +74,10 @@ pub use item::{
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
 };
 use itertools::Itertools;
-use language::{Buffer, LanguageRegistry, Rope, language_settings::all_language_settings};
+use language::{
+    Buffer, LanguageRegistry, Rope, Toolchain, ToolchainScope,
+    language_settings::all_language_settings,
+};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
@@ -1884,7 +1887,11 @@ impl Workspace {
                     ToolchainStoreEvent::CustomToolchainsModified => {
                         workspace.serialize_workspace(window, cx);
                     }
-                    _ => {}
+                    ToolchainStoreEvent::CustomToolchainRemoved(scope, toolchain) => {
+                        workspace.delete_user_toolchain(scope.clone(), toolchain.clone(), cx);
+                        workspace.serialize_workspace(window, cx);
+                    }
+                    ToolchainStoreEvent::ToolchainActivated => {}
                 },
             )
             .detach();
@@ -7661,6 +7668,27 @@ impl Workspace {
         }
     }
 
+    fn delete_user_toolchain(
+        &self,
+        scope: ToolchainScope,
+        toolchain: Toolchain,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(database_id) = self.database_id() else {
+            return;
+        };
+        let WorkspaceLocation::Location(location, _) = self.workspace_location(cx) else {
+            return;
+        };
+        let db = WorkspaceDb::global(cx);
+        cx.background_spawn(async move {
+            db.delete_user_toolchain(database_id, location, scope, toolchain)
+                .await
+                .log_err();
+        })
+        .detach();
+    }
+
     fn serialize_workspace_internal(&self, window: &mut Window, cx: &mut App) -> Task<()> {
         let Some(database_id) = self.database_id() else {
             return Task::ready(());
@@ -11434,6 +11462,18 @@ async fn open_remote_project_inner(
     source_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut AsyncApp,
 ) -> Result<(Entity<Workspace>, Vec<Option<Box<dyn ItemHandle>>>)> {
+    // Restore these before the workspace exists, as serializing a workspace whose toolchain
+    // store is still empty would delete the very rows we're about to read back.
+    if let Some(serialized_workspace) = serialized_workspace.as_ref() {
+        project.update(cx, |project, cx| {
+            for (scope, toolchains) in &serialized_workspace.user_toolchains {
+                for toolchain in toolchains {
+                    project.add_toolchain(toolchain.clone(), scope.clone(), cx);
+                }
+            }
+        });
+    }
+
     let mut project_paths_to_open = vec![];
     let mut project_path_errors = vec![];
 
