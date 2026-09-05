@@ -214,6 +214,10 @@ name = "shadow"
 path = "examples/shadow.rs"
 
 [[example]]
+name = "corner_smoothing"
+path = "examples/corner_smoothing.rs"
+
+[[example]]
 name = "svg"
 path = "examples/svg/svg.rs"
 

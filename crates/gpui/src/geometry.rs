@@ -2615,6 +2615,7 @@ pub fn radians(value: f32) -> Radians {
     PartialEq,
     Serialize,
     Deserialize,
+    JsonSchema,
     Debug,
 )]
 #[repr(transparent)]
