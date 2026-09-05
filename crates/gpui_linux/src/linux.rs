@@ -46,8 +46,12 @@ pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
         #[cfg(feature = "x11")]
         "X11" => Rc::new(LinuxPlatform {
             inner: X11Client::new()
-                .context("Failed to initialize X11 client.")
-                .unwrap(),
+                .context("Failed to initialize X11 client")
+                .unwrap_or_else(|error| {
+                    log::error!("Zed failed to launch: {error:?}");
+                    eprintln!("Zed failed to launch: {error:#}");
+                    std::process::exit(1);
+                }),
         }),
 
         "Headless" => Rc::new(LinuxPlatform {
