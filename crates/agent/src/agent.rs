@@ -1876,11 +1876,21 @@ impl NativeAgent {
                     .log_err()
             {
                 let db_thread = db_thread.await;
-                database
+                match database
                     .save_thread(id.clone(), db_thread, folder_paths)
                     .await
-                    .log_err();
-                thread_store.update(cx, |store, cx| store.reload(cx));
+                {
+                    Ok(()) => {
+                        thread_store.update(cx, |store, cx| store.reload(cx));
+                    }
+                    Err(error) => {
+                        // Don't reload after a failed save: the reload issues
+                        // list queries against the same connection, which
+                        // amplifies transient lock contention into the
+                        // multi-hundred-millisecond stalls seen in the UI.
+                        log::error!("Failed to save thread {id}: {error:#}");
+                    }
+                }
             }
             if closed {
                 break;
