@@ -89,7 +89,7 @@ async fn run_git_blame(
     let mut child = {
         let span = ztracing::debug_span!("spawning git-blame command", path = path.as_unix_str());
         let _enter = span.enter();
-        let mut args = vec!["blame", "--root", "--incremental"];
+        let mut args = vec!["blame", "--incremental"];
         let revision_string;
         match source {
             BlameSource::Contents(..) => args.extend(["--contents", "-"]),
@@ -111,6 +111,20 @@ async fn run_git_blame(
             .kill_on_drop(true)
             .spawn()
             .context("starting git blame process")?
+    };
+
+    let is_shallow = {
+        let output = git
+            .build_command(&["rev-parse", "--is-shallow-repository"])
+            .kill_on_drop(true)
+            .output()
+            .await
+            .context("starting git rev-parse process")?;
+
+        output.status.success()
+            && str::from_utf8(&output.stdout)
+                .map(str::trim)
+                .is_ok_and(|value| value == "true")
     };
 
     let stdin = child.stdin.take();
@@ -151,7 +165,7 @@ async fn run_git_blame(
             }
 
             let line = line_buffer.trim_end_matches(&['\r', '\n'][..]);
-            parser.push_line(line)?;
+            parser.push_line(line, is_shallow)?;
             lines_read += 1;
 
             if lines_read % BLAME_PARSE_YIELD_INTERVAL == 0 {
@@ -351,7 +365,7 @@ impl GitBlameParser {
         }
     }
 
-    fn push_line(&mut self, line: &str) -> Result<()> {
+    fn push_line(&mut self, line: &str, is_shallow: bool) -> Result<()> {
         let mut done = false;
 
         match &mut self.current_entry {
@@ -386,7 +400,7 @@ impl GitBlameParser {
                 self.current_entry.replace(new_entry);
             }
             Some(entry) => {
-                if line == "boundary" {
+                if is_shallow && line == "boundary" {
                     entry.boundary = true;
                     return Ok(());
                 }
@@ -502,7 +516,7 @@ mod tests {
         let mut parser = GitBlameParser::new();
 
         for line in output.lines() {
-            parser.push_line(line)?;
+            parser.push_line(line, true)?;
         }
 
         Ok(parser.entries)
