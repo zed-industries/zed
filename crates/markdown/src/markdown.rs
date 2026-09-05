@@ -56,10 +56,16 @@ use util::ResultExt;
 use crate::parser::CodeBlockKind;
 
 const MERMAID_MAX_ZOOM: f32 = 2.0;
-/// Zoom levels within this distance of 1.0 snap back to exactly 1.0 so users
-/// can easily return to the default size.
+/// When snapping is enabled, zoom levels within this distance of 1.0 snap back
+/// to exactly 1.0 so users can easily return to the default size.
 const MERMAID_ZOOM_SNAP_TOLERANCE: f32 = 0.05;
 const MERMAID_ZOOM_DEBOUNCE: Duration = Duration::from_millis(300);
+
+#[derive(Clone, Copy)]
+pub(crate) enum MermaidZoomSnapping {
+    Enabled,
+    Disabled,
+}
 
 /// A callback function that can be used to customize the style of links based on the destination URL.
 /// If the callback returns `None`, the default link style will be used.
@@ -68,8 +74,8 @@ pub type CodeSpanLinkCallback = Arc<dyn Fn(&str, &App) -> Option<SharedString> +
 type UrlHoverCallback = Rc<dyn Fn(Option<SharedString>, &mut Window, &mut App)>;
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
-/// Invoked when a mermaid diagram's zoom level changes (via scroll gesture or
-/// the reset button), so a scroll container can keep the diagram anchored.
+/// Invoked when a mermaid diagram's zoom level changes (via a gesture or the
+/// reset button), so a scroll container can keep the diagram anchored.
 pub type MermaidZoomCallback = Rc<dyn Fn(&mut Window, &mut App)>;
 
 #[derive(Clone, Copy, Default)]
@@ -813,10 +819,30 @@ impl Markdown {
         zoom: f32,
         cx: &mut Context<Self>,
     ) {
+        self.set_mermaid_zoom_level_with_snapping(
+            source_offset,
+            zoom,
+            MermaidZoomSnapping::Enabled,
+            cx,
+        );
+    }
+
+    fn set_mermaid_zoom_level_with_snapping(
+        &mut self,
+        source_offset: usize,
+        zoom: f32,
+        snapping: MermaidZoomSnapping,
+        cx: &mut Context<Self>,
+    ) {
+        let current_zoom = self.mermaid_zoom_level(source_offset);
         let min_zoom = self.mermaid_min_zoom_level(source_offset);
         let requested_zoom = zoom;
         let mut zoom = zoom.clamp(min_zoom, MERMAID_MAX_ZOOM);
-        if (zoom - 1.0).abs() <= MERMAID_ZOOM_SNAP_TOLERANCE {
+        let crossed_default_zoom =
+            (current_zoom < 1.0 && zoom > 1.0) || (current_zoom > 1.0 && zoom < 1.0);
+        if matches!(snapping, MermaidZoomSnapping::Enabled)
+            && ((zoom - 1.0).abs() <= MERMAID_ZOOM_SNAP_TOLERANCE || crossed_default_zoom)
+        {
             zoom = 1.0;
         }
         // The user zoomed out to (or past) the fit-to-width floor. From here
@@ -832,6 +858,32 @@ impl Markdown {
         view.zoomed_to_fit = zoomed_to_fit;
         view.debounce_task = Some(debounce_task);
         cx.notify();
+    }
+
+    pub(crate) fn set_mermaid_zoom_level_around(
+        &mut self,
+        source_offset: usize,
+        zoom: f32,
+        anchor_x: Pixels,
+        snapping: MermaidZoomSnapping,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let current_zoom = self.mermaid_zoom_level(source_offset);
+        let scroll_handle = self.mermaid_scroll_handle(source_offset);
+        let current_offset = scroll_handle.offset();
+
+        self.set_mermaid_zoom_level_with_snapping(source_offset, zoom, snapping, cx);
+        let new_zoom = self.mermaid_zoom_level(source_offset);
+        if new_zoom == current_zoom {
+            return false;
+        }
+
+        let zoom_ratio = new_zoom / current_zoom;
+        scroll_handle.set_offset(point(
+            anchor_x - (anchor_x - current_offset.x) * zoom_ratio,
+            current_offset.y,
+        ));
+        true
     }
 
     /// The zoom level to display a diagram at, syncing a fit-to-width zoom
