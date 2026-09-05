@@ -101,7 +101,7 @@ pub struct SyntaxMapMatch<'a> {
 
 struct SyntaxMapCapturesLayer<'a> {
     depth: usize,
-    captures: QueryCaptures<'a, 'a, TextProvider<'a>, &'a [u8]>,
+    captures: QueryCaptures<'a, 'a, 'static, TextProvider<'a>, &'a [u8]>,
     next_capture: Option<QueryCapture<'a>>,
     grammar_index: usize,
     _query_cursor: QueryCursorHandle,
@@ -113,7 +113,7 @@ struct SyntaxMapMatchesLayer<'a> {
     next_pattern_index: usize,
     next_captures: Vec<QueryCapture<'a>>,
     has_next: bool,
-    matches: QueryMatches<'a, 'a, TextProvider<'a>, &'a [u8]>,
+    matches: QueryMatches<'a, 'a, 'static, TextProvider<'a>, &'a [u8]>,
     query: &'a Query,
     grammar_index: usize,
     _query_cursor: QueryCursorHandle,

@@ -359,38 +359,13 @@ pub fn set_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
     }
 }
 
-/// The buffer's line height.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum BufferLineHeight {
-    /// A less dense line height.
-    #[default]
-    Comfortable,
-    /// The default line height.
-    Standard,
-    /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
-    Custom(f32),
-}
+pub use theme::BufferLineHeight;
 
-impl From<settings::BufferLineHeight> for BufferLineHeight {
-    fn from(value: settings::BufferLineHeight) -> Self {
-        match value {
-            settings::BufferLineHeight::Comfortable => BufferLineHeight::Comfortable,
-            settings::BufferLineHeight::Standard => BufferLineHeight::Standard,
-            settings::BufferLineHeight::Custom(line_height) => {
-                BufferLineHeight::Custom(line_height)
-            }
-        }
-    }
-}
-
-impl BufferLineHeight {
-    /// Returns the value of the line height.
-    pub fn value(&self) -> f32 {
-        match self {
-            BufferLineHeight::Comfortable => 1.618,
-            BufferLineHeight::Standard => 1.3,
-            BufferLineHeight::Custom(line_height) => *line_height,
-        }
+pub fn buffer_line_height_from_settings(value: settings::BufferLineHeight) -> BufferLineHeight {
+    match value {
+        settings::BufferLineHeight::Comfortable => BufferLineHeight::Comfortable,
+        settings::BufferLineHeight::Standard => BufferLineHeight::Standard,
+        settings::BufferLineHeight::Custom(line_height) => BufferLineHeight::Custom(line_height),
     }
 }
 
@@ -727,8 +702,9 @@ fn font_fallbacks_from_settings(
 }
 
 impl settings::Settings for ThemeSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
-        let content = &content.theme;
+    fn from_settings(settings_content: &settings::SettingsContent) -> Self {
+        let content = &settings_content.theme;
+        let markdown_preview = settings_content.markdown_preview.as_ref();
         let theme_selection: ThemeSelection = content.theme.clone().unwrap().into();
         let icon_theme_selection: IconThemeSelection = content.icon_theme.clone().unwrap().into();
         Self {
@@ -754,7 +730,9 @@ impl settings::Settings for ThemeSettings {
                 style: FontStyle::default(),
             },
             buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into_gpui()),
-            buffer_line_height: content.buffer_line_height.unwrap().into(),
+            buffer_line_height: buffer_line_height_from_settings(
+                content.buffer_line_height.unwrap(),
+            ),
             agent_ui_font_family: content
                 .agent_ui_font_family
                 .as_ref()
@@ -766,18 +744,17 @@ impl settings::Settings for ThemeSettings {
                 .map(|font| font.0.clone().into()),
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
             git_commit_buffer_font_size: content.git_commit_buffer_font_size.map(|s| s.into_gpui()),
-            markdown_preview_font_family: content
-                .markdown_preview_font_family
-                .as_ref()
+            markdown_preview_font_family: markdown_preview
+                .and_then(|preview| preview.font_family.as_ref())
                 .map(|f| f.0.clone().into()),
-            markdown_preview_code_font_family: content
-                .markdown_preview_code_font_family
-                .as_ref()
+            markdown_preview_code_font_family: markdown_preview
+                .and_then(|preview| preview.code_font_family.as_ref())
                 .map(|f| f.0.clone().into()),
-            markdown_preview_font_size: content.markdown_preview_font_size.map(|s| s.into_gpui()),
-            markdown_preview_theme: content
-                .markdown_preview_theme
-                .clone()
+            markdown_preview_font_size: markdown_preview
+                .and_then(|preview| preview.font_size)
+                .map(|size| size.into_gpui()),
+            markdown_preview_theme: markdown_preview
+                .and_then(|preview| preview.theme.clone())
                 .map(ThemeSelection::from),
             theme: theme_selection,
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),

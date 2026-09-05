@@ -1,5 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use futures::FutureExt;
 use gpui::{
     App, AppContext, Asset as _, AssetLogger, Bounds, ClickEvent, Context, ElementId, Entity,
@@ -254,6 +257,9 @@ fn run_example() {
     let app = gpui_platform::single_threaded_web();
 
     app.run(move |cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         #[cfg(not(target_family = "wasm"))]
         {
             let http_client = ReqwestClient::user_agent("gpui example").unwrap();

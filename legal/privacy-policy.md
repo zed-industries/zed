@@ -10,7 +10,7 @@ slug: privacy-policy
 Zed collects user information (name, email, username, IP address, etc.), device and usage data, and web analytics to improve our products and services, as well as payment details if you subscribe. We do not store your source code and we process but do not store audio/video/screenshare from collaboration sessions. For a limited set of provider-designated AI models (such as Anthropic's Mythos-class models), the model provider retains prompts and outputs for a limited period for safety purposes; see our [AI Privacy documentation](https://zed.dev/docs/ai/privacy-and-security).
 
 - **We don't sell your data and we don't allow AI providers to train on it**
-- **You control Zed editor telemetry** — disable it in Settings or learn more at [https://zed.dev/docs/telemetry](/telemetry)
+- **You control Zed editor telemetry** — disable it in Settings or learn more at [https://zed.dev/docs/telemetry](https://zed.dev/docs/telemetry)
 - **We honor Global Privacy Control** (GPC) signals from your browser
 - To access, correct, or delete your data, email privacy@zed.dev with subject "Privacy Request"
 
@@ -22,7 +22,7 @@ This Privacy Policy explains how Zed Industries, Inc. ("**Zed**," "**we**," "**o
 
 As used in this Privacy Policy, “personal data” means any information relating to an identified or identifiable individual and includes any information that constitutes "personally identifiable information," “personal data,” or "personal information" under applicable privacy or data protection laws or regulations.
 
-You acknowledge the collection, use, disclosure, procedures, and other processing described in this Privacy Policy. Beyond the Privacy Policy, your use of our products and services is also subject to our Terms of Service included alongside. This Privacy Policy does not apply to the extent we process personal data in the role of a processor or service provider on behalf of our Zed Business customers. Such processing is governed by our Data Processing Agreement, available upon request. For information about the sub-processors we engage in that capacity, see [https://zed.dev/subprocessors](/subprocessors).
+You acknowledge the collection, use, disclosure, procedures, and other processing described in this Privacy Policy. Beyond the Privacy Policy, your use of our products and services is also subject to our Terms of Service included alongside. This Privacy Policy does not apply to the extent we process personal data in the role of a processor or service provider on behalf of our Zed Business customers. Such processing is governed by our Data Processing Agreement, available upon request. For information about the sub-processors we engage in that capacity, see [https://zed.dev/subprocessors](https://zed.dev/subprocessors).
 
 ## Personal Data We Collect
 
@@ -42,19 +42,19 @@ For authorized users on Zed Business plans, certain data described in this secti
 
 - **Payment Information** - If you make a payment, your payment details, such as credit card, address, phone number, or other financial information, are collected by our third-party payment processor on our behalf. Zed does not collect, process, or store your payment information directly.
 
-- **Regarding Third-Party Services** - If you use or integrate third-party tools or link third-party services with the Software or Service, we may receive personal data about you, such as your [GitHub username and other related information](https://docs.github.com/en/apps/oauth-apps/using-oauth-apps/connecting-with-third-party-applications) that permits us to authenticate your user identity and keep your account secure. You can learn more about Zed Third Parties here: [https://zed.dev/](https://zed.dev/acceptable-use-policies)[acceptable-use-policies](/acceptable-use-policies)
+- **Regarding Third-Party Services** - If you use or integrate third-party tools or link third-party services with the Software or Service, we may receive personal data about you, such as your [GitHub username and other related information](https://docs.github.com/en/apps/oauth-apps/using-oauth-apps/connecting-with-third-party-applications) that permits us to authenticate your user identity and keep your account secure. You can learn more about Zed Third Parties here: [https://zed.dev/acceptable-use-policies](https://zed.dev/acceptable-use-policies)
 
 ### Personal Data We Collect When You Use Our Websites, Software, or Service
 
 - **Website, Software, and Service Telemetry** - We automatically collect telemetry - technical logs, metrics, and usage data - to improve and support Zed’s websites, Software, and Service. You may opt out of local telemetry collection in the Software settings. However, when you sign into or use the websites or Service (including via the Software) we collect telemetry on our servers related to use of the websites and Service.
 
-Learn more about telemetry and your choices and how to opt out of Software telemetry collection at [https://zed.dev/docs/telemetry](/telemetry)
+Learn more about telemetry and your choices and how to opt out of Software telemetry collection at [https://zed.dev/docs/telemetry](https://zed.dev/docs/telemetry)
 
 - **Device and Location Information** - When you use the website, Software, or Service we may collect information about your device and software, including IP address (and inferred approximate location), device type, device identifiers, browser (type, version, user-agent, and language), and operating system or mobile device type. We do so to support improving and securing the Software and Service. Zed does not collect precise location information.
 
 - **Usage Information** - We automatically collect information about how you use our website and Service, like the pages or other content you view and the dates and times of your visits. We do so to support improving and securing the websites, Software, and Service.
 
-- **Information from Cookies and Similar Technologies** - We and our third-party partners may collect information using cookies, beacons, and similar technologies (collectively “**Cookies**”) to provide functionality and to recognize you across visits. See our [Cookie Policy](/cookie-policy), which includes information on how to control or opt out of these Cookies.
+- **Information from Cookies and Similar Technologies** - We and our third-party partners may collect information using cookies, beacons, and similar technologies (collectively “**Cookies**”) to provide functionality and to recognize you across visits. See our [Cookie Policy](https://zed.dev/cookie-policy), which includes information on how to control or opt out of these Cookies.
 
 ## How We Use the Personal Data We Collect
 
@@ -120,7 +120,7 @@ The disclosures described below relate to Zed’s processing as a data controlle
 
 - **Do Not Track** - Because there is no widely-accepted standard on how to respond to “Do Not Track” signals, we instead utilize and honor [Global Privacy Control (GPC)](https://globalprivacycontrol.org/#gpc-spec) as an alternative where and when feasible.
 
-- **Opting-out of Software Telemetry** - Learn more about telemetry and how to opt out of Software telemetry collection at [https://zed.dev/docs/telemetry](/telemetry)
+- **Opting-out of Software Telemetry** - Learn more about telemetry and how to opt out of Software telemetry collection at [https://zed.dev/docs/telemetry](https://zed.dev/docs/telemetry)
 
 - **Disabling Image Loading for Email** - In order to prevent the use of tracking pixels, you may disable image loading in your own email client.
 

@@ -16,6 +16,7 @@ use editor::{Editor, EditorEvent};
 use gpui::{Action as _, Anchor, App, Entity, Subscription, Task, TaskExt, WeakEntity, actions};
 use language::{BinaryStatus, BufferId, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
+use path::PathStyle;
 use project::{
     LspStore, LspStoreEvent, Worktree, lsp_store::log_store::GlobalLogStore,
     project_settings::ProjectSettings, trusted_worktrees::TrustedWorktrees,
@@ -188,6 +189,13 @@ struct ServerInfo {
     message: Option<SharedString>,
 }
 
+#[derive(Default, Clone)]
+struct ServerMetadata {
+    server_version: Option<SharedString>,
+    binary_display_path: Option<SharedString>,
+    process_id: Option<u32>,
+}
+
 impl ServerInfo {
     fn server_selector(&self) -> LanguageServerSelector {
         LanguageServerSelector::Id(self.id)
@@ -260,24 +268,32 @@ impl LanguageServerState {
             );
         }
 
-        let server_metadata = self
-            .lsp_store
-            .update(cx, |lsp_store, _| {
-                lsp_store
-                    .language_server_statuses()
-                    .map(|(server_id, status)| {
-                        (
-                            server_id,
+        let path_style = self
+            .workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).path_style(cx))
+            .unwrap_or(PathStyle::local());
+
+        let server_metadata =
+            self.lsp_store
+                .update(cx, |lsp_store, _| {
+                    lsp_store
+                        .language_server_statuses()
+                        .map(|(server_id, status)| {
                             (
-                                status.server_readable_version.clone(),
-                                status.binary.as_ref().map(|b| b.path.clone()),
-                                status.process_id,
-                            ),
-                        )
-                    })
-                    .collect::<HashMap<_, _>>()
-            })
-            .unwrap_or_default();
+                                server_id,
+                                ServerMetadata {
+                                    server_version: status.server_readable_version.clone(),
+                                    binary_display_path: status.binary.as_ref().map(|binary| {
+                                        tooltip_for_server_binary(binary, path_style)
+                                    }),
+                                    process_id: status.process_id,
+                                },
+                            )
+                        })
+                        .collect::<HashMap<_, _>>()
+                })
+                .unwrap_or_default();
 
         let process_memory_cache = self.process_memory_cache.clone();
 
@@ -330,7 +346,15 @@ impl LanguageServerState {
                 .lsp_store
                 .update(cx, |lsp_store, _| lsp_store.as_remote().is_some())
                 .unwrap_or(false);
-            let has_logs = is_remote || lsp_logs.read(cx).has_server_logs(&server_selector);
+            let has_logs = is_remote
+                || self.workspace.upgrade().is_some_and(|workspace| {
+                    let project = workspace.read(cx).project();
+                    lsp_logs.read(cx).has_server_logs(
+                        &server_selector,
+                        &project.downgrade(),
+                        &self.lsp_store,
+                    )
+                });
 
             let (status_color, status_label) = server_info
                 .binary_status
@@ -360,17 +384,14 @@ impl LanguageServerState {
                 .or_else(|| server_info.binary_status.as_ref()?.message.as_ref())
                 .cloned();
 
-            let (server_version, binary_path, process_id) = server_metadata
+            let ServerMetadata {
+                server_version,
+                binary_display_path,
+                process_id,
+            } = server_metadata
                 .get(&server_info.id)
-                .map(|(version, path, process_id)| {
-                    (
-                        version.clone(),
-                        path.as_ref()
-                            .map(|p| SharedString::from(p.compact().to_string_lossy().to_string())),
-                        *process_id,
-                    )
-                })
-                .unwrap_or((None, None, None));
+                .cloned()
+                .unwrap_or_default();
 
             let server_message = message.clone();
 
@@ -581,7 +602,7 @@ impl LanguageServerState {
                         }
 
                         submenu = submenu.separator().custom_row({
-                            let binary_path = binary_path.clone();
+                            let binary_display_path = binary_display_path.clone();
                             let server_version = server_version.clone();
                             let server_message = server_message.clone();
                             let process_memory_cache = process_memory_cache.clone();
@@ -659,7 +680,7 @@ impl LanguageServerState {
                                                 .size(LabelSize::Small),
                                         )
                                     })
-                                    .when_some(binary_path.clone(), |el, path| {
+                                    .when_some(binary_display_path.clone(), |el, path| {
                                         el.tooltip(Tooltip::text(path))
                                     })
                                     .into_any_element()
@@ -672,6 +693,34 @@ impl LanguageServerState {
             );
         }
         menu
+    }
+}
+
+fn tooltip_for_server_binary(
+    server_binary: &lsp::LanguageServerBinary,
+    path_style: PathStyle,
+) -> SharedString {
+    let runtime = path_style.file_name(&server_binary.path).and_then(|name| {
+        ["node", "python"]
+            .into_iter()
+            .find(|runtime| name.starts_with(runtime))
+    });
+
+    let target_path = runtime
+        .and_then(|_runtime| {
+            server_binary
+                .arguments
+                .iter()
+                .find(|arg| !arg.to_string_lossy().starts_with('-'))
+        })
+        .map(Path::new)
+        .unwrap_or(&server_binary.path);
+
+    let display_path = path_style.normalize(&target_path.compact().to_string_lossy());
+
+    match runtime {
+        Some(runtime) => format!("{display_path} ({runtime})").into(),
+        None => display_path.into(),
     }
 }
 
@@ -926,7 +975,8 @@ impl LspButton {
                     let Some(name) = name.as_ref() else {
                         return;
                     };
-                    if let Some(binary_status) = proto::ServerBinaryStatus::from_i32(*binary_status)
+                    if let Some(binary_status) =
+                        proto::ServerBinaryStatus::try_from(*binary_status).ok()
                     {
                         let binary_status = match binary_status {
                             proto::ServerBinaryStatus::None => BinaryStatus::None,
@@ -955,7 +1005,7 @@ impl LspButton {
                     };
                 }
                 Some(proto::status_update::Status::Health(health_status)) => {
-                    if let Some(health) = proto::ServerHealth::from_i32(*health_status) {
+                    if let Some(health) = proto::ServerHealth::try_from(*health_status).ok() {
                         let health = match health {
                             proto::ServerHealth::Ok => ServerHealth::Ok,
                             proto::ServerHealth::Warning => ServerHealth::Warning,
@@ -1583,6 +1633,69 @@ mod tests {
         assert!(
             state.health_statuses.contains_key(&server_id(2)),
             "the new server's health entry is present",
+        );
+    }
+
+    #[test]
+    fn tooltip_for_server_binary_handles_runtime_and_standalone_servers() {
+        let node_server = lsp::LanguageServerBinary {
+            path: "/usr/bin/node".into(),
+            arguments: vec![
+                "/zed/languages/basedpyright/langserver.index.js".into(),
+                "--stdio".into(),
+            ],
+            env: None,
+        };
+        assert_eq!(
+            tooltip_for_server_binary(&node_server, PathStyle::Unix),
+            "/zed/languages/basedpyright/langserver.index.js (node)"
+        );
+
+        let node_server_windows = lsp::LanguageServerBinary {
+                path: "C:\\Program Files\\nodejs\\node.exe".into(),
+                arguments: vec![
+                    "C:\\Users\\Zed\\languages\\basedpyright\\node_modules/basedpyright/langserver.index.js".into(),
+                    "--stdio".into(),
+                ],
+                env: None
+        };
+        assert_eq!(
+            tooltip_for_server_binary(&node_server_windows, PathStyle::Windows),
+            "C:\\Users\\Zed\\languages\\basedpyright\\node_modules\\basedpyright\\langserver.index.js (node)"
+        );
+
+        let python_server = lsp::LanguageServerBinary {
+            path: "/usr/bin/python3".into(),
+            arguments: vec!["/zed/languages/pylsp/pylsp".into(), "--stdio".into()],
+            env: None,
+        };
+        assert_eq!(
+            tooltip_for_server_binary(&python_server, PathStyle::Unix),
+            "/zed/languages/pylsp/pylsp (python)"
+        );
+
+        let standalone_server = lsp::LanguageServerBinary {
+            path: "/usr/bin/ty".into(),
+            arguments: vec!["server".into()],
+            env: None,
+        };
+        assert_eq!(
+            tooltip_for_server_binary(&standalone_server, PathStyle::Unix),
+            "/usr/bin/ty"
+        );
+
+        let flagged_node_server = lsp::LanguageServerBinary {
+            path: "/usr/bin/node".into(),
+            arguments: vec![
+                "--max-old-space-size=8192".into(),
+                "/zed/languages/eslint/server.js".into(),
+                "--stdio".into(),
+            ],
+            env: None,
+        };
+        assert_eq!(
+            tooltip_for_server_binary(&flagged_node_server, PathStyle::Unix),
+            "/zed/languages/eslint/server.js (node)"
         );
     }
 }

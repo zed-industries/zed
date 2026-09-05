@@ -279,7 +279,7 @@ impl HostKeyValueStore for WasmState {
         latest::HostKeyValueStore::insert(self, kv_store, key, value).await
     }
 
-    async fn drop(&mut self, _worktree: Resource<ExtensionKeyValueStore>) -> Result<()> {
+    async fn drop(&mut self, _worktree: Resource<ExtensionKeyValueStore>) -> wasmtime::Result<()> {
         // We only ever hand out borrows of key-value stores.
         Ok(())
     }
@@ -293,7 +293,7 @@ impl HostProject for WasmState {
         latest::HostProject::worktree_ids(self, project).await
     }
 
-    async fn drop(&mut self, _project: Resource<Project>) -> Result<()> {
+    async fn drop(&mut self, _project: Resource<Project>) -> wasmtime::Result<()> {
         // We only ever hand out borrows of projects.
         Ok(())
     }
@@ -334,7 +334,7 @@ impl HostWorktree for WasmState {
         latest::HostWorktree::which(self, delegate, binary_name).await
     }
 
-    async fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {
+    async fn drop(&mut self, _worktree: Resource<Worktree>) -> wasmtime::Result<()> {
         // We only ever hand out borrows of worktrees.
         Ok(())
     }
@@ -403,7 +403,9 @@ impl From<latest::platform::Os> for platform::Os {
 }
 
 impl platform::Host for WasmState {
-    async fn current_platform(&mut self) -> Result<(platform::Os, platform::Architecture)> {
+    async fn current_platform(
+        &mut self,
+    ) -> wasmtime::Result<(platform::Os, platform::Architecture)> {
         latest::platform::Host::current_platform(self)
             .await
             .map(|(os, arch)| (os.into(), arch.into()))

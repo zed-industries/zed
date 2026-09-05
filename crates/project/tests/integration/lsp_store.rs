@@ -1,14 +1,15 @@
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use fs::FakeFs;
+use collections::HashMap;
+use fs::{FakeFs, Fs};
 use futures::StreamExt;
-use gpui::TestAppContext;
-use language::{CodeLabel, FakeLspAdapter, HighlightId, rust_lang};
-use lsp::Uri;
+use gpui::{Entity, TestAppContext};
+use language::{Buffer, CodeLabel, FakeLspAdapter, HighlightId, LocalFile, rust_lang};
+use lsp::{LanguageServerId, LanguageServerName, Uri};
 use parking_lot::Mutex;
 use project::{
     Project,
@@ -99,6 +100,178 @@ async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut
         );
         assert!(!lsp_store.has_language_server_seed_for_worktree(invisible_worktree_id));
     });
+}
+
+#[gpui::test]
+async fn test_open_buffer_via_lsp_case_variant_no_duplicate(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.set_case_sensitive(false);
+    fs.insert_tree(
+        path!("/root"),
+        json!({ "src": { "main.rs": "fn main() {}" } }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    fake_servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    let server_id = project.read_with(cx, |project, cx| {
+        project
+            .lsp_store()
+            .read(cx)
+            .language_server_statuses()
+            .next()
+            .unwrap()
+            .0
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_via_lsp(
+                Uri::from_file_path(path!("/root/SRC/main.rs")).unwrap(),
+                server_id,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    project.read_with(cx, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap();
+        let entries: Vec<_> = worktree
+            .read(cx)
+            .snapshot()
+            .entries(true, 0)
+            .map(|entry| entry.path.as_unix_str().to_string())
+            .collect();
+        assert_eq!(entries, vec!["", "src", "src/main.rs"]);
+    });
+}
+
+#[gpui::test]
+async fn test_open_buffer_via_lsp_preserves_external_symlink_path(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/shared"),
+        json!({ "pkg": { "def.rs": "pub fn def() {}" } }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/project"),
+        json!({ "src": { "main.rs": "fn main() {}" } }),
+    )
+    .await;
+    fs.create_symlink(
+        path!("/project/pkg").as_ref(),
+        PathBuf::from(path!("/shared/pkg")),
+    )
+    .await
+    .unwrap();
+
+    let (project, server_id) =
+        project_with_rust_server(fs, path!("/project"), path!("/project/src/main.rs"), cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_via_lsp(
+                Uri::from_file_path(path!("/project/pkg/def.rs")).unwrap(),
+                server_id,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer_paths(&buffer, cx),
+        (
+            "pkg/def.rs".to_string(),
+            PathBuf::from(path!("/project/pkg/def.rs"))
+        )
+    );
+    assert_eq!(
+        worktree_roots(&project, cx),
+        vec![PathBuf::from(path!("/project"))]
+    );
+}
+
+#[gpui::test]
+async fn test_open_buffer_via_lsp_case_variant_in_unscanned_dir(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.set_case_sensitive(false);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".gitignore": "ignored\n",
+            "src": { "main.rs": "fn main() {}" },
+            "ignored": { "lib.rs": "pub fn lib() {}" },
+        }),
+    )
+    .await;
+
+    let (project, server_id) =
+        project_with_rust_server(fs, path!("/root"), path!("/root/src/main.rs"), cx).await;
+    assert_eq!(
+        worktree_entries(&project, cx),
+        vec!["", ".gitignore", "ignored", "src", "src/main.rs"]
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_via_lsp(
+                Uri::from_file_path(path!("/root/IGNORED/LIB.rs")).unwrap(),
+                server_id,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer_paths(&buffer, cx),
+        (
+            "ignored/lib.rs".to_string(),
+            PathBuf::from(path!("/root/ignored/lib.rs"))
+        )
+    );
+    assert_eq!(
+        worktree_roots(&project, cx),
+        vec![PathBuf::from(path!("/root"))]
+    );
+    assert_eq!(
+        worktree_entries(&project, cx),
+        vec![
+            "",
+            ".gitignore",
+            "ignored",
+            "ignored/lib.rs",
+            "src",
+            "src/main.rs"
+        ]
+    );
 }
 
 #[test]
@@ -412,4 +585,262 @@ async fn test_user_initialization_options_override_adapter_arrays(cx: &mut TestA
             "userOnly": ["user"],
         })),
     );
+}
+
+#[gpui::test]
+async fn test_other_adapters_lsp_configuration_contributions_are_unioned(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let user_settings = serde_json::json!({
+        "lsp": {
+            "the-fake-language-server": {
+                "initialization_options": {
+                    "languages": ["user-lang"],
+                    "userOnly": true,
+                },
+            },
+        },
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            ".zed": {
+                "settings.json": user_settings.to_string(),
+            },
+            "main.rs": "fn main() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let main_server_name = LanguageServerName("the-fake-language-server".into());
+    for (language, server_name, plugin, lang, memory) in [
+        ("Vue", "vue-language-server", "vue-plugin", "vue", 4096),
+        (
+            "Astro",
+            "astro-language-server",
+            "astro-plugin",
+            "astro",
+            2048,
+        ),
+    ] {
+        let contribution = json!({
+            "tsserver": {
+                "globalPlugins": ["shared-plugin", plugin],
+                "maxMemory": memory,
+            },
+            "languages": [lang],
+        });
+        language_registry.register_fake_lsp_adapter(
+            language,
+            FakeLspAdapter {
+                name: server_name,
+                additional_initialization_options: HashMap::from_iter([(
+                    main_server_name.clone(),
+                    contribution.clone(),
+                )]),
+                additional_workspace_configuration: HashMap::from_iter([(
+                    main_server_name.clone(),
+                    contribution,
+                )]),
+                ..FakeLspAdapter::default()
+            },
+        );
+    }
+
+    let sent_initialization_options = Arc::new(Mutex::new(None));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-fake-language-server",
+            initialization_options: Some(json!({
+                "tsserver": {
+                    "globalPlugins": ["default-plugin"],
+                },
+                "languages": ["default-lang"],
+            })),
+            initializer: Some(Box::new({
+                let sent_initialization_options = sent_initialization_options.clone();
+                move |fake_server| {
+                    let sent_initialization_options = sent_initialization_options.clone();
+                    fake_server.set_request_handler::<lsp::request::Initialize, _, _>(
+                        move |params, _| {
+                            *sent_initialization_options.lock() = params.initialization_options;
+                            async move { Ok(lsp::InitializeResult::default()) }
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    cx.run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let mut fake_server = fake_servers.next().await.unwrap();
+    let workspace_configuration = fake_server
+        .receive_notification::<lsp::notification::DidChangeConfiguration>()
+        .await
+        .settings;
+    cx.run_until_parked();
+
+    assert_eq!(
+        sent_initialization_options.lock().take(),
+        Some(json!({
+            "tsserver": {
+                "globalPlugins": ["default-plugin", "shared-plugin", "astro-plugin", "vue-plugin"],
+                "maxMemory": 4096,
+            },
+            "languages": ["user-lang"],
+            "userOnly": true,
+        })),
+    );
+    assert_eq!(
+        workspace_configuration,
+        json!({
+            "tsserver": {
+                "globalPlugins": ["shared-plugin", "astro-plugin", "vue-plugin"],
+                "maxMemory": 4096,
+            },
+            "languages": ["astro", "vue"],
+        }),
+    );
+}
+
+#[gpui::test]
+async fn test_initialization_options_contributions_without_own_options(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let contribution = json!({
+        "tsserver": {
+            "globalPlugins": ["vue-plugin"],
+        },
+    });
+    language_registry.register_fake_lsp_adapter(
+        "Vue",
+        FakeLspAdapter {
+            name: "vue-language-server",
+            additional_initialization_options: HashMap::from_iter([(
+                LanguageServerName("the-fake-language-server".into()),
+                contribution.clone(),
+            )]),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let sent_initialization_options = Arc::new(Mutex::new(None));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-fake-language-server",
+            initialization_options: None,
+            initializer: Some(Box::new({
+                let sent_initialization_options = sent_initialization_options.clone();
+                move |fake_server| {
+                    let sent_initialization_options = sent_initialization_options.clone();
+                    fake_server.set_request_handler::<lsp::request::Initialize, _, _>(
+                        move |params, _| {
+                            *sent_initialization_options.lock() =
+                                Some(params.initialization_options);
+                            async move { Ok(lsp::InitializeResult::default()) }
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    cx.run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    fake_servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        sent_initialization_options.lock().take(),
+        Some(Some(contribution)),
+    );
+}
+
+async fn project_with_rust_server(
+    fs: Arc<FakeFs>,
+    root: &str,
+    first_file: &str,
+    cx: &mut TestAppContext,
+) -> (Entity<Project>, LanguageServerId) {
+    let project = Project::test(fs, [root.as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(first_file, cx)
+        })
+        .await
+        .unwrap();
+    fake_servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    let server_id = project.read_with(cx, |project, cx| {
+        project
+            .lsp_store()
+            .read(cx)
+            .language_server_statuses()
+            .next()
+            .unwrap()
+            .0
+    });
+    (project, server_id)
+}
+
+fn buffer_paths(buffer: &Entity<Buffer>, cx: &TestAppContext) -> (String, PathBuf) {
+    buffer.read_with(cx, |buffer, cx| {
+        let file = File::from_dyn(buffer.file()).unwrap();
+        (file.path.as_unix_str().to_string(), file.abs_path(cx))
+    })
+}
+
+fn worktree_roots(project: &Entity<Project>, cx: &TestAppContext) -> Vec<PathBuf> {
+    project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+            .collect()
+    })
+}
+
+fn worktree_entries(project: &Entity<Project>, cx: &TestAppContext) -> Vec<String> {
+    project.read_with(cx, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap();
+        worktree
+            .read(cx)
+            .snapshot()
+            .entries(true, 0)
+            .map(|entry| entry.path.as_unix_str().to_string())
+            .collect()
+    })
 }

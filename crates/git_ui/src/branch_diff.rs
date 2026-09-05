@@ -9,12 +9,12 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use editor::{
-    Addon, Editor, EditorEvent, RestoreOnlyDiffHunkDelegate, SplittableEditor,
+    Addon, Editor, EditorEvent, HiddenDiffHunkRenderer, SplittableEditor,
     actions::SendReviewToAgent,
 };
 use git::{repository::DiffType, status::FileStatus};
 use gpui::{
-    Action, AnyElement, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, Render,
+    Action, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, Subscription, Task, WeakEntity,
 };
 use language::{BufferId, Capability};
@@ -34,7 +34,7 @@ use ui::{DiffStat, Divider, PopoverMenu, Tooltip, prelude::*};
 use workspace::{
     ItemHandle, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
-    item::{Item, ItemEvent, SaveOptions, TabContentParams},
+    item::{Item, ItemEvent, SaveOptions},
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
@@ -338,7 +338,7 @@ impl BranchDiff {
                 Capability::ReadWrite,
                 "No changes",
                 move |editor, cx| {
-                    editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
+                    editor.set_diff_hunk_renderer(Some(Arc::new(HiddenDiffHunkRenderer)), cx);
                     editor.rhs_editor().update(cx, move |rhs_editor, _cx| {
                         rhs_editor.set_read_only(false);
                         rhs_editor.register_addon(BranchDiffAddon {
@@ -473,16 +473,6 @@ impl Item for BranchDiff {
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         Some(self.tab_content_text(0, cx))
-    }
-
-    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(0, cx))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
@@ -692,7 +682,6 @@ impl SerializableItem for BranchDiff {
         workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let workspace_id = workspace.database_id()?;

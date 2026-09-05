@@ -34,7 +34,7 @@ use gpui::{
     linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, Rope};
-use language_model::LanguageModelCompletionError;
+use language_model::{LanguageModelCompletionError, ProviderErrorCategory};
 use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont, MarkdownStyle,
 };
@@ -146,7 +146,9 @@ pub(crate) enum ThreadError {
         provider: SharedString,
         message: Option<SharedString>,
     },
-    RequestFailed,
+    ProviderRejection {
+        message: SharedString,
+    },
     MaxOutputTokens,
     NoModelSelected,
     ApiError {
@@ -171,16 +173,40 @@ impl From<anyhow::Error> for ThreadError {
         } else if let Some(lm_error) = error.downcast_ref::<LanguageModelCompletionError>() {
             use LanguageModelCompletionError::*;
             match lm_error {
-                RateLimitExceeded { provider, .. } => Self::RateLimitExceeded {
-                    provider: provider.to_string().into(),
-                },
-                ServerOverloaded { provider, .. } | ApiInternalServerError { provider, .. } => {
-                    Self::ServerOverloaded {
+                ProviderRejection {
+                    provider,
+                    message,
+                    category,
+                    ..
+                } => match category {
+                    ProviderErrorCategory::RateLimit => Self::RateLimitExceeded {
                         provider: provider.to_string().into(),
-                    }
-                }
-                PromptTooLarge { .. } => Self::PromptTooLarge,
-                PaymentRequired => Self::PaymentRequired,
+                    },
+                    ProviderErrorCategory::Overloaded => Self::ServerOverloaded {
+                        provider: provider.to_string().into(),
+                    },
+                    ProviderErrorCategory::PromptTooLarge { .. } => Self::PromptTooLarge,
+                    ProviderErrorCategory::PaymentRequired => Self::PaymentRequired,
+                    ProviderErrorCategory::Authentication => Self::AuthenticationFailed {
+                        provider: provider.to_string().into(),
+                    },
+                    ProviderErrorCategory::Permission => Self::PermissionDenied {
+                        provider: provider.to_string().into(),
+                        message: Some(message.clone().into()),
+                    },
+                    ProviderErrorCategory::EndpointNotFound => Self::ApiError {
+                        provider: provider.to_string().into(),
+                    },
+                    ProviderErrorCategory::InvalidEncryptedContent
+                    | ProviderErrorCategory::ContentPolicy
+                    | ProviderErrorCategory::InvalidRequest
+                    | ProviderErrorCategory::Conflict
+                    | ProviderErrorCategory::Timeout
+                    | ProviderErrorCategory::InternalServer
+                    | ProviderErrorCategory::Other => Self::ProviderRejection {
+                        message: message.clone().into(),
+                    },
+                },
                 NoApiKey { provider } => Self::NoCredentials {
                     provider: provider.to_string().into(),
                 },
@@ -190,20 +216,7 @@ impl From<anyhow::Error> for ThreadError {
                 | HttpSend { provider, .. } => Self::StreamError {
                     provider: provider.to_string().into(),
                 },
-                AuthenticationError { provider, .. } => Self::AuthenticationFailed {
-                    provider: provider.to_string().into(),
-                },
-                PermissionError { provider, message } => Self::PermissionDenied {
-                    provider: provider.to_string().into(),
-                    message: Some(message.clone().into()),
-                },
-                UpstreamProviderError { .. } => Self::RequestFailed,
                 DataRetentionConsentRequired { .. } => Self::DataRetentionConsentRequired,
-                BadRequestFormat { provider, .. }
-                | HttpResponseError { provider, .. }
-                | ApiEndpointNotFound { provider } => Self::ApiError {
-                    provider: provider.to_string().into(),
-                },
                 _ => {
                     let message: SharedString = format!("{:#}", error).into();
                     Self::Other {
@@ -965,6 +978,15 @@ impl ConversationView {
     fn request_elicitation_store(&self) -> Option<Entity<ElicitationStore>> {
         self.request_elicitation_connection()?
             .request_elicitations()
+    }
+
+    /// Drops the cached connection for this agent (so the next request spawns a
+    /// fresh server process) and rebuilds the thread state from scratch.
+    pub(crate) fn retry_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.connection_store.update(cx, |store, cx| {
+            store.restart_connection(self.connection_key.clone(), self.agent.clone(), cx);
+        });
+        self.reset(window, cx);
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2703,7 +2725,7 @@ impl ConversationView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let (title, message, action_slot): (_, SharedString, _) = match e {
+        let (title, message) = match e {
             LoadError::Unsupported {
                 command: path,
                 current_version,
@@ -2711,35 +2733,36 @@ impl ConversationView {
             } => {
                 return self.render_unsupported(path, current_version, minimum_version, window, cx);
             }
-            LoadError::FailedToInstall(msg) => (
-                "Failed to Install",
-                msg.into(),
-                Some(self.create_copy_button(msg.to_string()).into_any_element()),
-            ),
+            LoadError::FailedToInstall(msg) => ("Failed to Install", msg.to_string()),
             LoadError::Exited { status, stderr } => {
                 let mut message = format!("Server exited with status {status}");
                 if let Some(stderr) = stderr {
                     message.push_str("\n");
                     message.push_str(stderr);
                 };
-                let action_slot = stderr
-                    .is_some()
-                    .then(|| self.create_copy_button(message.clone()).into_any_element());
-                ("Failed to Launch", message.into(), action_slot)
+                ("Failed to Launch", message)
             }
-            LoadError::Other(msg) => (
-                "Failed to Launch",
-                msg.into(),
-                Some(self.create_copy_button(msg.to_string()).into_any_element()),
-            ),
+            LoadError::Other(msg) => ("Failed to Launch", msg.to_string()),
         };
+
+        let action_slot = h_flex()
+            .gap_1()
+            .child(
+                Button::new("retry-agent-launch", "Retry")
+                    .tooltip(Tooltip::text("Try to restart the agent"))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.retry_connection(window, cx);
+                    })),
+            )
+            .child(self.create_copy_button(message.clone()))
+            .into_any_element();
 
         Callout::new()
             .severity(Severity::Error)
             .icon(IconName::XCircleFilled)
             .title(title)
             .description(message)
-            .actions_slot(div().children(action_slot))
+            .actions_slot(action_slot)
             .into_any_element()
     }
 
@@ -3465,7 +3488,7 @@ fn render_agent_markdown(
             wrap_button_visibility: markdown::WrapButtonVisibility::VisibleOnHover,
             border: false,
         })
-        .image_resolver(move |dest_url| resolve_agent_image(dest_url, &worktree_roots))
+        .image_resolver(move |dest_url, _cx| resolve_agent_image(dest_url, &worktree_roots))
         .on_url_click(move |text, window, cx| {
             thread_view::open_link(text, &workspace, window, cx);
         })
@@ -3705,6 +3728,26 @@ pub(crate) mod tests {
             matches!(error, ThreadError::DataRetentionConsentRequired),
             "expected ThreadError::DataRetentionConsentRequired, got: {error:?}"
         );
+    }
+
+    #[test]
+    fn test_provider_rejection_preserves_provider_message() {
+        let provider_error = LanguageModelCompletionError::from_provider_response(
+            language_model::OPEN_AI_PROVIDER_NAME,
+            None,
+            Some("cyber_policy".to_string()),
+            "This content was flagged as potentially violating our terms of use.".to_string(),
+            None,
+            ProviderErrorCategory::Other,
+        );
+
+        let error = ThreadError::from(anyhow!(provider_error));
+
+        assert!(matches!(
+            error,
+            ThreadError::ProviderRejection { message }
+                if message == "This content was flagged as potentially violating our terms of use."
+        ));
     }
 
     #[gpui::test]
@@ -4280,10 +4323,12 @@ pub(crate) mod tests {
                 "Conversation should transition to LoadError when an ACP thread exits"
             );
         });
+
+        release_dropped_entities(cx);
         assert_eq!(
             close_session_count.load(std::sync::atomic::Ordering::SeqCst),
             1,
-            "ConversationView should close the ACP session after a thread exit"
+            "dropping the thread views after a thread exit should close the ACP session"
         );
     }
 
@@ -6626,6 +6671,11 @@ pub(crate) mod tests {
     ) -> Entity<MessageEditor> {
         let thread = active_thread(conversation_view, cx);
         cx.read(|cx| thread.read(cx).message_editor.clone())
+    }
+
+    fn release_dropped_entities(cx: &mut VisualTestContext) {
+        cx.update(|_, _| ());
+        cx.run_until_parked();
     }
 
     #[gpui::test]
