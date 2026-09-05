@@ -90,7 +90,8 @@ impl Render for SecurityModal {
             format!("Unrecognized Projects ({})", restricted_count).into()
         };
 
-        let trust_label = self.build_trust_label();
+        let path_style = self.path_style(cx);
+        let trust_label = self.build_trust_label(path_style);
 
         // The editable trust-scope field is shown only when a single project is
         // being prompted for (Delta opens one worktree per thread).
@@ -138,7 +139,7 @@ impl Render for SecurityModal {
                                         self.restricted_paths.values().filter_map(
                                             |restricted_path| {
                                                 let abs_path = if restricted_path.is_file {
-                                                    restricted_path.abs_path.parent()
+                                                    path_style.parent(&restricted_path.abs_path)
                                                 } else {
                                                     Some(restricted_path.abs_path.as_ref())
                                                 }?;
@@ -329,7 +330,11 @@ impl SecurityModal {
         // Pre-fill with the single project's parent folder (today's static
         // scope), read-only until the checkbox is ticked.
         if let Some(project) = this.single_trustable_path() {
-            let default_scope = project.parent().unwrap_or(&project).to_path_buf();
+            let path_style = this.path_style(cx);
+            let default_scope = path_style
+                .parent(&project)
+                .unwrap_or(&project)
+                .to_path_buf();
             this.trust_path_input.update(cx, |field, cx| {
                 field.set_text(&default_scope.to_string_lossy(), window, cx);
             });
@@ -340,7 +345,7 @@ impl SecurityModal {
         this
     }
 
-    fn build_trust_label(&self) -> Option<Cow<'static, str>> {
+    fn build_trust_label(&self, path_style: PathStyle) -> Option<Cow<'static, str>> {
         let mut has_restricted_files = false;
         let available_parents = self
             .restricted_paths
@@ -349,7 +354,7 @@ impl SecurityModal {
                 has_restricted_files |= restricted_path.is_file;
                 !restricted_path.is_file
             })
-            .filter_map(|restricted_path| restricted_path.abs_path.parent())
+            .filter_map(|restricted_path| path_style.parent(&restricted_path.abs_path))
             .collect::<SmallVec<[_; 2]>>();
         match available_parents.len() {
             0 => {
@@ -365,6 +370,13 @@ impl SecurityModal {
             ))),
             _ => Some(Cow::Borrowed("Trust all projects in the parent folders")),
         }
+    }
+
+    fn path_style(&self, cx: &App) -> PathStyle {
+        self.worktree_store
+            .upgrade()
+            .map(|store| store.read(cx).path_style())
+            .unwrap_or_else(PathStyle::local)
     }
 
     fn shorten_path<'a>(&self, path: &'a Path) -> Cow<'a, Path> {
@@ -389,11 +401,7 @@ impl SecurityModal {
             return Ok(None);
         };
         let typed = self.trust_path_input.read(cx).text(cx);
-        let path_style = self
-            .worktree_store
-            .upgrade()
-            .map(|store| store.read(cx).path_style())
-            .unwrap_or_else(PathStyle::local);
+        let path_style = self.path_style(cx);
         validate_trust_scope(&typed, &project, self.home_dir.as_deref(), path_style).map(Some)
     }
 
@@ -422,13 +430,15 @@ impl SecurityModal {
                     if let Some(scope) = scope_override {
                         paths_to_trust.insert(PathTrust::AbsPath(scope));
                     } else {
+                        let path_style = self.path_style(cx);
                         paths_to_trust.extend(self.restricted_paths.values().filter_map(
                             |restricted_paths| {
                                 if restricted_paths.is_file {
                                     None
                                 } else {
-                                    let parent_abs_path =
-                                        restricted_paths.abs_path.parent()?.to_owned();
+                                    let parent_abs_path = path_style
+                                        .parent(&restricted_paths.abs_path)?
+                                        .to_path_buf();
                                     Some(PathTrust::AbsPath(parent_abs_path))
                                 }
                             },
@@ -512,22 +522,28 @@ fn validate_trust_scope(
         return Err("Enter a folder to trust".into());
     }
     let expanded = match (trimmed.strip_prefix('~'), home_dir) {
-        (Some(rest), Some(home_dir)) => home_dir.join(
-            rest.strip_prefix(path_style.primary_separator())
-                .unwrap_or(rest),
-        ),
+        (Some(rest), Some(home_dir)) => path_style
+            .join_path(
+                home_dir,
+                rest.strip_prefix(path_style.primary_separator())
+                    .unwrap_or(rest),
+            )
+            .map_err(|error| SharedString::from(error.to_string()))?,
         _ => PathBuf::from(trimmed),
     };
     if !util::paths::is_absolute(&expanded.to_string_lossy(), path_style) {
         return Err("Enter an absolute folder path".into());
     }
-    if !project.starts_with(&expanded) {
+
+    let expanded = PathBuf::from(path_style.normalize(&expanded.to_string_lossy()));
+    let project = PathBuf::from(path_style.normalize(&project.to_string_lossy()));
+    if path_style.strip_prefix(&project, &expanded).is_none() {
         return Err("Must be a parent folder of the project".into());
     }
     Ok(expanded)
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -558,6 +574,61 @@ mod tests {
         // Deeper than the project is not an ancestor.
         assert!(
             validate_trust_scope("/Users/me/dev/delta/wt/t1/sub", project, None, style).is_err()
+        );
+    }
+
+    #[test]
+    fn accepts_windows_style_ancestor() {
+        let project = Path::new(r"C:\Users\me\dev\wt\t1");
+        let style = PathStyle::Windows;
+
+        assert_eq!(
+            validate_trust_scope(r"C:\Users\me\dev\wt", project, None, style).unwrap(),
+            PathBuf::from(r"C:\Users\me\dev\wt"),
+        );
+
+        assert_eq!(
+            validate_trust_scope(r"C:\Users\me\dev\wt\t1", project, None, style).unwrap(),
+            PathBuf::from(r"C:\Users\me\dev\wt\t1")
+        );
+
+        // Forward slashes are normalized to backslashes.
+        assert_eq!(
+            validate_trust_scope("C:/Users/me/dev/wt", project, None, style).unwrap(),
+            PathBuf::from(r"C:\Users\me\dev\wt"),
+        );
+        // Double separators and "." components are collapsed during normalization.
+        assert_eq!(
+            validate_trust_scope(r"C:\Users\me\\dev\.\wt", project, None, style).unwrap(),
+            PathBuf::from(r"C:\Users\me\dev\wt"),
+        );
+        // Drive letters are matched case-insensitively.
+        assert_eq!(
+            validate_trust_scope(r"c:\Users\me\dev\wt", project, None, style).unwrap(),
+            PathBuf::from(r"c:\Users\me\dev\wt")
+        );
+        // A distant ancestor is allowed.
+        assert!(validate_trust_scope(r"C:\Users\me", project, None, style).is_ok());
+    }
+
+    #[test]
+    fn rejects_windows_style_non_ancestor() {
+        let project = Path::new(r"C:\Users\me\dev\wt\t1");
+        let style = PathStyle::Windows;
+        assert!(validate_trust_scope(r"C:\Users\other", project, None, style).is_err());
+        // Relative paths are not absolute.
+        assert!(validate_trust_scope(r"dev\wt", project, None, style).is_err());
+        // Deeper than the project is not an ancestor.
+        assert!(validate_trust_scope(r"C:\Users\me\dev\wt\t1\sub", project, None, style).is_err());
+        // A prefix that is not a component boundary is not an ancestor.
+        assert!(
+            validate_trust_scope(
+                r"C:\Users\me\dev\wt",
+                Path::new(r"C:\Users\me\dev\wt2"),
+                None,
+                style,
+            )
+            .is_err()
         );
     }
 
