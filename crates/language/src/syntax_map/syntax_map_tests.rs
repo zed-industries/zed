@@ -67,6 +67,51 @@ fn test_splice_included_ranges() {
     );
     assert_eq!(change, 0..1);
 
+    // preserves non-empty ranges that merely touch the changed range.
+    //
+    // Combined injections can produce adjacent content ranges - the Go template
+    // lexer splits `podSelector: {}` into the three touching `(text)` nodes
+    // `"podSelector: "`, `"{"` and `"}"`. Editing the text after them re-runs the
+    // injection query over the edited range only, so splicing out the untouched
+    // `"}"` would drop it from the combined layer for good.
+    let adjacent = vec![
+        ts_range(0..7),
+        ts_range(7..8),
+        ts_range(8..9),
+        ts_range(9..20),
+    ];
+    let (new_ranges, change) =
+        splice_included_ranges(adjacent.clone(), &[15..16], &[ts_range(9..21)]);
+    assert_eq!(
+        new_ranges,
+        &[
+            ts_range(0..7),
+            ts_range(7..8),
+            ts_range(8..9),
+            ts_range(9..21)
+        ]
+    );
+    assert_eq!(change, 3..4);
+
+    // the same edit still replaces any touching range that the query re-reported.
+    let (new_ranges, change) =
+        splice_included_ranges(adjacent, &[9..10], &[ts_range(8..9), ts_range(9..21)]);
+    assert_eq!(
+        new_ranges,
+        &[
+            ts_range(0..7),
+            ts_range(7..8),
+            ts_range(8..9),
+            ts_range(9..21)
+        ]
+    );
+    assert_eq!(change, 2..4);
+
+    // empty ranges that touch the changed range are still spliced out.
+    let with_empty_ranges = vec![ts_range(0..7), ts_range(7..7), ts_range(7..20)];
+    let (new_ranges, _) = splice_included_ranges(with_empty_ranges, &[7..7], &[ts_range(7..20)]);
+    assert_eq!(new_ranges, &[ts_range(0..7), ts_range(7..20)]);
+
     fn ts_range(range: Range<usize>) -> tree_sitter::Range {
         tree_sitter::Range {
             start_byte: range.start,
@@ -819,6 +864,28 @@ fn test_combined_injections_editing_after_last_injection(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_combined_injections_with_adjacent_ranges(cx: &mut App) {
+    // Editing inside one content range must not drop the ranges that merely
+    // touch it. The injection query is only re-run over the edited range, so a
+    // neighbor that is spliced out here is never re-reported, and the combined
+    // layer silently loses everything it contributed. See
+    // zed-industries/zed#57341, where typing in a Helm chart dropped the `}` of
+    // `podSelector: {}` and broke YAML highlighting for the rest of the file.
+    test_edit_sequence(
+        "Adjacent",
+        &[
+            "
+                int aaa;int bbb;int ccc;
+            ",
+            "
+                int aaa;int bbb;int cc«c»c;
+            ",
+        ],
+        cx,
+    );
+}
+
+#[gpui::test]
 fn test_combined_injections_inside_injections(cx: &mut App) {
     let (buffer, syntax_map) = test_edit_sequence(
         "Markdown",
@@ -1404,6 +1471,7 @@ fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buf
     registry.add(Arc::new(ruby_lang()));
     registry.add(Arc::new(html_lang()));
     registry.add(Arc::new(erb_lang()));
+    registry.add(Arc::new(adjacent_injections_lang()));
     registry.add(markdown_lang());
     registry.add(Arc::new(markdown_inline_lang()));
 
@@ -1534,6 +1602,37 @@ fn erb_lang() -> Language {
             (
                 (content) @injection.content
                 (#set! injection.language "html")
+                (#set! injection.combined)
+            )
+        "#,
+    )
+    .unwrap()
+}
+
+/// A language whose injection query produces *adjacent* combined content
+/// ranges, like the Go template grammar does: because its lexer stops at `{`,
+/// `podSelector: {}` becomes the three touching `(text)` nodes
+/// `"podSelector: "`, `"{"` and `"}"`, which are then combined into one YAML
+/// layer. Consecutive C declarations written without whitespace between them
+/// have the same shape.
+fn adjacent_injections_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Adjacent".into(),
+            matcher: (LanguageMatcher {
+                path_suffixes: vec!["adjacent".into()],
+                ..Default::default()
+            })
+            .into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_c::LANGUAGE.into()),
+    )
+    .with_injection_query(
+        r#"
+            (
+                (declaration) @injection.content
+                (#set! injection.language "ruby")
                 (#set! injection.combined)
             )
         "#,
