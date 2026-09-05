@@ -574,28 +574,118 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             .expect("cannot benchmark renderer for entity without a current window");
 
         let dispatcher = self.background_executor.dispatcher().clone();
-        let collector = TraceScope::start();
-
-        let mut benchmark = || {
+        let mut benchmark = |this: &mut Self| {
             // Work already queued at frame start delays the frame in
             // production too, so run it inside the measured interval.
             dispatcher
                 .as_threaded()
                 .expect("validated in BenchAppContext::build")
                 .run_ready_main_tasks();
-            self.with_window(view.entity_id(), |window, cx| {
+            this.with_window(view.entity_id(), |window, cx| {
                 view.update(cx, |view, cx| update(view, window, cx));
             })
             .expect("cannot benchmark renderer for entity without a current window");
             // Submit the frame drawn by the update's effect flush, mirroring
             // production where every drawn frame is presented. With a headless
             // renderer this includes scene submission to the GPU.
-            self.with_window(view.entity_id(), |window, _| {
+            this.with_window(view.entity_id(), |window, _| {
                 window.present_if_needed();
             })
             .expect("cannot benchmark renderer for entity without a current window");
         };
-        bencher.iter(&mut benchmark);
+        let validate = std::env::var_os("GPUI_BENCH_VALIDATE").is_some();
+        let memory = std::env::var_os("GPUI_BENCH_MEMORY").is_some();
+        if validate || memory {
+            assert!(
+                std::env::args().any(|argument| argument == "--test"),
+                "diagnostic modes require Criterion --test"
+            );
+            #[cfg(not(feature = "test-memory"))]
+            assert!(
+                !memory,
+                "memory mode requires the test-memory feature and counting global allocator"
+            );
+            let mut reused = 0;
+            #[cfg(feature = "test-memory")]
+            if memory {
+                self.run_until_idle();
+                assert!(
+                    crate::memory::live_bytes() > 0,
+                    "install CountingAllocator as the executable's global allocator"
+                );
+                eprintln!("memory mounted: {}", crate::memory::live_bytes());
+            }
+            for step in 0..if validate { 24 } else { 500 } {
+                benchmark(self);
+                if validate {
+                    let (scene, pixels) = self
+                        .with_window(view.entity_id(), |window, _| {
+                            if let Some(stats) = window.retained_node_stats() {
+                                reused += stats.reused_subtrees;
+                            }
+                            (
+                                window.scene_snapshot_for_test(),
+                                window.render_to_image().expect("GPU readback"),
+                            )
+                        })
+                        .expect("benchmark window");
+                    assert!(scene.len() > 1000, "nontrivial benchmark scene");
+                    assert!(
+                        pixels.pixels().any(|pixel| pixel != pixels.get_pixel(0, 0)),
+                        "nontrivial GPU output"
+                    );
+                    self.with_window(view.entity_id(), |window, _| window.refresh())
+                        .expect("refresh window");
+                    self.with_window(view.entity_id(), |window, _| {
+                        assert!(
+                            scene == window.scene_snapshot_for_test(),
+                            "scene mismatch at step {step}"
+                        );
+                        assert!(
+                            pixels == window.render_to_image().expect("reference GPU readback"),
+                            "pixel mismatch at step {step}"
+                        );
+                    })
+                    .expect("reference window");
+                    if step == 0
+                        && let Ok(path) = std::env::var("GPUI_BENCH_SCREENSHOT")
+                    {
+                        pixels.save(path).expect("save benchmark screenshot");
+                    }
+                }
+                #[cfg(feature = "test-memory")]
+                if memory && step % 100 == 99 {
+                    self.run_until_idle();
+                    eprintln!(
+                        "memory after {} updates: {}",
+                        step + 1,
+                        crate::memory::live_bytes()
+                    );
+                }
+            }
+            if validate {
+                eprintln!(
+                    "validated {:?}: reused subtrees={reused}; no CPU timing result",
+                    self.benchmark_name
+                );
+            } else {
+                eprintln!("memory run {:?}: no CPU timing result", self.benchmark_name);
+            }
+            // Criterion still needs its iteration callback; diagnostic work is deliberately untimed.
+            bencher.iter(|| ());
+            if memory {
+                self.with_window(view.entity_id(), |window, _| window.remove_window())
+                    .expect("close benchmark window");
+                drop(view);
+                self.run_until_idle();
+                #[cfg(feature = "test-memory")]
+                eprintln!("memory after close: {}", crate::memory::live_bytes());
+            }
+            self.replace_bencher(bencher);
+            return;
+        }
+        let collector = TraceScope::start();
+        bencher.iter(|| benchmark(self));
 
         let events = collector.finish();
         self.report

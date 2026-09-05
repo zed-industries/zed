@@ -175,7 +175,8 @@ Performance and ownership:
   buffers and node recordings; these are a partial breakdown, not total heap.
   Add `--features test-memory` to count live requested bytes through Rust's
   global allocator separately from native caches and allocator overhead. The
-  counter is compiled only into GPUI's unit-test executable. Do not use its
+  counter is selected automatically by GPUI's unit-test executable and by the
+  editor benchmark executable when its `test-memory` feature is enabled. Do not use its
   timing output for CPU comparisons: allocation instrumentation adds overhead.
 - [ ] Measure repeated root-layout computation when several cached scopes change
   geometry in one frame; avoid repeated whole-tree work where semantics permit.
@@ -295,13 +296,117 @@ After the third unmount, live requested bytes return to 2,182,846 (legacy) and
 in this fixture; it does not establish memory behavior for path-heavy scenes,
 deep nesting, native GPU resources, or a full Zed workspace.
 
+## Busy workbench validation and measurement
+
+`Workbench/update/{row,editor,mixed,full}` embeds a real 1,000-line Editor in a
+1600-by-1000 window with four custom GPUI panels and 48 independently owned row
+entities. These panels exercise nested view boundaries, text, clipping, and click
+handler recordings; they are not the production project/search/diagnostics panels.
+The fixture has 54 retained scopes. Local row updates invalidate their containing
+panel and ancestors, editor updates leave the panels reusable, and full updates
+invalidate every scope. Mixed updates also reorder rows every eight updates and
+resize the window every twelve. Eight setup updates settle initial invalidations.
+
+`GPUI_BENCH_VALIDATE=1` with Criterion `--test` performs 24 updates and compares
+both the final scene and offscreen Metal pixels with a forced refresh after each
+update. It also checks for nontrivial scene and pixel output and reports actual
+subtree reuse. `GPUI_BENCH_SCREENSHOT=/tmp/workbench.png` saves the first incremental
+frame. This oracle detects stale cached output; refreshing the same engine is not
+an independent implementation of all rendering semantics. Input callback dispatch,
+native IME, compositor presentation, and GPU damage remain separate coverage.
+
+Build the memory executable with `CARGO_PROFILE_BENCH_DEBUG=0 cargo bench -p
+benchmarks --features test-memory --bench editor_render --no-run`. Run the emitted
+executable in a fresh process for each exact benchmark filter, with
+`GPUI_BENCH_MEMORY=1 GPUI_EXPERIMENTAL_NODE_ENGINE=0` or `1` and `--test`.
+It reports live requested Rust bytes before setup, after mounting, every 100
+updates through 500, and after closing the window and settling pending work.
+Profiler collection is disabled during these samples. This counts retained heap
+across all Rust threads, including shared application state; it excludes native
+font/Metal allocations and allocator overhead. Closing one window is a cleanup
+sample, not proof of leak freedom over repeated mount/unmount cycles.
+
+Use the executable built without `test-memory` for CPU timing, with filter
+`'^(editor_render|Editor panes|Workbench)' --bench --sample-size 20
+--warm-up-time 1 --measurement-time 3 --noplot`. Do not combine the memory and
+validation modes or interpret their empty Criterion callbacks as CPU timings.
+
+After `f7e66a3192`, three release timing runs per engine/workload gave these
+medians of Criterion point estimates on 2026-09-05. Every workload ran in a fresh
+process, with engine order legacy, retained, retained, legacy, legacy, retained;
+each used 20 samples, one second of warmup, and three seconds of measurement.
+Allocation instrumentation was disabled. Runs interrupted by other compilation
+or heavy CPU activity were discarded and retried. Exact benchmark-name filters
+(e.g. `'^Workbench/update/full$'`) reproduce the process isolation.
+
+| Workload | Legacy | Retained | Retained change |
+| --- | ---: | ---: | ---: |
+| Existing editor benchmark | 0.761 ms | 0.773 ms | +1.5% |
+| One editor pane | 1.093 ms | 1.153 ms | +5.5% |
+| Three editor panes | 3.218 ms | 1.681 ms | 47.8% less time (1.91×) |
+| Workbench: row | 0.852 ms | 0.436 ms | 48.8% less time (1.95×) |
+| Workbench: editor | 1.725 ms | 1.204 ms | 30.2% less time (1.43×) |
+| Workbench: mixed | 1.343 ms | 1.033 ms | 23.1% less time (1.30×) |
+| Workbench: full | 1.775 ms | 1.903 ms | +7.2% (+0.128 ms) |
+
+The full-workbench point estimates range from 1.771–1.836 ms legacy and
+1.865–1.947 ms retained. The existing editor benchmark's ranges overlap
+(0.747–0.765 ms legacy, 0.754–0.776 ms retained), so its small median difference
+should not be interpreted as a precise regression estimate. Earlier runs that
+combined all workloads in one process, during intermittent CPU contention,
+produced an approximately 10 ms retained full-workbench outlier; it did not
+reproduce in isolated runs. This measurement does not attribute that outlier to
+the engine or prove that CPU contention was its only cause.
+
+On 2026-09-05, after integrating the notification fix in `f7e66a3192`, three
+fresh processes per engine/workload on the M4 Max produced the following live
+Rust heap medians. Each warm value combines nine samples (at 300, 400, and 500
+updates in each process). These are whole-executable totals, including shared
+runtime/application allocations, not just scene storage.
+
+| Workload | Legacy warm | Retained warm | Extra retained heap |
+| --- | ---: | ---: | ---: |
+| Existing editor benchmark | 4.847 MiB | 5.037 MiB | 0.190 MiB (+3.9%) |
+| One editor pane | 6.258 MiB | 6.963 MiB | 0.705 MiB (+11.3%) |
+| Three editor panes | 9.580 MiB | 11.706 MiB | 2.126 MiB (+22.2%) |
+| Workbench: row | 6.917 MiB | 7.793 MiB | 0.877 MiB (+12.7%) |
+| Workbench: editor | 7.309 MiB | 8.242 MiB | 0.933 MiB (+12.8%) |
+| Workbench: mixed | 7.175 MiB | 8.099 MiB | 0.925 MiB (+12.9%) |
+| Workbench: full | 7.307 MiB | 8.497 MiB | 1.190 MiB (+16.3%) |
+
+The workbench row samples are nearly flat: 6.916–6.925 MiB legacy and
+7.793–7.794 MiB retained. Workloads with editor activity still vary across the
+last three samples; the largest within-process increase from update 300 to 500
+is about 0.189 MiB in each engine. This run does not establish a steady-state
+plateau for those workloads. Three-pane warm ranges are 9.550–9.597 MiB legacy
+and 11.686–11.722 MiB retained, so their extra heap is larger than the observed
+sampling variation. The notification fix did not materially change these heap
+costs relative to the preceding measurement.
+
+After closing the windows, median Rust heap is 3.895/3.894 MiB for the existing
+editor benchmark, 3.098/3.556 MiB for one pane, and 3.307/2.961 MiB for three panes
+(legacy/retained). Workbench medians range from 2.850–3.403 MiB legacy and
+2.952–3.377 MiB retained. Cleanup samples vary and include shared caches; they
+should not be interpreted as a precise leak measurement. The editor/workbench
+results demonstrate a memory cost unlike the original text microbenchmark's net
+savings. Attribution to scene recordings, layout contexts, text caches, and other
+allocation sites remains outstanding.
+
+All seven workloads pass 24 scene and Metal pixel comparisons under each engine
+(336 comparisons of each kind in total). The retained run records reuse in the
+three-pane and row/editor/mixed workbench cases; the single-editor and fully dirty
+cases legitimately rebuild everything. Mixed-workbench resizing calls
+`bounds_changed` after `resize`, because test windows do not dispatch the native
+resize callback. `./script/clippy -p gpui -p benchmarks` passes, including the
+dependency audit.
+
 ## Review validation
 
-The retained engine passes the GPUI suite (251 tests, two manual benchmarks
-ignored) and the editor suite (899 tests, one ignored). The workspace suite
-(238 tests) passed before the final allocation optimizations. The GPUI suite also
-passes with the legacy engine. The twelve focused node-engine tests pass across
-20 scheduler iterations.
+After the notification fix in `f7e66a3192`, the GPUI suite passes under both
+engines (252 tests, two manual benchmarks ignored), and thirteen focused
+node-engine tests pass across 20 scheduler iterations. The earlier editor suite
+run passed 899 tests with one ignored; it has not been repeated after that fix.
+The workspace suite (238 tests) passed before the final allocation optimizations.
 
 The workspace stress test passes its 48 scene comparisons under both engines.
 Its initial version exposed a test-only full-refresh fallback for debug selectors
