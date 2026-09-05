@@ -3131,6 +3131,9 @@ impl Window {
 
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
+        self.next_frame
+            .scene
+            .use_node_scene_storage(self.node_engine_enabled());
         // Now actually paint the elements.
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
@@ -3513,19 +3516,11 @@ impl Window {
         node_id: ViewNodeId,
         cache_key: ViewNodeCacheKey,
         recording: ViewNodeRecording,
-        paint_range: Range<PaintIndex>,
         accessed_entities: FxHashSet<EntityId>,
         cx: &mut App,
     ) {
         if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.store_render(
-                node_id,
-                cache_key,
-                recording,
-                paint_range,
-                accessed_entities,
-                cx,
-            );
+            node_engine.store_render(node_id, cache_key, recording, accessed_entities, cx);
         }
     }
 
@@ -3533,35 +3528,37 @@ impl Window {
         &mut self,
         node_id: ViewNodeId,
         recording: ViewNodeRecording,
-        paint_range: Range<PaintIndex>,
         cx: &mut App,
     ) {
         if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.store_graft(node_id, recording, paint_range, cx);
+            node_engine.store_graft(node_id, recording, cx);
         }
+    }
+
+    pub(crate) fn begin_view_node_paint(
+        &mut self,
+        node_id: ViewNodeId,
+        cx: &mut App,
+    ) -> ViewNodeRecording {
+        let mut recording = match &mut self.draw_engine {
+            DrawEngine::Node(engine) => engine.take_recording(node_id, cx).unwrap_or_default(),
+            DrawEngine::Legacy => unreachable!("node painting requires the node engine"),
+        };
+        self.next_frame
+            .scene
+            .begin_node_scene(mem::take(&mut recording.scene));
+        recording
     }
 
     pub(crate) fn capture_view_node_recording(
         &mut self,
         node_id: ViewNodeId,
+        mut recording: ViewNodeRecording,
         layout_range: Option<Range<PrepaintStateIndex>>,
         prepaint_range: Range<PrepaintStateIndex>,
         paint_range: Range<PaintIndex>,
-        cx: &mut App,
     ) -> ViewNodeRecording {
-        let (mut recording, children) = if let DrawEngine::Node(engine) = &mut self.draw_engine {
-            (
-                engine.take_recording(node_id, cx).unwrap_or_default(),
-                engine.child_scenes(node_id, cx),
-            )
-        } else {
-            (ViewNodeRecording::default(), &mut [][..])
-        };
-        recording.scene.record(
-            &self.next_frame.scene,
-            paint_range.start.scene_index..paint_range.end.scene_index,
-            children,
-        );
+        recording.scene = self.next_frame.scene.finish_node_scene(node_id);
         let record_states = |range: &Range<PrepaintStateIndex>, target: &mut Vec<_>| {
             self.next_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
@@ -3652,10 +3649,10 @@ impl Window {
 
     pub(crate) fn graft_view_node_paint(
         &mut self,
+        node_id: ViewNodeId,
         recording: &ViewNodeRecording,
         cx: &App,
-    ) -> Range<PaintIndex> {
-        let start = self.paint_index();
+    ) {
         #[cfg(any(test, feature = "test-support"))]
         self.next_frame.replay_debug_bounds(&recording.debug_bounds);
         self.next_frame
@@ -3675,12 +3672,13 @@ impl Window {
             .extend(recording.window_controls.iter().cloned());
         self.next_frame.tab_stops.replay(&recording.tab_stops);
         self.text_system.replay_layouts(&recording.paint_text);
+        let parent = self.next_frame.scene.suspend_node_scene();
         if let DrawEngine::Node(engine) = &self.draw_engine {
             recording
                 .scene
                 .replay(&mut self.next_frame.scene, engine, cx);
         }
-        start..self.paint_index()
+        self.next_frame.scene.restore_node_scene(parent, node_id);
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {

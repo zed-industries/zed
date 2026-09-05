@@ -687,8 +687,8 @@ impl<V: View> Element for ViewElement<V> {
             if let Some(entity_id) = self.entity_id {
                 window.with_rendered_view(entity_id, |window| match node {
                     ViewNodePrepaintState::Graft { node_id, recording } => {
-                        let paint_range = window.graft_view_node_paint(&recording, cx);
-                        window.store_grafted_view_node(node_id, recording, paint_range, cx);
+                        window.graft_view_node_paint(node_id, &recording, cx);
+                        window.store_grafted_view_node(node_id, recording, cx);
                     }
                     ViewNodePrepaintState::Render {
                         layout_range,
@@ -697,6 +697,7 @@ impl<V: View> Element for ViewElement<V> {
                         prepaint_range,
                         mut accessed_entities,
                     } => {
+                        let recording = window.begin_view_node_paint(node_id, cx);
                         let paint_start = window.paint_index();
                         if let Some(element) = element.element.as_mut() {
                             let refreshing = mem::replace(&mut window.refreshing, true);
@@ -709,16 +710,15 @@ impl<V: View> Element for ViewElement<V> {
                         let paint_range = paint_start..window.paint_index();
                         let recording = window.capture_view_node_recording(
                             node_id,
+                            recording,
                             layout_range,
                             prepaint_range,
-                            paint_range.clone(),
-                            cx,
+                            paint_range,
                         );
                         window.store_rendered_view_node(
                             node_id,
                             cache_key,
                             recording,
-                            paint_range,
                             accessed_entities,
                             cx,
                         );
@@ -1720,6 +1720,8 @@ mod tests {
                     let stats = window.retained_node_stats().expect("retained engine");
                     assert_eq!(stats.rebuilt_scopes, if dirty_all { 4 } else { 2 });
                     assert_eq!(stats.reused_subtrees, if dirty_all { 0 } else { 2 });
+                    assert_eq!(window.rendered_frame.scene.paint_operations.capacity(), 0);
+                    assert_eq!(window.next_frame.scene.paint_operations.capacity(), 0);
                 })
                 .expect("window open");
         }
@@ -2189,9 +2191,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_dependency_changes_dirty_views_without_notifying_them(
-        cx: &mut TestAppContext,
-    ) {
+    fn node_engine_dependency_changes_dirty_views_without_notifying_them(cx: &mut TestAppContext) {
         let dependency = cx.new(|_| Dependency);
         let renders = Rc::new(Cell::new(0));
         let window = cx.open_window(size(px(100.), px(100.)), |window, _| {
@@ -2203,16 +2203,26 @@ mod tests {
             }
         });
         cx.run_until_parked();
-        let view = window.update(cx, |_, _, cx| cx.entity()).expect("window open");
+        let view = window
+            .update(cx, |_, _, cx| cx.entity())
+            .expect("window open");
         let observer_calls = Rc::new(Cell::new(0));
         let _subscription = cx.update({
             let observer_calls = observer_calls.clone();
-            |cx| cx.observe(&view, move |_, _| observer_calls.set(observer_calls.get() + 1))
+            |cx| {
+                cx.observe(&view, move |_, _| {
+                    observer_calls.set(observer_calls.get() + 1)
+                })
+            }
         });
 
         dependency.update(cx, |_, cx| cx.notify());
         cx.run_until_parked();
-        assert_eq!(renders.get(), 2, "a changed dependency must rebuild the view's output");
+        assert_eq!(
+            renders.get(),
+            2,
+            "a changed dependency must rebuild the view's output"
+        );
         assert_eq!(
             observer_calls.get(),
             0,
@@ -2222,7 +2232,11 @@ mod tests {
         view.update(cx, |_, cx| cx.notify());
         cx.run_until_parked();
         assert_eq!(renders.get(), 3);
-        assert_eq!(observer_calls.get(), 1, "notifying the view itself still reaches its observers");
+        assert_eq!(
+            observer_calls.get(),
+            1,
+            "notifying the view itself still reaches its observers"
+        );
     }
 
     #[gpui::test]

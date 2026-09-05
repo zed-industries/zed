@@ -1,6 +1,6 @@
 use crate::{
     AnyView, Bounds, ContentMask, CursorStyleRequest, EntityId, GlobalElementId, Hitbox, LayoutId,
-    PaintIndex, Pixels, Scene, TextStyle, TooltipRequest,
+    Pixels, Scene, TextStyle, TooltipRequest,
 };
 use collections::{FxHashMap, FxHashSet};
 use std::any::TypeId;
@@ -44,6 +44,8 @@ pub(crate) struct ViewNodeRecording {
 pub(crate) struct ViewNodeScene {
     operations: Vec<crate::scene::PaintOperation>,
     segments: Vec<ViewNodeSceneSegment>,
+    operation_count: usize,
+    local_start: usize,
 }
 
 enum ViewNodeSceneSegment {
@@ -57,6 +59,41 @@ impl ViewNodeScene {
         self.operations.capacity() * std::mem::size_of::<crate::scene::PaintOperation>()
     }
 
+    pub(crate) fn begin(&mut self) {
+        self.segments.clear();
+        self.operation_count = 0;
+        self.local_start = 0;
+    }
+
+    pub(crate) fn push(&mut self, operation: crate::scene::PaintOperation) {
+        if let Some(previous) = self.operations.get_mut(self.operation_count) {
+            *previous = operation;
+        } else {
+            self.operations.push(operation);
+        }
+        self.operation_count += 1;
+    }
+
+    fn finish_local(&mut self) {
+        if self.local_start < self.operation_count {
+            self.segments.push(ViewNodeSceneSegment::Local(
+                self.local_start..self.operation_count,
+            ));
+        }
+        self.local_start = self.operation_count;
+    }
+
+    pub(crate) fn push_child(&mut self, child: crate::node_engine::ViewNodeId) {
+        self.finish_local();
+        self.segments.push(ViewNodeSceneSegment::Child(child));
+    }
+
+    pub(crate) fn finish(&mut self) {
+        self.finish_local();
+        self.operations.truncate(self.operation_count);
+    }
+
+    #[cfg(test)]
     pub(crate) fn record(
         &mut self,
         scene: &Scene,
@@ -86,6 +123,7 @@ impl ViewNodeScene {
         self.operations.truncate(operation_count);
     }
 
+    #[cfg(test)]
     fn record_local(&mut self, scene: &Scene, range: Range<usize>, start: usize) -> usize {
         let end = scene.recording(range, &mut self.operations, start);
         self.segments.push(ViewNodeSceneSegment::Local(start..end));
@@ -115,7 +153,6 @@ pub(crate) struct NodeLocalState {
 }
 
 pub(crate) struct ViewNode {
-    pub(crate) paint_range: Range<PaintIndex>,
     pub(crate) local_state: FxHashMap<(GlobalElementId, TypeId), NodeLocalState>,
     pub(crate) accessed_local_state: FxHashSet<(GlobalElementId, TypeId)>,
     pub(crate) layout: Option<LayoutId>,
@@ -168,6 +205,28 @@ mod tests {
         }
         replayed.finish();
         assert_eq!(replayed.snapshot_for_test(), expected.snapshot_for_test());
+    }
+
+    #[test]
+    fn direct_scene_recording_moves_path_buffers() {
+        let mut recording = ViewNodeScene::default();
+        for (vertices, offset) in [(64, 0.), (64, 3.), (8, 10.), (32, 5.)] {
+            let mut expected = path_scene(vertices, offset);
+            let mut scene = Scene::default();
+            scene.use_node_scene_storage(true);
+            scene.begin_node_scene(recording);
+            let path = expected.paths.first().expect("path").clone();
+            let pointer = path.vertices.as_ptr();
+            scene.insert_primitive(path);
+            recording = scene.finish_node_scene(EntityId::from(1));
+            scene.finish();
+            expected.finish();
+            assert_eq!(scene.snapshot_for_test(), expected.snapshot_for_test());
+            assert_eq!(scene.paint_operations.capacity(), 0);
+            let current = recorded_path(&recording).vertices.as_ptr();
+            assert_eq!(current, pointer);
+            assert_replay(&recording, &expected);
+        }
     }
 
     #[test]

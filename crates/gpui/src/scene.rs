@@ -40,6 +40,10 @@ impl From<bool> for PaddedBool32 {
 #[expect(missing_docs)]
 pub struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
+    operation_count: usize,
+    discard_paint_operations: bool,
+    node_scene: Option<crate::view_node::ViewNodeScene>,
+    node_scene_stack: Vec<crate::view_node::ViewNodeScene>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
     pub shadows: Vec<Shadow>,
@@ -55,7 +59,10 @@ pub struct Scene {
 #[expect(missing_docs)]
 impl Scene {
     pub fn clear(&mut self) {
+        debug_assert!(self.node_scene.is_none() && self.node_scene_stack.is_empty());
         self.paint_operations.clear();
+        self.operation_count = 0;
+        self.discard_paint_operations = false;
         self.primitive_bounds.clear();
         self.layer_stack.clear();
         self.paths.clear();
@@ -69,19 +76,18 @@ impl Scene {
     }
 
     pub fn len(&self) -> usize {
-        self.paint_operations.len()
+        self.operation_count
     }
 
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
         let order = self.primitive_bounds.insert(bounds);
         self.layer_stack.push(order);
-        self.paint_operations
-            .push(PaintOperation::StartLayer(bounds));
+        self.record_operation(PaintOperation::StartLayer(bounds));
     }
 
     pub fn pop_layer(&mut self) {
         self.layer_stack.pop();
-        self.paint_operations.push(PaintOperation::EndLayer);
+        self.record_operation(PaintOperation::EndLayer);
     }
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
@@ -134,14 +140,74 @@ impl Scene {
                 self.surfaces.push(surface.clone());
             }
         }
-        self.paint_operations
-            .push(PaintOperation::Primitive(primitive));
+        self.record_operation(PaintOperation::Primitive(primitive));
+    }
+
+    pub(crate) fn use_node_scene_storage(&mut self, enabled: bool) {
+        // Prepaint callers can submit primitives outside a retained scope.
+        // Preserve their replay log when switching storage after prepaint.
+        self.discard_paint_operations = enabled && self.operation_count == 0;
+        if self.discard_paint_operations {
+            self.paint_operations = Vec::new();
+        }
+    }
+
+    pub(crate) fn begin_node_scene(&mut self, mut recording: crate::view_node::ViewNodeScene) {
+        recording.begin();
+        if let Some(parent) = self.node_scene.replace(recording) {
+            self.node_scene_stack.push(parent);
+        }
+    }
+
+    pub(crate) fn finish_node_scene(
+        &mut self,
+        node_id: crate::node_engine::ViewNodeId,
+    ) -> crate::view_node::ViewNodeScene {
+        let mut recording = self.node_scene.take().expect("balanced node painting");
+        recording.finish();
+        self.node_scene = self.node_scene_stack.pop();
+        if let Some(parent) = &mut self.node_scene {
+            parent.push_child(node_id);
+        }
+        recording
+    }
+
+    pub(crate) fn suspend_node_scene(&mut self) -> Option<crate::view_node::ViewNodeScene> {
+        self.node_scene.take()
+    }
+
+    pub(crate) fn restore_node_scene(
+        &mut self,
+        mut parent: Option<crate::view_node::ViewNodeScene>,
+        child: crate::node_engine::ViewNodeId,
+    ) {
+        if let Some(parent) = &mut parent {
+            parent.push_child(child);
+        }
+        self.node_scene = parent;
+    }
+
+    fn record_operation(&mut self, operation: PaintOperation) {
+        self.operation_count += 1;
+        if let Some(recording) = &mut self.node_scene {
+            if !self.discard_paint_operations {
+                self.paint_operations.push(operation.clone());
+            }
+            recording.push(operation);
+        } else if !self.discard_paint_operations {
+            self.paint_operations.push(operation);
+        }
     }
 
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
+        assert!(
+            !prev_scene.discard_paint_operations,
+            "frame replay requires an operation recording"
+        );
         self.replay_recording(&prev_scene.paint_operations[range]);
     }
 
+    #[cfg(test)]
     pub(crate) fn recording(
         &self,
         range: Range<usize>,
