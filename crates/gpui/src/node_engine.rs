@@ -101,19 +101,6 @@ impl Drop for NodeEngineTestGuard {
 }
 
 impl NodeEngine {
-    #[cfg(any(all(test, target_os = "macos"), feature = "test-memory"))]
-    pub(crate) fn recorded_operation_buffer_bytes(&self, cx: &App) -> usize {
-        self.nodes
-            .values()
-            .map(|node| {
-                node.read(cx)
-                    .recording
-                    .as_ref()
-                    .map_or(0, |recording| recording.scene.operation_buffer_bytes())
-            })
-            .sum()
-    }
-
     pub(crate) fn new() -> Self {
         Self {
             invalidation_queue: Vec::new(),
@@ -273,7 +260,8 @@ impl NodeEngine {
     pub(crate) fn begin_occurrence(
         &mut self,
         occurrence: GlobalElementId,
-        view: AnyView,
+        view_id: EntityId,
+        view: Option<AnyView>,
         cache_key: ViewNodeCacheKey,
         cx: &mut App,
     ) -> NodeRenderDecision {
@@ -290,7 +278,8 @@ impl NodeEngine {
                 parent,
                 children: Vec::new(),
                 next_children: Vec::new(),
-                view,
+                view_id,
+                _view: view,
                 cache_key: cache_key.clone(),
                 previous_bounds,
                 accessed_entities: FxHashSet::default(),
@@ -378,7 +367,8 @@ impl NodeEngine {
         if let Some((bounds, _)) = previous {
             cache_key.bounds = bounds;
         }
-        let decision = self.begin_occurrence(occurrence, view, cache_key, cx);
+        let decision =
+            self.begin_occurrence(occurrence, view.entity_id(), Some(view), cache_key, cx);
         (decision, previous.and_then(|(_, layout)| layout))
     }
 
@@ -434,7 +424,7 @@ impl NodeEngine {
         let node = node.read(cx);
         let old_bounds = node.previous_bounds;
         let new_bounds = cache_key.bounds;
-        accessed_entities.insert(node.view.entity_id());
+        accessed_entities.insert(node.view_id);
         // A parent's output contains its children's, so a dirty child dirties its ancestors
         // through the same graph as any other dependency.
         accessed_entities.extend(node.children.iter().copied());

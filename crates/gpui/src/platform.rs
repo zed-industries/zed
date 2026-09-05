@@ -1538,7 +1538,7 @@ impl PlatformInputHandler {
 
     pub fn paste(&mut self, item: ClipboardItem) {
         self.cx
-            .update(|window, cx| self.handler.paste(item, window, cx))
+            .update(|window, cx| self.handler.borrow_mut().paste(item, window, cx))
             .ok();
     }
 
@@ -1695,13 +1695,19 @@ impl PlatformInputHandler {
         window: &mut Window,
         cx: &mut App,
     ) -> TextInputConfiguration {
-        self.handler.text_input_configuration(window, cx)
+        self.handler
+            .borrow_mut()
+            .text_input_configuration(window, cx)
     }
 
     /// See [`InputHandler::text_input_editable_range`].
     pub fn text_input_editable_range(&mut self) -> Option<Range<usize>> {
         self.cx
-            .update(|window, cx| self.handler.text_input_editable_range(window, cx))
+            .update(|window, cx| {
+                self.handler
+                    .borrow_mut()
+                    .text_input_editable_range(window, cx)
+            })
             .ok()
             .flatten()
     }

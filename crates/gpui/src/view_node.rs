@@ -201,11 +201,6 @@ impl ViewNodeScene {
         })
     }
 
-    #[cfg(any(all(test, target_os = "macos"), feature = "test-memory"))]
-    pub(crate) fn operation_buffer_bytes(&self) -> usize {
-        self.operations.capacity() * std::mem::size_of::<crate::scene::PaintOperation>()
-    }
-
     pub(crate) fn begin(&mut self) {
         self.segments.clear();
         self.operation_count = 0;
@@ -307,7 +302,8 @@ pub(crate) struct ViewNode {
     pub(crate) parent: Option<super::node_engine::ViewNodeId>,
     pub(crate) children: Vec<super::node_engine::ViewNodeId>,
     pub(crate) next_children: Vec<super::node_engine::ViewNodeId>,
-    pub(crate) view: AnyView,
+    pub(crate) view_id: EntityId,
+    pub(crate) _view: Option<AnyView>,
     pub(crate) cache_key: ViewNodeCacheKey,
     pub(crate) previous_bounds: Bounds<Pixels>,
     pub(crate) accessed_entities: FxHashSet<EntityId>,
@@ -422,42 +418,5 @@ mod tests {
         recording.record(&scene, 0..scene.len(), &mut []);
         scene.finish();
         assert_replay(&recording, &scene);
-    }
-
-    #[test]
-    #[ignore = "manual capture benchmark; run with --release --ignored --nocapture"]
-    fn path_recording_capture_benchmark() {
-        let mut scene = Scene::default();
-        for offset in 0..32 {
-            scene.replay_recording(&path_scene(256, offset as f32).paint_operations);
-        }
-        scene.finish();
-        let mut baseline = ViewNodeScene::default();
-        let mut retained = ViewNodeScene::default();
-        let mut samples = [Vec::new(), Vec::new()];
-        for round in 0..5 {
-            for index in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
-                let recording = if index == 0 {
-                    &mut baseline
-                } else {
-                    &mut retained
-                };
-                recording.record(&scene, 0..scene.len(), &mut []);
-                let started = std::time::Instant::now();
-                for _ in 0..1000 {
-                    if index == 0 {
-                        recording.operations.clear();
-                    }
-                    recording.record(std::hint::black_box(&scene), 0..scene.len(), &mut []);
-                    std::hint::black_box(&recording.operations);
-                }
-                samples[index].push(started.elapsed().as_secs_f64() * 1000.);
-                assert_replay(recording, &scene);
-            }
-        }
-        for (label, mut samples) in ["clear", "reuse"].into_iter().zip(samples) {
-            samples.sort_by(f64::total_cmp);
-            eprintln!("{label}: microseconds/capture {samples:?}");
-        }
     }
 }

@@ -688,6 +688,8 @@ fn test_ime_platform_handler_across_retained_frames(cx: &mut TestAppContext) {
             handler.text_for_range(0..text.encode_utf16().count(), &mut None),
             Some(text.to_owned())
         );
+        let configuration = cx.update(|window, cx| handler.text_input_configuration(window, cx));
+        let editable = handler.text_input_editable_range();
         let candidate = handler
             .ime_candidate_bounds()
             .expect("composition candidate bounds");
@@ -700,6 +702,8 @@ fn test_ime_platform_handler_across_retained_frames(cx: &mut TestAppContext) {
         cx.run_until_parked();
         let mut handler = cx.input_handler(handle).expect("rebuilt input handler");
         assert_eq!(handler.ime_candidate_bounds(), Some(candidate));
+        assert_eq!(cx.update(|window, cx| handler.text_input_configuration(window, cx)), configuration);
+        assert_eq!(handler.text_input_editable_range(), editable);
         let rebuilt_selection = handler
             .selected_text_range(true)
             .expect("rebuilt selection");

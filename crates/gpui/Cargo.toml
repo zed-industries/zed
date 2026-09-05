@@ -41,7 +41,6 @@ screen-capture = [
 windows-manifest = ["dep:embed-resource"]
 profiler = ["dep:hdrhistogram"]
 stacker = ["dep:stacksafe"]
-test-memory = []
 
 [lib]
 path = "src/gpui.rs"
@@ -178,10 +177,6 @@ name = "move_entity_between_windows"
 path = "examples/move_entity_between_windows.rs"
 
 [[example]]
-name = "node_engine_siblings"
-path = "examples/node_engine_siblings.rs"
-
-[[example]]
 name = "image"
 path = "examples/image/image.rs"
 
@@ -265,7 +260,3 @@ path = "examples/a11y.rs"
 [[example]]
 name = "view_example"
 path = "examples/view_example/view_example_main.rs"
-
-[[example]]
-name = "node_engine_boundaries"
-path = "examples/node_engine_boundaries.rs"

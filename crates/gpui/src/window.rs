@@ -8,22 +8,22 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, DrawEngine, Edges, Effect,
+    Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
+    GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
+    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, NodeRenderDecision,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    ViewNodeCacheKey, ViewNodeId, ViewNodeRecording, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     point, prelude::*, px, rems, size, transparent_black,
-    DrawEngine, NodeRenderDecision, ViewNodeCacheKey, ViewNodeId, ViewNodeRecording,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1170,6 +1170,8 @@ pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) draw_engine: DrawEngine,
+    global_revision: u64,
+    atlas_invalidated: bool,
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: Option<DisplayId>,
@@ -2003,6 +2005,8 @@ impl Window {
             handle,
             invalidator,
             draw_engine: DrawEngine::from_environment(),
+            global_revision: cx.global_revision,
+            atlas_invalidated: false,
             removed: false,
             platform_window,
             display_id,
@@ -3082,6 +3086,7 @@ impl Window {
             }
         }
         if !cx.mode.skip_drawing() {
+            self.a11y.sync_active_flag();
             self.begin_node_engine_frame(cx);
             self.draw_roots(cx);
             self.finish_node_engine_frame(cx);
@@ -3249,8 +3254,14 @@ impl Window {
         let inspector_active = self.inspector.is_some();
         #[cfg(not(any(feature = "inspector", debug_assertions)))]
         let inspector_active = false;
+        let atlas_invalidated = mem::take(&mut self.atlas_invalidated);
         let full_refresh_reason = if self.refreshing {
             Some("window refresh")
+        } else if atlas_invalidated {
+            Some("image eviction")
+        } else if self.global_revision != cx.global_revision {
+            // Global reads do not participate in entity dependency tracking.
+            Some("global change")
         } else if !self.rendered_frame.deferred_draws.is_empty() {
             Some("deferred drawing")
         } else if self.prompt.is_some() {
@@ -3263,6 +3274,7 @@ impl Window {
             None
         };
         if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
+            self.global_revision = cx.global_revision;
             node_engine.begin_frame(full_refresh_reason);
             // No scope can graft an old layout when every mounted node is dirty.
             // Keep the newly built tree for subsequent partial updates.
@@ -3353,7 +3365,6 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
-        self.a11y.sync_active_flag();
         if self.a11y.is_active() {
             self.a11y.begin_frame();
         }
@@ -3830,14 +3841,15 @@ impl Window {
     pub(crate) fn begin_view_node(
         &mut self,
         occurrence: GlobalElementId,
-        view: AnyView,
+        view_id: EntityId,
+        view: Option<AnyView>,
         cache_key: ViewNodeCacheKey,
         cx: &mut App,
     ) -> Option<NodeRenderDecision> {
         let DrawEngine::Node(node_engine) = &mut self.draw_engine else {
             return None;
         };
-        Some(node_engine.begin_occurrence(occurrence, view, cache_key, cx))
+        Some(node_engine.begin_occurrence(occurrence, view_id, view, cache_key, cx))
     }
 
     pub(crate) fn finish_view_node_prepaint(
@@ -5467,6 +5479,8 @@ impl Window {
 
     /// Removes an image from the sprite atlas.
     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
+        // Retained sprites refer to atlas tiles that may be reassigned after removal.
+        self.atlas_invalidated = true;
         for frame_index in 0..data.frame_count() {
             let params = RenderImageParams {
                 image_id: data.id,
@@ -8110,6 +8124,52 @@ mod tests {
         StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
         TouchId, TouchPhase, Window, WindowAppearance, WindowOptions, canvas, div, point, px, size,
     };
+
+    #[gpui::test]
+    fn accessibility_activation_precedes_retained_cache_decisions(cx: &mut TestAppContext) {
+        struct Leaf(Rc<Cell<usize>>);
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.0.set(self.0.get() + 1);
+                div().id("accessible-leaf").child("Accessible text")
+            }
+        }
+        struct Host(crate::Entity<Leaf>);
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().child(self.0.clone())
+            }
+        }
+        let active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let renders = Rc::new(Cell::new(0));
+        let handle = cx.open_window(size(px(300.), px(100.)), |window, cx| {
+            window.draw_engine = crate::DrawEngine::Node(crate::NodeEngine::new());
+            window.a11y = super::A11y::new(active.clone(), false, None);
+            Host(cx.new(|_| Leaf(renders.clone())))
+        });
+        cx.run_until_parked();
+        for enabled in [false, true, true, false, false] {
+            let before = renders.get();
+            active.store(enabled, std::sync::atomic::Ordering::SeqCst);
+            handle
+                .update(cx, |_, _, cx| cx.notify())
+                .expect("window open");
+            cx.run_until_parked();
+            assert_eq!(renders.get() - before, usize::from(enabled));
+            handle
+                .update(cx, |_, window, _| {
+                    assert_eq!(window.is_a11y_active(), enabled);
+                    assert_eq!(
+                        window
+                            .retained_node_stats()
+                            .expect("node engine")
+                            .full_refresh_reason,
+                        enabled.then_some("accessibility")
+                    );
+                })
+                .expect("window open");
+        }
+    }
 
     struct EmptyView;
 

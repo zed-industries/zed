@@ -26,7 +26,6 @@
 //! }
 //! ```
 use crate::{Entity, Subscription, TestAppContext, TestDispatcher};
-
 use futures::StreamExt as _;
 use proptest::prelude::{Just, Strategy, any};
 use std::{
@@ -34,61 +33,6 @@ use std::{
     panic::{self, RefUnwindSafe, UnwindSafe},
     pin::Pin,
 };
-
-/// Opt-in live Rust allocation accounting for test and benchmark executables.
-#[cfg(feature = "test-memory")]
-pub mod memory {
-    use std::alloc::{GlobalAlloc, Layout, System};
-    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
-
-    /// A system allocator that counts requested bytes still allocated.
-    pub struct CountingAllocator;
-    static LIVE_BYTES: AtomicUsize = AtomicUsize::new(0);
-
-    #[cfg(test)]
-    #[global_allocator]
-    static ALLOCATOR: CountingAllocator = CountingAllocator;
-
-    unsafe impl GlobalAlloc for CountingAllocator {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            let pointer = unsafe { System.alloc(layout) };
-            if !pointer.is_null() {
-                LIVE_BYTES.fetch_add(layout.size(), Relaxed);
-            }
-            pointer
-        }
-
-        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-            let pointer = unsafe { System.alloc_zeroed(layout) };
-            if !pointer.is_null() {
-                LIVE_BYTES.fetch_add(layout.size(), Relaxed);
-            }
-            pointer
-        }
-
-        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-            unsafe { System.dealloc(pointer, layout) };
-            LIVE_BYTES.fetch_sub(layout.size(), Relaxed);
-        }
-
-        unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-            let pointer = unsafe { System.realloc(pointer, layout, new_size) };
-            if !pointer.is_null() {
-                if new_size >= layout.size() {
-                    LIVE_BYTES.fetch_add(new_size - layout.size(), Relaxed);
-                } else {
-                    LIVE_BYTES.fetch_sub(layout.size() - new_size, Relaxed);
-                }
-            }
-            pointer
-        }
-    }
-
-    /// Returns live requested bytes, excluding native allocations and allocator overhead.
-    pub fn live_bytes() -> usize {
-        LIVE_BYTES.load(Relaxed)
-    }
-}
 
 /// Strategy injected into `#[gpui::property_test]` tests to control the seed
 /// given to the scheduler. Doesn't shrink, since all scheduler seeds are

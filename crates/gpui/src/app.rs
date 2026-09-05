@@ -728,6 +728,7 @@ pub struct App {
     // the tokio runtime. As any task attempting to spawn a blocking tokio task,
     // might panic.
     pub(crate) globals_by_type: TypeIdHashMap<Box<dyn Any>>,
+    pub(crate) global_revision: u64,
 
     // assets
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
@@ -822,6 +823,7 @@ impl App {
                 asset_source,
                 http_client,
                 globals_by_type: Default::default(),
+                global_revision: 0,
                 entities,
                 new_entity_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
@@ -1672,6 +1674,7 @@ impl App {
                 }
             }
             Effect::NotifyGlobalObservers { global_type } => {
+                self.global_revision = self.global_revision.wrapping_add(1);
                 if !self.pending_global_notifications.insert(*global_type) {
                     return;
                 }

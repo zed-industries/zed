@@ -529,12 +529,15 @@ impl<V: View> Element for ViewElement<V> {
             && window.node_engine_enabled()
             && let Some(entity_id) = self.entity_id
             && let Some(global_id) = global_id
-            && let Some(view) = self.view.as_ref().and_then(View::retained_view)
         {
             let cache_key = window.view_node_key(bounds);
-            if let Some(decision) =
-                window.begin_view_node(global_id.clone(), view, cache_key.clone(), cx)
-            {
+            if let Some(decision) = window.begin_view_node(
+                global_id.clone(),
+                entity_id,
+                self.view.as_ref().and_then(View::retained_view),
+                cache_key.clone(),
+                cx,
+            ) {
                 window.set_view_id(entity_id);
                 return window.with_rendered_view(entity_id, |window| match decision {
                     NodeRenderDecision::Graft {
@@ -1770,6 +1773,292 @@ mod tests {
         }
     }
 
+    struct AmbientStyle(u32);
+    impl crate::Global for AmbientStyle {}
+
+    struct AmbientLeaf {
+        image: std::sync::Arc<crate::RenderImage>,
+    }
+
+    impl Render for AmbientLeaf {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("ambient-leaf")
+                .w(px(100.))
+                .h(px(60.))
+                .bg(rgb(cx
+                    .try_global::<AmbientStyle>()
+                    .map_or(0x112233, |style| style.0)))
+                .child(format!("active {}", window.is_window_active()))
+                .child(crate::img(self.image.clone()).size(px(20.)))
+        }
+    }
+
+    struct AmbientHost {
+        leaf: Entity<AmbientLeaf>,
+        deferred: bool,
+    }
+
+    impl Render for AmbientHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().child(if self.deferred {
+                crate::deferred(self.leaf.clone()).into_any_element()
+            } else {
+                self.leaf.clone().into_any_element()
+            })
+        }
+    }
+
+    #[gpui::test]
+    fn node_engine_invalidates_ambient_inputs_and_evicted_images(cx: &mut TestAppContext) {
+        let image = std::sync::Arc::new(crate::RenderImage::new(smallvec::smallvec![
+            image::Frame::new(image::ImageBuffer::from_pixel(
+                2,
+                2,
+                image::Rgba([255, 0, 0, 255])
+            ))
+        ]));
+        let build = |engine| {
+            let image = image.clone();
+            move |window: &mut Window, cx: &mut Context<AmbientHost>| {
+                window.draw_engine = engine;
+                AmbientHost {
+                    leaf: cx.new(|_| AmbientLeaf { image }),
+                    deferred: false,
+                }
+            }
+        };
+        let legacy = cx.open_window(size(px(300.), px(100.)), build(DrawEngine::Legacy));
+        let retained = cx.open_window(
+            size(px(300.), px(100.)),
+            build(DrawEngine::Node(crate::NodeEngine::new())),
+        );
+        cx.run_until_parked();
+        for step in 0..9 {
+            if step == 1 {
+                cx.update(|cx| cx.set_global(AmbientStyle(0x335577)));
+            }
+            if step == 2 {
+                cx.update(|cx| cx.global_mut::<AmbientStyle>().0 = 0x7799bb);
+            }
+            if step == 3 {
+                cx.update(|cx| {
+                    cx.remove_global::<AmbientStyle>();
+                });
+            }
+            for handle in [legacy, retained] {
+                handle
+                    .update(cx, |host, window, cx| {
+                        if step == 4 {
+                            window.drop_image(image.clone()).expect("evict image");
+                        }
+                        if step == 5 {
+                            window.set_rem_size(px(20.));
+                        }
+                        host.deferred = step == 6 || step == 7;
+                        cx.notify();
+                    })
+                    .expect("window open");
+            }
+            cx.run_until_parked();
+            let snapshot = |handle: crate::WindowHandle<AmbientHost>, cx: &mut TestAppContext| {
+                handle
+                    .update(cx, |_, window, _| {
+                        assert!(
+                            window.has_image_atlas_entry(&image),
+                            "evicted image must be uploaded again"
+                        );
+                        window.rendered_frame.scene.snapshot_for_test()
+                    })
+                    .expect("window open")
+            };
+            assert_eq!(
+                snapshot(legacy, cx),
+                snapshot(retained, cx),
+                "ambient update {step}"
+            );
+        }
+    }
+
+    struct OverlapHost {
+        front: Option<Entity<InteractiveLeaf>>,
+        back: Entity<InteractiveLeaf>,
+        reversed: bool,
+    }
+
+    impl Render for OverlapHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut children = vec![self.back.clone()];
+            children.extend(self.front.clone());
+            if self.reversed {
+                children.reverse();
+            }
+            div()
+                .id("clip")
+                .relative()
+                .w(px(60.))
+                .h(px(30.))
+                .overflow_hidden()
+                .children(
+                    children
+                        .into_iter()
+                        .map(|child| div().absolute().child(child)),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn node_engine_preserves_clipping_overlap_and_focused_removal(cx: &mut TestAppContext) {
+        let build = |engine| {
+            move |window: &mut Window, cx: &mut Context<OverlapHost>| {
+                window.draw_engine = engine;
+                let front = cx.new(|cx| InteractiveLeaf {
+                    focus: cx.focus_handle(),
+                    clicks: 0,
+                    keys: 0,
+                });
+                front.read(cx).focus.clone().focus(window, cx);
+                OverlapHost {
+                    front: Some(front),
+                    back: cx.new(|cx| InteractiveLeaf {
+                        focus: cx.focus_handle(),
+                        clicks: 0,
+                        keys: 0,
+                    }),
+                    reversed: false,
+                }
+            }
+        };
+        let legacy = cx.open_window(size(px(300.), px(100.)), build(DrawEngine::Legacy));
+        let retained = cx.open_window(
+            size(px(300.), px(100.)),
+            build(DrawEngine::Node(crate::NodeEngine::new())),
+        );
+        cx.run_until_parked();
+        for step in 0..6 {
+            for handle in [legacy, retained] {
+                handle
+                    .update(cx, |host, _, cx| {
+                        if step == 3 {
+                            host.reversed = true;
+                        }
+                        if step == 4 {
+                            host.front.take();
+                        }
+                        cx.notify();
+                    })
+                    .expect("window open");
+            }
+            cx.run_until_parked();
+            for handle in [legacy, retained] {
+                let mut visual = crate::VisualTestContext::from_window(handle.into(), cx);
+                visual.simulate_click(
+                    crate::point(px(if step == 2 { 70. } else { 10. }), px(10.)),
+                    crate::Modifiers::default(),
+                );
+                visual.simulate_keystrokes("enter");
+            }
+            cx.run_until_parked();
+            let snapshot = |handle: crate::WindowHandle<OverlapHost>, cx: &mut TestAppContext| {
+                handle
+                    .update(cx, |host, window, cx| {
+                        let front = host
+                            .front
+                            .as_ref()
+                            .map(|leaf| (leaf.read(cx).clicks, leaf.read(cx).keys));
+                        let back = host.back.read(cx);
+                        if step == 2 {
+                            assert_eq!(front.map(|counts| counts.0), Some(2));
+                        }
+                        (
+                            window.rendered_frame.scene.snapshot_for_test(),
+                            front,
+                            back.clicks,
+                            back.keys,
+                            window.focused(cx).is_some(),
+                        )
+                    })
+                    .expect("window open")
+            };
+            assert_eq!(
+                snapshot(legacy, cx),
+                snapshot(retained, cx),
+                "overlap step {step}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn node_engine_caches_custom_views_with_entity_identity(cx: &mut TestAppContext) {
+        struct Custom {
+            source: Entity<usize>,
+            renders: Rc<Cell<usize>>,
+        }
+        impl super::View for Custom {
+            fn entity_id(&self) -> Option<crate::EntityId> {
+                Some(self.source.entity_id())
+            }
+            fn render(self, _: &mut Window, cx: &mut crate::App) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                div().size_full().child(self.source.read(cx).to_string())
+            }
+        }
+        struct Host {
+            source: Entity<usize>,
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().child(
+                    super::ViewElement::new(Custom {
+                        source: self.source.clone(),
+                        renders: self.renders.clone(),
+                    })
+                    .cached(StyleRefinement::default().w(px(100.)).h(px(50.))),
+                )
+            }
+        }
+        let renders = Rc::new(Cell::new(0));
+        let handle = cx.open_window(size(px(300.), px(100.)), |window, cx| {
+            window.draw_engine = DrawEngine::Node(crate::NodeEngine::new());
+            Host {
+                source: cx.new(|_| 0),
+                renders: renders.clone(),
+            }
+        });
+        cx.run_until_parked();
+        for _ in 0..3 {
+            handle
+                .update(cx, |_, _, cx| cx.notify())
+                .expect("window open");
+            cx.run_until_parked();
+        }
+        assert_eq!(renders.get(), 1);
+        handle
+            .update(cx, |host, _, cx| {
+                host.source.update(cx, |value, cx| {
+                    *value += 1;
+                    cx.notify();
+                })
+            })
+            .expect("window open");
+        cx.run_until_parked();
+        assert_eq!(renders.get(), 2);
+        let retained = handle
+            .update(cx, |_, window, _| {
+                let scene = window.rendered_frame.scene.snapshot_for_test();
+                window.refresh();
+                scene
+            })
+            .expect("window open");
+        cx.run_until_parked();
+        handle
+            .update(cx, |_, window, _| {
+                assert_eq!(retained, window.rendered_frame.scene.snapshot_for_test());
+            })
+            .expect("window open");
+    }
+
     struct ArenaMeasuredElement {
         lifetime: Rc<()>,
     }
@@ -1969,208 +2258,6 @@ mod tests {
                     assert_eq!(window.next_frame.scene.paint_operations.capacity(), 0);
                 })
                 .expect("window open");
-        }
-    }
-
-    #[gpui::test]
-    #[ignore = "manual CPU benchmark; run with --release --ignored --nocapture"]
-    fn node_engine_update_benchmark(cx: &mut TestAppContext) {
-        #[cfg(feature = "test-memory")]
-        eprintln!(
-            "test-memory counts live Rust allocations; timing includes allocator instrumentation"
-        );
-        #[cfg(not(target_os = "macos"))]
-        assert!(
-            std::env::var_os("GPUI_BENCH_MEMORY").is_none(),
-            "malloc-zone memory sampling requires macOS"
-        );
-        let cycles = std::env::var("GPUI_BENCH_MEMORY_CYCLES").map_or(1, |value| {
-            value.parse::<usize>().expect("memory cycle count")
-        });
-        assert!(cycles > 0);
-        assert!(cycles == 1 || std::env::var_os("GPUI_BENCH_MEMORY").is_some());
-        for cycle in 0..cycles {
-            eprintln!("mount cycle {cycle}");
-            run_node_engine_update_benchmark(cx);
-        }
-    }
-
-    fn run_node_engine_update_benchmark(cx: &mut TestAppContext) {
-        #[cfg(target_os = "macos")]
-        fn heap_bytes() -> usize {
-            #[repr(C)]
-            struct MallocStatistics {
-                blocks_in_use: u32,
-                size_in_use: usize,
-                max_size_in_use: usize,
-                size_allocated: usize,
-            }
-            unsafe extern "C" {
-                fn malloc_zone_statistics(
-                    zone: *mut std::ffi::c_void,
-                    statistics: *mut MallocStatistics,
-                );
-            }
-            let mut statistics = MallocStatistics {
-                blocks_in_use: 0,
-                size_in_use: 0,
-                max_size_in_use: 0,
-                size_allocated: 0,
-            };
-            // A null zone sums all malloc zones, including native framework allocations.
-            unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut statistics) };
-            #[cfg(feature = "test-memory")]
-            eprintln!(
-                "Rust live requested bytes: {}",
-                crate::test::memory::live_bytes()
-            );
-            statistics.size_in_use
-        }
-        #[cfg(target_os = "macos")]
-        let memory_baseline = std::env::var_os("GPUI_BENCH_MEMORY").map(|_| heap_bytes());
-        let dirty_all = std::env::var_os("GPUI_BENCH_ALL_DIRTY").is_some();
-        eprintln!(
-            "workload: {}",
-            if dirty_all {
-                "all leaves dirty"
-            } else {
-                "one leaf dirty"
-            }
-        );
-        let build = |engine| {
-            move |window: &mut Window, cx: &mut Context<BenchmarkHost>| {
-                window.draw_engine = engine;
-                BenchmarkHost {
-                    leaves: (0..64)
-                        .map(|_| cx.new(|_| BenchmarkLeaf { revision: 0 }))
-                        .collect(),
-                }
-            }
-        };
-        let selected = std::env::var("GPUI_BENCH_ENGINE").ok();
-        #[cfg(target_os = "macos")]
-        assert!(
-            memory_baseline.is_none() || selected.is_some(),
-            "memory measurements require a single engine per process"
-        );
-        let engines: Vec<_> = ["legacy", "retained"]
-            .into_iter()
-            .filter(|name| selected.as_deref().is_none_or(|selected| selected == *name))
-            .collect();
-        assert!(
-            !engines.is_empty(),
-            "GPUI_BENCH_ENGINE must be legacy or retained"
-        );
-        let windows: Vec<_> = engines
-            .iter()
-            .map(|name| {
-                let engine = if *name == "legacy" {
-                    DrawEngine::Legacy
-                } else {
-                    DrawEngine::Node(crate::NodeEngine::new())
-                };
-                cx.open_window(size(px(1600.), px(1000.)), build(engine))
-            })
-            .collect();
-        cx.run_until_parked();
-        #[cfg(target_os = "macos")]
-        if let Some(baseline) = memory_baseline {
-            let live = heap_bytes();
-            eprintln!(
-                "memory after mount: baseline={baseline} live={live} delta={}",
-                live as i128 - baseline as i128
-            );
-        }
-        let mut samples = vec![Vec::new(); windows.len()];
-        let mut previous_layout_count = None;
-        for round in 0..5 {
-            let mut order: Vec<_> = (0..windows.len()).collect();
-            if round % 2 != 0 {
-                order.reverse();
-            }
-            for index in order {
-                let window = windows[index];
-                let started = std::time::Instant::now();
-                for step in 0..100 {
-                    window
-                        .update(cx, |host, _, cx| {
-                            for (index, leaf) in host.leaves.iter().enumerate() {
-                                if dirty_all || index == step % 64 {
-                                    leaf.update(cx, |leaf, cx| {
-                                        leaf.revision += 1;
-                                        cx.notify();
-                                    });
-                                }
-                            }
-                        })
-                        .expect("window open");
-                    cx.run_until_parked();
-                }
-                samples[index].push(started.elapsed().as_secs_f64() * 10_000.);
-            }
-            let snapshot = |window: crate::WindowHandle<BenchmarkHost>, cx: &mut TestAppContext| {
-                window
-                    .update(cx, |_, window, _| {
-                        window.rendered_frame.scene.snapshot_for_test()
-                    })
-                    .expect("window open")
-            };
-            if let [legacy, retained] = windows.as_slice() {
-                assert_eq!(snapshot(*legacy, cx), snapshot(*retained, cx));
-            }
-            for window in &windows {
-                window
-                    .update(cx, |_, window, _| {
-                        let Some(stats) = window.retained_node_stats() else {
-                            return;
-                        };
-                        if let Some(previous) = previous_layout_count {
-                            assert_eq!(stats.layout_nodes, previous);
-                        }
-                        previous_layout_count = Some(stats.layout_nodes);
-                        eprintln!("round {round}: {stats:?}");
-                    })
-                    .expect("window open");
-            }
-            #[cfg(target_os = "macos")]
-            if let Some(baseline) = memory_baseline {
-                let live = heap_bytes();
-                eprintln!(
-                    "memory round {round}: live={live} delta={}",
-                    live as i128 - baseline as i128
-                );
-                for window in &windows {
-                    window.update(cx, |_, window, cx| {
-                        let frame_operations = (window.rendered_frame.scene.paint_operations.capacity()
-                            + window.next_frame.scene.paint_operations.capacity())
-                            * std::mem::size_of::<crate::scene::PaintOperation>();
-                        let recorded_operations = match &window.draw_engine {
-                            DrawEngine::Legacy => 0,
-                            DrawEngine::Node(engine) => engine.recorded_operation_buffer_bytes(cx),
-                        };
-                        let arena_bytes = cx.element_arena.borrow().capacity();
-                        eprintln!("paint-operation buffer bytes: frames={frame_operations} recordings={recorded_operations}; element arena bytes={arena_bytes}");
-                    }).expect("window open");
-                }
-            }
-        }
-        for (name, mut samples) in engines.into_iter().zip(samples) {
-            samples.sort_by(f64::total_cmp);
-            eprintln!("{name}: microseconds/update {samples:?}");
-        }
-        #[cfg(target_os = "macos")]
-        if let Some(baseline) = memory_baseline {
-            for window in windows {
-                window
-                    .update(cx, |_, window, _| window.remove_window())
-                    .expect("window open");
-            }
-            cx.run_until_parked();
-            let live = heap_bytes();
-            eprintln!(
-                "memory after unmount: live={live} delta={}",
-                live as i128 - baseline as i128
-            );
         }
     }
 
