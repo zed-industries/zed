@@ -7,6 +7,7 @@ use windows::{
         Color,
         ViewManagement::{UIColorType, UISettings},
     },
+    Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
         Foundation::*, Graphics::Dwm::*, System::LibraryLoader::LoadLibraryA,
         UI::WindowsAndMessaging::*,
@@ -16,6 +17,46 @@ use windows::{
 
 use crate::*;
 use gpui::*;
+
+/// The first Windows 11 build. Windows 11 reports itself as major version 10,
+/// so the build number is the only way to tell the two apart.
+const WINDOWS_11_BUILD_NUMBER: u32 = 22000;
+
+/// Whether we are running on Windows 10 rather than Windows 11 or newer.
+///
+/// The two draw the window border differently, which matters for windows that
+/// hide the system title bar: see [`WindowsWindowInner::top_border_height`].
+pub(crate) fn is_windows_10() -> bool {
+    static IS_WINDOWS_10: OnceLock<bool> = OnceLock::new();
+    *IS_WINDOWS_10.get_or_init(|| {
+        let mut version = unsafe { std::mem::zeroed() };
+        let status = unsafe { RtlGetVersion(&mut version) };
+        status.is_ok() && version.dwBuildNumber < WINDOWS_11_BUILD_NUMBER
+    })
+}
+
+/// Colour of the border Windows 10 draws around an *inactive* window, in
+/// premultiplied RGBA components.
+///
+/// Only the inactive border has to be reproduced. DWM fills the pixel of frame
+/// extended into the client area (see
+/// `WindowsWindowInner::update_frame_margins`) while the window is active, so
+/// the active border - accent colour included - comes from the system itself.
+/// It leaves that pixel alone once the window goes inactive, and this goes
+/// there instead.
+///
+/// Measured off the frame DWM draws for a stock window on Windows 10 build
+/// 19045, by sampling the border over five backdrop greys and solving
+/// `observed = premultiplied + (1 - alpha) * backdrop`: 43 over black through
+/// 170 over white, giving RGB(86, 86, 86) at 50% alpha with residuals under
+/// 0.3. It agrees with the value derived independently in the Handmade Network
+/// write-up of this same problem.
+const INACTIVE_BORDER_PREMULTIPLIED: [u8; 4] = [43, 43, 43, 128];
+
+/// [`INACTIVE_BORDER_PREMULTIPLIED`] in the form the renderer wants.
+pub(crate) fn top_border_color() -> [f32; 4] {
+    INACTIVE_BORDER_PREMULTIPLIED.map(|component| component as f32 / 255.0)
+}
 
 pub(crate) trait HiLoWord {
     fn hiword(&self) -> u16;
@@ -130,11 +171,25 @@ pub(crate) fn load_cursor(style: CursorStyle) -> Option<HCURSOR> {
     )
 }
 
-/// This function is used to configure the dark mode for the window built-in title bar.
-pub(crate) fn configure_dwm_dark_mode(hwnd: HWND, appearance: WindowAppearance) {
-    let dark_mode_enabled: BOOL = match appearance {
-        WindowAppearance::Dark | WindowAppearance::VibrantDark => true.into(),
-        WindowAppearance::Light | WindowAppearance::VibrantLight => false.into(),
+/// Configure dark mode for the window's built-in title bar.
+///
+/// `force_dark_frame` overrides `appearance` and is set for windows that hide
+/// their title bar on Windows 10: nothing of the frame is visible there except
+/// the border, and DWM renders the border of a frame-extended window pure white
+/// under the light theme. Asking for a dark frame is what makes that border
+/// visible again; see `WindowsWindowInner::update_frame_margins`.
+pub(crate) fn configure_dwm_dark_mode(
+    hwnd: HWND,
+    appearance: WindowAppearance,
+    force_dark_frame: bool,
+) {
+    let dark_mode_enabled: BOOL = if force_dark_frame {
+        true.into()
+    } else {
+        match appearance {
+            WindowAppearance::Dark | WindowAppearance::VibrantDark => true.into(),
+            WindowAppearance::Light | WindowAppearance::VibrantLight => false.into(),
+        }
     };
     unsafe {
         DwmSetWindowAttribute(
