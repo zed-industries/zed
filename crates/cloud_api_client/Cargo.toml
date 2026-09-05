@@ -27,3 +27,5 @@ yawc.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 gpui_tokio.workspace = true
+http_client_tls.workspace = true
+tokio-rustls = { version = "0.26", default-features = false }
