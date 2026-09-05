@@ -836,12 +836,20 @@ actions!(
         SignatureHelpNext,
         /// Navigates to the previous signature in the signature help popup.
         SignatureHelpPrevious,
-        /// Sorts selected lines by length.
+        /// Sorts selected lines by length (ascending).
         SortLinesByLength,
+        /// Sorts selected lines by length (descending).
+        SortLinesByLengthDescending,
         /// Sorts selected lines case-insensitively.
         SortLinesCaseInsensitive,
-        /// Sorts selected lines case-sensitively.
+        /// Sorts selected lines case-sensitively (ascending).
         SortLinesCaseSensitive,
+        /// Sorts selected lines case-sensitively (descending).
+        SortLinesCaseSensitiveDescending,
+        /// Sorts selected lines case-sensitively and removes duplicates.
+        SortLinesCaseSensitiveUnique,
+        /// Sorts selected lines using natural ordering (numbers sorted numerically).
+        SortLinesNatural,
         /// Stops the language server for the current file.
         StopLanguageServer,
         /// Switches between source and header files.

@@ -5876,6 +5876,38 @@ impl Editor {
         self.manipulate_immutable_lines(window, cx, |lines| lines.sort())
     }
 
+    pub fn sort_lines_case_sensitive_descending(
+        &mut self,
+        _: &SortLinesCaseSensitiveDescending,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_immutable_lines(window, cx, |lines| lines.sort_by(|a, b| b.cmp(a)))
+    }
+
+    pub fn sort_lines_case_sensitive_unique(
+        &mut self,
+        _: &SortLinesCaseSensitiveUnique,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_immutable_lines(window, cx, |lines| {
+            lines.sort();
+            lines.dedup();
+        })
+    }
+
+    pub fn sort_lines_natural(
+        &mut self,
+        _: &SortLinesNatural,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_immutable_lines(window, cx, |lines| {
+            lines.sort_by(|a, b| natural_cmp(a, b));
+        })
+    }
+
     pub fn sort_lines_by_length(
         &mut self,
         _: &SortLinesByLength,
@@ -5884,6 +5916,17 @@ impl Editor {
     ) {
         self.manipulate_immutable_lines(window, cx, |lines| {
             lines.sort_by_key(|&line| line.chars().count())
+        })
+    }
+
+    pub fn sort_lines_by_length_descending(
+        &mut self,
+        _: &SortLinesByLengthDescending,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_immutable_lines(window, cx, |lines| {
+            lines.sort_by_key(|&line| Reverse(line.chars().count()))
         })
     }
 
@@ -12970,6 +13013,57 @@ struct LineManipulationResult {
     pub new_text: String,
     pub line_count_before: usize,
     pub line_count_after: usize,
+}
+
+fn natural_cmp(a: &str, b: &str) -> Ordering {
+    let mut a_chars = a.chars().peekable();
+    let mut b_chars = b.chars().peekable();
+
+    loop {
+        match (a_chars.peek(), b_chars.peek()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(&ac), Some(&bc)) => {
+                if ac.is_ascii_digit() && bc.is_ascii_digit() {
+                    let a_num = consume_digits(&mut a_chars);
+                    let b_num = consume_digits(&mut b_chars);
+                    let a_trimmed = a_num.trim_start_matches('0');
+                    let b_trimmed = b_num.trim_start_matches('0');
+                    let ord = a_trimmed
+                        .len()
+                        .cmp(&b_trimmed.len())
+                        .then_with(|| a_trimmed.cmp(&b_trimmed));
+                    match ord {
+                        Ordering::Equal => {}
+                        other => return other,
+                    }
+                } else {
+                    match ac.cmp(&bc) {
+                        Ordering::Equal => {
+                            a_chars.next();
+                            b_chars.next();
+                        }
+                        ord => return ord,
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn consume_digits(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
+    std::iter::from_fn(|| {
+        chars
+            .peek()
+            .copied()
+            .filter(|c| c.is_ascii_digit())
+            .map(|c| {
+                chars.next();
+                c
+            })
+    })
+    .collect()
 }
 
 pub fn multibuffer_context_lines(cx: &App) -> u32 {
