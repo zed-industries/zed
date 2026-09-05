@@ -6050,6 +6050,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.active_pane = pane.clone();
+        self.status_bar.update(cx, |status_bar, cx| {
+            status_bar.set_active_pane(pane, window, cx);
+        });
         self.active_item_path_changed(true, window, cx);
         self.last_active_center_pane = Some(pane.downgrade());
     }
@@ -18732,6 +18735,190 @@ mod tests {
             let visible = workspace.status_bar_visible(cx);
             assert!(visible, "Status bar should be visible when show is true");
         });
+    }
+
+    #[gpui::test]
+    async fn test_status_bar_active_pane_updates(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        struct TestStatusItem {
+            active_item_id: Option<gpui::EntityId>,
+        }
+
+        impl Render for TestStatusItem {
+            fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+                Empty
+            }
+        }
+
+        impl StatusItemView for TestStatusItem {
+            fn set_active_pane_item(
+                &mut self,
+                active_pane_item: Option<&dyn ItemHandle>,
+                _window: &mut Window,
+                cx: &mut Context<Self>,
+            ) {
+                self.active_item_id = active_pane_item.map(|item| item.item_id());
+                cx.notify();
+            }
+
+            fn hide_setting(&self, _cx: &App) -> Option<HideStatusItem> {
+                None
+            }
+        }
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let pane_1 = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let status_bar = workspace.read_with(cx, |workspace, _| workspace.status_bar.clone());
+
+        assert_eq!(
+            status_bar.read_with(cx, |sb, _| sb.active_pane().clone()),
+            pane_1
+        );
+
+        let item_1 = cx.new(TestItem::new);
+        let item_1_id = item_1.entity_id();
+        pane_1.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item_1), true, true, None, window, cx);
+        });
+
+        let test_status_item = cx.new(|_| TestStatusItem { active_item_id: None });
+        status_bar.update_in(cx, |status_bar, window, cx| {
+            status_bar.add_right_item(test_status_item.clone(), window, cx);
+        });
+
+        assert_eq!(
+            test_status_item.read_with(cx, |item, _| item.active_item_id),
+            Some(item_1_id)
+        );
+
+        let pane_2 = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane_1.clone(), SplitDirection::Right, window, cx)
+        });
+        let item_2 = cx.new(TestItem::new);
+        let item_2_id = item_2.entity_id();
+        pane_2.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item_2), true, true, None, window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.set_active_pane(&pane_2, window, cx);
+        });
+
+        assert_eq!(
+            status_bar.read_with(cx, |sb, _| sb.active_pane().clone()),
+            pane_2,
+            "Status bar active pane should update immediately upon set_active_pane"
+        );
+        assert_eq!(
+            test_status_item.read_with(cx, |item, _| item.active_item_id),
+            Some(item_2_id)
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.set_active_pane(&pane_1, window, cx);
+        });
+
+        assert_eq!(
+            status_bar.read_with(cx, |sb, _| sb.active_pane().clone()),
+            pane_1
+        );
+        assert_eq!(
+            test_status_item.read_with(cx, |item, _| item.active_item_id),
+            Some(item_1_id)
+        );
+
+        pane_2.update_in(cx, |pane, window, cx| {
+            pane.update_status_bar(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            status_bar.read_with(cx, |sb, _| sb.active_pane().clone()),
+            pane_1,
+            "Inactive pane's deferred update_status_bar must not overwrite active pane in status bar"
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.set_active_pane(&pane_2, window, cx);
+        });
+        assert_eq!(
+            status_bar.read_with(cx, |sb, _| sb.active_pane().clone()),
+            pane_2
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.remove_pane(pane_2.clone(), None, window, cx);
+        });
+
+        assert_eq!(
+            status_bar.read_with(cx, |sb, _| sb.active_pane().clone()),
+            pane_1,
+            "Status bar active pane should update to fallback pane when active pane is removed"
+        );
+        assert_eq!(
+            test_status_item.read_with(cx, |item, _| item.active_item_id),
+            Some(item_1_id)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_status_bar_active_pane_updated_on_load_workspace(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        cx.update(register_serializable_item::<TestItem>);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "a.rs": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let database = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = database.next_id().await.unwrap();
+        workspace.update(cx, |workspace, _| workspace.set_database_id(workspace_id));
+
+        let project_item =
+            cx.update(|_, cx| TestProjectItem::new_in_worktree(1, "a.rs", worktree_id, cx));
+        let item =
+            cx.new(|cx| TestItem::new(cx).with_project_items(std::slice::from_ref(&project_item)));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        cx.executor().advance_clock(SERIALIZATION_THROTTLE_TIME);
+        cx.run_until_parked();
+        let serialized_workspace = database.workspace_for_id(workspace_id).unwrap();
+
+        let old_active_pane = workspace
+            .read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        workspace
+            .update_in(cx, |_, window, cx| {
+                Workspace::load_workspace(serialized_workspace, Vec::new(), window, cx)
+            })
+            .await
+            .unwrap();
+
+        let new_active_pane = workspace
+            .read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let status_bar_active_pane = workspace.read_with(cx, |workspace, cx| {
+            workspace.status_bar.read(cx).active_pane().clone()
+        });
+
+        assert_ne!(old_active_pane, new_active_pane);
+        assert_eq!(status_bar_active_pane, new_active_pane);
     }
 
     #[gpui::test]
