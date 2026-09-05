@@ -339,6 +339,9 @@ pub struct ThemeColors {
     pub version_control_conflict_marker_ours: Hsla,
     /// Represents the "theirs" region of a merge conflict.
     pub version_control_conflict_marker_theirs: Hsla,
+    /// Represents the common-ancestor ("base") region of a merge conflict,
+    /// shown when `merge.conflictStyle` is `diff3` or `zdiff3`.
+    pub version_control_conflict_marker_base: Hsla,
 }
 
 #[derive(EnumIter, Debug, Clone, Copy, AsRefStr)]
