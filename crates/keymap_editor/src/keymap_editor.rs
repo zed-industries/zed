@@ -68,6 +68,8 @@ actions!(
         OpenCreateKeybindingModal,
         /// Deletes the selected key binding.
         DeleteBinding,
+        /// Restores a key binding that was suppressed by an unbind entry.
+        RestoreBinding,
         /// Copies the action name to clipboard.
         CopyAction,
         /// Copies the context predicate to clipboard.
@@ -449,6 +451,7 @@ struct KeymapEditor {
     selected_index: Option<usize>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
+    is_restoring_binding: bool,
     humanized_action_names: HumanizedActionNameCache,
     current_widths: Entity<RedistributableColumnsState>,
     show_hover_menus: bool,
@@ -617,6 +620,7 @@ impl KeymapEditor {
             selected_index: None,
             context_menu: None,
             previous_edit: None,
+            is_restoring_binding: false,
             search_query_debounce: None,
             humanized_action_names: HumanizedActionNameCache::new(cx),
             show_hover_menus: true,
@@ -1091,6 +1095,9 @@ impl KeymapEditor {
                     .when(selected_binding_is_unmapped, |this| {
                         this.action("Create", Box::new(CreateBinding))
                     })
+                    .when(selected_binding_is_suppressed, |this| {
+                        this.action("Restore", Box::new(RestoreBinding))
+                    })
                     .action_disabled_when(
                         selected_binding_is_non_interactable,
                         "Edit",
@@ -1149,10 +1156,28 @@ impl KeymapEditor {
         cx: &mut Context<Self>,
     ) -> IconButton {
         if is_unbound_by_unbind {
-            base_button_style(index, IconName::Warning)
+            base_button_style(index, IconName::RotateCcw)
+                .aria_label("Restore binding")
                 .icon_color(Color::Warning)
-                .disabled(true)
-                .tooltip(Tooltip::text("This action is unbound"))
+                .tooltip(|_window, cx| {
+                    Tooltip::with_meta(
+                        "Restore this binding",
+                        Some(&RestoreBinding),
+                        "This action is unbound",
+                        cx,
+                    )
+                })
+                .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                    // A double-click fires this handler once per click. Only
+                    // the first should start a restore, or two concurrent
+                    // file-update tasks could race.
+                    if event.click_count() > 1 {
+                        return;
+                    }
+                    this.select_index(index, None, window, cx);
+                    this.restore_binding(&RestoreBinding, window, cx);
+                    cx.stop_propagation();
+                }))
         } else if self.filter_state != FilterState::Conflicts
             && let Some(conflict) = conflict
         {
@@ -1314,6 +1339,9 @@ impl KeymapEditor {
             return;
         };
         if !create && keybind.is_unbound_by_unbind() {
+            // A suppressed binding can't be edited. The Enter gesture that
+            // normally opens the edit modal instead restores it.
+            self.restore_binding(&RestoreBinding, window, cx);
             return;
         }
         let keybind = keybind.clone();
@@ -1445,6 +1473,45 @@ impl KeymapEditor {
                 &deprecated_aliases,
             )
             .await
+        })
+        .detach_and_notify_err(self.workspace.clone(), window, cx);
+    }
+
+    fn restore_binding(&mut self, _: &RestoreBinding, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_restoring_binding {
+            return;
+        }
+        let Some(to_restore) = self.selected_binding().cloned() else {
+            return;
+        };
+        if !to_restore.is_unbound_by_unbind() {
+            return;
+        }
+
+        let std::result::Result::Ok(fs) = self
+            .workspace
+            .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
+        else {
+            return;
+        };
+        self.previous_edit = Some(PreviousEdit::ScrollBarOffset(
+            self.table_interaction_state.read(cx).scroll_offset(),
+        ));
+        let keyboard_mapper = cx.keyboard_mapper().clone();
+        let deprecated_aliases = cx.deprecated_actions_to_preferred_actions().clone();
+        self.is_restoring_binding = true;
+        cx.spawn(async move |this, cx| {
+            let result = restore_keybinding(
+                to_restore,
+                &fs,
+                keyboard_mapper.as_ref(),
+                &deprecated_aliases,
+            )
+            .await;
+            let _ = this.update(cx, |this, _cx| {
+                this.is_restoring_binding = false;
+            });
+            result
         })
         .detach_and_notify_err(self.workspace.clone(), window, cx);
     }
@@ -1998,6 +2065,7 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::create_binding))
             .on_action(cx.listener(Self::open_create_keybinding_modal))
             .on_action(cx.listener(Self::delete_binding))
+            .on_action(cx.listener(Self::restore_binding))
             .on_action(cx.listener(Self::copy_action_to_clipboard))
             .on_action(cx.listener(Self::copy_context_to_clipboard))
             .on_action(cx.listener(Self::toggle_conflict_filter))
@@ -2268,37 +2336,41 @@ impl Render for KeymapEditor {
                                 .id(("keymap-row-wrapper", row_index))
                                 .child(
                                     row.id(row_id.clone())
-                                        .when(!is_unbound_by_unbind, |row| {
-                                            row.on_any_mouse_down(cx.listener(
-                                                move |this,
-                                                      mouse_down_event: &gpui::MouseDownEvent,
-                                                      window,
-                                                      cx| {
-                                                    if mouse_down_event.button == MouseButton::Right {
-                                                        this.select_index(
-                                                            row_index, None, window, cx,
-                                                        );
-                                                        this.create_context_menu(
-                                                            mouse_down_event.position,
+                                        .on_any_mouse_down(cx.listener(
+                                            move |this,
+                                                  mouse_down_event: &gpui::MouseDownEvent,
+                                                  window,
+                                                  cx| {
+                                                if mouse_down_event.button == MouseButton::Right {
+                                                    this.select_index(
+                                                        row_index, None, window, cx,
+                                                    );
+                                                    this.create_context_menu(
+                                                        mouse_down_event.position,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            },
+                                        ))
+                                        .on_click(cx.listener(
+                                            move |this, event: &ClickEvent, window, cx| {
+                                                this.select_index(row_index, None, window, cx);
+                                                if event.click_count() == 2 {
+                                                    if is_unbound_by_unbind {
+                                                        this.restore_binding(
+                                                            &RestoreBinding,
                                                             window,
                                                             cx,
                                                         );
-                                                    }
-                                                },
-                                            ))
-                                        })
-                                        .when(!is_unbound_by_unbind, |row| {
-                                            row.on_click(cx.listener(
-                                                move |this, event: &ClickEvent, window, cx| {
-                                                    this.select_index(row_index, None, window, cx);
-                                                    if event.click_count() == 2 {
+                                                    } else {
                                                         this.open_edit_keybinding_modal(
                                                             false, window, cx,
                                                         );
                                                     }
-                                                },
-                                            ))
-                                        })
+                                                }
+                                            },
+                                        ))
                                         .group(row_id)
                                         .when(
                                             is_unbound_by_unbind
@@ -2334,7 +2406,9 @@ impl Render for KeymapEditor {
                                             },
                                         )
                                         .when(is_unbound_by_unbind, |row| {
-                                            row.tooltip(Tooltip::text("This action is unbound"))
+                                            row.tooltip(Tooltip::text(
+                                                "This action is unbound. Double-click to restore it.",
+                                            ))
                                         }),
                                 )
                                 .border_2()
@@ -3736,6 +3810,60 @@ async fn remove_keybinding(
     Ok(())
 }
 
+/// Restores a binding that was suppressed by an unbind entry in the user
+/// keymap by removing that entry from the user keymap file.
+async fn restore_keybinding(
+    existing: ProcessedBinding,
+    fs: &Arc<dyn Fs>,
+    keyboard_mapper: &dyn PlatformKeyboardMapper,
+    deprecated_aliases: &HashMap<&'static str, &'static str>,
+) -> anyhow::Result<()> {
+    let Some(keystrokes) = existing.keystrokes() else {
+        anyhow::bail!("Cannot restore a keybinding that does not exist");
+    };
+    let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
+        .await
+        .context("Failed to load keymap file")?;
+    let tab_size = infer_json_indent_size(&keymap_contents);
+
+    let operation = settings::KeybindUpdateOperation::RemoveUnbind {
+        target: settings::KeybindUpdateTarget {
+            context: existing.context().and_then(KeybindContextString::local_str),
+            keystrokes,
+            action_name: existing.action().name,
+            action_arguments: existing
+                .action()
+                .arguments
+                .as_ref()
+                .map(|arguments| arguments.text.as_ref()),
+        },
+    };
+
+    let (new_keybinding, removed_keybinding, source) = operation.generate_telemetry();
+    let updated_keymap_contents = settings::KeymapFile::update_keybinding(
+        operation,
+        keymap_contents,
+        tab_size,
+        keyboard_mapper,
+        deprecated_aliases,
+    )
+    .context("Failed to restore keybinding")?;
+    fs.write(
+        paths::keymap_file().as_path(),
+        updated_keymap_contents.as_bytes(),
+    )
+    .await
+    .context("Failed to write keymap file")?;
+
+    telemetry::event!(
+        "Keybinding Restored",
+        new_keybinding = new_keybinding,
+        removed_keybinding = removed_keybinding,
+        source = source
+    );
+    Ok(())
+}
+
 fn collect_contexts_from_assets() -> Vec<SharedString> {
     let mut keymap_assets = vec![
         util::asset_str::<SettingsAssets>(settings::DEFAULT_KEYMAP_PATH),
@@ -4081,6 +4209,15 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
         let keymap_editor = cx
             .update(|window, cx| cx.new(|cx| KeymapEditor::new(workspace.downgrade(), window, cx)));
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(keymap_editor.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+        });
         cx.run_until_parked();
         (fs, keymap_editor, cx)
     }
@@ -4222,6 +4359,72 @@ mod tests {
             0,
             "second deletion should remove the remaining (alias) entry, got:\n{content}"
         );
+    }
+
+    // Regression test for #61862
+    #[gpui::test]
+    async fn test_restore_binding_removes_unbind_entry(cx: &mut TestAppContext) {
+        let keymap_content = r#"[
+    {
+        "bindings": {
+            "alt-cmd-shift-c": "zed::OpenKeymap"
+        }
+    },
+    {
+        "unbind": {
+            "alt-cmd-shift-c": "zed::OpenKeymap"
+        }
+    }
+]"#;
+        let (fs, keymap_editor, mut cx) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut cx;
+
+        let rows = keymap_editor.read_with(cx, |editor, _| {
+            visible_rows_for_action(editor, "zed::OpenKeymap")
+        });
+        assert_eq!(rows.len(), 1, "expected the suppressed binding as one row");
+
+        keymap_editor.read_with(cx, |editor, _| {
+            let binding = &editor.keybindings[editor.matches[rows[0]].candidate_id];
+            assert!(
+                binding.is_unbound_by_unbind(),
+                "the binding should be marked as suppressed by the unbind entry"
+            );
+        });
+
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.selected_index = Some(rows[0]);
+            window.focus(&editor.focus_handle(cx), cx);
+        });
+        let restore_icon_bounds = cx
+            .debug_bounds("ICON-RotateCcw")
+            .expect("the suppressed row should render a restore icon");
+        cx.simulate_click(restore_icon_bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        assert!(
+            !content.contains("unbind"),
+            "restoring should remove the unbind entry from the keymap file, got:\n{content}"
+        );
+        assert_eq!(
+            content.matches("alt-cmd-shift-c").count(),
+            1,
+            "the original binding should remain in the keymap file, got:\n{content}"
+        );
+
+        reload_keymap_from_file(&fs, cx).await;
+        cx.run_until_parked();
+
+        keymap_editor.read_with(cx, |editor, _| {
+            let rows = visible_rows_for_action(editor, "zed::OpenKeymap");
+            assert_eq!(rows.len(), 1);
+            let binding = &editor.keybindings[editor.matches[rows[0]].candidate_id];
+            assert!(
+                !binding.is_unbound_by_unbind(),
+                "the binding should no longer be suppressed after restore"
+            );
+        });
     }
 
     #[test]
