@@ -43,7 +43,6 @@ pub struct RetainedNodeStats {
 
 pub(crate) struct NodeEngine {
     invalidation_queue: Vec<ViewNodeId>,
-    scene_children: Vec<(std::ops::Range<usize>, ViewNodeId)>,
     frame_stats: RetainedNodeStats,
     pub(crate) last_frame_stats: RetainedNodeStats,
     nodes: FxHashMap<ViewNodeId, Entity<ViewNode>>,
@@ -74,7 +73,7 @@ impl DrawEngine {
         let forced_for_test = false;
 
         if forced_for_test
-            || std::env::var("GPUI_EXPERIMENTAL_NODE_ENGINE").is_ok_and(|value| value == "1")
+            || !std::env::var("GPUI_EXPERIMENTAL_NODE_ENGINE").is_ok_and(|value| value == "0")
         {
             Self::Node(NodeEngine::new())
         } else {
@@ -118,7 +117,6 @@ impl NodeEngine {
     pub(crate) fn new() -> Self {
         Self {
             invalidation_queue: Vec::new(),
-            scene_children: Vec::new(),
             frame_stats: RetainedNodeStats::default(),
             last_frame_stats: RetainedNodeStats::default(),
             nodes: FxHashMap::default(),
@@ -142,32 +140,6 @@ impl NodeEngine {
         self.nodes
             .get(&node_id)?
             .update(cx, |node, _| node.recording.take())
-    }
-
-    pub(crate) fn child_scenes(
-        &mut self,
-        node_id: ViewNodeId,
-        cx: &App,
-    ) -> &mut [(std::ops::Range<usize>, ViewNodeId)] {
-        self.scene_children.clear();
-        self.scene_children.extend(
-            self.nodes
-                .get(&node_id)
-                .into_iter()
-                .flat_map(|node| node.read(cx).children.iter())
-                .filter_map(|child| self.nodes.get(child))
-                .filter_map(|child| {
-                    let child_id = child.entity_id();
-                    let child = child.read(cx);
-                    child.recording.as_ref().map(|_| {
-                        (
-                            child.paint_range.start.scene_index..child.paint_range.end.scene_index,
-                            child_id,
-                        )
-                    })
-                }),
-        );
-        &mut self.scene_children
     }
 
     pub(crate) fn replay_scene(&self, node_id: ViewNodeId, scene: &mut crate::Scene, cx: &App) {
@@ -288,7 +260,6 @@ impl NodeEngine {
         } else {
             let previous_bounds = cache_key.bounds;
             let node = ViewNode {
-                paint_range: Default::default(),
                 local_state: FxHashMap::default(),
                 accessed_local_state: FxHashSet::default(),
                 layout: None,
@@ -431,7 +402,6 @@ impl NodeEngine {
         node_id: ViewNodeId,
         cache_key: ViewNodeCacheKey,
         recording: ViewNodeRecording,
-        paint_range: std::ops::Range<crate::PaintIndex>,
         mut accessed_entities: FxHashSet<EntityId>,
         cx: &mut App,
     ) {
@@ -465,7 +435,6 @@ impl NodeEngine {
                         }),
                 );
                 node.recording = Some(recording);
-                node.paint_range = paint_range;
                 node.local_state
                     .retain(|key, _| node.accessed_local_state.contains(key));
                 previous_accesses
@@ -489,13 +458,11 @@ impl NodeEngine {
         &mut self,
         node_id: ViewNodeId,
         recording: ViewNodeRecording,
-        paint_range: std::ops::Range<crate::PaintIndex>,
         cx: &mut App,
     ) {
         self.frame_stats.reused_subtrees += 1;
         if let Some(node) = self.nodes.get(&node_id) {
             node.update(cx, |node, _| {
-                node.paint_range = paint_range;
                 node.recording = Some(recording);
             });
         }
@@ -522,7 +489,6 @@ impl NodeEngine {
     pub(crate) fn clear(&mut self) {
         self.nodes.clear();
         self.consumers.clear();
-        self.scene_children.clear();
         self.invalidation_queue.clear();
         self.occurrences.clear();
         self.dirty_nodes.clear();

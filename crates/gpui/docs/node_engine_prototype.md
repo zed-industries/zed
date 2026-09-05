@@ -1,12 +1,12 @@
 # Retained view-node engine
 
-Select the experimental engine when creating a window:
+Retained rendering is enabled by default when creating a window:
 
 ```sh
-GPUI_EXPERIMENTAL_NODE_ENGINE=1 cargo run -p gpui --example node_engine_boundaries
+cargo run -p gpui --example node_engine_boundaries
 ```
 
-Use `GPUI_EXPERIMENTAL_NODE_ENGINE=0` for the legacy engine. The boundary lab
+Use `GPUI_EXPERIMENTAL_NODE_ENGINE=0` for the legacy reference engine. The boundary lab
 exercises keyed state, changed inputs, callbacks, focus, hover, sibling geometry,
 mounting, shared dependencies, and deferred painting. Its displayed statistics
 refer to the preceding frame. Element traces are not GPU timings.
@@ -59,12 +59,17 @@ frame-local dispatch IDs. Parent scene recordings interleave local fragments and
 child node IDs to preserve order without copying every descendant's
 primitives into every ancestor. Each node owns its recording directly. Reuse moves
 the recording through the frame's element phases and returns it to the node after
-paint; descendant recordings remain in their nodes. Local scene fragments retain
-paint operations rather than rebuilding GPU lanes and the bounds tree during
-capture. Dirty nodes refill their existing recording buffers, retaining capacity
-until unmount. Unchanged dependency sets keep their existing graph edges. The
-submitted scene remains flat and contiguous. Retained replay does not depend on
-the preceding frame's listener or text indices.
+paint; descendant recordings remain in their nodes. Painting writes scene
+operations directly into the active node's buffer, interleaving child IDs as
+nested scopes finish or replay. Dirty nodes reuse their operation and segment
+vector capacities; owned path payloads move into their slots. Normal retained
+frames allocate no flat paint-operation log, including deferred frames. Explicit
+prepaint primitive submission preserves its frame log for compatibility.
+GPU primitive arrays and the bounds tree are still assembled each frame, and the
+submitted scene remains flat and contiguous. Other effect metadata still gets
+captured from frame ranges, including descendant effects in parent recordings.
+Unchanged dependency sets keep their existing graph edges. Retained replay does
+not depend on the preceding frame's listener or text indices.
 
 Nodes own `use_keyed_state` entities and their subscriptions. State not accessed
 on a rebuild is released; removing a mounted subtree releases its local state.
@@ -158,11 +163,10 @@ Performance and ownership:
   Regression tests cover changed geometry, shrinking paths, operation-type
   replacement, child-range compaction, and removal. This removes repeated vertex
   allocation during stable capture; it does not remove the vertex copies.
-- [ ] Make retained scene storage the primary representation and reduce the
-  additional operation buffers, while preserving existing frame/replay APIs.
-  Extra recording capacities account for about 93% of the measured pane heap
-  increase; capacity reuse alone does not remove this duplication. Avoid the
-  active frame-to-recording capture pass where ownership permits.
+- [x] Make retained scene storage the primary operation destination. Node buffers
+  receive painted operations directly; normal retained frames keep no flat
+  operation buffers. Child IDs preserve ordering without a scene-capture pass.
+  GPU primitive arrays and non-scene metadata remain separate storage.
 - [ ] Benchmark deeper nesting, many callbacks, large paths, mixed dirty scopes,
   scrolling, and representative Zed windows. Measure CPU phases, copied bytes,
   allocations, and retained-memory high-water marks across mount/unmount cycles.
@@ -184,7 +188,7 @@ Performance and ownership:
 - [ ] Measure repeated root-layout computation when several cached scopes change
   geometry in one frame; avoid repeated whole-tree work where semantics permit.
 
-Correctness and integration before considering default enablement:
+Correctness and integration coverage:
 
 - [x] Drive the real editor through the installed platform input handler after
   retained replay. Cover composition updates, UTF-16 selection and replacement
@@ -244,7 +248,25 @@ Damage tracking (deferred to a follow-up):
   backend buffer-age/preservation requirements; validate against full rendering.
 - [ ] Measure battery impact after backend damage integration.
 
-## Editor and memory measurements
+## Direct node scene storage validation
+
+With retained rendering enabled by default, the GPUI suite passes 253 tests
+(two manual benchmarks ignored); the explicit legacy run passes the same suite.
+Thirteen focused node-engine tests pass across 20 scheduler iterations. Direct
+recording tests verify path payload ownership, scene equality, and zero flat
+operation-buffer capacity through alternating full/partial and deferred frames.
+Both editor engine runs pass 900 tests (one ignored), including the 48-step
+real-workspace scene oracle; the platform-handler IME test also passes 20
+scheduler iterations per engine. The default workspace suite passes 238 tests.
+The offscreen Metal pixel oracle passes under both engines.
+
+## Historical measurements before direct node scene storage
+
+The measurements below describe the earlier capture-based implementation, which
+kept both frame operation logs and node recordings. They are retained as a
+baseline; they do not measure the direct-write implementation.
+
+### Editor and memory measurements
 
 On the Apple M4 Max, three release runs per engine (order legacy, retained,
 retained, legacy, legacy, retained) produced these medians of Criterion point
@@ -299,7 +321,7 @@ After the third unmount, live requested bytes return to 2,182,846 (legacy) and
 in this fixture; it does not establish memory behavior for path-heavy scenes,
 deep nesting, native GPU resources, or a full Zed workspace.
 
-## Busy workbench validation and measurement
+### Busy workbench validation and measurement
 
 `Workbench/update/{row,editor,mixed,full}` embeds a real 1,000-line Editor in a
 1600-by-1000 window with four custom GPUI panels and 48 independently owned row
@@ -431,7 +453,7 @@ cases legitimately rebuild everything. Mixed-workbench resizing calls
 resize callback. `./script/clippy -p gpui -p benchmarks` passes, including the
 dependency audit.
 
-## Review validation
+### Review validation
 
 After the notification fix in `f7e66a3192`, the GPUI suite passes under both
 engines (252 tests, two manual benchmarks ignored), and thirteen focused
@@ -546,5 +568,4 @@ lifetime check for this fixture; heap attribution remains a separate measurement
 
 `./script/clippy -p gpui` passes, including all-target/all-feature checks and the
 dependency audit. The boundary demo was built during the preceding correctness
-validation. This is evidence for reviewing an experimental engine, not for enabling it by default
-or claiming GPU/battery improvements.
+validation. These historical measurements do not establish GPU or battery improvements.
