@@ -36,6 +36,7 @@ pub trait CommonAnimationExt: AnimationExt {
             Animation::new(Duration::from_secs(duration)).repeat_synced(),
             |component, delta| component.transform(Transformation::rotate(percentage(delta))),
         )
+        .with_max_fps(30)
     }
 }
 

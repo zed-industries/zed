@@ -723,7 +723,8 @@ pub(crate) fn render_mermaid_diagram(
                                         .repeat()
                                         .with_easing(pulsating_between(0.4, 0.8)),
                                     |label, delta| label.alpha(delta),
-                                ),
+                                )
+                                .with_max_fps(15),
                         ),
                     )
                     .when(show_interactive, |container| {

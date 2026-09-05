@@ -527,6 +527,7 @@ impl Render for ThreadImportModal {
                             .with_easing(pulsating_between(0.2, 0.6)),
                         |icon, delta| icon.opacity(delta),
                     )
+                    .with_max_fps(15)
                     .into_any_element()
                 } else {
                     item.into_any_element()
