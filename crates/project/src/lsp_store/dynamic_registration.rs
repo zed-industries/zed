@@ -617,6 +617,20 @@ impl LspStore {
                         |capabilities| &mut capabilities.definition_provider,
                     )?;
                 }
+                "textDocument/documentHighlight" => {
+                    let document_selector =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let options = parse_register_capabilities(reg.register_options)?;
+                    self.register_dynamic_text_document_capability(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        options,
+                        document_selector,
+                        cx,
+                        |capabilities| &mut capabilities.document_highlight_provider,
+                    )?;
+                }
                 "textDocument/completion" => {
                     if let Some(registration_options) = reg
                         .register_options
@@ -1036,6 +1050,14 @@ impl LspStore {
                         unreg,
                         cx,
                         |capabilities| &mut capabilities.definition_provider,
+                    )?;
+                }
+                "textDocument/documentHighlight" => {
+                    self.unregister_dynamic_text_document_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |capabilities| &mut capabilities.document_highlight_provider,
                     )?;
                 }
                 "textDocument/completion" => {

@@ -18,7 +18,7 @@ use crate::{
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use collections::{HashMap, HashSet};
 use fs::Fs as _;
-use futures::{StreamExt, channel::oneshot};
+use futures::{FutureExt, StreamExt, channel::oneshot};
 use gpui::{
     BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
     VisualTestContext, WindowBounds, WindowOptions, div,
@@ -35386,6 +35386,157 @@ async fn test_bookmarks_tab_retries_failed_path_when_file_appears(cx: &mut TestA
         2,
         "the bookmarks tab should refresh and show the late file's bookmark"
     );
+}
+
+#[gpui::test]
+async fn test_dynamic_document_highlight_registration_refreshes_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.lsp_highlight_debounce = Some(DelayMs(75));
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.set_state(indoc! {"
+        fn main() {
+            let foo = 1;
+            fˇoo;
+        }
+    "});
+    cx.run_until_parked();
+
+    let mut document_highlight_requests = cx
+        .set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>(
+            |_, _, _| async move {
+                Ok(Some(vec![lsp::DocumentHighlight {
+                    range: lsp::Range::new(lsp::Position::new(2, 4), lsp::Position::new(2, 7)),
+                    kind: Some(lsp::DocumentHighlightKind::READ),
+                }]))
+            },
+        );
+    let method = "textDocument/documentHighlight";
+    let python_registration_id = "python-document-highlight";
+    let rust_registration_id = "rust-document-highlight";
+
+    cx.lsp
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: python_registration_id.to_string(),
+                    method: method.to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "python", "scheme": "file" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.run_until_parked();
+
+    cx.lsp
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: rust_registration_id.to_string(),
+                    method: method.to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "file" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.run_until_parked();
+    let document_highlight_request = document_highlight_requests.next().fuse();
+    let timeout = cx.background_executor.timer(Duration::from_secs(5)).fuse();
+    futures::pin_mut!(document_highlight_request, timeout);
+    futures::select! {
+        request = document_highlight_request => {
+            request.expect("adding an applicable selector should refresh document highlights");
+        }
+        _ = timeout => panic!("timed out waiting for a document highlight request"),
+    }
+    cx.run_until_parked();
+
+    assert!(cx.editor(|editor, _, _| {
+        editor
+            .background_highlights
+            .get(&HighlightKey::DocumentHighlightRead)
+            .is_some_and(|(_, ranges)| !ranges.is_empty())
+    }));
+
+    assert_eq!(
+        cx.update_editor(|editor, _, cx| editor.refresh_document_highlights(cx)),
+        None,
+    );
+    for registration_index in 0..3 {
+        cx.executor().advance_clock(Duration::from_millis(20));
+        cx.lsp
+            .request::<lsp::request::RegisterCapability>(
+                lsp::RegistrationParams {
+                    registrations: vec![lsp::Registration {
+                        id: format!("python-document-highlight-{registration_index}"),
+                        method: method.to_string(),
+                        register_options: Some(json!({
+                            "documentSelector": [{ "language": "python", "scheme": "file" }],
+                        })),
+                    }],
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .unwrap();
+        cx.run_until_parked();
+    }
+    cx.executor().advance_clock(Duration::from_millis(20));
+    cx.run_until_parked();
+
+    let document_highlight_request = document_highlight_requests.next().fuse();
+    let timeout = cx
+        .background_executor
+        .timer(Duration::from_millis(10))
+        .fuse();
+    futures::pin_mut!(document_highlight_request, timeout);
+    futures::select! {
+        request = document_highlight_request => {
+            request.expect("irrelevant registration changes should not restart the document highlight debounce");
+        }
+        _ = timeout => panic!("irrelevant registration changes restarted the document highlight debounce"),
+    }
+    cx.run_until_parked();
+
+    cx.lsp
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: rust_registration_id.to_string(),
+                    method: method.to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().advance_clock(Duration::from_millis(75));
+    cx.run_until_parked();
+
+    assert!(cx.editor(|editor, _, _| {
+        editor
+            .background_highlights
+            .get(&HighlightKey::DocumentHighlightRead)
+            .is_none_or(|(_, ranges)| ranges.is_empty())
+    }));
 }
 
 #[gpui::test]
