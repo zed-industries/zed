@@ -191,6 +191,26 @@ fn next_wire_refresh_request_id() -> u64 {
     NEXT_WIRE_REFRESH_REQUEST_ID.fetch_add(1, atomic::Ordering::Relaxed) as u64
 }
 
+/// Returns the directory that should be used as the LSP workspace folder for
+/// `path` within `worktree`.
+///
+/// For single-file worktrees, `abs_path` points at the file itself, which is
+/// not a valid workspace folder: language servers such as gopls run their
+/// build commands (`go env`, `go list`) with the workspace folder as the
+/// working directory, and `CreateProcess` rejects a file as a directory.
+/// Use the parent directory instead, matching `DapAdapterDelegate::new` and
+/// `ProjectEnvironment::worktree_environment`.
+fn lsp_workspace_root_dir(worktree: &worktree::Snapshot, path: &RelPath) -> PathBuf {
+    let root_dir = worktree.root_dir().unwrap_or_else(|| {
+        worktree
+            .abs_path()
+            .parent()
+            .map(Arc::from)
+            .unwrap_or_else(|| worktree.abs_path().clone())
+    });
+    root_dir.join(path.as_std_path())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum ProgressToken {
     Number(i32),
@@ -3166,7 +3186,10 @@ impl LocalLspStore {
                     let path = &disposition.path;
 
                     {
-                        let uri = Uri::from_file_path(worktree.read(cx).absolutize(&path.path));
+                        let uri = Uri::from_file_path(lsp_workspace_root_dir(
+                            &worktree.read(cx),
+                            &path.path,
+                        ));
 
                         let server_id = self.get_or_insert_language_server(
                             &worktree,
@@ -6344,7 +6367,10 @@ impl LspStore {
                         }
                         let server_id = node.server_id_or_init(|disposition| {
                             let path = &disposition.path;
-                            let uri = Uri::from_file_path(worktree.read(cx).absolutize(&path.path));
+                            let uri = Uri::from_file_path(lsp_workspace_root_dir(
+                                &worktree.read(cx),
+                                &path.path,
+                            ));
                             let key = LanguageServerSeed {
                                 worktree_id,
                                 name: disposition.server_name.clone(),
