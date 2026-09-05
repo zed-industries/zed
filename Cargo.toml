@@ -956,6 +956,7 @@ features = [
     "Win32_System_RestartManager",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
+    "Win32_System_TaskScheduler",
     "Win32_System_Threading",
     "Win32_System_Variant",
     "Win32_System_WinRT",
