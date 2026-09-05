@@ -89,6 +89,7 @@ impl FsWatcher {
             self.pending_path_events.clone(),
             self.registrations.clone(),
             self.pending_registrations.clone(),
+            register_existing_path,
         ));
         pending_registrations.insert(path, task);
     }
@@ -486,9 +487,18 @@ async fn poll_path_until_created(
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
     registrations: Arc<Mutex<HashMap<WatchKey, FsWatcherRegistration>>>,
     pending_registrations: Arc<Mutex<HashMap<Arc<Path>, Task<()>>>>,
+    register: impl Fn(
+        Arc<Path>,
+        bool,
+        async_channel::Sender<()>,
+        Arc<Mutex<Vec<PathEvent>>>,
+    ) -> anyhow::Result<Option<FsWatcherRegistration>>
+    + Send
+    + 'static,
 ) {
+    let mut delay = poll_interval();
     loop {
-        executor.timer(poll_interval()).await;
+        executor.timer(delay).await;
 
         if !pending_registrations.lock().contains_key(path.as_ref()) {
             return;
@@ -508,7 +518,7 @@ async fn poll_path_until_created(
             return;
         }
 
-        match register_existing_path(
+        match register(
             path.clone(),
             case_insensitive,
             tx.clone(),
@@ -541,7 +551,10 @@ async fn poll_path_until_created(
             }
             Ok(None) => {}
             Err(error) => {
-                log::warn!("failed to watch newly-created path {path:?}: {error}; retrying");
+                delay = (delay * 2).min(MAX_WATCH_RETRY_INTERVAL);
+                log::warn!(
+                    "failed to watch newly-created path {path:?}: {error}; retrying in {delay:?}"
+                );
             }
         }
     }
@@ -1087,6 +1100,10 @@ fn is_max_files_watch_error(error: &anyhow::Error) -> bool {
         .is_some_and(|error| matches!(&error.kind, notify::ErrorKind::MaxFilesWatch))
 }
 
+/// Cap for the retry backoff after failed watch registrations, which
+/// rarely resolve quickly (e.g. FSEvent stream creation under fd exhaustion).
+const MAX_WATCH_RETRY_INTERVAL: Duration = Duration::from_secs(60);
+
 static POLL_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
     let poll_ms: u64 = std::env::var("ZED_FILE_WATCHER_POLL_MS")
         .ok()
@@ -1304,6 +1321,55 @@ mod tests {
                 kind: Some(PathEventKind::Created),
             }]
         );
+    }
+
+    #[gpui::test]
+    async fn failed_watch_registration_retries_with_backoff(cx: &mut gpui::TestAppContext) {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path: Arc<Path> = temp_dir.path().join("file.txt").into();
+        std::fs::write(&path, b"contents").expect("create path");
+
+        let (tx, _rx) = async_channel::unbounded();
+        let (attempt_tx, attempt_rx) = async_channel::unbounded();
+        let pending_path_events: Arc<Mutex<Vec<PathEvent>>> = Default::default();
+        let registrations: Arc<Mutex<HashMap<WatchKey, FsWatcherRegistration>>> =
+            Default::default();
+        let pending_registrations: Arc<Mutex<HashMap<Arc<Path>, Task<()>>>> = Default::default();
+
+        let task = cx.executor().spawn(poll_path_until_created(
+            cx.executor(),
+            path.clone(),
+            tx,
+            pending_path_events,
+            registrations,
+            pending_registrations.clone(),
+            move |_, _, _, _| {
+                attempt_tx
+                    .send_blocking(())
+                    .expect("record registration attempt");
+                Err(anyhow::anyhow!("simulated registration failure"))
+            },
+        ));
+        pending_registrations.lock().insert(path, task);
+
+        // poll_path_until_created stats the path on smol's blocking pool, which
+        // the deterministic executor cannot drive; park until each attempt
+        // signals the channel.
+        cx.executor().allow_parking();
+
+        // The first attempt happens after the base poll interval, then the
+        // delay doubles per failure up to MAX_WATCH_RETRY_INTERVAL.
+        let mut expected_delay = poll_interval();
+        for _ in 0..7 {
+            cx.executor().advance_clock(expected_delay);
+            attempt_rx.recv().await.expect("receive attempt");
+            assert!(
+                attempt_rx.try_recv().is_err(),
+                "only one attempt per backoff interval"
+            );
+            expected_delay = (expected_delay * 2).min(MAX_WATCH_RETRY_INTERVAL);
+        }
+        assert_eq!(expected_delay, MAX_WATCH_RETRY_INTERVAL);
     }
 
     #[test]
