@@ -46,6 +46,7 @@ pub(crate) struct TestWindowState {
     text_input_configurations: Vec<TextInputConfiguration>,
     text_input_state_changes: Vec<TextInputStateChange>,
     is_fullscreen: bool,
+    scale_factor: f32,
     appearance: WindowAppearance,
     external_drag_files: Vec<(PathBuf, bool)>,
     start_external_drag_result: bool,
@@ -110,6 +111,9 @@ impl TestWindow {
             text_input_configurations: Vec::new(),
             text_input_state_changes: Vec::new(),
             is_fullscreen: false,
+            // Matches the value `scale_factor()` has always returned, so existing
+            // tests keep rendering at 2x unless they simulate a change.
+            scale_factor: 2.0,
             appearance: WindowAppearance::Light,
             external_drag_files: Vec::new(),
             start_external_drag_result: false,
@@ -156,6 +160,24 @@ impl TestWindow {
             return;
         };
         drop(lock);
+        callback(size, scale_factor);
+        self.0.lock().resize_callback = Some(callback);
+    }
+
+    /// Simulates the window moving to a display with a different scale factor
+    /// (e.g. dragging from a Retina screen to a 1x external monitor). Reported
+    /// through the resize callback with the unchanged size, the same channel a
+    /// real DPI change reaches the window on.
+    pub fn simulate_scale_factor_change(&mut self, scale_factor: f32) {
+        let (size, callback) = {
+            let mut lock = self.0.lock();
+            // Always update the scale factor, even if no callback is registered
+            lock.scale_factor = scale_factor;
+            (lock.bounds.size, lock.resize_callback.take())
+        };
+        let Some(mut callback) = callback else {
+            return;
+        };
         callback(size, scale_factor);
         self.0.lock().resize_callback = Some(callback);
     }
@@ -241,7 +263,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn scale_factor(&self) -> f32 {
-        2.0
+        self.0.lock().scale_factor
     }
 
     fn appearance(&self) -> WindowAppearance {

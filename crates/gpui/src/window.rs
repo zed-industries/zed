@@ -7452,6 +7452,31 @@ mod tests {
             .unwrap();
     }
 
+    /// A simulated scale-factor change must reach `Window`'s cached value
+    /// through the same channel a real DPI change uses (the platform resize
+    /// callback), and must persist across later bounds changes — the platform
+    /// window owns the value, so a subsequent resize re-reports it instead of
+    /// reverting to the test platform's built-in 2.0.
+    #[test]
+    fn test_simulate_scale_factor_change() {
+        let mut cx = TestAppContext::single();
+        let window = cx.add_window(|_, _| EmptyView);
+        let handle: AnyWindowHandle = window.into();
+        let scale = |cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, _| window.scale_factor())
+                .unwrap()
+        };
+
+        // Unchanged default: tests render at 2x unless they simulate otherwise.
+        assert_eq!(scale(&mut cx), 2.0);
+
+        cx.simulate_window_scale_factor_change(handle, 1.0);
+        assert_eq!(scale(&mut cx), 1.0);
+
+        cx.simulate_window_resize(handle, size(px(800.), px(600.)));
+        assert_eq!(scale(&mut cx), 1.0);
+    }
+
     /// Platforms that stop requesting frames for idle windows (currently web)
     /// rely on the frame waker firing whenever frame demand arises; a demand
     /// source that skips the waker shows up there as a window that silently
