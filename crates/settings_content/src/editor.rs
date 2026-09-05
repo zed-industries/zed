@@ -481,6 +481,16 @@ pub struct MinimapContent {
     ///
     /// Default: 80
     pub max_width_columns: Option<num::NonZeroU32>,
+
+    /// Whether to show git diff indicators in the minimap.
+    ///
+    /// Default: inherits the scrollbar setting
+    pub git_diff: Option<bool>,
+
+    /// Which diagnostic levels to show as markers in the minimap.
+    ///
+    /// Default: inherits the scrollbar setting
+    pub diagnostics: Option<ScrollbarDiagnostics>,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis

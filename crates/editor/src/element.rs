@@ -6306,6 +6306,79 @@ impl EditorElement {
         });
     }
 
+    fn refresh_slow_minimap_markers(
+        &self,
+        layout: &EditorLayout,
+        minimap_layout: &MinimapLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            let minimap_size = minimap_layout.thumb_layout.hitbox.size;
+            let minimap_line_height = minimap_layout.minimap_line_height;
+            let marker_layout_size = size(minimap_size.width, minimap_line_height);
+            if !editor
+                .minimap_marker_state
+                .should_refresh(marker_layout_size)
+            {
+                return;
+            }
+
+            let minimap_settings = EditorSettings::get_global(cx).minimap;
+            let show_git_diff_markers = minimap_settings.git_diff;
+            let diagnostics = minimap_settings.diagnostics;
+            if !show_git_diff_markers && diagnostics == ScrollbarDiagnostics::None {
+                editor.minimap_marker_state.markers = Default::default();
+                editor.minimap_marker_state.scrollbar_size = marker_layout_size;
+                editor.minimap_marker_state.dirty = false;
+                return;
+            }
+
+            let snapshot = layout.position_map.snapshot.clone();
+            let theme = cx.theme().clone();
+
+            editor.minimap_marker_state.dirty = false;
+            editor.minimap_marker_state.pending_refresh =
+                Some(cx.spawn_in(window, async move |editor, cx| {
+                    let minimap_markers = cx
+                        .background_spawn(async move {
+                            let mut marker_quads = Vec::new();
+                            if diagnostics != ScrollbarDiagnostics::None {
+                                marker_quads.extend(minimap_marker_quads(
+                                    minimap_diagnostic_marker_ranges(
+                                        &snapshot,
+                                        &theme,
+                                        diagnostics,
+                                    ),
+                                    Pixels::ZERO..minimap_size.width,
+                                    minimap_line_height,
+                                ));
+                            }
+                            if show_git_diff_markers {
+                                marker_quads.extend(minimap_marker_quads(
+                                    minimap_git_diff_marker_ranges(&snapshot, &theme),
+                                    Pixels::ZERO
+                                        ..MinimapLayout::GIT_DIFF_MARKER_WIDTH
+                                            .min(minimap_size.width),
+                                    minimap_line_height,
+                                ));
+                            }
+                            Arc::from(marker_quads)
+                        })
+                        .await;
+
+                    editor.update(cx, |editor, cx| {
+                        editor.minimap_marker_state.markers = minimap_markers;
+                        editor.minimap_marker_state.scrollbar_size = marker_layout_size;
+                        editor.minimap_marker_state.pending_refresh = None;
+                        cx.notify();
+                    })?;
+
+                    Ok(())
+                }));
+        });
+    }
+
     fn paint_highlighted_range(
         &self,
         range: Range<DisplayPoint>,
@@ -6425,14 +6498,27 @@ impl EditorElement {
         }
     }
 
-    fn paint_minimap(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        if let Some(mut layout) = layout.minimap.take() {
+    fn paint_minimap(&self, editor_layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+        if let Some(mut layout) = editor_layout.minimap.take() {
             let minimap_hitbox = layout.thumb_layout.hitbox.clone();
             let dragging_minimap = self.editor.read(cx).scroll_manager.is_dragging_minimap();
+            let minimap_scroll_top = layout.minimap_scroll_top;
+            let minimap_line_height = layout.minimap_line_height;
 
             window.paint_layer(layout.thumb_layout.hitbox.bounds, |window| {
                 window.with_element_namespace("minimap", |window| {
                     layout.minimap.paint(window, cx);
+
+                    self.refresh_slow_minimap_markers(editor_layout, &layout, window, cx);
+                    let scroll_pixel_offset =
+                        Pixels::from(minimap_scroll_top * f64::from(minimap_line_height));
+                    let minimap_markers = self.editor.read(cx).minimap_marker_state.markers.clone();
+                    for mut marker in minimap_markers.iter().cloned() {
+                        marker.bounds.origin += minimap_hitbox.origin;
+                        marker.bounds.origin.y -= scroll_pixel_offset;
+                        window.paint_quad(marker);
+                    }
+
                     if let Some(thumb_bounds) = layout.thumb_layout.thumb_bounds {
                         let minimap_thumb_color = match layout.thumb_layout.thumb_state {
                             ScrollbarThumbState::Idle => {
@@ -9831,6 +9917,113 @@ struct ColoredRange<T> {
     color: Hsla,
 }
 
+struct MinimapMarkerRange {
+    start: DisplayRow,
+    end: DisplayRow,
+    color: Hsla,
+}
+
+fn minimap_marker_quads(
+    row_ranges: impl IntoIterator<Item = MinimapMarkerRange>,
+    x_range: Range<Pixels>,
+    line_height: Pixels,
+) -> impl Iterator<Item = PaintQuad> {
+    row_ranges.into_iter().map(move |range| {
+        let start_y = range.start.as_f64() as f32 * line_height;
+        let end_y = (range.end.as_f64() as f32 + 1.0) * line_height;
+        fill(
+            Bounds::from_corners(point(x_range.start, start_y), point(x_range.end, end_y)),
+            range.color,
+        )
+    })
+}
+
+fn minimap_git_diff_marker_ranges<'a>(
+    snapshot: &'a EditorSnapshot,
+    theme: &'a theme::Theme,
+) -> impl Iterator<Item = MinimapMarkerRange> + 'a {
+    snapshot.buffer_snapshot().diff_hunks().map(|hunk| {
+        let start_display_row = MultiBufferPoint::new(hunk.row_range.start.0, 0)
+            .to_display_point(&snapshot.display_snapshot)
+            .row();
+        let mut end_display_row = MultiBufferPoint::new(hunk.row_range.end.0, 0)
+            .to_display_point(&snapshot.display_snapshot)
+            .row();
+        if end_display_row != start_display_row {
+            end_display_row.0 -= 1;
+        }
+        let color = match &hunk.status().kind {
+            DiffHunkStatusKind::Added => theme.colors().version_control_added,
+            DiffHunkStatusKind::Modified => theme.colors().version_control_modified,
+            DiffHunkStatusKind::Deleted => theme.colors().version_control_deleted,
+        };
+        MinimapMarkerRange {
+            start: start_display_row,
+            end: end_display_row,
+            color,
+        }
+    })
+}
+
+fn minimap_diagnostic_marker_ranges<'a>(
+    snapshot: &'a EditorSnapshot,
+    theme: &'a theme::Theme,
+    diagnostics_filter: ScrollbarDiagnostics,
+) -> impl Iterator<Item = MinimapMarkerRange> + 'a {
+    let max_point = snapshot.display_snapshot.buffer_snapshot().max_point();
+    snapshot
+        .buffer_snapshot()
+        .diagnostics_in_range::<Point>(Point::zero()..max_point)
+        .filter(move |diagnostic| {
+            diagnostic_severity_is_included(diagnostics_filter, diagnostic.diagnostic.severity)
+        })
+        // Paint the most severe diagnostics last so they appear on top.
+        .sorted_by_key(|diagnostic| std::cmp::Reverse(diagnostic.diagnostic.severity))
+        .map(|diagnostic| {
+            let start_display = diagnostic
+                .range
+                .start
+                .to_display_point(&snapshot.display_snapshot);
+            let end_display = diagnostic
+                .range
+                .end
+                .to_display_point(&snapshot.display_snapshot);
+            let color = match diagnostic.diagnostic.severity {
+                lsp::DiagnosticSeverity::ERROR => theme.status().error,
+                lsp::DiagnosticSeverity::WARNING => theme.status().warning,
+                lsp::DiagnosticSeverity::INFORMATION => theme.status().info,
+                _ => theme.status().hint,
+            }
+            .opacity(MinimapLayout::DIAGNOSTIC_MARKER_OPACITY);
+            MinimapMarkerRange {
+                start: start_display.row(),
+                end: end_display.row(),
+                color,
+            }
+        })
+}
+
+fn diagnostic_severity_is_included(
+    diagnostics_filter: ScrollbarDiagnostics,
+    severity: lsp::DiagnosticSeverity,
+) -> bool {
+    match (diagnostics_filter, severity) {
+        (ScrollbarDiagnostics::All, _) => true,
+        (ScrollbarDiagnostics::Error, lsp::DiagnosticSeverity::ERROR) => true,
+        (
+            ScrollbarDiagnostics::Warning,
+            lsp::DiagnosticSeverity::ERROR | lsp::DiagnosticSeverity::WARNING,
+        ) => true,
+        (
+            ScrollbarDiagnostics::Information,
+            lsp::DiagnosticSeverity::ERROR
+            | lsp::DiagnosticSeverity::WARNING
+            | lsp::DiagnosticSeverity::INFORMATION,
+        ) => true,
+        (_, _) => false,
+    }
+}
+
 impl Along for ScrollbarAxes {
     type Unit = bool;
 
@@ -10210,6 +10403,8 @@ struct MinimapLayout {
 }
 
 impl MinimapLayout {
+    const DIAGNOSTIC_MARKER_OPACITY: f32 = 0.35;
+    const GIT_DIFF_MARKER_WIDTH: Pixels = px(2.);
     /// The minimum width of the minimap in columns. If the minimap is smaller than this, it will be hidden.
     const MINIMAP_MIN_WIDTH_COLUMNS: f32 = 20.;
     /// The minimap width as a percentage of the editor width.
@@ -10893,7 +11088,7 @@ fn compute_auto_height_layout(
 mod tests {
     use super::*;
     use crate::{
-        Editor, FoldPlaceholder, HighlightKey, Inlay, MultiBuffer, NavigationOverlayKey,
+        Crease, Editor, FoldPlaceholder, HighlightKey, Inlay, MultiBuffer, NavigationOverlayKey,
         NavigationOverlayLabel, NavigationTargetOverlay, SelectionEffects,
         display_map::{BlockPlacement, BlockProperties, DisplayMap},
         editor_tests::{init_test, update_test_language_settings},
@@ -12662,6 +12857,110 @@ mod tests {
         let k = line_height / result;
         assert!(k - k.round() < 0.0000001); // approximately integer
         assert!((k.round() as u32).is_multiple_of(2));
+    }
+
+    #[test]
+    fn test_minimap_marker_quads() {
+        let color = Hsla {
+            h: 0.2,
+            s: 0.4,
+            l: 0.6,
+            a: 0.8,
+        };
+        let quad = minimap_marker_quads(
+            [MinimapMarkerRange {
+                start: DisplayRow(4),
+                end: DisplayRow(6),
+                color,
+            }],
+            px(1.)..px(4.),
+            px(2.),
+        )
+        .next();
+        let Some(quad) = quad else {
+            panic!("expected one minimap marker quad");
+        };
+
+        assert_eq!(
+            quad.bounds,
+            Bounds::new(point(px(1.), px(8.)), size(px(3.), px(6.)))
+        );
+        assert_eq!(quad.background.as_solid(), Some(color));
+    }
+
+    #[test]
+    fn test_diagnostic_marker_severity_filter() {
+        use lsp::DiagnosticSeverity as Severity;
+
+        let severities = [
+            Severity::ERROR,
+            Severity::WARNING,
+            Severity::INFORMATION,
+            Severity::HINT,
+        ];
+        let cases = [
+            (ScrollbarDiagnostics::None, [false, false, false, false]),
+            (ScrollbarDiagnostics::Error, [true, false, false, false]),
+            (ScrollbarDiagnostics::Warning, [true, true, false, false]),
+            (ScrollbarDiagnostics::Information, [true, true, true, false]),
+            (ScrollbarDiagnostics::All, [true, true, true, true]),
+        ];
+
+        for (filter, expected) in cases {
+            for (severity, expected) in severities.into_iter().zip(expected) {
+                assert_eq!(diagnostic_severity_is_included(filter, severity), expected);
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_marker_states_invalidate_on_layout_and_theme_changes(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("a long line that can be wrapped", cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let reset = |editor: &mut Editor| {
+            editor.scrollbar_marker_state = Default::default();
+            editor.minimap_marker_state = Default::default();
+        };
+        let assert_only_minimap_dirty = |editor: &Editor| {
+            assert!(!editor.scrollbar_marker_state.dirty);
+            assert!(editor.minimap_marker_state.dirty);
+        };
+
+        let update_result = window.update(cx, |editor, window, cx| {
+            reset(editor);
+            assert!(editor.set_wrap_width(Some(px(40.)), cx));
+            assert_only_minimap_dirty(editor);
+
+            editor.fold_creases(
+                vec![Crease::simple(
+                    Point::new(0, 2)..Point::new(0, 8),
+                    FoldPlaceholder::test(),
+                )],
+                false,
+                window,
+                cx,
+            );
+            let snapshot = editor.display_snapshot(cx);
+            let fold_id = snapshot
+                .folds_in_range(MultiBufferOffset(0)..snapshot.buffer_snapshot().len())
+                .next()
+                .map(|fold| fold.id);
+            let Some(fold_id) = fold_id else {
+                panic!("expected a folded range");
+            };
+
+            reset(editor);
+            assert!(editor.update_renderer_widths([(ChunkRendererId::Fold(fold_id), px(20.))], cx));
+            assert_only_minimap_dirty(editor);
+
+            reset(editor);
+            editor.theme_changed(window, cx);
+            assert_only_minimap_dirty(editor);
+        });
+        assert!(update_result.is_ok(), "editor window should remain open");
     }
 
     #[test]

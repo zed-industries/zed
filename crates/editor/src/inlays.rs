@@ -164,6 +164,7 @@ impl Editor {
         self.display_map.update(cx, |display_map, cx| {
             display_map.splice_inlays(to_remove, to_insert, cx)
         });
+        self.minimap_marker_state.dirty = true;
         cx.notify();
     }
 
