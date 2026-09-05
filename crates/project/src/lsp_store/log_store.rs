@@ -9,6 +9,7 @@ use futures::{StreamExt, channel::mpsc};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription, TaskExt, WeakEntity,
 };
+use indexmap::IndexMap;
 use lsp::{
     IoKind, LanguageServer, LanguageServerId, LanguageServerName, LanguageServerSelector,
     MessageType, RequestId, TraceValue,
@@ -19,8 +20,16 @@ use settings::WorktreeId;
 
 use crate::{LanguageServerLogType, LspStore, Project, ProjectItem as _};
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StoppedServerKey {
+    pub kind: LanguageServerKind,
+    pub name: LanguageServerName,
+    pub worktree_id: Option<WorktreeId>,
+}
+
 const MAX_STORED_LOG_ENTRIES: usize = 2000;
 const MAX_PENDING_REQUESTS: usize = MAX_STORED_LOG_ENTRIES;
+const MAX_RETAINED_STOPPED_SERVERS: usize = 16;
 
 pub fn init(on_headless_host: bool, cx: &mut App) -> Entity<LogStore> {
     let log_store = cx.new(|cx| LogStore::new(on_headless_host, cx));
@@ -47,6 +56,7 @@ pub struct LogStore {
     on_headless_host: bool,
     projects: HashMap<WeakEntity<Project>, ProjectState>,
     pub language_servers: HashMap<LanguageServerLogKey, LanguageServerState>,
+    pub stopped_language_servers: IndexMap<StoppedServerKey, LanguageServerState>,
     io_tx: mpsc::UnboundedSender<(LanguageServerLogKey, IoKind, String, Instant)>,
 }
 
@@ -131,6 +141,7 @@ impl Message for RpcMessage {
 }
 
 pub struct LanguageServerState {
+    pub server_id: LanguageServerId,
     pub name: Option<LanguageServerName>,
     pub worktree_id: Option<WorktreeId>,
     server: Option<Weak<LanguageServer>>,
@@ -152,6 +163,7 @@ impl LanguageServerState {
 impl std::fmt::Debug for LanguageServerState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LanguageServerState")
+            .field("server_id", &self.server_id)
             .field("name", &self.name)
             .field("worktree_id", &self.worktree_id)
             .field("log_messages", &self.log_messages)
@@ -444,6 +456,7 @@ impl LogStore {
         let log_store = Self {
             projects: HashMap::default(),
             language_servers: HashMap::default(),
+            stopped_language_servers: IndexMap::default(),
 
             on_headless_host,
             io_tx,
@@ -472,6 +485,8 @@ impl LogStore {
                     cx.observe_release(project, move |this, _, _| {
                         this.projects.remove(&weak_project);
                         this.language_servers
+                            .retain(|key, _| key.kind.project() != Some(&weak_project));
+                        this.stopped_language_servers
                             .retain(|key, _| key.kind.project() != Some(&weak_project));
                     }),
                     cx.subscribe(project, move |log_store, project, event, cx| {
@@ -581,6 +596,9 @@ impl LogStore {
                                     *id,
                                 );
                                 log_store.remove_language_server(&server_key, cx);
+                                log_store
+                                    .stopped_language_servers
+                                    .retain(|_, state| state.server_id != *id);
                             }
                             crate::Event::LanguageServerLog(id, typ, message) => {
                                 let server_kind = server_kind_for_id(log_store, *id);
@@ -652,7 +670,16 @@ impl LogStore {
         &mut self,
         key: &LanguageServerLogKey,
     ) -> Option<&mut LanguageServerState> {
-        self.language_servers.get_mut(key)
+        if let Some(state) = self.language_servers.get_mut(key) {
+            Some(state)
+        } else {
+            self.stopped_language_servers
+                .iter_mut()
+                .find(|(stopped_key, state)| {
+                    stopped_key.kind == key.kind && state.server_id == key.server_id
+                })
+                .map(|(_, state)| state)
+        }
     }
 
     pub fn add_language_server(
@@ -664,6 +691,15 @@ impl LogStore {
         server: Option<Arc<LanguageServer>>,
         cx: &mut Context<Self>,
     ) -> Option<&mut LanguageServerState> {
+        let stopped_state = name.as_ref().and_then(|name| {
+            self.stopped_language_servers
+                .shift_remove(&StoppedServerKey {
+                    kind: kind.clone(),
+                    name: name.clone(),
+                    worktree_id,
+                })
+        });
+
         let server_key = LanguageServerLogKey::new(kind, server_id);
         let server_state = self
             .language_servers
@@ -671,9 +707,10 @@ impl LogStore {
             .or_insert_with(|| {
                 cx.notify();
                 LanguageServerState {
+                    server_id,
                     name: None,
                     worktree_id: None,
-                    server: server.as_ref().map(Arc::downgrade),
+                    server: None,
                     rpc_state: None,
                     log_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
                     trace_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
@@ -683,6 +720,24 @@ impl LogStore {
                     toggled_log_kind: None,
                 }
             });
+
+        if let Some(stopped_state) = stopped_state {
+            Self::merge_log_entries(&mut server_state.log_messages, stopped_state.log_messages);
+            Self::merge_log_entries(
+                &mut server_state.trace_messages,
+                stopped_state.trace_messages,
+            );
+            match (&mut server_state.rpc_state, stopped_state.rpc_state) {
+                (None, rpc_state) => server_state.rpc_state = rpc_state,
+                (Some(current), Some(stopped)) => {
+                    Self::merge_log_entries(&mut current.rpc_messages, stopped.rpc_messages);
+                }
+                (Some(_), None) => {}
+            }
+            server_state.trace_level = stopped_state.trace_level;
+            server_state.log_level = stopped_state.log_level;
+            server_state.toggled_log_kind = stopped_state.toggled_log_kind;
+        }
 
         if let Some(name) = name {
             server_state.name = Some(name);
@@ -824,6 +879,19 @@ impl LogStore {
         visible_message
     }
 
+    fn merge_log_entries<T>(destination: &mut VecDeque<T>, source: VecDeque<T>) {
+        let overflow = source
+            .len()
+            .saturating_add(destination.len())
+            .saturating_sub(MAX_STORED_LOG_ENTRIES);
+        let mut merged = source;
+        for _ in 0..overflow {
+            merged.pop_front();
+        }
+        merged.extend(destination.drain(..));
+        *destination = merged;
+    }
+
     fn add_language_server_rpc(
         &mut self,
         key: &LanguageServerLogKey,
@@ -887,16 +955,65 @@ impl LogStore {
     }
 
     pub fn remove_language_server(&mut self, key: &LanguageServerLogKey, cx: &mut Context<Self>) {
-        self.language_servers.remove(key);
+        if let Some(state) = self.language_servers.remove(key) {
+            if let Some(name) = state.name.clone() {
+                self.stopped_language_servers.insert(
+                    StoppedServerKey {
+                        kind: key.kind.clone(),
+                        name,
+                        worktree_id: state.worktree_id,
+                    },
+                    state,
+                );
+            }
+        }
+
+        while self.stopped_language_servers.len() > MAX_RETAINED_STOPPED_SERVERS {
+            self.stopped_language_servers.shift_remove_index(0);
+        }
         cx.notify();
     }
 
     pub fn server_logs(&self, key: &LanguageServerLogKey) -> Option<&VecDeque<LogMessage>> {
-        Some(&self.language_servers.get(key)?.log_messages)
+        self.language_servers
+            .get(key)
+            .map(|s| &s.log_messages)
+            .or_else(|| {
+                self.stopped_language_servers
+                    .iter()
+                    .find(|(stopped_key, state)| {
+                        stopped_key.kind == key.kind && state.server_id == key.server_id
+                    })
+                    .map(|(_, state)| &state.log_messages)
+            })
     }
 
     pub fn server_trace(&self, key: &LanguageServerLogKey) -> Option<&VecDeque<TraceMessage>> {
-        Some(&self.language_servers.get(key)?.trace_messages)
+        self.language_servers
+            .get(key)
+            .map(|s| &s.trace_messages)
+            .or_else(|| {
+                self.stopped_language_servers
+                    .iter()
+                    .find(|(stopped_key, state)| {
+                        stopped_key.kind == key.kind && state.server_id == key.server_id
+                    })
+                    .map(|(_, state)| &state.trace_messages)
+            })
+    }
+
+    pub fn language_server_state(
+        &self,
+        key: &LanguageServerLogKey,
+    ) -> Option<&LanguageServerState> {
+        self.language_servers.get(key).or_else(|| {
+            self.stopped_language_servers
+                .iter()
+                .find(|(stopped_key, state)| {
+                    stopped_key.kind == key.kind && state.server_id == key.server_id
+                })
+                .map(|(_, state)| state)
+        })
     }
 
     pub fn server_keys_for_project<'a>(
@@ -915,8 +1032,7 @@ impl LogStore {
         key: &LanguageServerLogKey,
     ) -> Option<&mut LanguageServerRpcState> {
         let rpc_state = self
-            .language_servers
-            .get_mut(key)?
+            .get_language_server_state(key)?
             .rpc_state
             .get_or_insert_with(|| LanguageServerRpcState {
                 rpc_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
@@ -930,7 +1046,7 @@ impl LogStore {
         &mut self,
         key: &LanguageServerLogKey,
     ) -> Option<()> {
-        self.language_servers.get_mut(key)?.rpc_state.take();
+        self.get_language_server_state(key)?.rpc_state.take();
         Some(())
     }
 
@@ -940,13 +1056,57 @@ impl LogStore {
         project: &WeakEntity<Project>,
         lsp_store: &WeakEntity<LspStore>,
     ) -> bool {
-        self.language_servers.iter().any(|(key, state)| {
+        // Check active servers
+        if self.language_servers.iter().any(|(key, state)| {
             key.is_for_project(project, lsp_store)
                 && match server {
                     LanguageServerSelector::Id(id) => key.server_id == *id,
                     LanguageServerSelector::Name(name) => state.name.as_ref() == Some(name),
                 }
+        }) {
+            return true;
+        }
+        // Also check stopped servers
+        self.stopped_language_servers.iter().any(|(key, state)| {
+            key.kind.is_for_project(project, lsp_store)
+                && match server {
+                    LanguageServerSelector::Id(id) => state.server_id == *id,
+                    LanguageServerSelector::Name(name) => Some(name) == state.name.as_ref(),
+                }
         })
+    }
+
+    pub fn contains_language_server(&self, id: LanguageServerId) -> bool {
+        self.language_servers.values().any(|s| s.server_id == id)
+            || self
+                .stopped_language_servers
+                .values()
+                .any(|state| state.server_id == id)
+    }
+
+    pub fn language_server_id_for_name_and_worktree(
+        &self,
+        name: &LanguageServerName,
+        worktree_id: WorktreeId,
+        project: &WeakEntity<Project>,
+        lsp_store: &WeakEntity<LspStore>,
+    ) -> Option<LanguageServerId> {
+        self.stopped_language_servers
+            .iter()
+            .find_map(|(key, state)| {
+                (key.kind.is_for_project(project, lsp_store)
+                    && state.name.as_ref() == Some(name)
+                    && state.worktree_id == Some(worktree_id))
+                .then_some(state.server_id)
+            })
+            .or_else(|| {
+                self.language_servers.iter().find_map(|(key, state)| {
+                    (key.is_for_project(project, lsp_store)
+                        && state.name.as_ref() == Some(name)
+                        && state.worktree_id == Some(worktree_id))
+                    .then_some(key.server_id)
+                })
+            })
     }
 
     fn on_io(
@@ -1095,4 +1255,316 @@ impl LogStore {
         project_state.copilot_log_subscription = Some(log_subscription);
         Some(())
     }
+}
+
+/// A stopped server keeps its entry in LogStore. This can then be reused later on
+#[gpui::test]
+async fn test_stopped_server_logs_retained_until_restart(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        let log_store = cx.new(|cx| LogStore::new(false, cx));
+        let project = WeakEntity::new_invalid();
+        let lsp_store = WeakEntity::new_invalid();
+        let name = LanguageServerName("rust-analyzer".into());
+        let worktree_id = WorktreeId::from_usize(1);
+        let first_id = LanguageServerId(1);
+        let kind = LanguageServerKind::Supplementary {
+            project: project.clone(),
+        };
+
+        log_store.update(cx, |store, cx| {
+            store.add_language_server(
+                kind.clone(),
+                first_id,
+                Some(name.clone()),
+                Some(worktree_id),
+                None,
+                cx,
+            );
+            let key = LanguageServerLogKey::new(kind.clone(), first_id);
+            store.add_language_server_log(&key, MessageType::LOG, "hello from the server", cx);
+
+            store.remove_language_server(&key, cx);
+
+            assert!(
+                store.contains_language_server(first_id),
+                "the stopped server stays tracked",
+            );
+            assert!(
+                !store.language_servers.contains_key(&key)
+                    && store
+                        .stopped_language_servers
+                        .contains_key(&StoppedServerKey {
+                            kind: kind.clone(),
+                            name: name.clone(),
+                            worktree_id: Some(worktree_id),
+                        }),
+                "the entry moves from running to stopped",
+            );
+            assert_eq!(
+                store.language_server_id_for_name_and_worktree(
+                    &name,
+                    worktree_id,
+                    &project,
+                    &lsp_store,
+                ),
+                Some(first_id),
+                "the stopped server can still be looked up by name and worktree",
+            );
+            let selector_id = LanguageServerSelector::Id(first_id);
+            let selector_name = LanguageServerSelector::Name(name.clone());
+            assert!(store.has_server_logs(&selector_id, &project, &lsp_store),);
+            assert!(store.has_server_logs(&selector_name, &project, &lsp_store),);
+            assert_eq!(
+                store.server_logs(&key).map(|logs| logs.len()),
+                Some(1),
+                "logs recorded before the stop are retained",
+            );
+            assert_eq!(
+                store
+                    .server_logs(&key)
+                    .and_then(|logs| logs.front())
+                    .map(|log| log.message.as_str()),
+                Some("hello from the server"),
+            );
+            assert!(
+                store.get_language_server_state(&key).is_some(),
+                "mutable state access still works for the stopped server",
+            );
+            assert!(
+                store.enable_rpc_trace_for_language_server(&key).is_some(),
+                "rpc tracing can still be enabled for the stopped server",
+            );
+
+            let restarted_id = LanguageServerId(2);
+            store.add_language_server(
+                kind.clone(),
+                restarted_id,
+                Some(name.clone()),
+                Some(worktree_id),
+                None,
+                cx,
+            );
+            let restarted_key = LanguageServerLogKey::new(kind.clone(), restarted_id);
+
+            assert!(
+                !store.contains_language_server(first_id),
+                "the stopped server's id is no longer tracked after the restart",
+            );
+            assert!(
+                store.stopped_language_servers.is_empty(),
+                "no stopped entries linger after the restart",
+            );
+            assert_eq!(
+                store.language_server_id_for_name_and_worktree(
+                    &name,
+                    worktree_id,
+                    &project,
+                    &lsp_store,
+                ),
+                Some(restarted_id),
+                "the lookup now points at the running instance",
+            );
+            assert_eq!(
+                store.server_logs(&restarted_key).map(|logs| logs
+                    .iter()
+                    .map(|log| log.message.as_str())
+                    .collect::<Vec<_>>()),
+                Some(vec!["hello from the server"]),
+                "the retained logs carry over to the restarted server",
+            );
+            store.add_language_server_log(&restarted_key, MessageType::LOG, "hello again", cx);
+            assert_eq!(
+                store.server_logs(&restarted_key).map(|logs| logs
+                    .iter()
+                    .map(|log| log.message.as_str())
+                    .collect::<Vec<_>>()),
+                Some(vec!["hello from the server", "hello again"]),
+                "new logs are appended after the carried-over logs",
+            );
+        });
+    });
+}
+
+/// A supplementary (worktree-less) stopped server merges its logs into the
+/// restarted instance, since stopped entries are keyed by
+/// (kind, name, Option<WorktreeId>).
+#[gpui::test]
+async fn test_stopped_global_server_logs_retained_until_restart(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        let log_store = cx.new(|cx| LogStore::new(false, cx));
+        let name = LanguageServerName("global-server".into());
+        let first_id = LanguageServerId(1);
+        let kind = LanguageServerKind::Supplementary {
+            project: WeakEntity::new_invalid(),
+        };
+
+        log_store.update(cx, |store, cx| {
+            store.add_language_server(kind.clone(), first_id, Some(name.clone()), None, None, cx);
+            let key = LanguageServerLogKey::new(kind.clone(), first_id);
+            store.add_language_server_log(&key, MessageType::LOG, "from the global server", cx);
+
+            store.remove_language_server(&key, cx);
+
+            assert!(
+                store
+                    .stopped_language_servers
+                    .contains_key(&StoppedServerKey {
+                        kind: kind.clone(),
+                        name: name.clone(),
+                        worktree_id: None,
+                    }),
+                "the global server is stored under a None worktree key",
+            );
+            assert_eq!(
+                store.server_logs(&key).map(|logs| logs.len()),
+                Some(1),
+                "the global server's logs are retained while stopped",
+            );
+
+            let restarted_id = LanguageServerId(2);
+            store.add_language_server(
+                kind.clone(),
+                restarted_id,
+                Some(name.clone()),
+                None,
+                None,
+                cx,
+            );
+            let restarted_key = LanguageServerLogKey::new(kind.clone(), restarted_id);
+
+            assert!(
+                store.stopped_language_servers.is_empty(),
+                "the global stopped entry is claimed on restart",
+            );
+            assert_eq!(
+                store.server_logs(&restarted_key).map(|logs| logs
+                    .iter()
+                    .map(|log| log.message.as_str())
+                    .collect::<Vec<_>>()),
+                Some(vec!["from the global server"]),
+                "the global server's logs carry over to the restarted instance",
+            );
+        });
+    });
+}
+
+/// Two projects running the same-named server for the same worktree do not
+/// leak logs or RPC traces into each other.
+#[gpui::test]
+async fn test_stopped_server_logs_are_not_transferred_between_projects(
+    cx: &mut gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        let log_store = cx.new(|cx| LogStore::new(false, cx));
+
+        let project_a = WeakEntity::new_invalid();
+        let project_b = WeakEntity::new_invalid();
+        let name = LanguageServerName("rust-analyzer".into());
+        let worktree_id = WorktreeId::from_usize(1);
+
+        let kind_a = LanguageServerKind::Supplementary {
+            project: project_a.clone(),
+        };
+        let kind_b = LanguageServerKind::Supplementary {
+            project: project_b.clone(),
+        };
+
+        log_store.update(cx, |store, cx| {
+            store.add_language_server(
+                kind_a.clone(),
+                LanguageServerId(1),
+                Some(name.clone()),
+                Some(worktree_id),
+                None,
+                cx,
+            );
+            let key_a = LanguageServerLogKey::new(kind_a.clone(), LanguageServerId(1));
+            store.add_language_server_log(&key_a, MessageType::LOG, "hello from project A", cx);
+
+            store.remove_language_server(&key_a, cx);
+
+            assert!(
+                store
+                    .stopped_language_servers
+                    .contains_key(&StoppedServerKey {
+                        kind: kind_a.clone(),
+                        name: name.clone(),
+                        worktree_id: Some(worktree_id),
+                    }),
+                "project A's server is in the stopped map",
+            );
+            assert!(
+                !store
+                    .stopped_language_servers
+                    .contains_key(&StoppedServerKey {
+                        kind: kind_b.clone(),
+                        name: name.clone(),
+                        worktree_id: Some(worktree_id),
+                    }),
+                "project B has no entry yet",
+            );
+
+            store.add_language_server(
+                kind_b.clone(),
+                LanguageServerId(2),
+                Some(name.clone()),
+                Some(worktree_id),
+                None,
+                cx,
+            );
+            let key_b = LanguageServerLogKey::new(kind_b.clone(), LanguageServerId(2));
+
+            assert!(
+                store
+                    .stopped_language_servers
+                    .contains_key(&StoppedServerKey {
+                        kind: kind_a.clone(),
+                        name: name.clone(),
+                        worktree_id: Some(worktree_id),
+                    }),
+                "project A's stopped entry is untouched by project B's start",
+            );
+            assert!(
+                store
+                    .server_logs(&key_b)
+                    .is_some_and(|logs| logs.is_empty()),
+                "project B does not inherit project A's logs",
+            );
+
+            store.add_language_server_log(&key_b, MessageType::LOG, "hello from project B", cx);
+            assert_eq!(
+                store.server_logs(&key_b).map(|logs| logs
+                    .iter()
+                    .map(|log| log.message.as_str())
+                    .collect::<Vec<_>>()),
+                Some(vec!["hello from project B"]),
+                "project B has only its own logs",
+            );
+
+            let lsp_store_a = WeakEntity::new_invalid();
+            let lsp_store_b = WeakEntity::new_invalid();
+
+            assert_eq!(
+                store.language_server_id_for_name_and_worktree(
+                    &name,
+                    worktree_id,
+                    &project_a,
+                    &lsp_store_a,
+                ),
+                Some(LanguageServerId(1)),
+                "project A lookup returns project A's stopped server ID",
+            );
+
+            assert_eq!(
+                store.language_server_id_for_name_and_worktree(
+                    &name,
+                    worktree_id,
+                    &project_b,
+                    &lsp_store_b,
+                ),
+                Some(LanguageServerId(2)),
+                "project B lookup returns project B's running server ID",
+            );
+        });
+    });
 }

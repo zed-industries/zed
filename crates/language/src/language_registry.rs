@@ -11,7 +11,7 @@ pub use language_core::{
     BinaryStatus, LanguageName, LanguageQueries, LanguageServerStatusUpdate, QueryFile,
     QueryFileContents, QueryFiles, ServerHealth,
 };
-use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
+use settings::{AllLanguageSettingsContent, LanguageSettingsContent, WorktreeId};
 
 use futures::{
     Future,
@@ -89,7 +89,14 @@ impl std::fmt::Display for LanguageNotFound {
     }
 }
 
-type ServerStatus = (Option<EntityId>, LanguageServerName, BinaryStatus);
+#[derive(Clone)]
+pub struct BinaryStatusUpdate {
+    pub name: LanguageServerName,
+    pub worktree_id: WorktreeId,
+    pub binary_status: BinaryStatus,
+}
+
+type ServerStatus = (Option<EntityId>, BinaryStatusUpdate);
 
 #[derive(Clone, Default)]
 struct ServerStatusSender {
@@ -929,18 +936,17 @@ impl LanguageRegistry {
         self.state.read().all_lsp_adapters.get(name).cloned()
     }
 
-    pub fn update_lsp_binary_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
-        self.lsp_binary_status_tx.send(None, server_name, status);
+    pub fn update_lsp_binary_status(&self, binary_update_info: BinaryStatusUpdate) {
+        self.lsp_binary_status_tx.send(None, binary_update_info);
     }
 
     pub fn update_lsp_binary_status_for_entity(
         &self,
         source: EntityId,
-        server_name: LanguageServerName,
-        status: BinaryStatus,
+        binary_update_info: BinaryStatusUpdate,
     ) {
         self.lsp_binary_status_tx
-            .send(Some(source), server_name, status);
+            .send(Some(source), binary_update_info);
     }
 
     pub fn next_language_server_id(&self) -> LanguageServerId {
@@ -986,10 +992,7 @@ impl LanguageRegistry {
 
     pub fn language_server_binary_statuses(
         &self,
-    ) -> (
-        mpsc::UnboundedReceiver<(Option<EntityId>, LanguageServerName, BinaryStatus)>,
-        Subscription,
-    ) {
+    ) -> (mpsc::UnboundedReceiver<ServerStatus>, Subscription) {
         self.lsp_binary_status_tx.subscribe()
     }
 }
@@ -1101,10 +1104,10 @@ impl ServerStatusSender {
         (rx, subscription)
     }
 
-    fn send(&self, source: Option<EntityId>, name: LanguageServerName, status: BinaryStatus) {
+    fn send(&self, source: Option<EntityId>, binary_status_update: BinaryStatusUpdate) {
         let mut state = self.state.lock();
         state.txs.retain(|_, tx| {
-            tx.unbounded_send((source, name.clone(), status.clone()))
+            tx.unbounded_send((source, binary_status_update.clone()))
                 .is_ok()
         });
     }

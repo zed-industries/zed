@@ -1080,6 +1080,7 @@ message RestartLanguageServers {
   repeated uint64 buffer_ids = 2;
   repeated LanguageServerSelector only_servers = 3;
   bool all = 4;
+  optional uint64 worktree_id = 5;
 }
 
 message StopLanguageServers {

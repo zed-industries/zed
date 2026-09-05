@@ -60,7 +60,8 @@ pub use language_core::{
     serialize_regex,
 };
 pub use language_registry::{
-    LanguageLoader, LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
+    BinaryStatusUpdate, LanguageLoader, LanguageName, LanguageServerStatusUpdate, LoadedLanguage,
+    ServerHealth,
 };
 use lsp::{
     CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions, Uri,
@@ -492,8 +493,8 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
     fn resolve_relative_path(&self, path: PathBuf) -> PathBuf;
+    fn update_status(&self, binary_status_update: BinaryStatusUpdate);
     fn status_source_id(&self) -> EntityId;
-    fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
@@ -769,9 +770,14 @@ where
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
         let name = self.name();
+        let worktree_id = delegate.worktree_id();
 
         log::debug!("fetching latest version of language server {:?}", name.0);
-        delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
+        delegate.update_status(BinaryStatusUpdate {
+            name: name.clone(),
+            worktree_id,
+            binary_status: BinaryStatus::CheckingForUpdate,
+        });
 
         let latest_version = self
             .fetch_latest_server_version(delegate, pre_release, cx)
@@ -783,17 +789,29 @@ where
             .await
         {
             log::debug!("language server {:?} is already installed", name.0);
-            delegate.update_status(name.clone(), BinaryStatus::None);
+            delegate.update_status(BinaryStatusUpdate {
+                name: name.clone(),
+                worktree_id,
+                binary_status: BinaryStatus::None,
+            });
             Ok(binary)
         } else {
             log::debug!("downloading language server {:?}", name.0);
-            delegate.update_status(name.clone(), BinaryStatus::Downloading);
+            delegate.update_status(BinaryStatusUpdate {
+                name: name.clone(),
+                worktree_id,
+                binary_status: BinaryStatus::Downloading,
+            });
             let binary = cx
                 .background_executor()
                 .spawn(self.fetch_server_binary(latest_version, container_dir, delegate))
                 .await;
 
-            delegate.update_status(name.clone(), BinaryStatus::None);
+            delegate.update_status(BinaryStatusUpdate {
+                name: name.clone(),
+                worktree_id,
+                binary_status: BinaryStatus::None,
+            });
             binary
         }
     }
@@ -883,12 +901,14 @@ where
                         );
                         binary = Ok(prev_downloaded_binary);
                     } else {
-                        delegate.update_status(
-                            self.name(),
-                            BinaryStatus::Failed {
+                        let worktree_id = delegate.worktree_id();
+                        delegate.update_status(BinaryStatusUpdate {
+                            name: self.name(),
+                            worktree_id,
+                            binary_status: BinaryStatus::Failed {
                                 error: format!("{error:?}"),
                             },
-                        );
+                        });
                     }
                 }
 
