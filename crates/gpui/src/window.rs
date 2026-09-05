@@ -8,22 +8,22 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, DrawEngine, Edges, Effect,
-    Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
-    GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, NodeRenderDecision,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
-    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
-    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    ViewNodeCacheKey, ViewNodeId, ViewNodeRecording, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
+    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, NodeRenderDecision, Path, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
+    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
+    TransformationMatrix, Underline, UnderlineStyle, ViewNodeCacheKey, ViewNodeId,
+    ViewNodeRecording, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems,
+    size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -973,8 +973,6 @@ pub(crate) struct DeferredDraw {
     rem_size: Pixels,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
-    prepaint_range: Range<PrepaintStateIndex>,
-    paint_range: Range<PaintIndex>,
 }
 
 pub(crate) struct Frame {
@@ -1014,7 +1012,6 @@ pub(crate) struct PrepaintStateIndex {
 
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
-    pub(crate) scene_index: usize,
     window_controls_index: usize,
     mouse_listeners_index: usize,
     input_handlers_index: usize,
@@ -1169,7 +1166,7 @@ enum InputModality {
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
-    pub(crate) draw_engine: DrawEngine,
+    pub(crate) node_engine: crate::NodeEngine,
     global_revision: u64,
     atlas_invalidated: bool,
     pub(crate) removed: bool,
@@ -2004,7 +2001,7 @@ impl Window {
         Ok(Window {
             handle,
             invalidator,
-            draw_engine: DrawEngine::from_environment(),
+            node_engine: crate::NodeEngine::new(),
             global_revision: cx.global_revision,
             atlas_invalidated: false,
             removed: false,
@@ -3068,10 +3065,7 @@ impl Window {
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
 
-        // Restore the previously-used input handler.
-        // Place it back into a None slot (left by a previous .take()) so that
-        // cached paint_range indices in reuse_paint find the handler at the
-        // expected position.
+        // Preserve handler positions referenced by retained metadata.
         if let Some(input_handler) = self.platform_window.take_input_handler() {
             if let Some(slot) = self
                 .rendered_frame
@@ -3104,11 +3098,7 @@ impl Window {
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
-        // Register requested input handler with the platform window.
-        // Use .take() instead of .pop() to preserve Vec length, so that cached
-        // paint_range indices remain valid for reuse_paint on the next frame.
-        // Search backwards to find the last Some entry, since reuse_paint may
-        // have copied None slots from the previous frame. (Fixes #50456)
+        // Taking the last handler preserves indices while the platform owns it.
         let focused_text_input_active = if let Some(mut input_handler) = self
             .next_frame
             .input_handlers
@@ -3133,12 +3123,9 @@ impl Window {
                 });
         }
 
-        if let DrawEngine::Node(engine) = &self.draw_engine {
-            let roots = engine.retained_layouts(cx);
-            self.layout_engine.as_mut().unwrap().retain(roots);
-        } else {
-            self.layout_engine.as_mut().unwrap().clear();
-        }
+        let engine = &self.node_engine;
+        let roots = engine.retained_layouts(cx);
+        self.layout_engine.as_mut().unwrap().retain(roots);
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
 
@@ -3188,7 +3175,7 @@ impl Window {
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.record_entities_accessed(cx);
         let notifications_during_draw = cx.end_render_notifications();
-        if self.node_engine_enabled() {
+        {
             // Keep these invalidations for the next requested frame. Scheduling
             // here would turn focus-lost fallbacks into self-sustaining draws.
             self.invalidator
@@ -3240,9 +3227,8 @@ impl Window {
 
     fn invalidate_entities(&mut self) {
         let mut views = self.invalidator.take_views();
-        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.invalidate_entities(&views);
-        }
+        let node_engine = &mut self.node_engine;
+        node_engine.invalidate_entities(&views);
         for entity in views.drain() {
             self.mark_view_dirty(entity);
         }
@@ -3273,22 +3259,20 @@ impl Window {
         } else {
             None
         };
-        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            self.global_revision = cx.global_revision;
-            node_engine.begin_frame(full_refresh_reason);
-            // No scope can graft an old layout when every mounted node is dirty.
-            // Keep the newly built tree for subsequent partial updates.
-            if node_engine.discard_dirty_layouts(cx) {
-                self.layout_engine.as_mut().unwrap().clear_retained();
-            }
+        let node_engine = &mut self.node_engine;
+        self.global_revision = cx.global_revision;
+        node_engine.begin_frame(full_refresh_reason);
+        // No scope can graft an old layout when every mounted node is dirty.
+        // Keep the newly built tree for subsequent partial updates.
+        if node_engine.discard_dirty_layouts(cx) {
+            self.layout_engine.as_mut().unwrap().clear_retained();
         }
     }
 
     fn finish_node_engine_frame(&mut self, cx: &mut App) {
-        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            let changed_bounds = node_engine.finish_frame(cx);
-            log::trace!("GPUI node engine changed view bounds: {changed_bounds:?}");
-        }
+        let node_engine = &mut self.node_engine;
+        let changed_bounds = node_engine.finish_frame(cx);
+        log::trace!("GPUI node engine changed view bounds: {changed_bounds:?}");
     }
 
     #[profiling::function]
@@ -3429,9 +3413,8 @@ impl Window {
 
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
-        self.next_frame
-            .scene
-            .use_node_scene_storage(self.node_engine_enabled());
+        #[cfg(test)]
+        self.next_frame.scene.use_node_scene_storage(true);
         // Now actually paint the elements.
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
@@ -3554,14 +3537,6 @@ impl Window {
 
         // Process deferred draws in multiple rounds to support nesting.
         // Each round processes all current deferred draws, which may push new ones.
-        //
-        // The draws are processed in place rather than being moved out of
-        // `next_frame.deferred_draws`: `prepaint_index` snapshots that vector's
-        // length, so any prepaint range recorded during a round (view caches,
-        // nested deferred draws) must index the same vector `reuse_prepaint`
-        // slices on the next frame. Moving the draws out and re-appending them
-        // shifts the indices of nested draws, causing reused subtrees to graft
-        // the wrong deferred draws and panic in the dispatch tree.
         let mut round_start = 0;
         let mut depth = 0;
         loop {
@@ -3578,7 +3553,7 @@ impl Window {
             traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
 
             for deferred_draw_ix in traversal_order {
-                let (element, parent_node, current_view, rem_size, absolute_offset, prepaint_range) = {
+                let (element, parent_node, current_view, rem_size, absolute_offset) = {
                     let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
                     self.element_id_stack
                         .clone_from(&deferred_draw.element_id_stack);
@@ -3590,13 +3565,12 @@ impl Window {
                         deferred_draw.current_view,
                         deferred_draw.rem_size,
                         deferred_draw.absolute_offset,
-                        deferred_draw.prepaint_range.clone(),
                     )
                 };
                 self.next_frame.dispatch_tree.set_active_node(parent_node);
 
-                let prepaint_start = self.prepaint_index();
-                if let Some(mut element) = element {
+                {
+                    let mut element = element.expect("deferred draw has not been prepainted");
                     self.with_rendered_view(current_view, |window| {
                         window.with_rem_size(Some(rem_size), |window| {
                             window.with_absolute_element_offset(absolute_offset, |window| {
@@ -3605,12 +3579,7 @@ impl Window {
                         });
                     });
                     self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
-                } else {
-                    self.reuse_prepaint(prepaint_range);
                 }
-                let prepaint_end = self.prepaint_index();
-                self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
-                    prepaint_start..prepaint_end;
             }
 
             self.element_id_stack.clear();
@@ -3638,9 +3607,12 @@ impl Window {
                 .dispatch_tree
                 .set_active_node(deferred_draw.parent_node);
 
-            let paint_start = self.paint_index();
             let content_mask = deferred_draw.content_mask;
-            if let Some(element) = deferred_draw.element.as_mut() {
+            {
+                let element = deferred_draw
+                    .element
+                    .as_mut()
+                    .expect("deferred draw was prepainted");
                 self.with_rendered_view(deferred_draw.current_view, |window| {
                     window.with_content_mask(content_mask, |window| {
                         window.with_rem_size(Some(deferred_draw.rem_size), |window| {
@@ -3648,11 +3620,7 @@ impl Window {
                         });
                     })
                 })
-            } else {
-                self.reuse_paint(deferred_draw.paint_range.clone());
             }
-            let paint_end = self.paint_index();
-            deferred_draw.paint_range = paint_start..paint_end;
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
@@ -3665,19 +3633,15 @@ impl Window {
         sorted_indices
     }
 
-    /// Returns work counters for the experimental retained engine's last completed frame.
-    /// Returns `None` when the window uses the legacy engine.
+    /// Returns work counters for the retained engine's last completed frame.
     pub fn retained_node_stats(&self) -> Option<crate::RetainedNodeStats> {
-        if let DrawEngine::Node(engine) = &self.draw_engine {
-            let mut stats = engine.last_frame_stats;
-            stats.layout_nodes = self
-                .layout_engine
-                .as_ref()
-                .map_or(0, TaffyLayoutEngine::retained_node_count);
-            Some(stats)
-        } else {
-            None
-        }
+        let engine = &self.node_engine;
+        let mut stats = engine.last_frame_stats;
+        stats.layout_nodes = self
+            .layout_engine
+            .as_ref()
+            .map_or(0, TaffyLayoutEngine::retained_node_count);
+        Some(stats)
     }
 
     /// Returns the last completed scene for differential rendering tests.
@@ -3688,9 +3652,7 @@ impl Window {
 
     #[cfg(test)]
     pub(crate) fn assert_metadata_unique(&self, cx: &App) {
-        let DrawEngine::Node(engine) = &self.draw_engine else {
-            return;
-        };
+        let engine = &self.node_engine;
         macro_rules! check {
             ($field:ident, $total:expr) => {
                 assert!(
@@ -3721,15 +3683,10 @@ impl Window {
         );
     }
 
-    pub(crate) fn node_engine_enabled(&self) -> bool {
-        matches!(self.draw_engine, DrawEngine::Node(_))
-    }
-
     #[cfg(test)]
     pub(crate) fn clear_view_nodes_for_test(&mut self) {
-        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.clear();
-        }
+        let node_engine = &mut self.node_engine;
+        node_engine.clear();
     }
 
     pub(crate) fn view_node_key(&self, bounds: Bounds<Pixels>) -> ViewNodeCacheKey {
@@ -3753,21 +3710,18 @@ impl Window {
 
     pub(crate) fn invalidate_component(&mut self, source: EntityId) {
         self.mark_view_dirty(source);
-        if let DrawEngine::Node(engine) = &mut self.draw_engine {
-            engine.invalidate_consumers(source);
-        }
+        let engine = &mut self.node_engine;
+        engine.invalidate_consumers(source);
     }
 
     pub(crate) fn restart_view_node_render(&mut self, node_id: ViewNodeId, cx: &mut App) {
-        if let DrawEngine::Node(engine) = &mut self.draw_engine {
-            engine.restart_render(node_id, cx);
-        }
+        let engine = &mut self.node_engine;
+        engine.restart_render(node_id, cx);
     }
 
     pub(crate) fn enter_view_node_prepaint(&mut self, node_id: ViewNodeId) {
-        if let DrawEngine::Node(engine) = &mut self.draw_engine {
-            engine.enter_prepaint(node_id);
-        }
+        let engine = &mut self.node_engine;
+        engine.enter_prepaint(node_id);
     }
 
     pub(crate) fn graft_view_node_layout(
@@ -3777,9 +3731,7 @@ impl Window {
     ) -> Option<Range<PrepaintStateIndex>> {
         recording.has_layout.then(|| {
             let start = self.prepaint_index();
-            let DrawEngine::Node(engine) = &self.draw_engine else {
-                unreachable!()
-            };
+            let engine = &self.node_engine;
             recording.layout_states.replay(
                 engine,
                 cx,
@@ -3809,9 +3761,7 @@ impl Window {
         cache_key: ViewNodeCacheKey,
         cx: &mut App,
     ) -> (NodeRenderDecision, Option<LayoutId>) {
-        let DrawEngine::Node(engine) = &mut self.draw_engine else {
-            unreachable!()
-        };
+        let engine = &mut self.node_engine;
         engine.begin_layout(occurrence, view, cache_key, cx)
     }
 
@@ -3821,9 +3771,8 @@ impl Window {
         layout: LayoutId,
         cx: &mut App,
     ) {
-        if let DrawEngine::Node(engine) = &mut self.draw_engine {
-            engine.store_layout(node_id, layout, cx);
-        }
+        let engine = &mut self.node_engine;
+        engine.store_layout(node_id, layout, cx);
     }
 
     pub(crate) fn view_node_cache_key(
@@ -3831,11 +3780,8 @@ impl Window {
         node_id: ViewNodeId,
         cx: &App,
     ) -> Option<ViewNodeCacheKey> {
-        if let DrawEngine::Node(engine) = &self.draw_engine {
-            engine.cache_key(node_id, cx)
-        } else {
-            None
-        }
+        let engine = &self.node_engine;
+        engine.cache_key(node_id, cx)
     }
 
     pub(crate) fn begin_view_node(
@@ -3845,11 +3791,9 @@ impl Window {
         view: Option<AnyView>,
         cache_key: ViewNodeCacheKey,
         cx: &mut App,
-    ) -> Option<NodeRenderDecision> {
-        let DrawEngine::Node(node_engine) = &mut self.draw_engine else {
-            return None;
-        };
-        Some(node_engine.begin_occurrence(occurrence, view_id, view, cache_key, cx))
+    ) -> NodeRenderDecision {
+        self.node_engine
+            .begin_occurrence(occurrence, view_id, view, cache_key, cx)
     }
 
     pub(crate) fn finish_view_node_prepaint(
@@ -3858,9 +3802,8 @@ impl Window {
         rendered: bool,
         cx: &mut App,
     ) {
-        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.finish_prepaint(node_id, rendered, cx);
-        }
+        let node_engine = &mut self.node_engine;
+        node_engine.finish_prepaint(node_id, rendered, cx);
     }
 
     pub(crate) fn store_rendered_view_node(
@@ -3871,9 +3814,8 @@ impl Window {
         accessed_entities: FxHashSet<EntityId>,
         cx: &mut App,
     ) {
-        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.store_render(node_id, cache_key, recording, accessed_entities, cx);
-        }
+        let node_engine = &mut self.node_engine;
+        node_engine.store_render(node_id, cache_key, recording, accessed_entities, cx);
     }
 
     pub(crate) fn store_grafted_view_node(
@@ -3882,9 +3824,8 @@ impl Window {
         recording: ViewNodeRecording,
         cx: &mut App,
     ) {
-        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
-            node_engine.store_graft(node_id, recording, cx);
-        }
+        let node_engine = &mut self.node_engine;
+        node_engine.store_graft(node_id, recording, cx);
     }
 
     pub(crate) fn begin_view_node_paint(
@@ -3892,10 +3833,10 @@ impl Window {
         node_id: ViewNodeId,
         cx: &mut App,
     ) -> ViewNodeRecording {
-        let mut recording = match &mut self.draw_engine {
-            DrawEngine::Node(engine) => engine.take_recording(node_id, cx).unwrap_or_default(),
-            DrawEngine::Legacy => unreachable!("node painting requires the node engine"),
-        };
+        let mut recording = self
+            .node_engine
+            .take_recording(node_id, cx)
+            .unwrap_or_default();
         self.next_frame
             .scene
             .begin_node_scene(mem::take(&mut recording.scene));
@@ -3913,9 +3854,7 @@ impl Window {
     ) -> ViewNodeRecording {
         use crate::view_node::{MetadataPhase, capture_metadata};
         recording.scene = self.next_frame.scene.finish_node_scene(node_id);
-        let DrawEngine::Node(engine) = &self.draw_engine else {
-            unreachable!()
-        };
+        let engine = &self.node_engine;
         // Prepaint can visit children that are never painted and have no completed recording.
         let children: smallvec::SmallVec<[_; 16]> = recording
             .scene
@@ -4074,9 +4013,7 @@ impl Window {
     ) -> Range<PrepaintStateIndex> {
         use crate::view_node::MetadataPhase;
         let start = self.prepaint_index();
-        let DrawEngine::Node(engine) = &self.draw_engine else {
-            unreachable!()
-        };
+        let engine = &self.node_engine;
         recording.prepaint_states.replay(
             engine,
             cx,
@@ -4130,9 +4067,7 @@ impl Window {
     ) {
         use crate::view_node::MetadataPhase;
         let start = self.paint_index();
-        let DrawEngine::Node(engine) = &self.draw_engine else {
-            unreachable!()
-        };
+        let engine = &self.node_engine;
         recording.paint_states.replay(
             engine,
             cx,
@@ -4227,61 +4162,8 @@ impl Window {
         }
     }
 
-    pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
-        self.next_frame.hitboxes.extend(
-            self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
-                .iter()
-                .cloned(),
-        );
-        self.next_frame.tooltip_requests.extend(
-            self.rendered_frame.tooltip_requests
-                [range.start.tooltips_index..range.end.tooltips_index]
-                .iter_mut()
-                .map(|request| request.take()),
-        );
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .map(|(id, type_id)| (id.clone(), *type_id)),
-        );
-        self.text_system.reuse_layouts(
-            range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
-        );
-
-        let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
-            range.start.dispatch_tree_index..range.end.dispatch_tree_index,
-            &mut self.rendered_frame.dispatch_tree,
-            self.focus,
-        );
-
-        if reused_subtree.contains_focus() {
-            self.next_frame.focus = self.focus;
-        }
-
-        self.next_frame.deferred_draws.extend(
-            self.rendered_frame.deferred_draws
-                [range.start.deferred_draws_index..range.end.deferred_draws_index]
-                .iter()
-                .map(|deferred_draw| DeferredDraw {
-                    current_view: deferred_draw.current_view,
-                    parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
-                    element_id_stack: deferred_draw.element_id_stack.clone(),
-                    text_style_stack: deferred_draw.text_style_stack.clone(),
-                    content_mask: deferred_draw.content_mask,
-                    rem_size: deferred_draw.rem_size,
-                    priority: deferred_draw.priority,
-                    element: None,
-                    absolute_offset: deferred_draw.absolute_offset,
-                    prepaint_range: deferred_draw.prepaint_range.clone(),
-                    paint_range: deferred_draw.paint_range.clone(),
-                }),
-        );
-    }
-
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
-            scene_index: self.next_frame.scene.len(),
             window_controls_index: self.next_frame.window_control_hitboxes.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
@@ -4292,49 +4174,6 @@ impl Window {
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds_index: self.next_frame.debug_bounds_history.len(),
         }
-    }
-
-    pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
-        #[cfg(any(test, feature = "test-support"))]
-        self.next_frame.replay_debug_bounds(
-            &self.rendered_frame.debug_bounds_history
-                [range.start.debug_bounds_index..range.end.debug_bounds_index],
-        );
-        self.next_frame.cursor_styles.extend(
-            self.rendered_frame.cursor_styles
-                [range.start.cursor_styles_index..range.end.cursor_styles_index]
-                .iter()
-                .cloned(),
-        );
-        self.next_frame.input_handlers.extend(
-            self.rendered_frame.input_handlers
-                [range.start.input_handlers_index..range.end.input_handlers_index]
-                .iter_mut()
-                .map(|handler| handler.take()),
-        );
-        self.next_frame.mouse_listeners.extend(
-            self.rendered_frame.mouse_listeners
-                [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
-                .iter_mut()
-                .map(|listener| listener.take()),
-        );
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .map(|(id, type_id)| (id.clone(), *type_id)),
-        );
-        self.next_frame.tab_stops.replay(
-            &self.rendered_frame.tab_stops.insertion_history
-                [range.start.tab_handle_index..range.end.tab_handle_index],
-        );
-
-        self.text_system
-            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
-        self.next_frame.scene.replay(
-            range.start.scene_index..range.end.scene_index,
-            &self.rendered_frame.scene,
-        );
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -4511,25 +4350,9 @@ impl Window {
     /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
     /// time.
     pub fn use_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) -> Option<A::Output> {
-        let (task, is_first) = cx.fetch_asset::<A>(source);
-        task.clone().now_or_never().or_else(|| {
-            if is_first {
-                let entity_id = self.current_view();
-                self.spawn(cx, {
-                    let task = task.clone();
-                    async move |cx| {
-                        task.await;
-
-                        cx.on_next_frame(move |_, cx| {
-                            cx.notify(entity_id);
-                        });
-                    }
-                })
-                .detach();
-            }
-
-            None
-        })
+        let (task, _) = cx.fetch_asset::<A>(source);
+        cx.track_asset::<A>(source);
+        task.now_or_never()
     }
 
     /// Asynchronously load an asset, if the asset hasn't finished loading or doesn't exist this will return None.
@@ -4594,9 +4417,7 @@ impl Window {
         init: impl FnOnce(&mut Self, &mut Context<S>) -> S,
     ) -> Entity<S> {
         let current_view = self.current_view();
-        if let DrawEngine::Node(engine) = &self.draw_engine
-            && let Some(node) = engine.current_node()
-        {
+        if let Some(node) = self.node_engine.current_node() {
             return self.with_global_id(key.into(), |global_id, window| {
                 let key = (global_id.clone(), TypeId::of::<S>());
                 let existing = node.update(cx, |node, _| {
@@ -4809,8 +4630,6 @@ impl Window {
             priority,
             element: Some(element),
             absolute_offset,
-            prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
-            paint_range: PaintIndex::default()..PaintIndex::default(),
         });
     }
 
@@ -5548,9 +5367,8 @@ impl Window {
         F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
             + 'static,
     {
-        if let DrawEngine::Node(engine) = &mut self.draw_engine {
-            engine.mark_frame_bound_layout();
-        }
+        let engine = &mut self.node_engine;
+        engine.mark_frame_bound_layout();
         self.request_retained_measured_layout(style, measure)
     }
 
@@ -8143,7 +7961,7 @@ mod tests {
         let active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let renders = Rc::new(Cell::new(0));
         let handle = cx.open_window(size(px(300.), px(100.)), |window, cx| {
-            window.draw_engine = crate::DrawEngine::Node(crate::NodeEngine::new());
+            window.node_engine = crate::NodeEngine::new();
             window.a11y = super::A11y::new(active.clone(), false, None);
             Host(cx.new(|_| Leaf(renders.clone())))
         });
@@ -8165,6 +7983,63 @@ mod tests {
                             .expect("node engine")
                             .full_refresh_reason,
                         enabled.then_some("accessibility")
+                    );
+                })
+                .expect("window open");
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    #[gpui::test]
+    fn cached_views_survive_inspector_transitions(cx: &mut TestAppContext) {
+        struct Leaf;
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .id("inspected-leaf")
+                    .debug_selector(|| "inspected-leaf".into())
+                    .size_full()
+                    .bg(crate::red())
+            }
+        }
+        struct Host(crate::Entity<Leaf>);
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(
+                    self.0
+                        .clone()
+                        .cached(crate::StyleRefinement::default().size_full()),
+                )
+            }
+        }
+        let handle = cx.open_window(size(px(300.), px(100.)), |_, cx| Host(cx.new(|_| Leaf)));
+        cx.run_until_parked();
+        for _ in 0..4 {
+            handle
+                .update(cx, |_, window, cx| window.toggle_inspector(cx))
+                .expect("window open");
+            cx.run_until_parked();
+            handle
+                .update(cx, |_, window, _| {
+                    assert!(
+                        window
+                            .rendered_frame
+                            .debug_bounds
+                            .contains_key("inspected-leaf")
+                    );
+                })
+                .expect("window open");
+            handle
+                .update(cx, |_, _, cx| cx.notify())
+                .expect("window open");
+            cx.run_until_parked();
+            handle
+                .update(cx, |_, window, _| {
+                    assert!(
+                        window
+                            .rendered_frame
+                            .debug_bounds
+                            .contains_key("inspected-leaf")
                     );
                 })
                 .expect("window open");

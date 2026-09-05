@@ -1,8 +1,8 @@
 use crate::{
-    AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, Element, ElementId,
-    Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
-    NodeRenderDecision, PaintIndex, Pixels, PrepaintStateIndex, Render, RenderOnce, Style,
-    StyleRefinement, TextStyle, ViewNodeCacheKey, ViewNodeId, ViewNodeRecording, WeakEntity,
+    AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, Context, Element, ElementId, Entity,
+    EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, NodeRenderDecision,
+    Pixels, PrepaintStateIndex, Render, RenderOnce, Style, StyleRefinement, ViewNodeCacheKey,
+    ViewNodeId, ViewNodeRecording, WeakEntity,
 };
 use crate::{Empty, Window};
 use anyhow::Result;
@@ -306,19 +306,6 @@ struct RetainedViewLayout {
     accessed_entities: FxHashSet<EntityId>,
 }
 
-struct ViewElementState {
-    prepaint_range: Range<PrepaintStateIndex>,
-    paint_range: Range<PaintIndex>,
-    cache_key: ViewElementCacheKey,
-    accessed_entities: FxHashSet<EntityId>,
-}
-
-struct ViewElementCacheKey {
-    bounds: Bounds<Pixels>,
-    content_mask: ContentMask<Pixels>,
-    text_style: TextStyle,
-}
-
 #[doc(hidden)]
 pub struct ViewElementPrepaintState {
     element: Option<AnyElement>,
@@ -363,7 +350,6 @@ impl<V: View> Element for ViewElement<V> {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         if self.cached_style.is_none()
-            && window.node_engine_enabled()
             && let Some(entity_id) = self.entity_id
             && let Some(id) = id
             && let Some(view) = self.view.as_ref().and_then(View::retained_view)
@@ -526,62 +512,61 @@ impl<V: View> Element for ViewElement<V> {
             });
         }
         if self.cached_style.is_some()
-            && window.node_engine_enabled()
+            && element.is_none()
             && let Some(entity_id) = self.entity_id
             && let Some(global_id) = global_id
         {
             let cache_key = window.view_node_key(bounds);
-            if let Some(decision) = window.begin_view_node(
+            let decision = window.begin_view_node(
                 global_id.clone(),
                 entity_id,
                 self.view.as_ref().and_then(View::retained_view),
                 cache_key.clone(),
                 cx,
-            ) {
-                window.set_view_id(entity_id);
-                return window.with_rendered_view(entity_id, |window| match decision {
-                    NodeRenderDecision::Graft {
-                        node_id,
-                        mut recording,
-                        accessed_entities,
-                    } => {
-                        window.graft_view_node_prepaint(&mut recording, cx);
-                        cx.entities.extend_accessed(&accessed_entities);
-                        cx.entities.recycle_access_scope(accessed_entities);
-                        window.finish_view_node_prepaint(node_id, false, cx);
-                        ViewElementPrepaintState {
-                            element: None,
-                            node: Some(ViewNodePrepaintState::Graft { node_id, recording }),
-                        }
+            );
+            window.set_view_id(entity_id);
+            return window.with_rendered_view(entity_id, |window| match decision {
+                NodeRenderDecision::Graft {
+                    node_id,
+                    mut recording,
+                    accessed_entities,
+                } => {
+                    window.graft_view_node_prepaint(&mut recording, cx);
+                    cx.entities.extend_accessed(&accessed_entities);
+                    cx.entities.recycle_access_scope(accessed_entities);
+                    window.finish_view_node_prepaint(node_id, false, cx);
+                    ViewElementPrepaintState {
+                        element: None,
+                        node: Some(ViewNodePrepaintState::Graft { node_id, recording }),
                     }
-                    NodeRenderDecision::Render { node_id } => {
-                        let refreshing = mem::replace(&mut window.refreshing, true);
-                        let prepaint_start = window.prepaint_index();
-                        let (element, accessed_entities) = cx.collect_accessed_entities(|cx| {
-                            let Some(view) = self.view.take() else {
-                                return None;
-                            };
-                            let mut element = view.render(window, cx).into_any_element();
-                            element.layout_as_root(bounds.size.into(), window, cx);
-                            element.prepaint_at(bounds.origin, window, cx);
-                            Some(element)
-                        });
-                        let prepaint_range = prepaint_start..window.prepaint_index();
-                        window.refreshing = refreshing;
-                        window.finish_view_node_prepaint(node_id, true, cx);
-                        ViewElementPrepaintState {
-                            element: element,
-                            node: Some(ViewNodePrepaintState::Render {
-                                layout_range: None,
-                                node_id,
-                                cache_key,
-                                prepaint_range,
-                                accessed_entities,
-                            }),
-                        }
+                }
+                NodeRenderDecision::Render { node_id } => {
+                    let refreshing = mem::replace(&mut window.refreshing, true);
+                    let prepaint_start = window.prepaint_index();
+                    let (element, accessed_entities) = cx.collect_accessed_entities(|cx| {
+                        let Some(view) = self.view.take() else {
+                            return None;
+                        };
+                        let mut element = view.render(window, cx).into_any_element();
+                        element.layout_as_root(bounds.size.into(), window, cx);
+                        element.prepaint_at(bounds.origin, window, cx);
+                        Some(element)
+                    });
+                    let prepaint_range = prepaint_start..window.prepaint_index();
+                    window.refreshing = refreshing;
+                    window.finish_view_node_prepaint(node_id, true, cx);
+                    ViewElementPrepaintState {
+                        element,
+                        node: Some(ViewNodePrepaintState::Render {
+                            layout_range: None,
+                            node_id,
+                            cache_key,
+                            prepaint_range,
+                            accessed_entities,
+                        }),
                     }
-                });
-            }
+                }
+            });
         }
 
         if let Some(entity_id) = self.entity_id {
@@ -596,65 +581,7 @@ impl<V: View> Element for ViewElement<V> {
                     };
                 }
 
-                let element = window.with_element_state::<ViewElementState, _>(
-                    global_id.unwrap(),
-                    |element_state, window| {
-                        let content_mask = window.content_mask();
-                        let text_style = window.text_style();
-
-                        if let Some(mut element_state) = element_state
-                            && element_state.cache_key.bounds == bounds
-                            && element_state.cache_key.content_mask == content_mask
-                            && element_state.cache_key.text_style == text_style
-                            && !window.dirty_views.contains(&entity_id)
-                            && !window.refreshing
-                        {
-                            let prepaint_start = window.prepaint_index();
-                            window.reuse_prepaint(element_state.prepaint_range.clone());
-                            cx.entities
-                                .extend_accessed(&element_state.accessed_entities);
-                            let prepaint_end = window.prepaint_index();
-                            element_state.prepaint_range = prepaint_start..prepaint_end;
-
-                            return (None, element_state);
-                        }
-
-                        let refreshing = mem::replace(&mut window.refreshing, true);
-                        let prepaint_start = window.prepaint_index();
-                        let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
-                            let mut element = self
-                                .view
-                                .take()
-                                .unwrap()
-                                .render(window, cx)
-                                .into_any_element();
-                            element.layout_as_root(bounds.size.into(), window, cx);
-                            element.prepaint_at(bounds.origin, window, cx);
-                            element
-                        });
-
-                        let prepaint_end = window.prepaint_index();
-                        window.refreshing = refreshing;
-
-                        (
-                            Some(element),
-                            ViewElementState {
-                                accessed_entities,
-                                prepaint_range: prepaint_start..prepaint_end,
-                                paint_range: PaintIndex::default()..PaintIndex::default(),
-                                cache_key: ViewElementCacheKey {
-                                    bounds,
-                                    content_mask,
-                                    text_style,
-                                },
-                            },
-                        )
-                    },
-                );
-                ViewElementPrepaintState {
-                    element,
-                    node: None,
-                }
+                unreachable!("retained cached views are handled before uncached views")
             })
         } else {
             // Stateless path: just prepaint the element.
@@ -673,7 +600,7 @@ impl<V: View> Element for ViewElement<V> {
 
     fn paint(
         &mut self,
-        global_id: Option<&GlobalElementId>,
+        _global_id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
@@ -740,32 +667,10 @@ impl<V: View> Element for ViewElement<V> {
         if let Some(entity_id) = self.entity_id {
             // Stateful path.
             window.with_rendered_view(entity_id, |window| {
-                let caching_disabled = window.is_inspector_picking(cx);
-                if self.cached_style.is_some() && !caching_disabled {
-                    window.with_element_state::<ViewElementState, _>(
-                        global_id.unwrap(),
-                        |element_state, window| {
-                            let mut element_state = element_state.unwrap();
-
-                            let paint_start = window.paint_index();
-
-                            if let Some(element) = element {
-                                let refreshing = mem::replace(&mut window.refreshing, true);
-                                element.paint(window, cx);
-                                window.refreshing = refreshing;
-                            } else {
-                                window.reuse_paint(element_state.paint_range.clone());
-                            }
-
-                            let paint_end = window.paint_index();
-                            element_state.paint_range = paint_start..paint_end;
-
-                            ((), element_state)
-                        },
-                    )
-                } else {
-                    element.as_mut().unwrap().paint(window, cx);
-                }
+                element
+                    .as_mut()
+                    .expect("uncached view was prepainted")
+                    .paint(window, cx);
             });
         } else {
             // Stateless path: just paint the element.
@@ -836,9 +741,113 @@ impl Render for EmptyView {
 
 #[cfg(test)]
 mod tests {
+    #[gpui::test]
+    fn shared_image_completion_invalidates_every_consumer(cx: &mut TestAppContext) {
+        use futures::FutureExt as _;
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([255, 0, 0, 255]),
+        ))
+        .write_to(&mut encoded, image::ImageFormat::Png)
+        .expect("encode image");
+        let (complete, pending) = futures::channel::oneshot::channel::<()>();
+        let pending = pending.shared();
+        let bytes = encoded.into_inner();
+        cx.update(|cx| {
+            cx.set_http_client(http_client::FakeHttpClient::create(move |_| {
+                let pending = pending.clone();
+                let bytes = bytes.clone();
+                async move {
+                    pending.await?;
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(bytes.into())?)
+                }
+            }))
+        });
+        struct ImageView;
+        impl Render for ImageView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                crate::img("https://test.example/shared.png")
+                    .w(px(40.))
+                    .h(px(40.))
+            }
+        }
+        struct Host(Vec<Entity<ImageView>>, bool);
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let children = div().flex().children(self.0.iter().cloned());
+                if self.1 {
+                    crate::image_cache(crate::retain_all("images"))
+                        .child(children)
+                        .into_any_element()
+                } else {
+                    children.into_any_element()
+                }
+            }
+        }
+        struct PassiveView(Rc<Cell<usize>>);
+        impl Render for PassiveView {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                self.0.set(self.0.get() + 1);
+                let _image = window.get_asset::<crate::ImgResourceLoader>(
+                    &crate::Resource::Uri("https://test.example/shared.png".into()),
+                    cx,
+                );
+                div()
+            }
+        }
+        let passive_renders = Rc::new(Cell::new(0));
+        let _passive = cx.open_window(size(px(200.), px(100.)), |_, _| {
+            PassiveView(passive_renders.clone())
+        });
+        let handles = [false, false, true].map(|cached| {
+            cx.open_window(size(px(200.), px(100.)), |_, cx| {
+                Host(vec![cx.new(|_| ImageView), cx.new(|_| ImageView)], cached)
+            })
+        });
+        cx.run_until_parked();
+        for handle in handles {
+            handle
+                .update(cx, |_, window, _| {
+                    assert!(window.rendered_frame.scene.polychrome_sprites.is_empty())
+                })
+                .expect("window open");
+        }
+        complete.send(()).expect("image request pending");
+        cx.run_until_parked();
+        for handle in handles {
+            handle
+                .update(cx, |_, window, cx| {
+                    window.simulate_next_frame(cx);
+                })
+                .expect("window open");
+        }
+        cx.run_until_parked();
+        for handle in handles {
+            handle
+                .update(cx, |host, window, _| {
+                    assert_eq!(
+                        window.rendered_frame.scene.polychrome_sprites.len(),
+                        2,
+                        "image cache: {}",
+                        host.1
+                    )
+                })
+                .expect("window open");
+        }
+        assert_eq!(
+            passive_renders.get(),
+            1,
+            "get_asset must not subscribe to completion"
+        );
+    }
+
     use crate::{
-        Context, DrawEngine, Entity, Render, StyleRefinement, TestAppContext, Window, div,
-        prelude::*, px, rgb, size,
+        Context, Entity, Render, StyleRefinement, TestAppContext, Window, div, prelude::*, px, rgb,
+        size,
     };
     use std::{cell::Cell, rc::Rc};
 
@@ -879,10 +888,10 @@ mod tests {
         for retained in [false, true] {
             for cached in [false, true] {
                 let window = cx.open_window(size(px(300.), px(100.)), |window, cx| {
-                    window.draw_engine = if retained {
-                        DrawEngine::Node(crate::NodeEngine::new())
+                    window.node_engine = if retained {
+                        crate::NodeEngine::new()
                     } else {
-                        DrawEngine::Legacy
+                        crate::NodeEngine::new_eager()
                     };
                     Root {
                         children: ["a", "b", "c"]
@@ -997,7 +1006,6 @@ mod tests {
         let middle_render_count = Rc::new(Cell::new(0));
         let right_render_count = Rc::new(Cell::new(0));
         let dependency = cx.new(|_| Dependency);
-        let _node_engine_guard = DrawEngine::force_node_engine_for_test();
         let window = cx.open_window(size(px(300.), px(100.)), |_, cx| NodeEngineRoot {
             left: cx.new({
                 let left_render_count = left_render_count.clone();
@@ -1096,7 +1104,6 @@ mod tests {
         let left_render_count = Rc::new(Cell::new(0));
         let middle_render_count = Rc::new(Cell::new(0));
         let right_render_count = Rc::new(Cell::new(0));
-        let _node_engine_guard = DrawEngine::force_node_engine_for_test();
         let window = cx.open_window(size(px(300.), px(100.)), |_, cx| NodeEngineRoot {
             left: cx.new({
                 let left_render_count = left_render_count.clone();
@@ -1206,12 +1213,12 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_automatic_views_match_legacy_across_layout_and_mount_changes(
+    fn node_engine_automatic_views_match_eager_across_layout_and_mount_changes(
         cx: &mut TestAppContext,
     ) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<IntrinsicRoot>| {
-                window.draw_engine = engine;
+                window.node_engine = engine;
                 IntrinsicRoot {
                     leaves: (0..3)
                         .map(|_| {
@@ -1228,14 +1235,14 @@ mod tests {
                 }
             }
         };
-        let legacy = cx.open_window(size(px(400.), px(100.)), build(DrawEngine::Legacy));
-        let retained = cx.open_window(
+        let eager = cx.open_window(
             size(px(400.), px(100.)),
-            build(DrawEngine::Node(crate::NodeEngine::new())),
+            build(crate::NodeEngine::new_eager()),
         );
+        let retained = cx.open_window(size(px(400.), px(100.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         for step in 0..10 {
-            for window in [legacy, retained] {
+            for window in [eager, retained] {
                 window
                     .update(cx, |root, _, cx| match step {
                         0 => {}
@@ -1299,7 +1306,7 @@ mod tests {
                     .expect("window remains open")
             };
             assert_eq!(
-                snapshot(legacy, cx),
+                snapshot(eager, cx),
                 snapshot(retained, cx),
                 "frame after step {step}"
             );
@@ -1364,7 +1371,7 @@ mod tests {
             for layout_mode in 0..3 {
                 let build = |engine| {
                     move |window: &mut Window, cx: &mut Context<PercentageHost>| {
-                        window.draw_engine = engine;
+                        window.node_engine = engine;
                         PercentageHost {
                             width: 200.,
                             layout_mode,
@@ -1372,13 +1379,14 @@ mod tests {
                         }
                     }
                 };
-                let legacy = cx.open_window(size(px(400.), px(200.)), build(DrawEngine::Legacy));
-                let retained = cx.open_window(
+                let eager = cx.open_window(
                     size(px(400.), px(200.)),
-                    build(DrawEngine::Node(crate::NodeEngine::new())),
+                    build(crate::NodeEngine::new_eager()),
                 );
+                let retained =
+                    cx.open_window(size(px(400.), px(200.)), build(crate::NodeEngine::new()));
                 for width in [200., 300., 160., 320., 320.] {
-                    for window in [legacy, retained] {
+                    for window in [eager, retained] {
                         window
                             .update(cx, |host, _, cx| {
                                 host.width = width;
@@ -1396,7 +1404,7 @@ mod tests {
                             .expect("window open")
                     };
                     assert_eq!(
-                        snapshot(legacy, cx),
+                        snapshot(eager, cx),
                         snapshot(retained, cx),
                         "parent width {width}, relative {relative_width}, layout mode {layout_mode}"
                     );
@@ -1452,7 +1460,7 @@ mod tests {
     fn node_engine_preserves_focus_hover_and_moved_hit_targets(cx: &mut TestAppContext) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<InteractiveHost>| {
-                window.draw_engine = engine;
+                window.node_engine = engine;
                 let leaf = cx.new(|cx| InteractiveLeaf {
                     focus: cx.focus_handle(),
                     clicks: 0,
@@ -1462,14 +1470,14 @@ mod tests {
                 InteractiveHost { offset: 0., leaf }
             }
         };
-        let legacy = cx.open_window(size(px(300.), px(100.)), build(DrawEngine::Legacy));
-        let retained = cx.open_window(
+        let eager = cx.open_window(
             size(px(300.), px(100.)),
-            build(DrawEngine::Node(crate::NodeEngine::new())),
+            build(crate::NodeEngine::new_eager()),
         );
+        let retained = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         for step in 0..8 {
-            for window in [legacy, retained] {
+            for window in [eager, retained] {
                 let mut visual = crate::VisualTestContext::from_window(window.into(), cx);
                 match step {
                     0 | 1 => {
@@ -1518,7 +1526,7 @@ mod tests {
                     .expect("window open")
             };
             assert_eq!(
-                snapshot(legacy, cx),
+                snapshot(eager, cx),
                 snapshot(retained, cx),
                 "interaction {step}"
             );
@@ -1590,7 +1598,7 @@ mod tests {
     fn node_engine_replays_nested_metadata_from_different_frames(cx: &mut TestAppContext) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<MetadataRoot>| {
-                window.draw_engine = engine;
+                window.node_engine = engine;
                 let events = Rc::new(std::cell::RefCell::new(Vec::new()));
                 let leaf = cx.new(|cx| MetadataLeaf {
                     focus: cx.focus_handle(),
@@ -1609,14 +1617,14 @@ mod tests {
                 }
             }
         };
-        let legacy = cx.open_window(size(px(300.), px(100.)), build(DrawEngine::Legacy));
-        let retained = cx.open_window(
+        let eager = cx.open_window(
             size(px(300.), px(100.)),
-            build(DrawEngine::Node(crate::NodeEngine::new())),
+            build(crate::NodeEngine::new_eager()),
         );
+        let retained = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         for step in 0..12 {
-            for handle in [legacy, retained] {
+            for handle in [eager, retained] {
                 handle
                     .update(cx, |root, _, cx| {
                         root.events.borrow_mut().clear();
@@ -1630,7 +1638,7 @@ mod tests {
                     .expect("window open");
             }
             cx.run_until_parked();
-            for handle in [legacy, retained] {
+            for handle in [eager, retained] {
                 crate::VisualTestContext::from_window(handle.into(), cx)
                     .simulate_keystrokes("enter");
             }
@@ -1648,7 +1656,7 @@ mod tests {
                     .expect("window open")
             };
             assert_eq!(
-                snapshot(legacy, cx),
+                snapshot(eager, cx),
                 snapshot(retained, cx),
                 "metadata frame {step}"
             );
@@ -1730,7 +1738,7 @@ mod tests {
     fn node_engine_captures_children_that_prepaint_without_paint(cx: &mut TestAppContext) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<OptionalPaintRoot>| {
-                window.draw_engine = engine;
+                window.node_engine = engine;
                 OptionalPaintRoot {
                     leaf: cx.new(|cx| InteractiveLeaf {
                         focus: cx.focus_handle(),
@@ -1741,14 +1749,14 @@ mod tests {
                 }
             }
         };
-        let legacy = cx.open_window(size(px(300.), px(100.)), build(DrawEngine::Legacy));
-        let retained = cx.open_window(
+        let eager = cx.open_window(
             size(px(300.), px(100.)),
-            build(DrawEngine::Node(crate::NodeEngine::new())),
+            build(crate::NodeEngine::new_eager()),
         );
+        let retained = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         for step in 0..8 {
-            for handle in [legacy, retained] {
+            for handle in [eager, retained] {
                 handle
                     .update(cx, |root, _, cx| {
                         root.paint_child = step % 2 == 0;
@@ -1766,7 +1774,7 @@ mod tests {
                     .expect("window open")
             };
             assert_eq!(
-                snapshot(legacy, cx),
+                snapshot(eager, cx),
                 snapshot(retained, cx),
                 "optional paint {step}"
             );
@@ -1821,18 +1829,18 @@ mod tests {
         let build = |engine| {
             let image = image.clone();
             move |window: &mut Window, cx: &mut Context<AmbientHost>| {
-                window.draw_engine = engine;
+                window.node_engine = engine;
                 AmbientHost {
                     leaf: cx.new(|_| AmbientLeaf { image }),
                     deferred: false,
                 }
             }
         };
-        let legacy = cx.open_window(size(px(300.), px(100.)), build(DrawEngine::Legacy));
-        let retained = cx.open_window(
+        let eager = cx.open_window(
             size(px(300.), px(100.)),
-            build(DrawEngine::Node(crate::NodeEngine::new())),
+            build(crate::NodeEngine::new_eager()),
         );
+        let retained = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         for step in 0..9 {
             if step == 1 {
@@ -1846,7 +1854,7 @@ mod tests {
                     cx.remove_global::<AmbientStyle>();
                 });
             }
-            for handle in [legacy, retained] {
+            for handle in [eager, retained] {
                 handle
                     .update(cx, |host, window, cx| {
                         if step == 4 {
@@ -1873,7 +1881,7 @@ mod tests {
                     .expect("window open")
             };
             assert_eq!(
-                snapshot(legacy, cx),
+                snapshot(eager, cx),
                 snapshot(retained, cx),
                 "ambient update {step}"
             );
@@ -1911,7 +1919,7 @@ mod tests {
     fn node_engine_preserves_clipping_overlap_and_focused_removal(cx: &mut TestAppContext) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<OverlapHost>| {
-                window.draw_engine = engine;
+                window.node_engine = engine;
                 let front = cx.new(|cx| InteractiveLeaf {
                     focus: cx.focus_handle(),
                     clicks: 0,
@@ -1929,14 +1937,14 @@ mod tests {
                 }
             }
         };
-        let legacy = cx.open_window(size(px(300.), px(100.)), build(DrawEngine::Legacy));
-        let retained = cx.open_window(
+        let eager = cx.open_window(
             size(px(300.), px(100.)),
-            build(DrawEngine::Node(crate::NodeEngine::new())),
+            build(crate::NodeEngine::new_eager()),
         );
+        let retained = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         for step in 0..6 {
-            for handle in [legacy, retained] {
+            for handle in [eager, retained] {
                 handle
                     .update(cx, |host, _, cx| {
                         if step == 3 {
@@ -1950,7 +1958,7 @@ mod tests {
                     .expect("window open");
             }
             cx.run_until_parked();
-            for handle in [legacy, retained] {
+            for handle in [eager, retained] {
                 let mut visual = crate::VisualTestContext::from_window(handle.into(), cx);
                 visual.simulate_click(
                     crate::point(px(if step == 2 { 70. } else { 10. }), px(10.)),
@@ -1981,7 +1989,7 @@ mod tests {
                     .expect("window open")
             };
             assert_eq!(
-                snapshot(legacy, cx),
+                snapshot(eager, cx),
                 snapshot(retained, cx),
                 "overlap step {step}"
             );
@@ -2020,7 +2028,7 @@ mod tests {
         }
         let renders = Rc::new(Cell::new(0));
         let handle = cx.open_window(size(px(300.), px(100.)), |window, cx| {
-            window.draw_engine = DrawEngine::Node(crate::NodeEngine::new());
+            window.node_engine = crate::NodeEngine::new();
             Host {
                 source: cx.new(|_| 0),
                 renders: renders.clone(),
@@ -2147,7 +2155,7 @@ mod tests {
         let lifetime = Rc::new(());
         let renders = Rc::new(Cell::new(0));
         let window = cx.open_window(size(px(200.), px(100.)), |window, cx| {
-            window.draw_engine = DrawEngine::Node(crate::NodeEngine::new());
+            window.node_engine = crate::NodeEngine::new();
             ArenaMeasuredHost(cx.new(|_| ArenaMeasuredView {
                 lifetime: lifetime.clone(),
                 renders: renders.clone(),
@@ -2209,7 +2217,7 @@ mod tests {
     fn node_engine_reuses_after_fully_dirty_frames(cx: &mut TestAppContext) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<BenchmarkHost>| {
-                window.draw_engine = engine;
+                window.node_engine = engine;
                 BenchmarkHost {
                     leaves: (0..3)
                         .map(|_| cx.new(|_| BenchmarkLeaf { revision: 0 }))
@@ -2217,11 +2225,11 @@ mod tests {
                 }
             }
         };
-        let legacy = cx.open_window(size(px(500.), px(300.)), build(DrawEngine::Legacy));
-        let retained = cx.open_window(
+        let eager = cx.open_window(
             size(px(500.), px(300.)),
-            build(DrawEngine::Node(crate::NodeEngine::new())),
+            build(crate::NodeEngine::new_eager()),
         );
+        let retained = cx.open_window(size(px(500.), px(300.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         let snapshot = |window: crate::WindowHandle<BenchmarkHost>, cx: &mut TestAppContext| {
             window
@@ -2232,7 +2240,7 @@ mod tests {
         };
         for step in 0..6 {
             let dirty_all = step % 2 == 0;
-            for window in [legacy, retained] {
+            for window in [eager, retained] {
                 window
                     .update(cx, |host, window, cx| {
                         for leaf in host.leaves.iter().take(if dirty_all { 3 } else { 1 }) {
@@ -2248,7 +2256,7 @@ mod tests {
                     .expect("window open");
             }
             cx.run_until_parked();
-            assert_eq!(snapshot(legacy, cx), snapshot(retained, cx));
+            assert_eq!(snapshot(eager, cx), snapshot(retained, cx));
             retained
                 .update(cx, |_, window, _| {
                     let stats = window.retained_node_stats().expect("retained engine");
@@ -2319,7 +2327,7 @@ mod tests {
         let state = Rc::new(std::cell::RefCell::new(None));
         let seen = Rc::new(Cell::new(0));
         let window = cx.open_window(size(px(200.), px(100.)), |window, _| {
-            window.draw_engine = DrawEngine::Node(crate::NodeEngine::new());
+            window.node_engine = crate::NodeEngine::new();
             ComponentHost {
                 state: state.clone(),
                 seen_revision: seen.clone(),
@@ -2393,13 +2401,10 @@ mod tests {
 
     #[gpui::test]
     fn node_engine_defers_render_notifications_until_next_requested_frame(cx: &mut TestAppContext) {
-        for engine in [
-            DrawEngine::Legacy,
-            DrawEngine::Node(crate::NodeEngine::new()),
-        ] {
+        for engine in [crate::NodeEngine::new_eager(), crate::NodeEngine::new()] {
             let renders = Rc::new(Cell::new(0));
             let window = cx.open_window(size(px(100.), px(100.)), |window, _| {
-                window.draw_engine = engine;
+                window.node_engine = engine;
                 NotifyDuringRender {
                     renders: renders.clone(),
                 }
@@ -2432,7 +2437,7 @@ mod tests {
     fn node_engine_nested_reuse_keeps_layout_storage_bounded(cx: &mut TestAppContext) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<NestedRoot>| {
-                window.draw_engine = engine;
+                window.node_engine = engine;
                 NestedRoot {
                     prefix: cx.new(|_| IntrinsicLeaf {
                         renders: Rc::new(Cell::new(0)),
@@ -2456,11 +2461,11 @@ mod tests {
                 }
             }
         };
-        let legacy = cx.open_window(size(px(400.), px(200.)), build(DrawEngine::Legacy));
-        let retained = cx.open_window(
+        let eager = cx.open_window(
             size(px(400.), px(200.)),
-            build(DrawEngine::Node(crate::NodeEngine::new())),
+            build(crate::NodeEngine::new_eager()),
         );
+        let retained = cx.open_window(size(px(400.), px(200.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         let baseline = retained
             .update(cx, |_, window, _| {
@@ -2471,7 +2476,7 @@ mod tests {
             })
             .expect("window open");
         for step in 0..30 {
-            for window in [legacy, retained] {
+            for window in [eager, retained] {
                 window
                     .update(cx, |root, _, cx| {
                         if step % 3 == 2 {
@@ -2504,7 +2509,7 @@ mod tests {
                     .expect("window open")
             };
             assert_eq!(
-                snapshot(legacy, cx),
+                snapshot(eager, cx),
                 snapshot(retained, cx),
                 "nested frame {step}"
             );
@@ -2527,7 +2532,7 @@ mod tests {
         let dependency = cx.new(|_| Dependency);
         let renders = Rc::new(Cell::new(0));
         let window = cx.open_window(size(px(100.), px(100.)), |window, _| {
-            window.draw_engine = DrawEngine::Node(crate::NodeEngine::new());
+            window.node_engine = crate::NodeEngine::new();
             CountingLeaf {
                 render_count: renders.clone(),
                 dependency: Some(dependency.clone()),
@@ -2576,7 +2581,7 @@ mod tests {
         let dependency = cx.new(|_| Dependency);
         let renders = Rc::new(Cell::new(0));
         let window = cx.open_window(size(px(100.), px(100.)), |window, _| {
-            window.draw_engine = DrawEngine::Node(crate::NodeEngine::new());
+            window.node_engine = crate::NodeEngine::new();
             CountingLeaf {
                 render_count: renders.clone(),
                 dependency: Some(dependency.clone()),

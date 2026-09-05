@@ -5029,6 +5029,56 @@ mod tests {
             1,
             "mouse down over an active prompt should not fire mouse-down-out listeners"
         );
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear(cx);
+                assert_eq!(
+                    window
+                        .retained_node_stats()
+                        .expect("retained engine")
+                        .full_refresh_reason,
+                    Some("prompt")
+                );
+                let position = window
+                    .rendered_frame
+                    .hitboxes
+                    .last()
+                    .expect("prompt button")
+                    .bounds
+                    .center();
+                window.dispatch_event(
+                    MouseDownEvent {
+                        position,
+                        button: MouseButton::Left,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.dispatch_event(
+                    crate::MouseUpEvent {
+                        position,
+                        button: MouseButton::Left,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .expect("window open");
+        test_app.run_until_parked();
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                assert!(!window.has_active_prompt());
+                window.draw(cx).clear(cx);
+            })
+            .expect("window open");
+        dispatch_mouse_down_outside_target(&mut test_app, any_window);
+        assert_eq!(*mouse_down_out_count.borrow(), 2);
     }
 
     #[test]

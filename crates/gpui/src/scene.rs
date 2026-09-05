@@ -39,8 +39,10 @@ impl From<bool> for PaddedBool32 {
 #[derive(Default)]
 #[expect(missing_docs)]
 pub struct Scene {
+    #[cfg(test)]
     pub(crate) paint_operations: Vec<PaintOperation>,
     operation_count: usize,
+    #[cfg(test)]
     discard_paint_operations: bool,
     node_scene: Option<crate::view_node::ViewNodeScene>,
     node_scene_stack: Vec<crate::view_node::ViewNodeScene>,
@@ -60,9 +62,13 @@ pub struct Scene {
 impl Scene {
     pub fn clear(&mut self) {
         debug_assert!(self.node_scene.is_none() && self.node_scene_stack.is_empty());
+        #[cfg(test)]
         self.paint_operations.clear();
         self.operation_count = 0;
-        self.discard_paint_operations = false;
+        #[cfg(test)]
+        {
+            self.discard_paint_operations = false;
+        }
         self.primitive_bounds.clear();
         self.layer_stack.clear();
         self.paths.clear();
@@ -143,6 +149,7 @@ impl Scene {
         self.record_operation(PaintOperation::Primitive(primitive));
     }
 
+    #[cfg(test)]
     pub(crate) fn use_node_scene_storage(&mut self, enabled: bool) {
         // Prepaint callers can submit primitives outside a retained scope.
         // Preserve their replay log when switching storage after prepaint.
@@ -190,21 +197,17 @@ impl Scene {
     fn record_operation(&mut self, operation: PaintOperation) {
         self.operation_count += 1;
         if let Some(recording) = &mut self.node_scene {
+            #[cfg(test)]
             if !self.discard_paint_operations {
                 self.paint_operations.push(operation.clone());
             }
             recording.push(operation);
-        } else if !self.discard_paint_operations {
-            self.paint_operations.push(operation);
+        } else {
+            #[cfg(test)]
+            if !self.discard_paint_operations {
+                self.paint_operations.push(operation);
+            }
         }
-    }
-
-    pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
-        assert!(
-            !prev_scene.discard_paint_operations,
-            "frame replay requires an operation recording"
-        );
-        self.replay_recording(&prev_scene.paint_operations[range]);
     }
 
     #[cfg(test)]

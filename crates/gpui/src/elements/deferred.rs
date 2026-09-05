@@ -145,13 +145,6 @@ mod tests {
         }
     }
 
-    /// Regression test for a crash with nested deferred draws (e.g. a popover
-    /// menu inside a popover hosted by a cached dock panel). Prepaint indices
-    /// recorded during the deferred draw rounds must index the same
-    /// `deferred_draws` vector that `reuse_prepaint` slices on the next frame;
-    /// previously they were measured against a transient per-round vector, so
-    /// reusing the panel's subtree grafted the wrong deferred draws and
-    /// panicked in the dispatch tree.
     #[gpui::test]
     fn test_nested_deferred_draws_with_reused_views(cx: &mut TestAppContext) {
         let window = cx.open_window(size(px(800.), px(600.)), |_, cx| {
@@ -194,7 +187,7 @@ mod tests {
         window
             .update(cx, |_, window, _| {
                 assert_eq!(window.rendered_frame.deferred_draws.len(), 2);
-                if window.node_engine_enabled() {
+                {
                     assert_eq!(window.rendered_frame.scene.paint_operations.capacity(), 0);
                     assert_eq!(window.next_frame.scene.paint_operations.capacity(), 0);
                 }

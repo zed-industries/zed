@@ -3,14 +3,6 @@ use crate::{
     ViewNode, ViewNodeCacheKey, ViewNodeRecording,
 };
 use collections::{FxHashMap, FxHashSet};
-#[cfg(test)]
-use std::cell::Cell;
-
-#[cfg(test)]
-thread_local! {
-    static FORCE_NODE_ENGINE: Cell<bool> = const { Cell::new(false) };
-}
-
 pub(crate) type ViewNodeId = EntityId;
 
 pub(crate) enum NodeRenderDecision {
@@ -24,7 +16,7 @@ pub(crate) enum NodeRenderDecision {
     },
 }
 
-/// Work performed by the experimental retained engine in its last completed frame.
+/// Work performed by the retained engine in its last completed frame.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RetainedNodeStats {
     /// Input that forced every scope to rebuild, when present.
@@ -46,9 +38,6 @@ pub(crate) struct NodeEngine {
     frame_stats: RetainedNodeStats,
     pub(crate) last_frame_stats: RetainedNodeStats,
     nodes: FxHashMap<ViewNodeId, Entity<ViewNode>>,
-    /// Reverse of each node's `accessed_entities`: the nodes whose recorded output was
-    /// computed from a read of the keyed entity. Keys include node ids, since a parent's
-    /// output contains its children's.
     consumers: FxHashMap<EntityId, FxHashSet<ViewNodeId>>,
     occurrences: FxHashMap<GlobalElementId, ViewNodeId>,
     dirty_nodes: FxHashSet<ViewNodeId>,
@@ -57,50 +46,20 @@ pub(crate) struct NodeEngine {
     roots: Vec<ViewNodeId>,
     next_roots: Vec<ViewNodeId>,
     full_refresh: bool,
+    #[cfg(test)]
+    eager: bool,
     changed_bounds: Option<Bounds<Pixels>>,
 }
 
-pub(crate) enum DrawEngine {
-    Legacy,
-    Node(NodeEngine),
-}
-
-impl DrawEngine {
-    pub(crate) fn from_environment() -> Self {
-        #[cfg(test)]
-        let forced_for_test = FORCE_NODE_ENGINE.get();
-        #[cfg(not(test))]
-        let forced_for_test = false;
-
-        if forced_for_test
-            || !std::env::var("GPUI_EXPERIMENTAL_NODE_ENGINE").is_ok_and(|value| value == "0")
-        {
-            Self::Node(NodeEngine::new())
-        } else {
-            Self::Legacy
+impl NodeEngine {
+    #[cfg(test)]
+    pub(crate) fn new_eager() -> Self {
+        Self {
+            eager: true,
+            ..Self::new()
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn force_node_engine_for_test() -> NodeEngineTestGuard {
-        let previous = FORCE_NODE_ENGINE.replace(true);
-        NodeEngineTestGuard { previous }
-    }
-}
-
-#[cfg(test)]
-pub(crate) struct NodeEngineTestGuard {
-    previous: bool,
-}
-
-#[cfg(test)]
-impl Drop for NodeEngineTestGuard {
-    fn drop(&mut self) {
-        FORCE_NODE_ENGINE.set(self.previous);
-    }
-}
-
-impl NodeEngine {
     pub(crate) fn new() -> Self {
         Self {
             invalidation_queue: Vec::new(),
@@ -115,6 +74,8 @@ impl NodeEngine {
             roots: Vec::new(),
             next_roots: Vec::new(),
             full_refresh: true,
+            #[cfg(test)]
+            eager: false,
             changed_bounds: None,
         }
     }
@@ -185,6 +146,12 @@ impl NodeEngine {
 
     pub(crate) fn begin_frame(&mut self, full_refresh_reason: Option<&'static str>) {
         debug_assert!(self.traversal_stack.is_empty());
+        #[cfg(test)]
+        let full_refresh_reason = if self.eager {
+            Some("eager reference")
+        } else {
+            full_refresh_reason
+        };
         self.full_refresh = full_refresh_reason.is_some();
         self.frame_stats = RetainedNodeStats {
             full_refresh_reason,
@@ -197,9 +164,6 @@ impl NodeEngine {
         }
     }
 
-    /// Marks dirty every node whose recorded output was computed from a read of one of
-    /// `sources`, directly or through a descendant. Reads only establish dirtiness; the
-    /// sources' observers are not involved and no node is notified.
     pub(crate) fn invalidate_entities(&mut self, sources: &FxHashSet<EntityId>) {
         for source in sources {
             if !self.consumers.contains_key(source) {
@@ -214,8 +178,6 @@ impl NodeEngine {
         }
     }
 
-    /// Marks dirty the nodes that read `source`, and transitively their ancestors. Does
-    /// nothing when no node has read `source`.
     pub(crate) fn invalidate_consumers(&mut self, source: EntityId) {
         let pending = &mut self.invalidation_queue;
         pending.clear();

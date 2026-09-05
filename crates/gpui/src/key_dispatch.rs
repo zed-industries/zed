@@ -58,7 +58,6 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
-    mem,
     ops::Range,
     rc::Rc,
 };
@@ -113,28 +112,6 @@ impl Clone for DispatchNode {
         self.focus_id = source.focus_id;
         self.view_id = source.view_id;
         self.parent = source.parent;
-    }
-}
-
-pub(crate) struct ReusedSubtree {
-    old_range: Range<usize>,
-    new_range: Range<usize>,
-    contains_focus: bool,
-}
-
-impl ReusedSubtree {
-    pub fn refresh_node_id(&self, node_id: DispatchNodeId) -> DispatchNodeId {
-        debug_assert!(
-            self.old_range.contains(&node_id.0),
-            "node {} was not part of the reused subtree {:?}",
-            node_id.0,
-            self.old_range
-        );
-        DispatchNodeId((node_id.0 - self.old_range.start) + self.new_range.start)
-    }
-
-    pub fn contains_focus(&self) -> bool {
-        self.contains_focus
     }
 }
 
@@ -269,24 +246,6 @@ impl DispatchTree {
         self.node_stack.pop();
     }
 
-    fn move_node(&mut self, source: &mut DispatchNode) {
-        self.push_node();
-        if let Some(context) = source.context.clone() {
-            self.set_key_context(context);
-        }
-        if let Some(focus_id) = source.focus_id {
-            self.set_focus_id(focus_id);
-        }
-        if let Some(view_id) = source.view_id {
-            self.set_view_id(view_id);
-        }
-
-        let target = self.active_node();
-        target.key_listeners = mem::take(&mut source.key_listeners);
-        target.action_listeners = mem::take(&mut source.action_listeners);
-        target.modifiers_changed_listeners = mem::take(&mut source.modifiers_changed_listeners);
-    }
-
     pub(crate) fn record_retained_subtree(
         &self,
         range: Range<usize>,
@@ -400,52 +359,6 @@ impl DispatchTree {
             self.nodes.push(node);
         }
         contains_focus
-    }
-
-    pub fn reuse_subtree(
-        &mut self,
-        old_range: Range<usize>,
-        source: &mut Self,
-        focus: Option<FocusId>,
-    ) -> ReusedSubtree {
-        let new_range = self.nodes.len()..self.nodes.len() + old_range.len();
-
-        let mut contains_focus = false;
-        let mut source_stack = vec![];
-        for (source_node_id, source_node) in source
-            .nodes
-            .iter_mut()
-            .enumerate()
-            .skip(old_range.start)
-            .take(old_range.len())
-        {
-            let source_node_id = DispatchNodeId(source_node_id);
-            while let Some(source_ancestor) = source_stack.last() {
-                if source_node.parent == Some(*source_ancestor) {
-                    break;
-                } else {
-                    source_stack.pop();
-                    self.pop_node();
-                }
-            }
-
-            source_stack.push(source_node_id);
-            if source_node.focus_id.is_some() && source_node.focus_id == focus {
-                contains_focus = true;
-            }
-            self.move_node(source_node);
-        }
-
-        while !source_stack.is_empty() {
-            source_stack.pop();
-            self.pop_node();
-        }
-
-        ReusedSubtree {
-            old_range,
-            new_range,
-            contains_focus,
-        }
     }
 
     pub fn truncate(&mut self, index: usize) {

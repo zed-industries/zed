@@ -687,45 +687,6 @@ impl LineLayoutCache {
         );
     }
 
-    pub fn reuse_layouts(&self, range: Range<LineLayoutIndex>) {
-        let mut previous_frame = &mut *self.previous_frame.lock();
-        let mut current_frame = &mut *self.current_frame.write();
-
-        for key in &previous_frame.used_lines[range.start.lines_index..range.end.lines_index] {
-            if let Some((key, line)) = previous_frame.lines.remove_entry(key) {
-                current_frame.lines.insert(key, line);
-            }
-            current_frame.used_lines.push(key.clone());
-        }
-
-        for key in &previous_frame.used_wrapped_lines
-            [range.start.wrapped_lines_index..range.end.wrapped_lines_index]
-        {
-            if let Some((key, line)) = previous_frame.wrapped_lines.remove_entry(key) {
-                current_frame.wrapped_lines.insert(key, line);
-            }
-            current_frame.used_wrapped_lines.push(key.clone());
-        }
-
-        for key in &previous_frame.used_lines_by_hash
-            [range.start.lines_by_hash_index..range.end.lines_by_hash_index]
-        {
-            if let Some((key, line)) = previous_frame.lines_by_hash.remove_entry(key) {
-                current_frame.lines_by_hash.insert(key, line);
-            }
-            current_frame.used_lines_by_hash.push(key.clone());
-        }
-
-        for key in &previous_frame.used_wrapped_lines_by_hash
-            [range.start.wrapped_lines_by_hash_index..range.end.wrapped_lines_by_hash_index]
-        {
-            if let Some((key, line)) = previous_frame.wrapped_lines_by_hash.remove_entry(key) {
-                current_frame.wrapped_lines_by_hash.insert(key, line);
-            }
-            current_frame.used_wrapped_lines_by_hash.push(key.clone());
-        }
-    }
-
     pub fn truncate_layouts(&self, index: LineLayoutIndex) {
         let mut current_frame = &mut *self.current_frame.write();
         current_frame.used_lines.truncate(index.lines_index);

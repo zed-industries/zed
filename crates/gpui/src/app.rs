@@ -677,6 +677,12 @@ enum PlatformOwnedDragState {
     RestoredInSourceWindow,
 }
 
+struct CachedAsset {
+    task: Box<dyn Any>,
+    completion: Entity<()>,
+    _notification: Task<()>,
+}
+
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other [Context] derefs to this type.
 /// You need a reference to an `App` to access the state of a [Entity].
@@ -731,7 +737,7 @@ pub struct App {
     pub(crate) global_revision: u64,
 
     // assets
-    pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
+    loading_assets: FxHashMap<(TypeId, u64), CachedAsset>,
     asset_source: Arc<dyn AssetSource>,
     pub(crate) svg_renderer: SvgRenderer,
     http_client: Arc<dyn HttpClient>,
@@ -1112,22 +1118,6 @@ impl App {
             on_notify(e, cx);
             true
         })
-    }
-
-    pub(crate) fn detect_accessed_entities<R>(
-        &mut self,
-        callback: impl FnOnce(&mut App) -> R,
-    ) -> (R, FxHashSet<EntityId>) {
-        let accessed_entities_start = self.entities.accessed_entities.get_mut().clone();
-        let result = callback(self);
-        let entities_accessed_in_callback = self
-            .entities
-            .accessed_entities
-            .get_mut()
-            .difference(&accessed_entities_start)
-            .copied()
-            .collect::<FxHashSet<EntityId>>();
-        (result, entities_accessed_in_callback)
     }
 
     pub(crate) fn collect_accessed_entities<R>(
@@ -2677,21 +2667,43 @@ impl App {
     /// time, and the results of this call will be cached
     pub fn fetch_asset<A: Asset>(&mut self, source: &A::Source) -> (Shared<Task<A::Output>>, bool) {
         let asset_id = (TypeId::of::<A>(), hash(source));
-        let mut is_first = false;
-        let task = self
-            .loading_assets
-            .remove(&asset_id)
-            .map(|boxed_task| *boxed_task.downcast::<Shared<Task<A::Output>>>().unwrap())
-            .unwrap_or_else(|| {
-                is_first = true;
-                let future = A::load(source.clone(), self);
+        if let Some(asset) = self.loading_assets.get(&asset_id) {
+            let task = asset
+                .task
+                .downcast_ref::<Shared<Task<A::Output>>>()
+                .expect("asset type matches its cache key");
+            return (task.clone(), false);
+        }
+        let future = A::load(source.clone(), self);
+        let task = self.background_executor().spawn(future).shared();
+        // Fetching alone is passive; only Window::use_asset observes completion.
+        let previous_accesses = self.entities.suspend_access_tracking();
+        let completion = self.new(|_| ());
+        self.entities.restore_access_tracking(previous_accesses);
+        let notification = self.spawn({
+            let task = task.clone();
+            let completion = completion.clone();
+            async move |cx| {
+                task.await;
+                cx.update(|cx| cx.notify(completion.entity_id()));
+            }
+        });
+        self.loading_assets.insert(
+            asset_id,
+            CachedAsset {
+                task: Box::new(task.clone()),
+                completion,
+                _notification: notification,
+            },
+        );
+        (task, true)
+    }
 
-                self.background_executor().spawn(future).shared()
-            });
-
-        self.loading_assets.insert(asset_id, Box::new(task.clone()));
-
-        (task, is_first)
+    pub(crate) fn track_asset<A: Asset>(&self, source: &A::Source) {
+        if let Some(asset) = self.loading_assets.get(&(TypeId::of::<A>(), hash(source))) {
+            // Every retained consumer must observe completion, including those sharing a load.
+            asset.completion.read(self);
+        }
     }
 
     /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
@@ -2701,15 +2713,11 @@ impl App {
         FocusHandle::new(&self.focus_handles)
     }
 
-    /// Starts collecting the entities notified while a window draws. Entities notified
-    /// mid-draw have no chance to dirty the frame being built, so the window records them
-    /// for its next requested frame instead.
+    // Mid-draw notifications must survive until the next requested frame.
     pub(crate) fn begin_render_notifications(&mut self) {
         self.render_notifications.push(FxHashSet::default());
     }
 
-    /// Returns the entities notified since the matching [`Self::begin_render_notifications`]
-    /// that the finished frame also read. Returns an empty set if tracking was not begun.
     pub(crate) fn end_render_notifications(&mut self) -> FxHashSet<EntityId> {
         let mut sources = self.render_notifications.pop().unwrap_or_default();
         let accessed_entities = self.entities.accessed_entities.borrow();

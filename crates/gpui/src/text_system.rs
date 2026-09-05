@@ -418,10 +418,6 @@ impl WindowTextSystem {
         self.line_layout_cache.replay_layouts(recording, engine, cx);
     }
 
-    pub(crate) fn reuse_layouts(&self, index: Range<LineLayoutIndex>) {
-        self.line_layout_cache.reuse_layouts(index)
-    }
-
     pub(crate) fn truncate_layouts(&self, index: LineLayoutIndex) {
         self.line_layout_cache.truncate_layouts(index)
     }
