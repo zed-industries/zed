@@ -276,6 +276,8 @@ impl WebWindowInner {
                 modifiers,
                 click_count,
                 first_mouse: false,
+                // The web backend does not read PointerEvent pressure yet.
+                pressure: 1.0,
             }));
 
             this.ime_mirror.focus();
@@ -369,6 +371,8 @@ impl WebWindowInner {
                 position,
                 modifiers,
                 click_count,
+                // The web backend does not read PointerEvent pressure yet.
+                pressure: 1.0,
             }));
 
             this.schedule_ime_mirror_sync();
@@ -595,6 +599,8 @@ impl WebWindowInner {
                 position,
                 pressed_button: current_pressed,
                 modifiers,
+                // The web backend does not read PointerEvent pressure yet.
+                pressure: 1.0,
             }));
         })
     }

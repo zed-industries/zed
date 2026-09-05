@@ -152,6 +152,22 @@ pub struct Xdnd {
 struct PointerDeviceState {
     horizontal: ScrollAxisState,
     vertical: ScrollAxisState,
+    pressure: Option<PressureAxisState>,
+}
+
+/// State of a device's stylus pressure valuator ("Abs Pressure"). Ordinary
+/// mice have no such valuator and get `PointerDeviceState::pressure = None`.
+#[derive(Debug)]
+struct PressureAxisState {
+    /// Valuator number for looking up this axis's pressure value.
+    valuator_number: u16,
+    /// Lower bound of the axis's reported range.
+    min: f32,
+    /// Width of the axis's reported range, always positive.
+    range: f32,
+    /// Last normalized pressure seen, cached because XInput only includes the
+    /// valuators that changed in each event.
+    last_value: f32,
 }
 
 #[derive(Debug, Default)]
@@ -375,13 +391,14 @@ impl X11Client {
             supports_xinput_gestures,
         );
 
-        let pointer_device_states =
-            current_pointer_device_states(&xcb_connection, &BTreeMap::new()).unwrap_or_default();
-
         let atoms = XcbAtoms::new(&xcb_connection)
             .context("Failed to get XCB atoms")?
             .reply()
             .context("Failed to get XCB atoms")?;
+
+        let pointer_device_states =
+            current_pointer_device_states(&xcb_connection, &BTreeMap::new(), atoms.AbsPressure)
+                .unwrap_or_default();
 
         let root = xcb_connection.setup().roots[0].root;
         let compositor_present = check_compositor_present(&xcb_connection, root);
@@ -1168,6 +1185,8 @@ impl X11Client {
                     window.handle_ime_commit(text);
                     state = self.0.borrow_mut();
                 }
+                let pressure =
+                    get_pressure_and_update_state(&mut state.pointer_device_states, &event);
                 match button_or_scroll_from_event_detail(event.detail) {
                     Some(ButtonOrScroll::Button(button)) => {
                         let click_elapsed = state.last_click.elapsed();
@@ -1194,6 +1213,7 @@ impl X11Client {
                             modifiers,
                             click_count: current_count,
                             first_mouse: false,
+                            pressure,
                         }));
                     }
                     Some(ButtonOrScroll::Scroll(direction)) => {
@@ -1230,6 +1250,8 @@ impl X11Client {
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
+                let pressure =
+                    get_pressure_and_update_state(&mut state.pointer_device_states, &event);
                 match button_or_scroll_from_event_detail(event.detail) {
                     Some(ButtonOrScroll::Button(button)) => {
                         let click_count = state.current_count;
@@ -1239,6 +1261,7 @@ impl X11Client {
                             position,
                             modifiers,
                             click_count,
+                            pressure,
                         }));
                     }
                     Some(ButtonOrScroll::Scroll(_)) => {}
@@ -1283,13 +1306,28 @@ impl X11Client {
                 );
                 let modifiers = modifiers_from_xinput_info(event.mods);
                 state.modifiers = modifiers;
+                // A stylus pressed harder without moving reports only its
+                // pressure valuator; that must still reach the application, so
+                // it counts as a move alongside the x/y valuators (bits 0 and
+                // 1) below. Scroll-wheel valuators keep not counting.
+                let pressure_valuator_changed = state
+                    .pointer_device_states
+                    .get(&event.sourceid)
+                    .and_then(|device| device.pressure.as_ref())
+                    .is_some_and(|pressure| {
+                        get_valuator_axis_index(&event.valuator_mask, pressure.valuator_number)
+                            .is_some()
+                    });
+                let pressure =
+                    get_pressure_and_update_state(&mut state.pointer_device_states, &event);
                 drop(state);
 
-                if event.valuator_mask[0] & 3 != 0 {
+                if event.valuator_mask[0] & 3 != 0 || pressure_valuator_changed {
                     window.handle_input(PlatformInput::MouseMove(gpui::MouseMoveEvent {
                         position,
                         pressed_button,
                         modifiers,
+                        pressure,
                     }));
                 }
 
@@ -1348,6 +1386,7 @@ impl X11Client {
                 if let Some(pointer_device_states) = current_pointer_device_states(
                     &state.xcb_connection,
                     &state.pointer_device_states,
+                    state.atoms.AbsPressure,
                 ) {
                     state.pointer_device_states = pointer_device_states;
                 }
@@ -2375,6 +2414,7 @@ fn xdnd_send_status(
 fn current_pointer_device_states(
     xcb_connection: &XCBConnection,
     scroll_values_to_preserve: &BTreeMap<xinput::DeviceId, PointerDeviceState>,
+    abs_pressure_atom: xproto::Atom,
 ) -> Option<BTreeMap<xinput::DeviceId, PointerDeviceState>> {
     let devices_query_result = get_reply(
         || "Failed to query XInput devices",
@@ -2407,7 +2447,13 @@ fn current_pointer_device_states(
                     .iter()
                     .find(|data| data.scroll_type == xinput::ScrollType::VERTICAL)
                     .map(|data| scroll_data_to_axis_state(data, old_vertical));
-                if horizontal.is_none() && vertical.is_none() {
+                let pressure = info
+                    .classes
+                    .iter()
+                    .filter_map(|class| class.data.as_valuator())
+                    .find(|valuator| valuator.label == abs_pressure_atom)
+                    .and_then(pressure_valuator_to_axis_state);
+                if horizontal.is_none() && vertical.is_none() && pressure.is_none() {
                     None
                 } else {
                     Some((
@@ -2415,6 +2461,7 @@ fn current_pointer_device_states(
                         PointerDeviceState {
                             horizontal: horizontal.unwrap_or_else(Default::default),
                             vertical: vertical.unwrap_or_else(Default::default),
+                            pressure,
                         },
                     ))
                 }
@@ -2440,6 +2487,50 @@ fn scroll_data_to_axis_state(
         multiplier: SCROLL_LINES / fp3232_to_f32(data.increment),
         scroll_value: old_axis_state_with_valid_scroll_value.and_then(|state| state.scroll_value),
     }
+}
+
+fn pressure_valuator_to_axis_state(
+    valuator: &xinput::DeviceClassDataValuator,
+) -> Option<PressureAxisState> {
+    let min = fp3232_to_f32(valuator.min);
+    let range = fp3232_to_f32(valuator.max) - min;
+    // A degenerate range would make every event divide by zero (or report
+    // inverted pressure); treat such a device as having no pressure axis.
+    if !(range.is_finite() && range > 0.0) {
+        return None;
+    }
+    Some(PressureAxisState {
+        valuator_number: valuator.number,
+        min,
+        range,
+        // Seed from the axis's current value so events that arrive before the
+        // first pressure change still report something sensible.
+        last_value: ((fp3232_to_f32(valuator.value) - min) / range).clamp(0.0, 1.0),
+    })
+}
+
+/// Returns the stylus pressure to report for a pointer event, 0.0..=1.0,
+/// updating the device's cached value from the event's valuators. Devices
+/// without a pressure valuator -- ordinary mice -- report full pressure, per
+/// the `MouseDownEvent::pressure` contract.
+fn get_pressure_and_update_state(
+    pointer_device_states: &mut BTreeMap<xinput::DeviceId, PointerDeviceState>,
+    event: &xinput::ButtonPressEvent,
+) -> f32 {
+    let Some(pressure) = pointer_device_states
+        .get_mut(&event.sourceid)
+        .and_then(|device| device.pressure.as_mut())
+    else {
+        return 1.0;
+    };
+    if let Some(axis_index) =
+        get_valuator_axis_index(&event.valuator_mask, pressure.valuator_number)
+        && let Some(axis_value) = event.axisvalues.get(axis_index)
+    {
+        pressure.last_value =
+            ((fp3232_to_f32(*axis_value) - pressure.min) / pressure.range).clamp(0.0, 1.0);
+    }
+    pressure.last_value
 }
 
 fn reset_all_pointer_device_scroll_positions(

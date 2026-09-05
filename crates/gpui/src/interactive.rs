@@ -144,7 +144,7 @@ impl InputEvent for TouchEvent {
 }
 
 /// A mouse down event from the platform
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct MouseDownEvent {
     /// Which mouse button was pressed.
     pub button: MouseButton,
@@ -160,6 +160,24 @@ pub struct MouseDownEvent {
 
     /// Whether this is the first, focusing click.
     pub first_mouse: bool,
+
+    /// Stylus pressure, 0.0..=1.0. Always 1.0 for a mouse, and on
+    /// platforms whose tablet input is not wired up, so a caller can
+    /// multiply by it unconditionally.
+    pub pressure: f32,
+}
+
+impl Default for MouseDownEvent {
+    fn default() -> Self {
+        Self {
+            button: MouseButton::default(),
+            position: Point::default(),
+            modifiers: Modifiers::default(),
+            click_count: 0,
+            first_mouse: false,
+            pressure: 1.0,
+        }
+    }
 }
 
 impl Sealed for MouseDownEvent {}
@@ -181,7 +199,7 @@ impl MouseDownEvent {
 }
 
 /// A mouse up event from the platform
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct MouseUpEvent {
     /// Which mouse button was released.
     pub button: MouseButton,
@@ -194,6 +212,21 @@ pub struct MouseUpEvent {
 
     /// The number of times the button has been clicked.
     pub click_count: usize,
+
+    /// Stylus pressure, 0.0..=1.0. See [`MouseDownEvent::pressure`].
+    pub pressure: f32,
+}
+
+impl Default for MouseUpEvent {
+    fn default() -> Self {
+        Self {
+            button: MouseButton::default(),
+            position: Point::default(),
+            modifiers: Modifiers::default(),
+            click_count: 0,
+            pressure: 1.0,
+        }
+    }
 }
 
 impl Sealed for MouseUpEvent {}
@@ -490,7 +523,7 @@ pub enum NavigationDirection {
 }
 
 /// A mouse move event from the platform.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct MouseMoveEvent {
     /// The position of the mouse on the window.
     pub position: Point<Pixels>,
@@ -500,6 +533,20 @@ pub struct MouseMoveEvent {
 
     /// The modifiers that were held down when the mouse was moved.
     pub modifiers: Modifiers,
+
+    /// Stylus pressure, 0.0..=1.0. See [`MouseDownEvent::pressure`].
+    pub pressure: f32,
+}
+
+impl Default for MouseMoveEvent {
+    fn default() -> Self {
+        Self {
+            position: Point::default(),
+            pressed_button: None,
+            modifiers: Modifiers::default(),
+            pressure: 1.0,
+        }
+    }
 }
 
 impl Sealed for MouseMoveEvent {}
@@ -872,9 +919,11 @@ impl PlatformInput {
 mod test {
 
     use crate::{
-        self as gpui, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
-        KeyBinding, Keystroke, Modifiers, ParentElement, Render, TestAppContext, Window, div,
+        self as gpui, AnyWindowHandle, AppContext as _, Context, FocusHandle, InputEvent as _,
+        InteractiveElement, IntoElement, KeyBinding, Keystroke, Modifiers, ParentElement, Render,
+        Styled, TestAppContext, Window, div, point, px,
     };
+    use std::{cell::RefCell, rc::Rc};
 
     struct TestView {
         saw_key_down: bool,
@@ -967,5 +1016,84 @@ mod test {
         cx.simulate_modifiers_change(Modifiers::shift());
         cx.simulate_modifiers_change(Modifiers::none());
         assert!(test_view.read_with(cx, |test_view, _| test_view.saw_action));
+    }
+
+    /// Records the pressure of every mouse event an element sees.
+    struct PressureView(Rc<RefCell<Vec<f32>>>);
+
+    impl Render for PressureView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let down = self.0.clone();
+            let moved = self.0.clone();
+            div()
+                .size_full()
+                .on_mouse_down(
+                    crate::MouseButton::Left,
+                    move |e: &crate::MouseDownEvent, _, _| down.borrow_mut().push(e.pressure),
+                )
+                .on_mouse_move(move |e: &crate::MouseMoveEvent, _, _| {
+                    moved.borrow_mut().push(e.pressure)
+                })
+        }
+    }
+
+    #[gpui::test]
+    fn test_pressure_reaches_handlers(cx: &mut TestAppContext) {
+        let log: Rc<RefCell<Vec<f32>>> = Default::default();
+        let window = cx.add_window({
+            let log = log.clone();
+            move |_, _| PressureView(log)
+        });
+        let any_window = AnyWindowHandle::from(window);
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.dispatch_event(
+                crate::MouseDownEvent {
+                    position: point(px(50.), px(50.)),
+                    button: crate::MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                    pressure: 0.42,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(
+                crate::MouseMoveEvent {
+                    position: point(px(60.), px(50.)),
+                    pressed_button: Some(crate::MouseButton::Left),
+                    modifiers: Default::default(),
+                    pressure: 0.9,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+
+        assert_eq!(log.borrow().as_slice(), &[0.42, 0.9]);
+    }
+
+    #[gpui::test]
+    fn test_a_mouse_reports_full_pressure(cx: &mut TestAppContext) {
+        // The default has to be 1.0, not 0.0: a brush that multiplies its
+        // opacity by pressure would paint nothing at all otherwise.
+        let log: Rc<RefCell<Vec<f32>>> = Default::default();
+        let window = cx.add_window({
+            let log = log.clone();
+            move |_, _| PressureView(log)
+        });
+        let any_window = AnyWindowHandle::from(window);
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            // The simulate helper is what a mouse-driven test uses.
+            window.simulate_mouse_move(point(px(50.), px(50.)), cx);
+        })
+        .unwrap();
+
+        assert_eq!(log.borrow().as_slice(), &[1.0]);
     }
 }

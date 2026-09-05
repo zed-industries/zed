@@ -4616,6 +4616,7 @@ mod tests {
                     modifiers: Default::default(),
                     click_count: 1,
                     first_mouse: false,
+                    pressure: 1.0,
                 }
                 .to_platform_input(),
                 cx,
@@ -4632,6 +4633,7 @@ mod tests {
                     button: MouseButton::Left,
                     modifiers: Default::default(),
                     click_count: 1,
+                    pressure: 1.0,
                 }
                 .to_platform_input(),
                 cx,
@@ -4819,6 +4821,7 @@ mod tests {
                         position: point(px(10.), px(10.)),
                         modifiers: Default::default(),
                         pressed_button: None,
+                        pressure: 1.0,
                     }
                     .to_platform_input(),
                     cx,
@@ -4938,6 +4941,7 @@ mod tests {
                         position: point(px(75.), px(75.)),
                         modifiers: Default::default(),
                         pressed_button: None,
+                        pressure: 1.0,
                     }
                     .to_platform_input(),
                     cx,
@@ -4990,6 +4994,7 @@ mod tests {
                             modifiers: Default::default(),
                             click_count: 1,
                             first_mouse: false,
+                            pressure: 1.0,
                         }
                         .to_platform_input(),
                         cx,

@@ -73,6 +73,10 @@ pub struct WindowsWindowState {
     pub force_render_pending: Cell<bool>,
 
     pub click_state: ClickState,
+    /// Pressure of the pen currently in contact, 0.0..=1.0, cached from
+    /// `WM_POINTER*` messages so the legacy mouse messages synthesised from
+    /// them can report it. Zero whenever no pen is touching.
+    pub pen_pressure: Cell<f32>,
     pub current_cursor: Cell<Option<HCURSOR>>,
     /// Shared with [`WindowsPlatformState::cursor_visible`].
     pub cursor_visible: Arc<AtomicBool>,
@@ -175,6 +179,7 @@ impl WindowsWindowState {
             renderer: RefCell::new(renderer),
             force_render_pending: Cell::new(false),
             click_state,
+            pen_pressure: Cell::new(0.0),
             current_cursor: Cell::new(current_cursor),
             cursor_visible,
             nc_button_pressed: Cell::new(nc_button_pressed),
@@ -549,6 +554,7 @@ impl WindowsWindow {
         let this = this.unwrap();
 
         register_drag_drop(&this)?;
+        disable_pen_gesture_feedback(hwnd);
         set_non_rude_hwnd(hwnd, true);
         configure_dwm_dark_mode(hwnd, appearance);
         this.state.border_offset.update(hwnd)?;
@@ -1472,6 +1478,32 @@ fn register_drag_drop(window: &Rc<WindowsWindowInner>) -> Result<()> {
             .context("unable to register drag-drop event")?;
     }
     Ok(())
+}
+
+/// Turns off the system pen gestures that stand between a pen and immediate
+/// mouse events: press-and-hold for right-click (which delays every pen-down
+/// until the hold timeout or a movement threshold decides it was not a hold),
+/// tap feedback animations, and flicks. Without this a pen cannot start a
+/// paint stroke, or place a dot, at the moment it touches.
+fn disable_pen_gesture_feedback(hwnd: HWND) {
+    // Values documented for the MicrosoftTabletPenServiceProperty window
+    // property, which has no constants in the Windows crate.
+    const TABLET_DISABLE_PRESSANDHOLD: usize = 0x00000001;
+    const TABLET_DISABLE_PENTAPFEEDBACK: usize = 0x00000008;
+    const TABLET_DISABLE_PENBARRELFEEDBACK: usize = 0x00000010;
+    const TABLET_DISABLE_FLICKS: usize = 0x00010000;
+    let value = TABLET_DISABLE_PRESSANDHOLD
+        | TABLET_DISABLE_PENTAPFEEDBACK
+        | TABLET_DISABLE_PENBARRELFEEDBACK
+        | TABLET_DISABLE_FLICKS;
+    unsafe {
+        SetPropW(
+            hwnd,
+            w!("MicrosoftTabletPenServiceProperty"),
+            Some(HANDLE(value as _)),
+        )
+        .log_err();
+    }
 }
 
 fn calculate_window_rect(bounds: Bounds<DevicePixels>, border_offset: &WindowBorderOffset) -> RECT {

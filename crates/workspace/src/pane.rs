@@ -6843,12 +6843,14 @@ mod tests {
             modifiers: Modifiers::default(),
             click_count: 1,
             first_mouse: false,
+            pressure: 1.0,
         });
         cx.run_until_parked();
         cx.simulate_event(MouseMoveEvent {
             position: tab_c_bounds.center(),
             pressed_button: Some(MouseButton::Left),
             modifiers: Modifiers::default(),
+            pressure: 1.0,
         });
         cx.run_until_parked();
         cx.simulate_event(MouseUpEvent {
@@ -6856,6 +6858,7 @@ mod tests {
             button: MouseButton::Left,
             modifiers: Modifiers::default(),
             click_count: 1,
+            pressure: 1.0,
         });
         cx.run_until_parked();
 
@@ -6918,12 +6921,14 @@ mod tests {
             modifiers: Modifiers::default(),
             click_count: 1,
             first_mouse: false,
+            pressure: 1.0,
         });
         cx.run_until_parked();
         cx.simulate_event(MouseMoveEvent {
             position: tab_c_bounds.center(),
             pressed_button: Some(MouseButton::Left),
             modifiers: Modifiers::default(),
+            pressure: 1.0,
         });
         cx.run_until_parked();
         cx.simulate_event(MouseUpEvent {
@@ -6931,6 +6936,7 @@ mod tests {
             button: MouseButton::Left,
             modifiers: Modifiers::default(),
             click_count: 1,
+            pressure: 1.0,
         });
         cx.run_until_parked();
 
@@ -6970,12 +6976,14 @@ mod tests {
             modifiers: Modifiers::default(),
             click_count: 1,
             first_mouse: false,
+            pressure: 1.0,
         });
         cx.run_until_parked();
         cx.simulate_event(MouseMoveEvent {
             position: tab_c_bounds.center(),
             pressed_button: Some(MouseButton::Left),
             modifiers: Modifiers::default(),
+            pressure: 1.0,
         });
         cx.run_until_parked();
         cx.simulate_event(MouseUpEvent {
@@ -6983,6 +6991,7 @@ mod tests {
             button: MouseButton::Left,
             modifiers: Modifiers::default(),
             click_count: 1,
+            pressure: 1.0,
         });
         cx.run_until_parked();
 
@@ -7037,12 +7046,14 @@ mod tests {
             modifiers: Modifiers::default(),
             click_count: 1,
             first_mouse: false,
+            pressure: 1.0,
         });
         cx.run_until_parked();
         cx.simulate_event(MouseMoveEvent {
             position: tab_e_bounds.center(),
             pressed_button: Some(MouseButton::Left),
             modifiers: Modifiers::default(),
+            pressure: 1.0,
         });
         cx.run_until_parked();
         cx.simulate_event(MouseUpEvent {
@@ -7050,6 +7061,7 @@ mod tests {
             button: MouseButton::Left,
             modifiers: Modifiers::default(),
             click_count: 1,
+            pressure: 1.0,
         });
         cx.run_until_parked();
 
@@ -7092,6 +7104,7 @@ mod tests {
             modifiers: Modifiers::default(),
             click_count: 1,
             first_mouse: false,
+            pressure: 1.0,
         });
 
         cx.run_until_parked();
@@ -7101,6 +7114,7 @@ mod tests {
             button: MouseButton::Middle,
             modifiers: Modifiers::default(),
             click_count: 1,
+            pressure: 1.0,
         });
 
         cx.run_until_parked();
@@ -7111,6 +7125,7 @@ mod tests {
             modifiers: Modifiers::default(),
             click_count: 1,
             first_mouse: false,
+            pressure: 1.0,
         });
 
         cx.run_until_parked();
@@ -7120,6 +7135,7 @@ mod tests {
             button: MouseButton::Middle,
             modifiers: Modifiers::default(),
             click_count: 1,
+            pressure: 1.0,
         });
 
         cx.run_until_parked();
@@ -7174,6 +7190,7 @@ mod tests {
             modifiers: Modifiers::default(),
             click_count: 2,
             first_mouse: false,
+            pressure: 1.0,
         });
 
         cx.run_until_parked();
@@ -7183,6 +7200,7 @@ mod tests {
             button: MouseButton::Left,
             modifiers: Modifiers::default(),
             click_count: 2,
+            pressure: 1.0,
         });
 
         cx.run_until_parked();

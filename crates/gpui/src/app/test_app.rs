@@ -414,6 +414,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
             position,
             modifiers: Default::default(),
             pressed_button: None,
+            pressure: 1.0,
         });
     }
 
@@ -425,6 +426,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
             modifiers: Default::default(),
             click_count: 1,
             first_mouse: false,
+            pressure: 1.0,
         });
     }
 
@@ -435,6 +437,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
             button,
             modifiers: Default::default(),
             click_count: 1,
+            pressure: 1.0,
         });
     }
 
