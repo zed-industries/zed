@@ -8,6 +8,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -445,18 +446,67 @@ impl Platform for WindowsPlatform {
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
+        // A 1 ms interval stays below a 240 Hz frame period while capping empty
+        // supplemental probes at 1,000 per second.
+        const FAIRNESS_PROBE_INTERVAL: Duration = Duration::from_millis(1);
+        // Leave headroom for 1 kHz input even when the outer loop cannot run one
+        // probe per millisecond, but keep the supplemental batch finite.
+        const MAX_INPUTS_PER_PROBE: usize = 4;
+
         on_finish_launching();
         if !self.headless {
             self.begin_vsync_thread();
         }
 
         let mut msg = MSG::default();
+        let mut next_fairness_probe = Instant::now() + FAIRNESS_PROBE_INTERVAL;
         unsafe {
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            'message_loop: while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 if translate_accelerator(&msg).is_none() {
                     _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
+
+                // Windows selects posted work before hardware input and synthesized
+                // WM_PAINT. Periodically service one of each before continuous posted
+                // traffic can starve either, while bounding the supplemental work.
+                let now = Instant::now();
+                if msg.message == WM_PAINT {
+                    next_fairness_probe = now + FAIRNESS_PROBE_INTERVAL;
+                    continue;
+                }
+                if now < next_fairness_probe {
+                    continue;
+                }
+
+                let mut supplemental_msg = MSG::default();
+                if PeekMessageW(&mut supplemental_msg, None, 0, 0, PM_REMOVE | PM_QS_PAINT)
+                    .as_bool()
+                {
+                    if supplemental_msg.message == WM_QUIT {
+                        break 'message_loop;
+                    }
+                    if translate_accelerator(&supplemental_msg).is_none() {
+                        _ = TranslateMessage(&supplemental_msg);
+                        DispatchMessageW(&supplemental_msg);
+                    }
+                }
+
+                for _ in 0..MAX_INPUTS_PER_PROBE {
+                    if !PeekMessageW(&mut supplemental_msg, None, 0, 0, PM_REMOVE | PM_QS_INPUT)
+                        .as_bool()
+                    {
+                        break;
+                    }
+                    if supplemental_msg.message == WM_QUIT {
+                        break 'message_loop;
+                    }
+                    if translate_accelerator(&supplemental_msg).is_none() {
+                        _ = TranslateMessage(&supplemental_msg);
+                        DispatchMessageW(&supplemental_msg);
+                    }
+                }
+                next_fairness_probe = Instant::now() + FAIRNESS_PROBE_INTERVAL;
             }
         }
 
