@@ -1080,7 +1080,7 @@ impl MessageEditor {
         // Insert creases for pasted clipboard selections that:
         // 1. Contain exactly one selection
         // 2. Have an associated file path
-        // 3. Span multiple lines (not single-line selections)
+        // 3. Span multiple lines, or cover a whole line (not partial single-line selections)
         // 4. Belong to a file that exists in the current project
         let should_insert_creases = util::maybe!({
             let selections = editor_clipboard_selections.as_ref()?;
@@ -1091,7 +1091,7 @@ impl MessageEditor {
             let file_path = selection.file_path.as_ref()?;
             let line_range = selection.line_range.as_ref()?;
 
-            if line_range.start() == line_range.end() {
+            if line_range.start() == line_range.end() && !selection.is_entire_line {
                 return Some(false);
             }
 
@@ -5151,6 +5151,89 @@ mod tests {
                 abs_path: path!("/project/file.txt").into(),
             }
         );
+    }
+
+    #[gpui::test]
+    async fn test_paste_whole_line_copy_inserts_single_line_mention(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"file.md": "line 1\nline 2\nline 3\n"}), cx)
+                .await;
+
+        // Copying with an empty selection copies the whole line, including its
+        // trailing newline.
+        let clipboard = ClipboardItem::new_string_with_json_metadata(
+            "line 2\n".to_string(),
+            vec![editor::ClipboardSelection {
+                len: "line 2\n".len(),
+                is_entire_line: true,
+                first_line_indent: 0,
+                file_path: Some(PathBuf::from(path!("/project/file.md"))),
+                line_range: Some(1..=1),
+            }],
+        );
+        cx.write_to_clipboard(clipboard);
+
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.paste(&Paste, window, cx);
+        });
+
+        let expected_uri = MentionUri::Selection {
+            abs_path: Some(path!("/project/file.md").into()),
+            line_range: 1..=1,
+            column: None,
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), format!("[@file.md (2)]({expected_uri}) "));
+        });
+
+        let contents = mention_contents(&message_editor, &mut cx).await;
+        let [(uri, Mention::Text { content, .. })] = contents.as_slice() else {
+            panic!("Unexpected mentions");
+        };
+
+        assert_eq!(content, "line 2\n");
+        assert_eq!(
+            uri,
+            &MentionUri::Selection {
+                abs_path: Some(path!("/project/file.md").into()),
+                line_range: 1..=1,
+                column: None,
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_paste_partial_line_copy_inserts_plain_text(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"file.md": "line 1\nline 2\nline 3\n"}), cx)
+                .await;
+
+        let clipboard = ClipboardItem::new_string_with_json_metadata(
+            "line".to_string(),
+            vec![editor::ClipboardSelection {
+                len: "line".len(),
+                is_entire_line: false,
+                first_line_indent: 0,
+                file_path: Some(PathBuf::from(path!("/project/file.md"))),
+                line_range: Some(1..=1),
+            }],
+        );
+        cx.write_to_clipboard(clipboard);
+
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.paste(&Paste, window, cx);
+        });
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "line");
+        });
+        assert!(mention_contents(&message_editor, &mut cx).await.is_empty());
     }
 
     #[gpui::test]
