@@ -126,6 +126,7 @@ members = [
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
+    "crates/latex_render",
     "crates/line_ending_selector",
     "crates/livekit_api",
     "crates/livekit_client",
@@ -393,6 +394,7 @@ language_onboarding = { path = "crates/language_onboarding" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
+latex_render = { path = "crates/latex_render" }
 line_ending_selector = { path = "crates/line_ending_selector" }
 livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
@@ -514,6 +516,7 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 
 accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
+ab_glyph = "0.2"
 accesskit_unix = "0.22"
 accesskit_windows = "0.34"
 agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
@@ -764,6 +767,12 @@ pulldown-cmark = { version = "0.13.0", default-features = false }
 quick-xml = "0.41"
 quote = "1.0.9"
 rand = "0.9"
+ratex-font = { git = "https://github.com/erweixin/RaTeX", rev = "7a5f242b3f7ae45ae891730f88b0a51559f20ce4" }
+ratex-font-loader = { git = "https://github.com/erweixin/RaTeX", rev = "7a5f242b3f7ae45ae891730f88b0a51559f20ce4", features = ["embed-fonts"] }
+ratex-katex-fonts = { git = "https://github.com/erweixin/RaTeX", rev = "7a5f242b3f7ae45ae891730f88b0a51559f20ce4" }
+ratex-layout = { git = "https://github.com/erweixin/RaTeX", rev = "7a5f242b3f7ae45ae891730f88b0a51559f20ce4" }
+ratex-parser = { git = "https://github.com/erweixin/RaTeX", rev = "7a5f242b3f7ae45ae891730f88b0a51559f20ce4" }
+ratex-types = { git = "https://github.com/erweixin/RaTeX", rev = "7a5f242b3f7ae45ae891730f88b0a51559f20ce4" }
 raw-window-handle = "0.6"
 rayon = "1.8"
 regex = "1.5"
@@ -867,6 +876,7 @@ tree-sitter-ruby = "0.23"
 tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = { git = "https://github.com/zed-industries/tree-sitter-typescript", rev = "e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899" } # https://github.com/tree-sitter/tree-sitter-typescript/pull/347
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
+ttf-parser = "0.25"
 unicase = "2.6"
 unicode-bidi = { version = "0.3.18", default-features = false, features = [
     "hardcoded-data",
