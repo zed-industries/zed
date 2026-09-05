@@ -1,5 +1,5 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use futures::{Future, FutureExt as _};
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};

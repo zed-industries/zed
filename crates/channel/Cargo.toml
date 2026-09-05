@@ -29,7 +29,6 @@ release_channel.workspace = true
 rpc.workspace = true
 settings.workspace = true
 text.workspace = true
-time.workspace = true
 util.workspace = true
 
 [dev-dependencies]

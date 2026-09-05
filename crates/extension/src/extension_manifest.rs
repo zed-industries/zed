@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -11,7 +12,8 @@ use language::LanguageName;
 use lsp::LanguageServerName;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use util::rel_path::{PathExt, RelPathBuf};
+use util::paths::PathStyle;
+use util::rel_path::{RelPath, RelPathBuf};
 
 use crate::ExtensionCapability;
 
@@ -181,9 +183,27 @@ impl ExtensionManifest {
     }
 
     pub fn allow_remote_load(&self) -> bool {
-        !self.language_servers.is_empty()
+        self.remote_load().is_some()
+    }
+
+    pub fn remote_load(&self) -> Option<RemoteLoad<'_>> {
+        (!self.language_servers.is_empty()
             || !self.debug_adapters.is_empty()
-            || !self.debug_locators.is_empty()
+            || !self.debug_locators.is_empty())
+        .then_some(RemoteLoad { manifest: self })
+    }
+}
+
+pub struct RemoteLoad<'a> {
+    manifest: &'a ExtensionManifest,
+}
+
+impl RemoteLoad<'_> {
+    pub fn language_dependencies(&self) -> impl Iterator<Item = LanguageName> + '_ {
+        self.manifest
+            .language_servers
+            .values()
+            .flat_map(|language_server_config| language_server_config.languages())
     }
 }
 
@@ -193,9 +213,12 @@ pub fn build_debug_adapter_schema_path(
 ) -> anyhow::Result<RelPathBuf> {
     match &meta.schema_path {
         Some(path) => Ok(path.clone()),
-        None => Path::new("debug_adapter_schemas")
-            .join(Path::new(adapter_name.as_ref()).with_extension("json"))
-            .to_rel_path_buf(),
+        None => RelPath::new(
+            &Path::new("debug_adapter_schemas")
+                .join(Path::new(adapter_name.as_ref()).with_extension("json")),
+            PathStyle::local(),
+        )
+        .map(Cow::into_owned),
     }
 }
 
@@ -345,7 +368,7 @@ pub struct SlashCommandManifestEntry {
     pub requires_argument: bool,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugAdapterManifestEntry {
     pub schema_path: Option<RelPathBuf>,
 }
@@ -484,7 +507,7 @@ mod tests {
     #[test]
     fn test_build_adapter_schema_path_without_schema_path() {
         let adapter_name = Arc::from("my_adapter");
-        let entry = DebugAdapterManifestEntry { schema_path: None };
+        let entry = DebugAdapterManifestEntry::default();
 
         let path = build_debug_adapter_schema_path(&adapter_name, &entry).unwrap();
         assert_eq!(path, rel_path_buf("debug_adapter_schemas/my_adapter.json"));

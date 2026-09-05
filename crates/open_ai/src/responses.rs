@@ -1,20 +1,26 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::SerializeSeq as _};
 use serde_json::Value;
+use std::sync::Arc;
 
 use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
+use language_model_core::{
+    CompactedContext, LanguageModelProviderId, ProviderCompactionState, SharedString,
+};
+
+pub const COMPACTION_STATE_FORMAT: &str = "openai.responses.input-items.v1";
 
 #[derive(Serialize, Debug)]
 pub struct Request {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub input: Vec<ResponseInputItem>,
+    #[serde(skip_serializing_if = "ResponseInput::is_empty")]
+    pub input: ResponseInput,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<ResponseIncludable>,
     #[serde(default)]
@@ -39,6 +45,188 @@ pub struct Request {
     pub store: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<ServiceTier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<Vec<ContextManagement>>,
+}
+
+impl Request {
+    pub fn into_compact_request(self) -> CompactRequest {
+        CompactRequest {
+            model: self.model,
+            instructions: self.instructions,
+            input: self.input,
+            prompt_cache_key: self.prompt_cache_key,
+            service_tier: self.service_tier,
+        }
+    }
+}
+
+#[derive(Serialize, Debug)]
+pub struct CompactRequest {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    pub input: ResponseInput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct CompactedResponse {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub created_at: u64,
+    #[serde(default)]
+    pub object: String,
+    pub output: Vec<Value>,
+    #[serde(default)]
+    pub usage: ResponseUsage,
+}
+
+impl CompactedResponse {
+    pub fn into_compacted_context(
+        self,
+        owner: LanguageModelProviderId,
+    ) -> Result<CompactedContext> {
+        Ok(CompactedContext::ProviderState(
+            provider_compaction_state_from_items(owner, self.output)?,
+        ))
+    }
+}
+
+/// Packages a canonical replacement window into opaque provider state owned by
+/// `owner`.
+///
+/// Several backends speak the OpenAI Responses protocol (OpenAI itself, Zed
+/// Cloud's OpenAI models, OpenAI-compatible endpoints, and others), but their
+/// encrypted compaction items are not interchangeable: only the backend that
+/// produced an item can decrypt it. The owner recorded here is what
+/// [`provider_compaction_items`] later compares against, so it must identify
+/// the backend whose infrastructure produced the items, not merely the wire
+/// protocol.
+pub fn provider_compaction_state_from_items(
+    owner: LanguageModelProviderId,
+    items: Vec<Value>,
+) -> Result<ProviderCompactionState> {
+    validate_compaction_items(&items)?;
+    Ok(ProviderCompactionState::new(
+        owner,
+        SharedString::new_static(COMPACTION_STATE_FORMAT),
+        serde_json::to_string(&items)?,
+    ))
+}
+
+/// Recovers the canonical replacement window from `state` if it is owned by
+/// `owner`, or `None` when the state belongs to a different backend and the
+/// caller should fall back to replaying the full transcript.
+pub fn provider_compaction_items(
+    state: &ProviderCompactionState,
+    owner: &LanguageModelProviderId,
+) -> Result<Option<Vec<Value>>> {
+    if state.provider_id() != owner {
+        return Ok(None);
+    }
+    if state.format() != COMPACTION_STATE_FORMAT {
+        return Err(anyhow!(
+            "unsupported OpenAI compaction state format: {}",
+            state.format()
+        ));
+    }
+
+    let items = serde_json::from_str::<Vec<Value>>(state.payload())
+        .context("malformed OpenAI compaction state payload")?;
+    validate_compaction_items(&items)?;
+    Ok(Some(items))
+}
+
+fn validate_compaction_items(items: &[Value]) -> Result<()> {
+    if items.is_empty() {
+        return Err(anyhow!("OpenAI returned an empty compaction output"));
+    }
+    if !items.iter().any(|item| {
+        item.get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|item_type| {
+                matches!(
+                    item_type,
+                    "compaction" | "compaction_summary" | "context_compaction"
+                )
+            })
+    }) {
+        let item_types = items
+            .iter()
+            .filter_map(|item| item.get("type").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(anyhow!(
+            "OpenAI compaction output did not contain a recognized compaction item \
+             (output types: {item_types})"
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Default)]
+pub struct ResponseInput {
+    provider_items: Vec<Value>,
+    generated_items: Vec<ResponseInputItem>,
+}
+
+impl ResponseInput {
+    pub fn new(provider_items: Vec<Value>, generated_items: Vec<ResponseInputItem>) -> Self {
+        Self {
+            provider_items,
+            generated_items,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.provider_items.is_empty() && self.generated_items.is_empty()
+    }
+
+    /// Filters only the items this crate generated from the request.
+    ///
+    /// Provider items are a canonical replacement window that must be replayed
+    /// verbatim, so they are exempt from filtering. Callers that rewrite the
+    /// input to satisfy backend-specific requirements (and therefore can't
+    /// tolerate arbitrary items inside a replayed window) should not accept
+    /// provider-native compaction state in the first place.
+    pub fn retain(&mut self, predicate: impl FnMut(&ResponseInputItem) -> bool) {
+        self.generated_items.retain(predicate);
+    }
+
+    pub fn push(&mut self, item: ResponseInputItem) {
+        self.generated_items.push(item);
+    }
+}
+
+impl Serialize for ResponseInput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut sequence = serializer
+            .serialize_seq(Some(self.provider_items.len() + self.generated_items.len()))?;
+        for item in &self.provider_items {
+            sequence.serialize_element(item)?;
+        }
+        for item in &self.generated_items {
+            sequence.serialize_element(item)?;
+        }
+        sequence.end()
+    }
+}
+
+/// Server-side context management configuration.
+///
+/// <https://developers.openai.com/api/docs/guides/compaction>
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContextManagement {
+    Compaction { compact_threshold: u64 },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -54,7 +242,18 @@ pub enum ResponseInputItem {
     Message(ResponseMessageItem),
     FunctionCall(ResponseFunctionCallItem),
     FunctionCallOutput(ResponseFunctionCallOutputItem),
+    CustomToolCall(ResponseCustomToolCallItem),
+    CustomToolCallOutput(ResponseCustomToolCallOutputItem),
     Reasoning(ResponseReasoningInputItem),
+    Compaction(ResponseCompactionItem),
+    CompactionTrigger,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResponseCompactionItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<Arc<str>>,
+    pub encrypted_content: Arc<str>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -74,6 +273,21 @@ pub struct ResponseFunctionCallItem {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResponseFunctionCallOutputItem {
+    pub call_id: String,
+    pub output: ResponseFunctionCallOutputContent,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResponseCustomToolCallItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub call_id: String,
+    pub name: String,
+    pub input: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResponseCustomToolCallOutputItem {
     pub call_id: String,
     pub output: ResponseFunctionCallOutputContent,
 }
@@ -137,7 +351,7 @@ pub enum ReasoningSummaryMode {
     Detailed,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolDefinition {
     Function {
@@ -149,12 +363,38 @@ pub enum ToolDefinition {
         #[serde(skip_serializing_if = "Option::is_none")]
         strict: Option<bool>,
     },
+    Custom {
+        name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        format: Option<CustomToolFormat>,
+    },
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CustomToolFormat {
+    Text,
+    Grammar {
+        syntax: CustomToolGrammarSyntax,
+        definition: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CustomToolGrammarSyntax {
+    Lark,
+    Regex,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ResponseError {
     #[serde(default)]
     pub code: Option<String>,
+    #[serde(default, rename = "type")]
+    pub error_type: Option<String>,
     pub message: String,
     #[serde(default)]
     pub param: Option<Value>,
@@ -176,6 +416,8 @@ pub struct GenericStreamErrorPayload {
 struct PartialResponseError {
     #[serde(default)]
     code: Option<String>,
+    #[serde(default, rename = "type")]
+    error_type: Option<String>,
     #[serde(default)]
     message: Option<String>,
     #[serde(default)]
@@ -187,6 +429,7 @@ impl GenericStreamErrorPayload {
         let nested = self.error.unwrap_or_default();
         ResponseError {
             code: self.top_level.code.or(nested.code),
+            error_type: self.top_level.error_type.or(nested.error_type),
             message: self
                 .top_level
                 .message
@@ -276,6 +519,7 @@ pub enum StreamEvent {
     ReasoningSummaryTextDelta {
         item_id: String,
         output_index: usize,
+        summary_index: usize,
         delta: String,
     },
     #[serde(rename = "response.reasoning_summary_text.done")]
@@ -290,6 +534,23 @@ pub enum StreamEvent {
         output_index: usize,
         summary_index: usize,
     },
+    #[serde(rename = "response.reasoning.delta")]
+    ReasoningDelta {
+        #[serde(default)]
+        item_id: Option<String>,
+        #[serde(default)]
+        output_index: Option<usize>,
+        delta: String,
+    },
+    #[serde(rename = "response.reasoning.done")]
+    ReasoningDone {
+        #[serde(default)]
+        item_id: Option<String>,
+        #[serde(default)]
+        output_index: Option<usize>,
+        #[serde(default)]
+        text: Option<String>,
+    },
     #[serde(rename = "response.function_call_arguments.delta")]
     FunctionCallArgumentsDelta {
         item_id: String,
@@ -303,6 +564,22 @@ pub enum StreamEvent {
         item_id: String,
         output_index: usize,
         arguments: String,
+        #[serde(default)]
+        sequence_number: Option<u64>,
+    },
+    #[serde(rename = "response.custom_tool_call_input.delta")]
+    CustomToolCallInputDelta {
+        item_id: String,
+        output_index: usize,
+        delta: String,
+        #[serde(default)]
+        sequence_number: Option<u64>,
+    },
+    #[serde(rename = "response.custom_tool_call_input.done")]
+    CustomToolCallInputDone {
+        item_id: String,
+        output_index: usize,
+        input: String,
         #[serde(default)]
         sequence_number: Option<u64>,
     },
@@ -323,7 +600,7 @@ pub enum StreamEvent {
     Unknown,
 }
 
-#[derive(Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ResponseSummary {
     #[serde(default)]
     pub id: Option<String>,
@@ -341,13 +618,13 @@ pub struct ResponseSummary {
     pub service_tier: Option<crate::ServiceTier>,
 }
 
-#[derive(Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ResponseIncompleteDetails {
     #[serde(default)]
     pub reason: Option<String>,
 }
 
-#[derive(Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ResponseUsage {
     #[serde(default)]
     pub input_tokens: Option<u64>,
@@ -361,29 +638,32 @@ pub struct ResponseUsage {
     pub total_tokens: Option<u64>,
 }
 
-#[derive(Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ResponseInputTokensDetails {
     #[serde(default)]
     pub cached_tokens: u64,
 }
 
-#[derive(Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ResponseOutputTokensDetails {
     #[serde(default)]
     pub reasoning_tokens: u64,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseOutputItem {
     Message(ResponseOutputMessage),
     FunctionCall(ResponseFunctionToolCall),
+    CustomToolCall(ResponseCustomToolCall),
     Reasoning(ResponseReasoningItem),
+    Compaction(ResponseCompactionItem),
+    /// Deserialization-only catch-all; must never be serialized back to the API.
     #[serde(other)]
     Unknown,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ResponseReasoningItem {
     #[serde(default)]
     pub id: Option<String>,
@@ -397,7 +677,7 @@ pub struct ResponseReasoningItem {
     pub status: Option<String>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ReasoningSummaryPart {
     SummaryText {
@@ -407,7 +687,7 @@ pub enum ReasoningSummaryPart {
     Unknown,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ResponseOutputMessage {
     #[serde(default)]
     pub id: Option<String>,
@@ -421,7 +701,7 @@ pub struct ResponseOutputMessage {
     pub phase: Option<String>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ResponseFunctionToolCall {
     #[serde(default)]
     pub id: Option<String>,
@@ -433,6 +713,67 @@ pub struct ResponseFunctionToolCall {
     pub name: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ResponseCustomToolCall {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub call_id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub input: String,
+}
+
+pub async fn compact_response(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    request: CompactRequest,
+    extra_headers: &CustomHeaders,
+) -> Result<CompactedResponse, RequestError> {
+    let request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(format!("{api_url}/responses/compact"))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(
+            serde_json::to_string(&request).map_err(|error| RequestError::Other(error.into()))?,
+        ))
+        .map_err(|error| RequestError::Other(error.into()))?;
+
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
+    let mut response = client
+        .send(request)
+        .await
+        .map_err(|error| RequestError::HttpSend {
+            provider: provider_name.to_owned(),
+            host,
+            error,
+        })?;
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(|error| RequestError::Other(error.into()))?;
+
+    if response.status().is_success() {
+        serde_json::from_str(&body).map_err(|error| RequestError::Other(error.into()))
+    } else {
+        Err(RequestError::HttpResponseError {
+            provider: provider_name.to_owned(),
+            status_code: response.status(),
+            body,
+            headers: Box::new(response.headers().clone()),
+        })
+    }
 }
 
 pub async fn stream_response(
@@ -456,7 +797,15 @@ pub async fn stream_response(
         ))
         .map_err(|e| RequestError::Other(e.into()))?;
 
-    let mut response = client.send(request).await?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
+    let mut response = client
+        .send(request)
+        .await
+        .map_err(|error| RequestError::HttpSend {
+            provider: provider_name.to_owned(),
+            host,
+            error,
+        })?;
     if response.status().is_success() {
         if is_streaming {
             let reader = BufReader::new(response.into_body());
@@ -542,14 +891,27 @@ pub async fn stream_response(
                                     });
                                 }
                             }
+                            ResponseOutputItem::CustomToolCall(custom_tool_call) => {
+                                if let Some(ref item_id) = custom_tool_call.id {
+                                    all_events.push(StreamEvent::CustomToolCallInputDone {
+                                        item_id: item_id.clone(),
+                                        output_index,
+                                        input: custom_tool_call.input.clone(),
+                                        sequence_number: None,
+                                    });
+                                }
+                            }
                             ResponseOutputItem::Reasoning(reasoning) => {
                                 if let Some(ref item_id) = reasoning.id {
-                                    for part in &reasoning.summary {
+                                    for (summary_index, part) in
+                                        reasoning.summary.iter().enumerate()
+                                    {
                                         if let ReasoningSummaryPart::SummaryText { text } = part {
                                             all_events.push(
                                                 StreamEvent::ReasoningSummaryTextDelta {
                                                     item_id: item_id.clone(),
                                                     output_index,
+                                                    summary_index,
                                                     delta: text.clone(),
                                                 },
                                             );
@@ -557,6 +919,9 @@ pub async fn stream_response(
                                     }
                                 }
                             }
+                            // No synthesized deltas; the `OutputItemDone`
+                            // event pushed below carries the full item.
+                            ResponseOutputItem::Compaction(_) => {}
                             ResponseOutputItem::Unknown => {}
                         }
 
@@ -604,7 +969,449 @@ pub async fn stream_response(
             provider: provider_name.to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::executor::block_on;
+    use http_client::FakeHttpClient;
+    use language_model_core::OPEN_AI_PROVIDER_ID;
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn compact_response_posts_supported_request_fields() {
+        let captured_request = Arc::new(Mutex::new(None));
+        let captured_request_for_handler = captured_request.clone();
+        let http_client = FakeHttpClient::create(move |request| {
+            let captured_request = captured_request_for_handler.clone();
+            async move {
+                let method = request.method().clone();
+                let uri = request.uri().to_string();
+                let authorization = request
+                    .headers()
+                    .get("Authorization")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                let mut body = request.into_body();
+                let mut body_text = String::new();
+                body.read_to_string(&mut body_text).await?;
+                *captured_request.lock().unwrap() = Some((method, uri, authorization, body_text));
+
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(
+                        json!({
+                            "id": "resp_compact",
+                            "created_at": 1_700_000_000,
+                            "object": "response.compaction",
+                            "output": [{
+                                "type": "compaction",
+                                "id": "cmp_manual",
+                                "encrypted_content": "opaque-state"
+                            }],
+                            "usage": {
+                                "input_tokens": 100,
+                                "input_tokens_details": {"cached_tokens": 20},
+                                "output_tokens": 10,
+                                "output_tokens_details": {"reasoning_tokens": 5},
+                                "total_tokens": 110
+                            }
+                        })
+                        .to_string(),
+                    ))?)
+            }
+        });
+        let response = block_on(compact_response(
+            http_client.as_ref(),
+            "OpenAI",
+            "https://api.openai.com/v1",
+            "secret",
+            compact_test_request(),
+            &CustomHeaders::default(),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            provider_compaction_items(
+                &match response
+                    .into_compacted_context(OPEN_AI_PROVIDER_ID)
+                    .unwrap()
+                {
+                    CompactedContext::ProviderState(state) => state,
+                    CompactedContext::Summary { .. } => panic!("expected provider state"),
+                },
+                &OPEN_AI_PROVIDER_ID
+            )
+            .unwrap(),
+            Some(vec![json!({
+                "type": "compaction",
+                "id": "cmp_manual",
+                "encrypted_content": "opaque-state"
+            })])
+        );
+        let (method, uri, authorization, body) = captured_request.lock().unwrap().take().unwrap();
+        assert_eq!(method, Method::POST);
+        assert_eq!(uri, "https://api.openai.com/v1/responses/compact");
+        assert_eq!(authorization.as_deref(), Some("Bearer secret"));
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap(),
+            json!({
+                "model": "gpt-5.4",
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "Retain this context."
+                    }]
+                }],
+                "prompt_cache_key": "thread-123",
+                "service_tier": "priority"
+            })
+        );
+    }
+
+    #[test]
+    fn compact_response_reports_http_and_deserialization_errors() {
+        let http_client = FakeHttpClient::create(|_| async move {
+            Ok(http_client::Response::builder()
+                .status(429)
+                .header("retry-after", "5")
+                .body(AsyncBody::from("rate limited"))?)
+        });
+
+        let error = block_on(compact_response(
+            http_client.as_ref(),
+            "OpenAI",
+            "https://api.openai.com/v1",
+            "secret",
+            compact_test_request(),
+            &CustomHeaders::default(),
+        ))
+        .unwrap_err();
+
+        match error {
+            RequestError::HttpResponseError {
+                provider,
+                status_code,
+                body,
+                headers,
+            } => {
+                assert_eq!(provider, "OpenAI");
+                assert_eq!(status_code, 429);
+                assert_eq!(body, "rate limited");
+                assert_eq!(headers["retry-after"], "5");
+            }
+            error => panic!("expected an HTTP response error, got {error:?}"),
+        }
+
+        let http_client = FakeHttpClient::create(|_| async move {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(AsyncBody::from("not valid JSON"))?)
+        });
+
+        let error = block_on(compact_response(
+            http_client.as_ref(),
+            "OpenAI",
+            "https://api.openai.com/v1",
+            "secret",
+            compact_test_request(),
+            &CustomHeaders::default(),
+        ))
+        .unwrap_err();
+
+        assert!(
+            matches!(error, RequestError::Other(_)),
+            "expected malformed JSON to produce a request error, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn stream_response_reports_http_send_errors() {
+        let http_client =
+            FakeHttpClient::create(|_| async move { Err(anyhow::anyhow!("DNS lookup failed")) });
+
+        let error = block_on(stream_response(
+            http_client.as_ref(),
+            "ChatGPT Subscription",
+            "https://chatgpt.com/backend-api/codex",
+            "secret",
+            response_test_request(),
+            &CustomHeaders::default(),
+        ));
+        let error = match error {
+            Ok(_) => panic!("expected request to fail"),
+            Err(error) => language_model_core::LanguageModelCompletionError::from(error),
+        };
+
+        match error {
+            language_model_core::LanguageModelCompletionError::HttpSend {
+                provider,
+                host,
+                error,
+            } => {
+                assert_eq!(provider.0.as_ref(), "ChatGPT Subscription");
+                assert_eq!(host, "chatgpt.com");
+                assert_eq!(error.to_string(), "DNS lookup failed");
+            }
+            error => panic!("expected an HTTP send error, got {error:?}"),
+        }
+    }
+
+    #[test]
+    fn compact_response_reports_http_send_errors() {
+        let http_client =
+            FakeHttpClient::create(|_| async move { Err(anyhow::anyhow!("DNS lookup failed")) });
+
+        let error = block_on(compact_response(
+            http_client.as_ref(),
+            "ChatGPT Subscription",
+            "https://chatgpt.com/backend-api/codex",
+            "secret",
+            compact_test_request(),
+            &CustomHeaders::default(),
+        ));
+        let error = match error {
+            Ok(_) => panic!("expected request to fail"),
+            Err(error) => language_model_core::LanguageModelCompletionError::from(error),
+        };
+
+        match error {
+            language_model_core::LanguageModelCompletionError::HttpSend {
+                provider,
+                host,
+                error,
+            } => {
+                assert_eq!(provider.0.as_ref(), "ChatGPT Subscription");
+                assert_eq!(host, "chatgpt.com");
+                assert_eq!(error.to_string(), "DNS lookup failed");
+            }
+            error => panic!("expected an HTTP send error, got {error:?}"),
+        }
+    }
+
+    #[test]
+    fn compacted_response_preserves_canonical_output_items() {
+        let output = vec![
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": "Retained user context.",
+                "provider_extension": {"preserve": true}
+            }),
+            json!({
+                "type": "compaction",
+                "id": "cmp_manual",
+                "encrypted_content": "opaque-state"
+            }),
+        ];
+        let response: CompactedResponse = serde_json::from_value(json!({
+            "id": "resp_compact",
+            "created_at": 1_700_000_000,
+            "object": "response.compaction",
+            "output": &output,
+            "usage": {
+                "input_tokens": 100,
+                "input_tokens_details": {"cached_tokens": 20},
+                "output_tokens": 10,
+                "output_tokens_details": {"reasoning_tokens": 5},
+                "total_tokens": 110
+            }
+        }))
+        .unwrap();
+
+        let CompactedContext::ProviderState(state) = response
+            .into_compacted_context(OPEN_AI_PROVIDER_ID)
+            .unwrap()
+        else {
+            panic!("expected provider state");
+        };
+        assert_eq!(
+            provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
+            Some(output)
+        );
+    }
+
+    #[test]
+    fn compacted_response_preserves_legacy_compaction_item_types() {
+        for item_type in ["compaction_summary", "context_compaction"] {
+            let output = vec![json!({
+                "type": item_type,
+                "encrypted_content": "opaque-state"
+            })];
+            let response: CompactedResponse =
+                serde_json::from_value(json!({ "output": &output })).unwrap();
+
+            let CompactedContext::ProviderState(state) = response
+                .into_compacted_context(OPEN_AI_PROVIDER_ID)
+                .unwrap()
+            else {
+                panic!("expected provider state");
+            };
+            assert_eq!(
+                provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
+                Some(output)
+            );
+        }
+    }
+
+    #[test]
+    fn compacted_response_rejects_output_without_compaction_item() {
+        let response: CompactedResponse = serde_json::from_value(json!({
+            "id": "resp_compact",
+            "created_at": 1_700_000_000,
+            "object": "response.compaction",
+            "output": [{
+                "type": "message",
+                "role": "user",
+                "content": "Retained user context."
+            }],
+            "usage": {
+                "input_tokens": 100,
+                "input_tokens_details": {"cached_tokens": 20},
+                "output_tokens": 10,
+                "output_tokens_details": {"reasoning_tokens": 5},
+                "total_tokens": 110
+            }
+        }))
+        .unwrap();
+
+        assert!(
+            response
+                .into_compacted_context(OPEN_AI_PROVIDER_ID)
+                .unwrap_err()
+                .to_string()
+                .contains("compaction item")
+        );
+    }
+
+    #[test]
+    fn compacted_response_rejects_empty_output() {
+        let response: CompactedResponse = serde_json::from_value(json!({
+            "id": "resp_compact",
+            "created_at": 1_700_000_000,
+            "object": "response.compaction",
+            "output": [],
+            "usage": {
+                "input_tokens": 100,
+                "input_tokens_details": {"cached_tokens": 20},
+                "output_tokens": 10,
+                "output_tokens_details": {"reasoning_tokens": 5},
+                "total_tokens": 110
+            }
+        }))
+        .unwrap();
+
+        assert!(
+            response
+                .into_compacted_context(OPEN_AI_PROVIDER_ID)
+                .unwrap_err()
+                .to_string()
+                .contains("empty")
+        );
+    }
+
+    #[test]
+    fn provider_compaction_items_ignores_state_owned_by_another_provider() {
+        let items = vec![json!({
+            "type": "compaction",
+            "id": "cmp_manual",
+            "encrypted_content": "opaque-state"
+        })];
+        let state =
+            provider_compaction_state_from_items(OPEN_AI_PROVIDER_ID, items.clone()).unwrap();
+
+        assert_eq!(
+            provider_compaction_items(&state, &LanguageModelProviderId::new("anthropic")).unwrap(),
+            None
+        );
+
+        // The same window stamped for a different OpenAI-protocol backend is
+        // opaque to OpenAI proper: encrypted compaction items are only
+        // decryptable by the infrastructure that produced them.
+        let compatible_backend = LanguageModelProviderId::new("my-compatible-endpoint");
+        let state =
+            provider_compaction_state_from_items(compatible_backend.clone(), items).unwrap();
+        assert_eq!(
+            provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
+            None
+        );
+        assert!(
+            provider_compaction_items(&state, &compatible_backend)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn provider_compaction_items_rejects_unknown_open_ai_format() {
+        let state = ProviderCompactionState::new(
+            OPEN_AI_PROVIDER_ID,
+            "openai.responses.input-items.v2",
+            "[]",
+        );
+        assert!(
+            provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID)
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported OpenAI compaction state format")
+        );
+    }
+
+    #[test]
+    fn provider_compaction_items_rejects_malformed_open_ai_state() {
+        let state = ProviderCompactionState::new(
+            OPEN_AI_PROVIDER_ID,
+            COMPACTION_STATE_FORMAT,
+            "not valid JSON",
+        );
+
+        assert!(provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).is_err());
+    }
+
+    fn compact_test_request() -> CompactRequest {
+        CompactRequest {
+            model: "gpt-5.4".to_string(),
+            instructions: None,
+            input: ResponseInput::new(
+                Vec::new(),
+                vec![ResponseInputItem::Message(ResponseMessageItem {
+                    role: Role::User,
+                    content: vec![ResponseInputContent::Text {
+                        text: "Retain this context.".to_string(),
+                    }],
+                    phase: None,
+                })],
+            ),
+            prompt_cache_key: Some("thread-123".to_string()),
+            service_tier: Some(ServiceTier::Priority),
+        }
+    }
+
+    fn response_test_request() -> Request {
+        Request {
+            model: "gpt-5.4".to_string(),
+            instructions: None,
+            input: ResponseInput::new(Vec::new(), Vec::new()),
+            include: Vec::new(),
+            stream: true,
+            temperature: None,
+            top_p: None,
+            max_output_tokens: None,
+            parallel_tool_calls: None,
+            tool_choice: None,
+            tools: Vec::new(),
+            prompt_cache_key: None,
+            reasoning: None,
+            store: None,
+            service_tier: None,
+            context_management: None,
+        }
     }
 }

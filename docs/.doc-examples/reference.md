@@ -40,6 +40,8 @@ When no path is provided, shows a summary of error and warning counts for all fi
 
 Fetches a URL and returns the content as Markdown. Useful for providing docs as context.
 
+`fetch` is governed by tool permissions, agent profiles, and project trust. It is not run inside the terminal OS sandbox, so terminal sandbox network grants such as `allow_hosts` and `allow_all_hosts` do not apply to it.
+
 ### `find_path` {#find-path}
 
 Quickly finds files by matching glob patterns (like `**/*.js`), returning matching file paths alphabetically.

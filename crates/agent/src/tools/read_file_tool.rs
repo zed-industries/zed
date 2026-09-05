@@ -1,5 +1,5 @@
 use action_log::ActionLog;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
@@ -295,7 +295,7 @@ impl AgentTool for ReadFileTool {
                     project.absolute_path(&project_path, cx)
                 })
                 .ok_or_else(|| {
-                    anyhow!("Failed to convert {} to absolute path", &input.path)
+                    anyhow!("Failed to convert {} to absolute path", input.path)
                 }).map_err(tool_content_err)?;
 
             // Check settings exclusions synchronously
@@ -304,14 +304,14 @@ impl AgentTool for ReadFileTool {
                 if global_settings.is_path_excluded(&project_path.path) {
                     anyhow::bail!(
                         "Cannot read file because its path matches the global `file_scan_exclusions` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
                 if global_settings.is_path_private(&project_path.path) {
                     anyhow::bail!(
                         "Cannot read file because its path matches the global `private_files` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
@@ -319,14 +319,14 @@ impl AgentTool for ReadFileTool {
                 if worktree_settings.is_path_excluded(&project_path.path) {
                     anyhow::bail!(
                         "Cannot read file because its path matches the worktree `file_scan_exclusions` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
                 if worktree_settings.is_path_private(&project_path.path) {
                     anyhow::bail!(
                         "Cannot read file because its path matches the worktree `private_files` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
@@ -336,7 +336,7 @@ impl AgentTool for ReadFileTool {
             if fs.is_dir(&abs_path).await {
                 return Err(tool_content_err(format!(
                     "{} is a directory, not a file. Use the list_directory tool to explore directory contents.",
-                    &input.path
+                    input.path
                 )));
             }
 
@@ -542,7 +542,7 @@ mod test {
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{SettingsStore, SplicingVec};
     use std::path::PathBuf;
     use std::sync::Arc;
     use util::path;
@@ -1051,10 +1051,10 @@ mod test {
             use settings::SettingsStore;
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.project.worktree.file_scan_exclusions = Some(vec![
+                    settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
                         "**/.secretdir".to_string(),
                         "**/.mymetadata".to_string(),
-                    ]);
+                    ]));
                     settings.project.worktree.private_files = Some(
                         vec![
                             "**/.mysecrets".to_string(),
@@ -1357,8 +1357,10 @@ mod test {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.project.worktree.file_scan_exclusions =
-                        Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
+                    settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                        "**/.git".to_string(),
+                        "**/node_modules".to_string(),
+                    ]));
                     settings.project.worktree.private_files =
                         Some(vec!["**/.env".to_string()].into());
                 });

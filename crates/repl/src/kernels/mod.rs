@@ -426,7 +426,7 @@ pub fn python_env_kernel_specifications(
     let toolchains = project.read(cx).available_toolchains(
         ProjectPath {
             worktree_id,
-            path: RelPath::empty().into(),
+            path: RelPath::empty_arc(),
         },
         python_language,
         cx,

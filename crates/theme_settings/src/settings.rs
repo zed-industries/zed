@@ -52,8 +52,14 @@ pub struct ThemeSettings {
     ///
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_font: Font,
+    /// The agent UI font family. Determines the family of response text in the agent panel.
+    /// Falls back to the UI font family if unset.
+    agent_ui_font_family: Option<SharedString>,
     /// The agent font size. Determines the size of text in the agent panel. Falls back to the UI font size if unset.
     agent_ui_font_size: Option<Pixels>,
+    /// The agent buffer font family. Determines the family of user messages in the agent panel.
+    /// Falls back to the buffer font family if unset.
+    agent_buffer_font_family: Option<SharedString>,
     /// The agent buffer font size. Determines the size of user messages in the agent panel.
     agent_buffer_font_size: Option<Pixels>,
     git_commit_buffer_font_size: Option<Pixels>,
@@ -63,6 +69,9 @@ pub struct ThemeSettings {
     /// The font family to use for code in the markdown preview.
     /// Falls back to the buffer font family if unset.
     markdown_preview_code_font_family: Option<SharedString>,
+    /// The font size to use for rendering in the markdown preview.
+    /// Falls back to the UI font size if unset.
+    markdown_preview_font_size: Option<Pixels>,
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
     pub markdown_preview_theme: Option<ThemeSelection>,
@@ -123,6 +132,12 @@ impl Global for AgentBufferFontSize {}
 pub struct GitCommitBufferFontSize(Pixels);
 
 impl Global for GitCommitBufferFontSize {}
+
+/// In-memory override for the markdown preview font size.
+#[derive(Default)]
+pub struct MarkdownPreviewFontSize(Pixels);
+
+impl Global for MarkdownPreviewFontSize {}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -344,38 +359,13 @@ pub fn set_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
     }
 }
 
-/// The buffer's line height.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum BufferLineHeight {
-    /// A less dense line height.
-    #[default]
-    Comfortable,
-    /// The default line height.
-    Standard,
-    /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
-    Custom(f32),
-}
+pub use theme::BufferLineHeight;
 
-impl From<settings::BufferLineHeight> for BufferLineHeight {
-    fn from(value: settings::BufferLineHeight) -> Self {
-        match value {
-            settings::BufferLineHeight::Comfortable => BufferLineHeight::Comfortable,
-            settings::BufferLineHeight::Standard => BufferLineHeight::Standard,
-            settings::BufferLineHeight::Custom(line_height) => {
-                BufferLineHeight::Custom(line_height)
-            }
-        }
-    }
-}
-
-impl BufferLineHeight {
-    /// Returns the value of the line height.
-    pub fn value(&self) -> f32 {
-        match self {
-            BufferLineHeight::Comfortable => 1.618,
-            BufferLineHeight::Standard => 1.3,
-            BufferLineHeight::Custom(line_height) => *line_height,
-        }
+pub fn buffer_line_height_from_settings(value: settings::BufferLineHeight) -> BufferLineHeight {
+    match value {
+        settings::BufferLineHeight::Comfortable => BufferLineHeight::Comfortable,
+        settings::BufferLineHeight::Standard => BufferLineHeight::Standard,
+        settings::BufferLineHeight::Custom(line_height) => BufferLineHeight::Custom(line_height),
     }
 }
 
@@ -407,6 +397,12 @@ impl ThemeSettings {
             .unwrap_or_else(|| self.ui_font_size(cx))
     }
 
+    pub fn agent_ui_font_family(&self) -> &SharedString {
+        self.agent_ui_font_family
+            .as_ref()
+            .unwrap_or(&self.ui_font.family)
+    }
+
     /// Returns the agent panel buffer font size.
     pub fn agent_buffer_font_size(&self, cx: &App) -> Pixels {
         cx.try_global::<AgentBufferFontSize>()
@@ -414,6 +410,12 @@ impl ThemeSettings {
             .or(self.agent_buffer_font_size)
             .map(clamp_font_size)
             .unwrap_or_else(|| self.buffer_font_size(cx))
+    }
+
+    pub fn agent_buffer_font_family(&self) -> &SharedString {
+        self.agent_buffer_font_family
+            .as_ref()
+            .unwrap_or(&self.buffer_font.family)
     }
 
     pub fn git_commit_buffer_font_size(&self, cx: &App) -> Pixels {
@@ -438,6 +440,18 @@ impl ThemeSettings {
         self.markdown_preview_code_font_family
             .as_ref()
             .unwrap_or(&self.buffer_font.family)
+    }
+
+    /// Returns the markdown preview font size.
+    ///
+    /// Note: the fallback deliberately uses `self.ui_font_size` instead of `ui_font_size(cx)`,
+    /// so that temporary UI zoom does not also resize the markdown preview.
+    pub fn markdown_preview_font_size(&self, cx: &App) -> Pixels {
+        cx.try_global::<MarkdownPreviewFontSize>()
+            .map(|size| size.0)
+            .or(self.markdown_preview_font_size)
+            .map(clamp_font_size)
+            .unwrap_or_else(|| clamp_font_size(self.ui_font_size))
     }
 
     /// Returns the buffer font size, read from the settings.
@@ -474,6 +488,14 @@ impl ThemeSettings {
 
     pub fn git_commit_buffer_font_size_settings(&self) -> Option<Pixels> {
         self.git_commit_buffer_font_size
+    }
+
+    /// Returns the markdown preview font size, read from the settings.
+    ///
+    /// The real markdown preview font size is stored in-memory, to support temporary
+    /// font size changes. Use [`Self::markdown_preview_font_size`] to get the real font size.
+    pub fn markdown_preview_font_size_settings(&self) -> Option<Pixels> {
+        self.markdown_preview_font_size
     }
 
     /// Returns the buffer's line height.
@@ -643,6 +665,24 @@ pub fn reset_git_commit_buffer_font_size(cx: &mut App) {
     }
 }
 
+/// Sets the adjusted font size of the markdown preview.
+pub fn adjust_markdown_preview_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
+    let markdown_preview_font_size = ThemeSettings::get_global(cx).markdown_preview_font_size(cx);
+    let adjusted_size = cx
+        .try_global::<MarkdownPreviewFontSize>()
+        .map_or(markdown_preview_font_size, |adjusted_size| adjusted_size.0);
+    cx.set_global(MarkdownPreviewFontSize(clamp_font_size(f(adjusted_size))));
+    cx.refresh_windows();
+}
+
+/// Resets the markdown preview font size to the default value.
+pub fn reset_markdown_preview_font_size(cx: &mut App) {
+    if cx.has_global::<MarkdownPreviewFontSize>() {
+        cx.remove_global::<MarkdownPreviewFontSize>();
+        cx.refresh_windows();
+    }
+}
+
 /// Ensures font size is within the valid range.
 pub fn clamp_font_size(size: Pixels) -> Pixels {
     size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
@@ -662,8 +702,9 @@ fn font_fallbacks_from_settings(
 }
 
 impl settings::Settings for ThemeSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
-        let content = &content.theme;
+    fn from_settings(settings_content: &settings::SettingsContent) -> Self {
+        let content = &settings_content.theme;
+        let markdown_preview = settings_content.markdown_preview.as_ref();
         let theme_selection: ThemeSelection = content.theme.clone().unwrap().into();
         let icon_theme_selection: IconThemeSelection = content.icon_theme.clone().unwrap().into();
         Self {
@@ -689,21 +730,31 @@ impl settings::Settings for ThemeSettings {
                 style: FontStyle::default(),
             },
             buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into_gpui()),
-            buffer_line_height: content.buffer_line_height.unwrap().into(),
+            buffer_line_height: buffer_line_height_from_settings(
+                content.buffer_line_height.unwrap(),
+            ),
+            agent_ui_font_family: content
+                .agent_ui_font_family
+                .as_ref()
+                .map(|font| font.0.clone().into()),
             agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
+            agent_buffer_font_family: content
+                .agent_buffer_font_family
+                .as_ref()
+                .map(|font| font.0.clone().into()),
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
             git_commit_buffer_font_size: content.git_commit_buffer_font_size.map(|s| s.into_gpui()),
-            markdown_preview_font_family: content
-                .markdown_preview_font_family
-                .as_ref()
+            markdown_preview_font_family: markdown_preview
+                .and_then(|preview| preview.font_family.as_ref())
                 .map(|f| f.0.clone().into()),
-            markdown_preview_code_font_family: content
-                .markdown_preview_code_font_family
-                .as_ref()
+            markdown_preview_code_font_family: markdown_preview
+                .and_then(|preview| preview.code_font_family.as_ref())
                 .map(|f| f.0.clone().into()),
-            markdown_preview_theme: content
-                .markdown_preview_theme
-                .clone()
+            markdown_preview_font_size: markdown_preview
+                .and_then(|preview| preview.font_size)
+                .map(|size| size.into_gpui()),
+            markdown_preview_theme: markdown_preview
+                .and_then(|preview| preview.theme.clone())
                 .map(ThemeSelection::from),
             theme: theme_selection,
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),

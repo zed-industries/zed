@@ -3,10 +3,14 @@ name = "gpui_util"
 version = "0.1.0"
 publish.workspace = true
 edition.workspace = true
+license = "Apache-2.0"
 
 [dependencies]
 log.workspace = true
 anyhow.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+which.workspace = true
 
 [lints]
 workspace = true

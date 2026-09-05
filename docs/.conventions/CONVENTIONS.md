@@ -2,7 +2,7 @@
 
 This document covers structural conventions for Zed documentation: what to document, how to organize it, and when to create new pages.
 
-For voice, tone, and writing style, see the [brand-voice/](./brand-voice/) directory, which contains:
+For voice, tone, and writing style, see the [brand-writer/](./brand-writer/) directory, which contains:
 
 - `SKILL.md` — Core voice principles and workflow
 - `rubric.md` — 8-point scoring criteria for quality
@@ -365,7 +365,7 @@ Before finalizing documentation:
 - [ ] Non-reference pages include at least 3 useful internal docs links
 - [ ] Main feature pages include a relevant `zed.dev` marketing link
 - [ ] Passes Prettier formatting check
-- [ ] Passes brand voice rubric (see `brand-voice/rubric.md`)
+- [ ] Passes brand voice rubric (see `brand-writer/rubric.md`)
 
 ---
 

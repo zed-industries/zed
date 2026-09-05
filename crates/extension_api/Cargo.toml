@@ -23,3 +23,6 @@ wit-bindgen = "0.41"
 
 [package.metadata.component]
 target = { path = "wit" }
+
+[package.metadata.cargo-shear]
+ignored-paths = ["wit/since_v*/settings.rs"]

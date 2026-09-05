@@ -41,6 +41,10 @@ pub(crate) struct ParsedMarkdownData {
     pub metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
+    /// Source spans of link reference definitions (`[id]: https://example.com`), which are
+    /// consumed by the parser and never appear in any event range.
+    pub link_definition_spans: Vec<Range<usize>>,
+    pub has_untagged_code_block: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -150,6 +154,12 @@ fn build_heading_slugs(
                 }
                 heading_text.push_str(&source[range.clone()]);
             }
+            MarkdownEvent::SubstitutedCode(substituted) if inside_heading => {
+                if heading_source_start.is_none() {
+                    heading_source_start = Some(range.start);
+                }
+                heading_text.push_str(substituted);
+            }
             MarkdownEvent::SubstitutedText(substituted) if inside_heading => {
                 if heading_source_start.is_none() {
                     heading_source_start = Some(range.start);
@@ -208,6 +218,21 @@ fn trim_metadata_range(source: &str, range: Range<usize>) -> Range<usize> {
     start..end
 }
 
+fn is_br_tag(html: &str) -> bool {
+    let Some(inner) = html
+        .trim()
+        .strip_prefix('<')
+        .and_then(|s| s.strip_suffix('>'))
+    else {
+        return false;
+    };
+    let inner = inner.strip_suffix('/').unwrap_or(inner);
+    inner
+        .split_ascii_whitespace()
+        .next()
+        .is_some_and(|name| name.eq_ignore_ascii_case("br"))
+}
+
 pub(crate) fn parse_markdown_with_options(
     text: &str,
     parse_html: bool,
@@ -217,11 +242,13 @@ pub(crate) fn parse_markdown_with_options(
     let mut state = ParseState::default();
     let mut language_names = HashSet::default();
     let mut language_paths = HashSet::default();
+    let mut has_untagged_code_block = false;
     let mut html_blocks = BTreeMap::default();
     let mut metadata_blocks = BTreeMap::default();
     let mut within_link = false;
     let mut within_code_block = false;
     let mut within_metadata = false;
+    let mut within_table = false;
     let mut current_metadata_block_start = None;
     let mut metadata_block_content_range: Option<Range<usize>> = None;
     let parse_options = if parse_metadata_blocks {
@@ -229,9 +256,14 @@ pub(crate) fn parse_markdown_with_options(
     } else {
         PARSE_OPTIONS
     };
-    let mut parser = Parser::new_ext(text, parse_options)
-        .into_offset_iter()
-        .peekable();
+    let parser = Parser::new_ext(text, parse_options);
+    let mut link_definition_spans = parser
+        .reference_definitions()
+        .iter()
+        .map(|(_, definition)| definition.span.clone())
+        .collect::<Vec<_>>();
+    link_definition_spans.sort_by_key(|span| span.start);
+    let mut parser = parser.into_offset_iter().peekable();
     while let Some((pulldown_event, range)) = parser.next() {
         if within_metadata && !parse_metadata_blocks {
             if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock(_)) =
@@ -310,7 +342,9 @@ pub(crate) fn parse_markdown_with_options(
                         ref info,
                     )) => {
                         within_code_block = true;
-                        let content_range = extract_code_block_content_range(&text[range.clone()]);
+                        let code_block_source = &text[range.clone()];
+                        let content_range = extract_code_block_content_range(code_block_source);
+                        let is_fenced_closed = content_range.end < code_block_source.len();
                         let content_range =
                             content_range.start + range.start..content_range.end + range.start;
 
@@ -319,17 +353,6 @@ pub(crate) fn parse_markdown_with_options(
                             .bytes()
                             .filter(|c| *c == b'\n')
                             .count();
-                        let is_fenced_closed = {
-                            let code_block_source = &text[range.clone()];
-                            code_block_source
-                                .trim_end()
-                                .lines()
-                                .last()
-                                .is_some_and(|line| {
-                                    let trimmed = line.trim_start();
-                                    trimmed.len() >= 3 && trimmed.chars().all(|c| c == '`')
-                                })
-                        };
 
                         let metadata = CodeBlockMetadata {
                             content_range,
@@ -339,6 +362,7 @@ pub(crate) fn parse_markdown_with_options(
 
                         let info = info.trim();
                         let kind = if info.is_empty() {
+                            has_untagged_code_block = true;
                             CodeBlockKind::Fenced
                             // Languages should never contain a slash, and PathRanges always should.
                             // (Models are told to specify them relative to a workspace root.)
@@ -388,7 +412,10 @@ pub(crate) fn parse_markdown_with_options(
                     pulldown_cmark::Tag::FootnoteDefinition(label) => {
                         MarkdownTag::FootnoteDefinition(SharedString::from(label.to_string()))
                     }
-                    pulldown_cmark::Tag::Table(alignments) => MarkdownTag::Table(alignments),
+                    pulldown_cmark::Tag::Table(alignments) => {
+                        within_table = true;
+                        MarkdownTag::Table(alignments)
+                    }
                     pulldown_cmark::Tag::TableHead => MarkdownTag::TableHead,
                     pulldown_cmark::Tag::TableRow => MarkdownTag::TableRow,
                     pulldown_cmark::Tag::TableCell => MarkdownTag::TableCell,
@@ -441,6 +468,8 @@ pub(crate) fn parse_markdown_with_options(
                     if !parse_metadata_blocks {
                         continue;
                     }
+                } else if let pulldown_cmark::TagEnd::Table = tag {
+                    within_table = false;
                 }
                 state.push_event(range, MarkdownEvent::End(tag));
             }
@@ -489,13 +518,13 @@ pub(crate) fn parse_markdown_with_options(
                     parsed,
                 }];
 
-                while matches!(parser.peek(), Some((pulldown_cmark::Event::Text(_), _)))
-                    || (parse_html
-                        && matches!(
-                            parser.peek(),
-                            Some((pulldown_cmark::Event::InlineHtml(_), _))
-                        ))
-                {
+                while match parser.peek() {
+                    Some((pulldown_cmark::Event::Text(_), _)) => true,
+                    Some((pulldown_cmark::Event::InlineHtml(html), _)) => {
+                        parse_html && !is_br_tag(html)
+                    }
+                    _ => false,
+                } {
                     let Some((next_event, next_range)) = parser.next() else {
                         unreachable!()
                     };
@@ -610,15 +639,25 @@ pub(crate) fn parse_markdown_with_options(
                     state.push_event(range, event);
                 }
             }
-            pulldown_cmark::Event::Code(_) => {
+            pulldown_cmark::Event::Code(parsed) => {
                 let content_range = extract_code_content_range(&text[range.clone()]);
                 let content_range =
                     content_range.start + range.start..content_range.end + range.start;
-                state.push_event(content_range, MarkdownEvent::Code)
+                let source = &text[content_range.clone()];
+                let event = if within_table && source.contains(r"\|") {
+                    MarkdownEvent::SubstitutedCode(parsed.to_string())
+                } else {
+                    MarkdownEvent::Code
+                };
+                state.push_event(content_range, event)
             }
             pulldown_cmark::Event::Html(_) => state.push_event(range, MarkdownEvent::Html),
-            pulldown_cmark::Event::InlineHtml(_) => {
-                state.push_event(range, MarkdownEvent::InlineHtml)
+            pulldown_cmark::Event::InlineHtml(html) => {
+                if parse_html && is_br_tag(&html) {
+                    state.push_event(range, MarkdownEvent::HardBreak)
+                } else {
+                    state.push_event(range, MarkdownEvent::InlineHtml)
+                }
             }
             pulldown_cmark::Event::FootnoteReference(label) => state.push_event(
                 range,
@@ -663,6 +702,8 @@ pub(crate) fn parse_markdown_with_options(
         metadata_blocks,
         heading_slugs,
         footnote_definitions,
+        link_definition_spans,
+        has_untagged_code_block,
     }
 }
 
@@ -746,6 +787,8 @@ pub enum MarkdownEvent {
     SubstitutedText(String),
     /// An inline code node.
     Code,
+    /// An inline code node that differs from the markdown source due to escape decoding.
+    SubstitutedCode(String),
     /// An HTML node.
     Html,
     /// An inline HTML node.
@@ -902,17 +945,51 @@ fn extract_code_content_range(text: &str) -> Range<usize> {
 
 pub(crate) fn extract_code_block_content_range(text: &str) -> Range<usize> {
     let mut range = 0..text.len();
-    if text.starts_with("```") {
-        range.start += 3;
+    let Some(fence_character) = text
+        .as_bytes()
+        .first()
+        .copied()
+        .filter(|character| matches!(character, b'`' | b'~'))
+    else {
+        return range;
+    };
+    let opening_fence_len = text
+        .bytes()
+        .take_while(|character| *character == fence_character)
+        .count();
+    if opening_fence_len < 3 {
+        return range;
+    }
 
-        if let Some(newline_ix) = text[range.clone()].find('\n') {
-            range.start += newline_ix + 1;
+    range.start += opening_fence_len;
+    if let Some(newline_ix) = text[range.clone()].find('\n') {
+        range.start += newline_ix + 1;
+    }
+
+    let text_without_line_ending =
+        text.trim_end_matches(|character| matches!(character, '\r' | '\n'));
+    let closing_line_start = text_without_line_ending
+        .rfind('\n')
+        .map_or(0, |newline_ix| newline_ix + 1);
+    if closing_line_start >= range.start {
+        let closing_line = &text_without_line_ending[closing_line_start..];
+        let closing_fence = closing_line.trim_start_matches(' ');
+        let indentation_len = closing_line.len() - closing_fence.len();
+        let closing_fence_len = closing_fence
+            .bytes()
+            .take_while(|character| *character == fence_character)
+            .count();
+        let trailing_characters = &closing_fence[closing_fence_len..];
+        if indentation_len <= 3
+            && closing_fence_len >= opening_fence_len
+            && trailing_characters
+                .bytes()
+                .all(|character| matches!(character, b' ' | b'\t'))
+        {
+            range.end = closing_line_start;
         }
     }
 
-    if !range.is_empty() && text.ends_with("```") {
-        range.end -= 3;
-    }
     if range.start > range.end {
         range.end = range.start;
     }
@@ -1297,6 +1374,18 @@ mod tests {
                 ..Default::default()
             }
         );
+
+        for markdown in ["```mermaid\ngraph TD;\n~~~", "~~~~mermaid\ngraph TD;\n~~~"] {
+            let parsed = parse_markdown_with_options(markdown, false, false, false);
+            let metadata = parsed.events.iter().find_map(|(_, event)| match event {
+                Start(CodeBlock { metadata, .. }) => Some(metadata),
+                _ => None,
+            });
+            assert_eq!(
+                metadata.map(|metadata| metadata.is_fenced_closed),
+                Some(false)
+            );
+        }
     }
 
     fn assert_code_block_does_not_emit_links(markdown: &str) {
@@ -1476,6 +1565,43 @@ mod tests {
     }
 
     #[test]
+    fn test_inline_code_substitutes_escaped_pipes() {
+        let markdown = r"| Pattern |
+| --- |
+| `a\|b` |";
+        let parsed = parse_markdown_with_options(markdown, false, false, false);
+        let code_range = {
+            let start = markdown.find(r"a\|b").expect("inline code source");
+            start..start + r"a\|b".len()
+        };
+
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(range, event)| range == &code_range
+                    && event == &SubstitutedCode("a|b".into())),
+            "expected escaped pipe in table inline code to render as decoded inline code: {:?}",
+            parsed.events
+        );
+    }
+
+    #[test]
+    fn test_inline_code_keeps_escaped_pipes_outside_tables() {
+        let markdown = r"`a\|b`";
+        let parsed = parse_markdown_with_options(markdown, false, false, false);
+
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(range, event)| range == &(1..5) && event == &Code),
+            "expected escaped pipe outside a table to remain normal inline code: {:?}",
+            parsed.events
+        );
+    }
+
+    #[test]
     fn test_extract_code_block_content_range() {
         let input = "```rust\nlet x = 5;\n```";
         assert_eq!(extract_code_block_content_range(input), 8..19);
@@ -1486,9 +1612,21 @@ mod tests {
         let input = "```python\nprint('hello')\nprint('world')\n```";
         assert_eq!(extract_code_block_content_range(input), 10..40);
 
+        let input = "~~~~mermaid\ngraph TD;\n~~~~";
+        let content_range = extract_code_block_content_range(input);
+        assert_eq!(&input[content_range], "graph TD;\n");
+
+        let input = "~~~mermaid\ngraph TD;\n    ~~~~";
+        let content_range = extract_code_block_content_range(input);
+        assert_eq!(&input[content_range], "graph TD;\n    ~~~~");
+
+        let input = "~~~mermaid\ngraph TD;\n   ~~~~ \t";
+        let content_range = extract_code_block_content_range(input);
+        assert_eq!(&input[content_range], "graph TD;\n");
+
         // Malformed input
         let input = "`````";
-        assert_eq!(extract_code_block_content_range(input), 3..3);
+        assert_eq!(extract_code_block_content_range(input), 5..5);
     }
 
     #[test]
@@ -1684,5 +1822,93 @@ mod tests {
                 None,
             ]
         );
+    }
+
+    #[test]
+    fn test_br_tag_emits_hard_break() {
+        for input in [
+            "hello<br>world",
+            "hello<br/>world",
+            "hello<br />world",
+            "hello<br >world",
+            "hello<BR>world",
+            "hello<br class=\"x\">world",
+            "hello<br class=\"x\"/>world",
+        ] {
+            let parsed = parse_markdown_with_options(input, true, false, false);
+            let has_hard_break = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::HardBreak));
+            let has_empty_substituted_text = parsed.events.iter().any(|(_, event)| {
+                matches!(event, MarkdownEvent::SubstitutedText(text) if text.is_empty())
+            });
+            assert!(has_hard_break, "<br> in \"{input}\" should emit HardBreak");
+            assert!(
+                !has_empty_substituted_text,
+                "<br> in \"{input}\" should not produce empty SubstitutedText"
+            );
+        }
+    }
+
+    #[test]
+    fn test_br_tag_not_a_hard_break_without_parse_html() {
+        for input in ["hello<br>world", "hello<br/>world", "hello<br />world"] {
+            let parsed = parse_markdown_with_options(input, false, false, false);
+            let has_hard_break = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::HardBreak));
+            let has_inline_html = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::InlineHtml));
+            assert!(
+                !has_hard_break,
+                "<br> in \"{input}\" should not emit HardBreak when parse_html is disabled"
+            );
+            assert!(
+                has_inline_html,
+                "<br> in \"{input}\" should be preserved as InlineHtml when parse_html is disabled"
+            );
+        }
+    }
+
+    #[test]
+    fn test_br_prefixed_tag_is_not_a_hard_break() {
+        for input in ["a<break>b", "a<brick>b", "a<b>bold</b>c"] {
+            let parsed = parse_markdown_with_options(input, true, false, false);
+            let has_hard_break = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::HardBreak));
+            assert!(
+                !has_hard_break,
+                "\"{input}\" should not be treated as a <br> hard break"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unrecognized_inline_html_preserved_as_inline_html() {
+        for input in ["a<span>b</span>c", "a<em>b</em>c", "a<strong>b</strong>c"] {
+            let parsed = parse_markdown_with_options(input, false, false, false);
+            let has_inline_html = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::InlineHtml));
+            let has_hard_break = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::HardBreak));
+            assert!(
+                has_inline_html,
+                "unrecognized inline HTML \"{input}\" should emit InlineHtml"
+            );
+            assert!(
+                !has_hard_break,
+                "unrecognized inline HTML \"{input}\" should not emit HardBreak"
+            );
+        }
     }
 }

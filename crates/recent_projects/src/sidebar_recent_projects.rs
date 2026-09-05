@@ -12,7 +12,6 @@ use picker::{
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 use ui::{ButtonLike, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
-use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     MultiWorkspace, OpenMode, OpenOptions, ProjectGroupKey, RecentWorkspace,
@@ -55,6 +54,8 @@ impl SidebarRecentProjects {
                 Picker::list(delegate, window, cx)
                     .list_measure_all()
                     .show_scrollbar(true)
+                    .initial_width(rems(18.))
+                    .popover()
             });
 
             let picker_focus_handle = picker.focus_handle(cx);
@@ -134,24 +135,12 @@ impl EventEmitter<DismissEvent> for SidebarRecentProjectsDelegate {}
 impl PickerDelegate for SidebarRecentProjectsDelegate {
     type ListItem = AnyElement;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search projects…".into()
+    fn name() -> &'static str {
+        "sidebar recent projects"
     }
 
-    fn render_editor(
-        &self,
-        editor: &Arc<dyn ErasedEditor>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Div {
-        h_flex()
-            .flex_none()
-            .h_9()
-            .px_2p5()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(editor.render(window, cx))
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Search projects…".into()
     }
 
     fn match_count(&self) -> usize {
@@ -401,7 +390,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child({
                     let open_action = workspace::Open {
-                        create_new_window: false,
+                        create_new_window: Some(false),
                     };
 
                     ButtonLike::new("open_local_folder")
@@ -429,7 +418,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                                 .child(KeyBinding::for_action(
                                     &OpenRemote {
                                         from_existing_connection: false,
-                                        create_new_window: false,
+                                        create_new_window: Some(false),
                                     },
                                     cx,
                                 )),
@@ -438,7 +427,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                             window.dispatch_action(
                                 OpenRemote {
                                     from_existing_connection: false,
-                                    create_new_window: false,
+                                    create_new_window: Some(false),
                                 }
                                 .boxed_clone(),
                                 cx,

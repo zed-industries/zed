@@ -1,0 +1,102 @@
+name: Maintainer Edits Nudge
+
+on:
+  # zizmor: ignore[dangerous-triggers]
+  # Fork PRs must be supported, but this workflow only reads GitHub metadata and
+  # posts a comment; it never checks out or executes PR code.
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions: {}
+
+concurrency:
+  group: maintainer-edits-nudge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  nudge-contributor:
+    if: >-
+      github.repository == 'zed-industries/zed'
+      && github.event.pull_request.head.repo.full_name != null
+      && github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+      && github.event.pull_request.user.type != 'Bot'
+      && !contains(fromJSON('["MEMBER","OWNER"]'), github.event.pull_request.author_association)
+    permissions:
+      pull-requests: write
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    timeout-minutes: 5
+
+    steps:
+      - name: Nudge contributor to allow maintainer edits
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const commentMarker = '<!-- zed-maintainer-edits-nudge -->';
+            const repositoryOwner = context.repo.owner;
+            const repositoryName = context.repo.repo;
+            const pullRequestNumber = context.payload.pull_request.number;
+
+            const { data: pullRequest } = await github.rest.pulls.get({
+              owner: repositoryOwner,
+              repo: repositoryName,
+              pull_number: pullRequestNumber,
+            });
+
+            const headRepository = pullRequest.head.repo;
+            const isCrossRepositoryPullRequest =
+              headRepository &&
+              headRepository.full_name !== pullRequest.base.repo.full_name;
+
+            if (!isCrossRepositoryPullRequest || pullRequest.maintainer_can_modify) {
+              return;
+            }
+
+            const headRepositoryOwnerType = headRepository.owner.type;
+            if (
+              headRepositoryOwnerType !== 'User' &&
+              headRepositoryOwnerType !== 'Organization'
+            ) {
+              throw new Error(
+                `Unsupported head repository owner type: ${headRepositoryOwnerType}`
+              );
+            }
+
+            const existingComments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner: repositoryOwner,
+                repo: repositoryName,
+                issue_number: pullRequestNumber,
+                per_page: 100,
+              }
+            );
+            const commentAlreadyExists = existingComments.some(
+              comment =>
+                comment.user?.login === 'github-actions[bot]' &&
+                comment.body?.includes(commentMarker)
+            );
+
+            if (commentAlreadyExists) {
+              return;
+            }
+
+            const commentBody = headRepositoryOwnerType === 'User'
+              ? `${commentMarker}
+            Thanks for contributing to Zed.
+
+            Please enable **Allow edits from maintainers** for this pull request. [GitHub documents the setting and steps here](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/allowing-changes-to-a-pull-request-branch-created-from-a-fork).
+
+            This lets a Zed maintainer apply small review fixes or update your branch from the pull request's base branch when needed. It reduces follow-up work for you and helps us merge an approved contribution without waiting for another round trip. Any changes we make will appear as commits in this pull request.`
+              : `${commentMarker}
+            Thanks for contributing to Zed.
+
+            This pull request comes from an organization-owned fork. GitHub does not offer **Allow edits from maintainers** for organization-owned forks, so this pull request cannot grant Zed maintainers access to the branch.
+
+            If your organization permits it, consider opening the contribution from a personal fork instead and enabling **Allow edits from maintainers**. [GitHub explains the setting here](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/allowing-changes-to-a-pull-request-branch-created-from-a-fork). Otherwise, no action is needed now. Unless a maintainer already has write access to the fork, we may need to ask you to make branch updates before the pull request can be merged.`;
+
+            await github.rest.issues.createComment({
+              owner: repositoryOwner,
+              repo: repositoryName,
+              issue_number: pullRequestNumber,
+              body: commentBody,
+            });

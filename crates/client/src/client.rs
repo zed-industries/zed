@@ -30,7 +30,7 @@ use gpui::{App, AsyncApp, Entity, Global, Task, TaskExt, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
-use proxy::connect_proxy_stream;
+use proxy::{connect_proxy_stream, excluded_from_proxy};
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
@@ -67,7 +67,7 @@ static ZED_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("Z
 pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
     std::env::var("ZED_IMPERSONATE")
         .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+        .filter(|s| !s.is_empty())
 });
 
 pub static USE_WEB_LOGIN: LazyLock<bool> = LazyLock::new(|| std::env::var("ZED_WEB_LOGIN").is_ok());
@@ -75,7 +75,7 @@ pub static USE_WEB_LOGIN: LazyLock<bool> = LazyLock::new(|| std::env::var("ZED_W
 pub static ADMIN_API_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| {
     std::env::var("ZED_ADMIN_API_TOKEN")
         .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+        .filter(|s| !s.is_empty())
 });
 
 pub static ZED_APP_PATH: LazyLock<Option<PathBuf>> =
@@ -971,7 +971,7 @@ impl Client {
             Ok(valid) => Ok(valid),
             Err(err) => {
                 self.set_status(Status::AuthenticationError, cx);
-                Err(anyhow!("failed to validate credentials: {}", err))
+                Err(err.context("failed to validate credentials"))
             }
         }
     }
@@ -1362,8 +1362,10 @@ impl Client {
                         .zip(rpc_url.port_or_known_default())
                         .context("missing host in rpc url")?;
                     Ok(match proxy {
-                        Some(proxy) => connect_proxy_stream(&proxy, rpc_host).await?,
-                        None => Box::new(TcpStream::connect(rpc_host).await?),
+                        Some(proxy) if !excluded_from_proxy(rpc_host.0) => {
+                            connect_proxy_stream(&proxy, rpc_host).await?
+                        }
+                        _ => Box::new(TcpStream::connect(rpc_host).await?),
                     })
                 }
             })
@@ -2240,6 +2242,45 @@ mod tests {
         let credentials = client.sign_in(false, &cx.to_async()).await.unwrap();
         assert_eq!(*auth_count.lock(), 2);
         assert_eq!(credentials.access_token, "2");
+    }
+
+    #[gpui::test]
+    async fn test_sign_in_reports_connection_failure(cx: &mut TestAppContext) {
+        init_test(cx);
+        let http_client = FakeHttpClient::create(|_request| async move {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body("".into())
+                .unwrap())
+        });
+        let client =
+            cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client.clone(), cx));
+        client.override_authenticate(move |cx| {
+            cx.background_spawn(async move {
+                Ok(Credentials {
+                    user_id: 1,
+                    access_token: "token".into(),
+                })
+            })
+        });
+
+        // Sign in once so that the credentials are cached on the client.
+        client.sign_in(false, &cx.to_async()).await.unwrap();
+
+        // Simulate a transport-level failure (DNS/TCP/TLS/timeout) where the
+        // request never receives a response while validating cached credentials.
+        http_client
+            .as_fake()
+            .replace_handler(|_, _request| async move {
+                Err(anyhow!("connection reset by peer").context("boom"))
+            });
+
+        let error = client.sign_in(false, &cx.to_async()).await.unwrap_err();
+
+        assert_eq!(
+            format!("{error:#}"),
+            "failed to validate credentials: boom: connection reset by peer"
+        );
     }
 
     #[gpui::test(iterations = 10)]

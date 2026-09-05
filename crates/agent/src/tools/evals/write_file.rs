@@ -8,17 +8,14 @@ use client::{Client, RefreshLlmTokenListener, UserStore};
 use fs::FakeFs;
 use futures::{FutureExt as _, StreamExt};
 use gpui::{AppContext as _, AsyncApp, Entity, TestAppContext, UpdateGlobal as _};
-use http_client::StatusCode;
 use language::language_settings::FormatOnSave;
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, Role, SelectedModel,
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel,
 };
 use project::Project;
 use prompt_store::{ProjectContext, WorktreeContext};
-use rand::prelude::*;
 use reqwest_client::ReqwestClient;
 use serde::Serialize;
 use settings::SettingsStore;
@@ -27,7 +24,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
-    time::Duration,
 };
 use util::path;
 
@@ -203,6 +199,8 @@ impl WriteToolTest {
                 date: chrono::Local::now().format("%Y-%m-%d").to_string(),
                 user_agents_md: None,
                 sandboxing: false,
+                is_linux: cfg!(target_os = "linux"),
+                is_windows: cfg!(target_os = "windows"),
             };
             let templates = Templates::new();
             template.render(&templates)?
@@ -321,7 +319,9 @@ impl WriteToolTest {
                     if tool_use.is_input_complete
                         && tool_use.name.as_ref() == WriteFileTool::NAME =>
                 {
-                    let input: WriteFileToolInput = serde_json::from_value(tool_use.input)
+                    let input: WriteFileToolInput = tool_use
+                        .input
+                        .parse()
                         .context("Failed to parse tool input as WriteFileToolInput")?;
                     return Ok(input);
                 }
@@ -408,7 +408,9 @@ fn tool_use(
         id: LanguageModelToolUseId::from(id.into()),
         name: name.into(),
         raw_input: serde_json::to_string_pretty(&input).unwrap(),
-        input: serde_json::to_value(input).unwrap(),
+        input: language_model::LanguageModelToolUseInput::Json(
+            serde_json::to_value(input).unwrap(),
+        ),
         is_input_complete: true,
         thought_signature: None,
     })
@@ -429,57 +431,27 @@ fn tool_result(
 }
 
 async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> Result<R> {
-    const MAX_RETRIES: usize = 20;
-    let mut attempt = 0;
+    const MAX_ATTEMPTS: usize = 20;
+    let mut completed_attempts = 0;
 
     loop {
-        attempt += 1;
         let response = request().await;
+        completed_attempts += 1;
 
-        if attempt >= MAX_RETRIES {
+        if completed_attempts >= MAX_ATTEMPTS {
             return response;
         }
 
-        let retry_delay = match &response {
-            Ok(_) => None,
-            Err(err) => match err.downcast_ref::<LanguageModelCompletionError>() {
-                Some(err) => match &err {
-                    LanguageModelCompletionError::RateLimitExceeded { retry_after, .. }
-                    | LanguageModelCompletionError::ServerOverloaded { retry_after, .. } => {
-                        Some(retry_after.unwrap_or(Duration::from_secs(5)))
-                    }
-                    LanguageModelCompletionError::UpstreamProviderError {
-                        status,
-                        retry_after,
-                        ..
-                    } => {
-                        let should_retry = matches!(
-                            *status,
-                            StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
-                        ) || status.as_u16() == 529;
+        let retry_attempt = completed_attempts;
+        let retry_delay = response
+            .as_ref()
+            .err()
+            .and_then(|error| super::completion_retry_delay(error, retry_attempt));
 
-                        if should_retry {
-                            Some(retry_after.unwrap_or(Duration::from_secs(5)))
-                        } else {
-                            None
-                        }
-                    }
-                    LanguageModelCompletionError::ApiReadResponseError { .. }
-                    | LanguageModelCompletionError::ApiInternalServerError { .. }
-                    | LanguageModelCompletionError::HttpSend { .. } => {
-                        Some(Duration::from_secs(2_u64.pow((attempt - 1) as u32).min(30)))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            },
-        };
-
-        if let Some(retry_after) = retry_delay {
-            let jitter = retry_after.mul_f64(rand::rng().random_range(0.0..1.0));
-            eprintln!("Attempt #{attempt}: Retry after {retry_after:?} + jitter of {jitter:?}");
+        if let Some(retry_delay) = retry_delay {
+            eprintln!("Retry attempt #{retry_attempt}: Retry after {retry_delay:?}");
             #[allow(clippy::disallowed_methods)]
-            async_io::Timer::after(retry_after + jitter).await;
+            async_io::Timer::after(retry_delay).await;
         } else {
             return response;
         }

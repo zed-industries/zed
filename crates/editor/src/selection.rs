@@ -87,6 +87,25 @@ impl Editor {
         result
     }
 
+    /// Re-resolves selection anchors so they reference live buffer fragments.
+    ///
+    /// Deleted CRDT fragments remain as tombstones. An anchor associated with a
+    /// tombstone can resolve to the correct visible offset while causing later
+    /// insertions to be ordered on the wrong side of the cursor. Round-tripping
+    /// selections through their offsets creates fresh anchors associated with
+    /// live fragments.
+    ///
+    /// This does not emit selection effects, but it replaces pending selection
+    /// state with the resolved selections.
+    pub fn refresh_selection_anchors(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.display_snapshot(cx);
+        let selections = self.selections.all::<MultiBufferOffset>(&snapshot);
+        self.selections
+            .change_with(&snapshot, |selection_collection| {
+                selection_collection.select(selections);
+            });
+    }
+
     /// Defers the effects of selection change, so that the effects of multiple calls to
     /// `change_selections` are applied at the end. This way these intermediate states aren't added
     /// to selection history and the state of popovers based on selection position aren't
@@ -637,7 +656,7 @@ impl Editor {
                     }
                     new_selection
                 }
-                None => selection.clone(),
+                None => *selection,
             })
             .collect::<Vec<_>>();
 
@@ -855,7 +874,7 @@ impl Editor {
                         reversed: selection.reversed,
                     }
                 } else {
-                    selection.clone()
+                    *selection
                 }
             })
             .collect::<Vec<_>>();
@@ -913,7 +932,7 @@ impl Editor {
                         reversed: selection.reversed,
                     }
                 } else {
-                    selection.clone()
+                    *selection
                 }
             })
             .collect::<Vec<_>>();
@@ -964,6 +983,69 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.select_to_syntax_nodes(window, cx, true);
+    }
+
+    pub fn select_inside_delimiters(
+        &mut self,
+        _: &SelectInsideDelimiters,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_delimiters_impl(false, window, cx);
+    }
+
+    pub fn select_around_delimiters(
+        &mut self,
+        _: &SelectAroundDelimiters,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_delimiters_impl(true, window, cx);
+    }
+
+    fn select_delimiters_impl(
+        &mut self,
+        include_brackets: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.change_selections(Default::default(), window, cx, |s| {
+            s.move_offsets_with(&mut |snapshot, selection| {
+                let Some(enclosing_bracket_ranges) =
+                    snapshot.enclosing_bracket_ranges(selection.start..selection.end)
+                else {
+                    return;
+                };
+
+                let mut best = None;
+                let mut best_length = usize::MAX;
+
+                for (open, close) in enclosing_bracket_ranges {
+                    let range = if include_brackets {
+                        open.start..close.end
+                    } else {
+                        open.end..close.start
+                    };
+
+                    // Skip any bracket pair that is already covered by the
+                    // selection so repeated uses of delimiters selection only
+                    // evere expands outwards to the next pair.
+                    if (selection.start..selection.end).contains_inclusive(&range) {
+                        continue;
+                    }
+
+                    let length = close.end - open.start;
+                    if length < best_length {
+                        best_length = length;
+                        best = Some(range);
+                    }
+                }
+
+                if let Some(range) = best {
+                    selection.set_head_tail(range.end, range.start, SelectionGoal::None);
+                }
+            })
+        });
     }
 
     pub fn move_to_enclosing_bracket(
@@ -1166,7 +1248,7 @@ impl Editor {
         };
 
         self.change_selections(effects, window, cx, |s| {
-            s.set_pending(pending_selection.clone(), pending_mode);
+            s.set_pending(pending_selection, pending_mode);
             s.set_is_extending(true);
         });
     }
@@ -1362,7 +1444,7 @@ impl Editor {
             }
 
             self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.set_pending(pending.clone(), mode);
+                s.set_pending(pending, mode);
             });
         } else {
             log::error!("update_selection dispatched with no pending selection");
@@ -1379,14 +1461,20 @@ impl Editor {
             let selections = self
                 .selections
                 .all::<MultiBufferOffset>(&self.display_snapshot(cx));
+            // `select` below resets the selections' granularity to `Character`, since it's the
+            // funnel every wholesale selection replacement goes through. When extending, the
+            // granularity established by the selection gesture that started the extension must
+            // survive that reset instead of being overwritten by `pending_mode`.
+            let select_mode = if self.selections.is_extending() {
+                self.selections.select_mode().clone()
+            } else {
+                pending_mode
+            };
             self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select(selections);
                 s.clear_pending();
-                if s.is_extending() {
-                    s.set_is_extending(false);
-                } else {
-                    s.set_select_mode(pending_mode);
-                }
+                s.set_is_extending(false);
+                s.set_select_mode(select_mode);
             });
         }
     }
@@ -1512,6 +1600,7 @@ impl Editor {
         self.invalidate_autoclose_regions(&selection_anchors, buffer);
         self.snippet_stack.invalidate(&selection_anchors, buffer);
         self.take_rename(false, window, cx);
+        self.take_inline_input(window, cx);
 
         let newest_selection = self.selections.newest_anchor();
         let new_cursor_position = newest_selection.head();
@@ -1700,30 +1789,80 @@ impl Editor {
 
         let start_row = cmp::min(tail.row(), head.row());
         let end_row = cmp::max(tail.row(), head.row());
-        let start_column = cmp::min(tail.column(), goal_column);
-        let end_column = cmp::max(tail.column(), goal_column);
-        let reversed = start_column < tail.column();
 
+        // Anchor the columnar rectangle in x pixels rather than byte columns so
+        // rows with multi-byte characters (e.g. diacritics) stay visually aligned.
+        let text_layout_details = self.text_layout_details(window, cx);
+
+        // The mouse handlers encode drags past a line's end as extra columns
+        // beyond the line length, in em layout widths (see
+        // `PositionMap::point_for_position`). `x_for_display_point` clamps at
+        // the line's width, so convert that overshoot back to pixels with the
+        // same unit to keep the rectangle tracking the mouse past short lines.
+        let font_id = text_layout_details
+            .text_system
+            .resolve_font(&text_layout_details.editor_style.text.font());
+        let font_size = text_layout_details
+            .editor_style
+            .text
+            .font_size
+            .to_pixels(text_layout_details.rem_size);
+        let em_layout_width = text_layout_details
+            .text_system
+            .em_layout_width(font_id, font_size);
+        let x_for_unclipped_point = |point: DisplayPoint| {
+            let line_len = display_map.line_len(point.row());
+            if point.column() > line_len {
+                let eol_x = display_map.x_for_display_point(
+                    DisplayPoint::new(point.row(), line_len),
+                    &text_layout_details,
+                );
+                eol_x + em_layout_width * (point.column() - line_len) as f32
+            } else {
+                display_map.x_for_display_point(point, &text_layout_details)
+            }
+        };
+
+        let tail_x = x_for_unclipped_point(tail);
+        let head_x = x_for_unclipped_point(DisplayPoint::new(head.row(), goal_column));
+        let start_x = tail_x.min(head_x);
+        let end_x = tail_x.max(head_x);
+        let reversed = head_x < tail_x;
+
+        let mut last_buffer_row = None;
         let selection_ranges = (start_row.0..=end_row.0)
             .map(DisplayRow)
             .filter_map(|row| {
-                if (matches!(columnar_state, ColumnarSelectionState::FromMouse { .. })
-                    || start_column <= display_map.line_len(row))
-                    && !display_map.is_block_line(row)
+                if display_map.is_block_line(row) {
+                    return None;
+                }
+
+                let buffer_row = row.as_display_point().to_point(display_map).row;
+                if last_buffer_row == Some(buffer_row) {
+                    return None;
+                }
+                last_buffer_row = Some(buffer_row);
+
+                let layout = display_map.layout_row(row, &text_layout_details);
+                if matches!(columnar_state, ColumnarSelectionState::FromSelection { .. })
+                    && start_x > layout.width
                 {
-                    let start = display_map
-                        .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
-                        .to_point(display_map);
-                    let end = display_map
-                        .clip_point(DisplayPoint::new(row, end_column), Bias::Right)
-                        .to_point(display_map);
-                    if reversed {
-                        Some(end..start)
-                    } else {
-                        Some(start..end)
-                    }
+                    return None;
+                }
+
+                let start_column = layout.closest_index_for_x(start_x) as u32;
+                let end_column = layout.closest_index_for_x(end_x) as u32;
+
+                let start = display_map
+                    .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
+                    .to_point(display_map);
+                let end = display_map
+                    .clip_point(DisplayPoint::new(row, end_column), Bias::Right)
+                    .to_point(display_map);
+                if reversed {
+                    Some(end..start)
                 } else {
-                    None
+                    Some(start..end)
                 }
             })
             .collect::<Vec<_>>();
@@ -1754,7 +1893,7 @@ impl Editor {
 
     fn pending_selection_and_mode(&self) -> Option<(Selection<Anchor>, SelectMode)> {
         Some((
-            self.selections.pending_anchor()?.clone(),
+            *self.selections.pending_anchor()?,
             self.selections.pending_mode()?,
         ))
     }
@@ -1825,10 +1964,11 @@ impl Editor {
             display_map.max_point().row()
         };
 
-        // When `skip_soft_wrap` is true, we use UTF-16 columns instead of pixel
-        // positions to place new selections, so we need to keep track of the
-        // column range of the oldest selection in each group, because
-        // intermediate selections may have been clamped to shorter lines.
+        // When `skip_soft_wrap` is true, we place new selections by column rather than
+        // pixel position, so we need to keep track of the column range of the oldest
+        // selection in each group, because intermediate selections may have been
+        // clamped to shorter lines. Columns are counted with tabs expanded so that
+        // tab-aligned code lines up the way it renders.
         let mut goal_columns_by_selection_id = if skip_soft_wrap {
             let mut map = HashMap::default();
             for group in state.groups.iter() {
@@ -1836,10 +1976,8 @@ impl Editor {
                     if let Some(oldest_selection) =
                         columnar_selections.iter().find(|s| s.id == *oldest_id)
                     {
-                        let snapshot = display_map.buffer_snapshot();
-                        let start_col =
-                            snapshot.point_to_point_utf16(oldest_selection.start).column;
-                        let end_col = snapshot.point_to_point_utf16(oldest_selection.end).column;
+                        let start_col = display_map.tab_expanded_column(oldest_selection.start);
+                        let end_col = display_map.tab_expanded_column(oldest_selection.end);
                         let goal_columns = start_col.min(end_col)..start_col.max(end_col);
                         for id in &group.stack {
                             map.insert(*id, goal_columns.clone());
@@ -1880,10 +2018,8 @@ impl Editor {
                         let goal_columns = goal_columns_by_selection_id
                             .remove(&selection.id)
                             .unwrap_or_else(|| {
-                                let snapshot = display_map.buffer_snapshot();
-                                let start_col =
-                                    snapshot.point_to_point_utf16(selection.start).column;
-                                let end_col = snapshot.point_to_point_utf16(selection.end).column;
+                                let start_col = display_map.tab_expanded_column(selection.start);
+                                let end_col = display_map.tab_expanded_column(selection.end);
                                 start_col.min(end_col)..start_col.max(end_col)
                             });
                         self.selections.find_next_columnar_selection_by_buffer_row(
@@ -2232,7 +2368,7 @@ impl Editor {
             .iter()
             .map(|selection| {
                 if !selection.is_empty() {
-                    return selection.clone();
+                    return *selection;
                 }
 
                 let selection_pos = selection.head();
@@ -2279,7 +2415,7 @@ impl Editor {
                     &buffer,
                 );
 
-                let mut new_selection = selection.clone();
+                let mut new_selection = *selection;
                 new_selection.set_head(new_pos, SelectionGoal::None);
                 new_selection
             })

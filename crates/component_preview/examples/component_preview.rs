@@ -1,6 +1,7 @@
 //! Component Preview Example
 //!
 //! Run with: `cargo run -p component_preview --example component_preview"`
+use assets::Assets;
 use fs::RealFs;
 use gpui::{AppContext as _, Bounds, KeyBinding, WindowBounds, WindowOptions, actions, size};
 
@@ -16,20 +17,28 @@ use workspace::{AppState, Workspace, WorkspaceStore};
 
 use component_preview::{ComponentPreview, init};
 
-actions!(zed, [Quit]);
+actions!(component_preview, [Quit]);
 
 fn quit(_: &Quit, cx: &mut App) {
     cx.quit();
 }
 
 fn main() {
-    gpui_platform::application().run(|cx| {
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Warn)
+        .init();
+
+    gpui_platform::application().with_assets(Assets).run(|cx| {
         component::init();
 
         cx.on_action(quit);
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         let version = release_channel::AppVersion::load(env!("CARGO_PKG_VERSION"), None, None);
         release_channel::init(version, cx);
+        cx.set_global(db::AppDatabase::new());
+        Assets
+            .load_fonts(cx)
+            .expect("Failed to load embedded fonts");
 
         let http_client =
             ReqwestClient::user_agent("component_preview").expect("Failed to create HTTP client");
@@ -68,6 +77,7 @@ fn main() {
         AppState::set_global(app_state.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
+        editor::init(cx);
         init(app_state.clone(), cx);
 
         let size = size(px(1200.), px(800.));

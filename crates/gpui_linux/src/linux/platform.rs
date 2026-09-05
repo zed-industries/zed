@@ -13,11 +13,12 @@ use std::{
     time::Duration,
 };
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
+use anyhow::ensure;
 use anyhow::{Context as _, anyhow};
-use calloop::LoopSignal;
+use calloop::{LoopSignal, channel::Sender};
 use futures::channel::oneshot;
-use util::ResultExt as _;
-use util::command::{new_command, new_std_command};
+use gpui_util::{ResultExt as _, new_std_command};
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
@@ -105,12 +106,13 @@ pub(crate) trait LinuxClient {
 #[derive(Default)]
 pub(crate) struct PlatformHandlers {
     pub(crate) open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
-    pub(crate) quit: Option<Box<dyn FnMut()>>,
+    pub(crate) quit: Option<Box<dyn FnMut() -> bool>>,
     pub(crate) reopen: Option<Box<dyn FnMut()>>,
     pub(crate) app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
+    pub(crate) system_wake: Option<Box<dyn FnMut()>>,
 }
 
 pub(crate) struct LinuxCommon {
@@ -123,11 +125,26 @@ pub(crate) struct LinuxCommon {
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
+    app_name: Option<String>,
+    system_notifications: crate::linux::system_notifications::SystemNotificationState,
+    #[cfg_attr(
+        not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))),
+        allow(dead_code)
+    )]
+    wake_sender: Sender<()>,
+    wake_listener_started: bool,
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, PriorityQueueCalloopReceiver<RunnableVariant>) {
+    pub fn new(
+        signal: LoopSignal,
+    ) -> (
+        Self,
+        PriorityQueueCalloopReceiver<RunnableVariant>,
+        calloop::channel::Channel<()>,
+    ) {
         let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
+        let (wake_sender, wake_receiver) = calloop::channel::channel();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::linux::CosmicTextSystem::new("IBM Plex Sans"));
@@ -150,10 +167,63 @@ impl LinuxCommon {
             callbacks,
             signal,
             menus: Vec::new(),
+            app_name: None,
+            system_notifications: crate::linux::system_notifications::SystemNotificationState::new(
+            ),
+            wake_sender,
+            wake_listener_started: false,
         };
 
-        (common, main_receiver)
+        (common, main_receiver, wake_receiver)
     }
+
+    pub(crate) fn start_wake_listener(&mut self) {
+        if !self.wake_listener_started {
+            #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+            smol::spawn({
+                let wake_sender = self.wake_sender.clone();
+                async move {
+                    if let Err(error) = listen_for_system_wake(wake_sender).await {
+                        log::debug!("failed to listen for system wake events: {error:?}");
+                    }
+                }
+            })
+            .detach();
+
+            self.wake_listener_started = true;
+        }
+    }
+
+    pub(crate) fn handle_system_wake(&mut self) {
+        if let Some(mut callback) = self.callbacks.system_wake.take() {
+            callback();
+            self.callbacks.system_wake = Some(callback);
+        }
+    }
+}
+
+#[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+async fn listen_for_system_wake(wake_sender: Sender<()>) -> anyhow::Result<()> {
+    use futures::StreamExt as _;
+
+    let connection = ashpd::zbus::Connection::system().await?;
+    let proxy = ashpd::zbus::Proxy::new(
+        &connection,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    )
+    .await?;
+    let mut sleep_events = proxy.receive_signal("PrepareForSleep").await?;
+
+    while let Some(message) = sleep_events.next().await {
+        let sleeping = message.body().deserialize::<bool>()?;
+        if !sleeping {
+            wake_sender.send(()).ok();
+        }
+    }
+
+    Ok(())
 }
 
 pub(crate) struct LinuxPlatform<P> {
@@ -215,7 +285,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.inner.compositor_name()
     }
 
-    fn restart(&self, binary_path: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
         use std::os::unix::process::CommandExt as _;
 
         // get the process id of the current process
@@ -242,7 +312,9 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
                 sleep 0.1
             done
 
-            "$1"
+            app_path="$1"
+            shift
+            "$app_path" "$@"
             "#;
 
         #[allow(
@@ -255,6 +327,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
             .arg(script)
             .arg(&app_pid)
             .arg(&app_path)
+            .args(arguments)
             .process_group(0)
             .spawn();
 
@@ -461,20 +534,20 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         let path = path.to_owned();
         self.background_executor()
             .spawn(async move {
-                let _ = new_command("xdg-open")
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "running on a background thread, so blocking is fine"
+                )]
+                new_std_command("xdg-open")
                     .arg(path)
-                    .spawn()
-                    .context("invoking xdg-open")
-                    .log_err()?
                     .status()
-                    .await
-                    .log_err()?;
-                Some(())
+                    .context("invoking xdg-open")
+                    .log_err();
             })
             .detach();
     }
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>) {
         self.inner.with_common(|common| {
             common.callbacks.quit = Some(callback);
         });
@@ -483,6 +556,41 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.inner.with_common(|common| {
             common.callbacks.reopen = Some(callback);
+        });
+    }
+
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+        self.inner.with_common(|common| {
+            common.callbacks.system_wake = Some(callback);
+            common.start_wake_listener();
+        });
+    }
+
+    fn set_app_identity(&self, _identifier: &str, name: &str) {
+        self.inner
+            .with_common(|common| common.app_name = Some(name.to_string()));
+    }
+
+    fn show_system_notification(&self, notification: gpui::SystemNotification) {
+        self.inner.with_common(|common| {
+            common
+                .system_notifications
+                .show(common.app_name.as_deref(), notification)
+        });
+    }
+
+    fn dismiss_system_notification(&self, tag: &str) {
+        self.inner
+            .with_common(|common| common.system_notifications.dismiss(tag));
+    }
+
+    fn on_system_notification_response(
+        &self,
+        callback: Box<dyn FnMut(gpui::SystemNotificationResponse)>,
+    ) {
+        self.inner.with_common(|common| {
+            let executor = common.foreground_executor.clone();
+            common.system_notifications.on_response(&executor, callback)
         });
     }
 
@@ -727,6 +835,20 @@ pub(super) fn reveal_path_internal(
 pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {
     let diff = a - b;
     diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) fn new_xkb_context() -> anyhow::Result<xkb::Context> {
+    validate_xkb_context(xkb::Context::new(xkb::CONTEXT_NO_FLAGS))
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn validate_xkb_context(context: xkb::Context) -> anyhow::Result<xkb::Context> {
+    ensure!(
+        !context.get_raw_ptr().is_null(),
+        "libxkbcommon failed to create an XKB context"
+    );
+    Ok(context)
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -1140,6 +1262,23 @@ pub(super) fn compositor_gpu_hint_from_dev_t(dev: u64) -> Option<gpui_wgpu::Comp
 mod tests {
     use super::*;
     use gpui::{Point, px};
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    #[test]
+    fn rejects_null_xkb_context() {
+        let context = unsafe {
+            // libxkbcommon permits unref on null, matching the value returned by Context::new on failure.
+            xkb::Context::from_raw_ptr(std::ptr::null_mut())
+        };
+        let error = validate_xkb_context(context)
+            .err()
+            .expect("null XKB context should be rejected");
+
+        assert_eq!(
+            error.to_string(),
+            "libxkbcommon failed to create an XKB context"
+        );
+    }
 
     #[test]
     fn test_is_within_click_distance() {

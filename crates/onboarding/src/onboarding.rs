@@ -237,6 +237,7 @@ impl Onboarding {
                 Some(Plan::ZedPro) => "pro",
                 Some(Plan::ZedProTrial) => "trial",
                 Some(Plan::ZedBusiness) => "business",
+                Some(Plan::ZedVip) => "vip",
                 Some(Plan::ZedStudent) => "student",
                 Some(Plan::ZedFree) | None => "free",
             }
@@ -333,7 +334,7 @@ impl Render for Onboarding {
                     .child(
                         v_flex()
                             .min_w_0()
-                            .max_w(rems_from_px(780.))
+                            .max_w(rems_from_px(780_f32))
                             .w_full()
                             .mx_auto()
                             .p_12()
@@ -365,7 +366,7 @@ impl Render for Onboarding {
                                         Button::new("finish_setup", "Finish Setup")
                                             .style(ButtonStyle::Filled)
                                             .size(ButtonSize::Medium)
-                                            .width(rems_from_px(200.))
+                                            .width(rems_from_px(200_f32))
                                             .key_binding(KeyBinding::for_action_in(
                                                 &Finish,
                                                 &self.focus_handle,
@@ -629,7 +630,6 @@ impl workspace::SerializableItem for Onboarding {
         workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut ui::Context<Self>,
     ) -> Option<gpui::Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;

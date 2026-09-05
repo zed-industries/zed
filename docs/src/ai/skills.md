@@ -58,7 +58,7 @@ Nothing is written to disk until they explicitly save, so a shared link can neve
 
 By default, the agent picks up skills autonomously. It sees a catalog of every installed skill (name and description) in its system prompt, and calls the `skill` tool when a task matches a skill's description.
 
-When the agent invokes a skill, Zed prompts you to allow or deny it, using the same permission flow as other tools. You can set per-skill defaults in [Tool Permissions](./tool-permissions.md) so you're not prompted for skills you always trust.
+When the agent invokes a skill you created or installed, Zed prompts you to allow or deny it, using the same permission flow as other tools. Skills built into Zed do not prompt. You can set per-skill defaults in [Tool Permissions](./tool-permissions.md) so you're not prompted for skills you always trust.
 
 ### Manual Invocation {#manual-invocation}
 
@@ -98,7 +98,7 @@ my-skill/
 └── assets/           # Optional: templates and static files
 ```
 
-The folder name must match the `name` field in `SKILL.md`.
+By convention, the folder name should match the `name` field in `SKILL.md`.
 
 ### SKILL.md format {#skill-md-format}
 
@@ -119,11 +119,11 @@ Step-by-step instructions for the agent...
 
 #### Frontmatter Fields {#frontmatter-fields}
 
-| Field                      | Required | Description                                                                                  |
-| -------------------------- | -------- | -------------------------------------------------------------------------------------------- |
-| `name`                     | Yes      | Lowercase letters, numbers, and hyphens only. Max 64 characters. Must match the folder name. |
-| `description`              | Yes      | What the skill does and when to use it. Max 1024 characters.                                 |
-| `disable-model-invocation` | No       | Set to `true` to hide from the agent's catalog (slash command only).                         |
+| Field                      | Required | Description                                                                                                                       |
+| -------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                     | Yes      | Lowercase letters, numbers, and hyphens only. Max 64 characters. Should match the folder name.                                    |
+| `description`              | Yes      | What the skill does and when to use it. Keep it under 1024 bytes; skills with longer descriptions still load, but with a warning. |
+| `disable-model-invocation` | No       | Set to `true` to hide from the agent's catalog (invocable via slash command or @-mention only).                                   |
 
 > **Tip:** Write descriptions that help the agent recognize when a skill is relevant. Include specific task types and trigger phrases: "Use when handling PDFs, extracting text, or filling forms" is better than "Helps with PDFs."
 
@@ -196,7 +196,7 @@ Zed Skills apply to the Zed Agent. External Agents and Terminal Threads may have
 
 - **Flat layout only.** Skills must be direct children of the skills root. Nested folders like `~/.agents/skills/group/my-skill/` are not discovered.
 - **50KB catalog budget.** The total size of all skill names and descriptions is capped at 50KB. Skills that don't fit are dropped from the catalog with a warning in the UI. Keep descriptions concise.
-- **No remote registry.** Zed does not fetch skills from URLs or support custom search paths. Skills come from `~/.agents/skills/` and `<worktree>/.agents/skills/` only. Use a symlink if you need to point at another location.
+- **No remote registry.** Zed does not discover or load skills from remote locations at runtime, and custom search paths are not supported. (You can still import a skill once from a GitHub URL — see [Create your own](#create-your-own).) Skills are loaded from `~/.agents/skills/` and `<worktree>/.agents/skills/` only. Use a symlink if you need to point at another location.
 - **Live reload.** Adding, removing, or editing a `SKILL.md` takes effect immediately without restarting your session. Changes to a skill's `name` or `description` invalidate the model's prompt cache for the current session.
 
 ## See also

@@ -1,7 +1,7 @@
+use gpui_util::ResultExt;
 use itertools::Itertools;
 use smallvec::SmallVec;
 use std::rc::Rc;
-use util::ResultExt;
 use uuid::Uuid;
 use windows::{
     Win32::{
@@ -90,6 +90,12 @@ impl WindowsDisplay {
             return None;
         }
         WindowsDisplay::new(Self::display_id_for_monitor(monitor))
+    }
+
+    /// The DPI scale factor of this monitor, independent of whatever monitor
+    /// a not-yet-positioned window currently happens to be on.
+    pub(crate) fn scale_factor(&self) -> f32 {
+        self.scale_factor
     }
 
     /// Check if the center point of given bounds is inside this monitor

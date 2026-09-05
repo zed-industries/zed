@@ -347,15 +347,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         );
     });
 
-    Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window, cx) else {
-            return;
-        };
-        workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(workspace, "'<,'>!", window, cx);
-        })
-    });
-
     Vim::action(editor, cx, |vim, action: &VimSave, window, cx| {
         if let Some(range) = &action.range {
             vim.update_editor(cx, |vim, editor, cx| {
@@ -741,13 +732,11 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
             cx.spawn_in(window, async move |editor, cx| {
                 if let Some(task) = task {
-                    text.push_str(
-                        &task
-                            .await
-                            .log_err()
-                            .map(|loaded_file| loaded_file.text)
-                            .unwrap_or_default(),
-                    );
+                    if let Some(loaded_file) = task.await.log_err() {
+                        for chunk in loaded_file.text.chunks() {
+                            text.push_str(chunk);
+                        }
+                    }
                 }
 
                 if !text.is_empty() && !is_end_of_file {
@@ -780,7 +769,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let keystrokes = action
             .command
             .chars()
-            .map(|c| Keystroke::parse(&c.to_string()).unwrap())
+            .filter_map(|c| Keystroke::parse(&c.to_string()).ok())
             .collect();
         vim.switch_mode(Mode::Normal, true, window, cx);
         if let Some(override_rows) = &action.override_rows {
@@ -844,8 +833,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         {
                             let last_sel = editor.selections.disjoint_anchors_arc();
                             editor.modify_transaction_selection_history(tx_id, |old| {
-                                old.0 = old.0.get(..1).unwrap_or(&[]).into();
-                                old.1 = Some(last_sel);
+                                old.undo = old.undo.get(..1).unwrap_or(&[]).into();
+                                old.redo = Some(last_sel);
                             });
                         }
                     });
@@ -1958,7 +1947,7 @@ pub fn command_interceptor(
                 + if parsed_query.has_bang { "!" } else { "" };
             let space = if parsed_query.has_space { " " } else { "" };
 
-            let string = format!("{}{}{}", &display_string, &space, &parsed_query.args);
+            let string = format!("{}{}{}", display_string, space, parsed_query.args);
             let positions = generate_positions(&string, &(range_prefix.clone() + query));
 
             let results = vec![CommandInterceptItem {
@@ -2375,13 +2364,7 @@ impl Vim {
                 .newest_display(&editor.display_snapshot(cx));
             let text_layout_details = editor.text_layout_details(window, cx);
             let (mut range, _) = motion
-                .range(
-                    &snapshot,
-                    start.clone(),
-                    times,
-                    &text_layout_details,
-                    forced_motion,
-                )
+                .range(&snapshot, start, times, &text_layout_details, forced_motion)
                 .unwrap_or((start.range(), MotionKind::Exclusive));
             if range.start != start.start {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -2423,7 +2406,7 @@ impl Vim {
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
             let range = object
-                .range(&snapshot, start.clone(), around, None)
+                .range(&snapshot, start, around, None)
                 .unwrap_or(start.range());
             if range.start != start.start {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -2549,7 +2532,7 @@ impl ShellExec {
             }
             editor.highlight_rows::<ShellExec>(
                 input_range.clone().unwrap(),
-                cx.theme().status().unreachable_background,
+                |cx| cx.theme().status().unreachable_background,
                 Default::default(),
                 cx,
             );

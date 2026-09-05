@@ -20,8 +20,21 @@ pub const DOT_GIT: &str = ".git";
 pub const GITIGNORE: &str = ".gitignore";
 pub const FSMONITOR_DAEMON: &str = "fsmonitor--daemon";
 pub const LFS_DIR: &str = "lfs";
+pub const OBJECTS_DIR: &str = "objects";
+pub const REFS_DIR: &str = "refs";
+pub const REFTABLE_DIR: &str = "reftable";
+pub const HOOKS_DIR: &str = "hooks";
+pub const LOGS_DIR: &str = "logs";
+pub const LOGS_REF_STASH: &str = "logs/refs/stash";
+pub const REBASE_MERGE_DIR: &str = "rebase-merge";
+pub const REBASE_APPLY_DIR: &str = "rebase-apply";
+pub const SEQUENCER_DIR: &str = "sequencer";
 pub const COMMIT_MESSAGE: &str = "COMMIT_EDITMSG";
-pub const INDEX_LOCK: &str = "index.lock";
+pub const FETCH_HEAD: &str = "FETCH_HEAD";
+pub const ORIG_HEAD: &str = "ORIG_HEAD";
+pub const BISECT_LOG: &str = "BISECT_LOG";
+pub const GC_PID: &str = "gc.pid";
+pub const INFO_DIR: &str = "info";
 pub const REPO_EXCLUDE: &str = "info/exclude";
 
 actions!(
@@ -48,10 +61,21 @@ actions!(
         Blame,
         /// Shows the git history for the selected file, folder, or project.
         FileHistory,
+        /// Opens a permalink for the selected file on its Git hosting provider.
+        OpenFilePermalink,
+        /// Copies a permalink for the selected file on its Git hosting provider.
+        CopyFilePermalink,
+        /// Opens the selected file in the editor without a diff view.
+        ViewFile,
         /// Stages the current file.
         StageFile,
         /// Unstages the current file.
         UnstageFile,
+        // per-section
+        /// Stages every entry in the section containing the selected entry.
+        StageSection,
+        /// Unstages every entry in the section containing the selected entry.
+        UnstageSection,
         // repo-wide
         /// Stages all changes in the repository.
         StageAll,
@@ -59,6 +83,10 @@ actions!(
         UnstageAll,
         /// Stashes all changes in the repository, including untracked files.
         StashAll,
+        /// Stashes tracked changes in the repository, leaving untracked files in place.
+        StashTracked,
+        /// Stashes staged changes in the repository, leaving unstaged changes in place.
+        StashStaged,
         /// Pops the most recent stash.
         StashPop,
         /// Apply the most recent stash.
@@ -85,6 +113,8 @@ actions!(
         FetchFrom,
         /// Creates a new commit with staged changes.
         Commit,
+        /// Runs the next commit with `git commit --no-verify`.
+        SkipHooks,
         /// Amends the last commit with staged changes.
         Amend,
         /// Enable the --signoff option.
@@ -102,6 +132,8 @@ actions!(
         Init,
         /// Opens all modified files in the editor.
         OpenModifiedFiles,
+        /// Opens the current file in a solo diff view.
+        OpenFileDiff,
         /// Clones a repository.
         Clone,
         ViewCommit,
@@ -206,7 +238,7 @@ impl Oid {
         &self.bytes[..self.format.byte_len()]
     }
 
-    pub(crate) fn is_zero(&self) -> bool {
+    pub fn is_zero(&self) -> bool {
         self.as_bytes().iter().all(|byte| *byte == 0)
     }
 

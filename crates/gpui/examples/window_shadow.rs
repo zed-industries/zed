@@ -1,5 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use gpui::{
     App, Bounds, Context, CursorStyle, Decorations, HitboxBehavior, Hsla, MouseButton, Pixels,
     Point, ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
@@ -107,18 +110,19 @@ impl Render for WindowShadow {
                             .when(!tiling.left, |div| div.border_l(border_size))
                             .when(!tiling.right, |div| div.border_r(border_size))
                             .when(!tiling.is_tiled(), |div| {
-                                div.shadow(vec![gpui::BoxShadow {
-                                    color: Hsla {
-                                        h: 0.,
-                                        s: 0.,
-                                        l: 0.,
-                                        a: 0.4,
-                                    },
-                                    blur_radius: shadow_size / 2.,
-                                    spread_radius: px(0.),
-                                    inset: false,
-                                    offset: point(px(0.0), px(0.0)),
-                                }])
+                                div.shadow(vec![
+                                    gpui::BoxShadow::new(
+                                        px(0.),
+                                        px(0.),
+                                        Hsla {
+                                            h: 0.,
+                                            s: 0.,
+                                            l: 0.,
+                                            a: 0.4,
+                                        },
+                                    )
+                                    .blur_radius(shadow_size / 2.),
+                                ])
                             }),
                     })
                     .on_mouse_move(|_e, _, cx| {
@@ -148,18 +152,19 @@ impl Render for WindowShadow {
                                         .w(px(200.0))
                                         .h(px(100.0))
                                         .bg(green())
-                                        .shadow(vec![gpui::BoxShadow {
-                                            color: Hsla {
-                                                h: 0.,
-                                                s: 0.,
-                                                l: 0.,
-                                                a: 1.0,
-                                            },
-                                            blur_radius: px(20.0),
-                                            spread_radius: px(0.0),
-                                            inset: false,
-                                            offset: point(px(0.0), px(0.0)),
-                                        }])
+                                        .shadow(vec![
+                                            gpui::BoxShadow::new(
+                                                px(0.),
+                                                px(0.),
+                                                Hsla {
+                                                    h: 0.,
+                                                    s: 0.,
+                                                    l: 0.,
+                                                    a: 1.0,
+                                                },
+                                            )
+                                            .blur_radius(px(20.0)),
+                                        ])
                                         .map(|div| match decorations {
                                             Decorations::Server => div,
                                             Decorations::Client { .. } => div
@@ -209,6 +214,9 @@ fn resize_edge(pos: Point<Pixels>, shadow_size: Pixels, size: Size<Pixels>) -> O
 
 fn run_example() {
     application().run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         let bounds = Bounds::centered(None, size(px(600.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {

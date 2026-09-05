@@ -339,11 +339,13 @@ impl AnyProtoClient {
     pub fn send_lsp_response<T: LspRequestMessage>(
         &self,
         project_id: u64,
+        peer_id: proto::PeerId,
         lsp_request_id: LspRequestId,
         server_responses: HashMap<u64, T::Response>,
     ) -> Result<()> {
         self.send(proto::LspQueryResponse {
             project_id,
+            peer_id: Some(peer_id),
             lsp_request_id: lsp_request_id.0,
             responses: server_responses
                 .into_iter()
@@ -396,10 +398,16 @@ impl AnyProtoClient {
                             Response::GetDefinitionResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
+                            Response::GetEditPredictionDefinitionResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
                             Response::GetDeclarationResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetTypeDefinitionResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetEditPredictionTypeDefinitionResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetImplementationResponse(response) => {
@@ -418,6 +426,15 @@ impl AnyProtoClient {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetDocumentLinksResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::PrepareCallHierarchyResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetIncomingCallsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetOutgoingCallsResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                         };

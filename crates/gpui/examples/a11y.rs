@@ -1,3 +1,5 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 //! Accessibility (AccessKit) demo app.
 //!
 //! Run with: `cargo run -p gpui --example a11y`
@@ -27,6 +29,9 @@
 //!     - "1. Write code"
 //!     - "2. Run tests"
 //!     - "3. Ship it"
+
+#[path = "example_support/fonts.rs"]
+mod example_support;
 
 use gpui::{
     AccessibleAction, App, Bounds, Context, FocusHandle, KeyBinding, Role, SharedString, Toggled,
@@ -224,6 +229,9 @@ impl Render for A11yDemo {
 
 fn run_example() {
     application().run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         cx.bind_keys([
             KeyBinding::new("tab", Tab, None),
             KeyBinding::new("shift-tab", TabPrev, None),
