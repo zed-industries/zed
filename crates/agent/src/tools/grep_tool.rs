@@ -199,7 +199,11 @@ impl AgentTool for GrepTool {
                         has_more_matches = true;
                         break;
                     }
-                    Some(SearchResult::WaitingForScan | SearchResult::Searching) => continue,
+                    Some(
+                        SearchResult::WaitingForScan
+                        | SearchResult::Searching
+                        | SearchResult::PartialIndex { .. },
+                    ) => continue,
                     None => break,
                 };
                 if ranges.is_empty() {

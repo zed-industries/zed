@@ -1268,7 +1268,9 @@ async fn stream_results_to_picker(
                 SearchResult::LimitReached => {
                     limit_reached = true;
                 }
-                SearchResult::WaitingForScan | SearchResult::Searching => {}
+                SearchResult::WaitingForScan
+                | SearchResult::Searching
+                | SearchResult::PartialIndex { .. } => {}
             }
         }
 

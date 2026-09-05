@@ -332,7 +332,9 @@ async fn do_search_and_assert(
             match response {
                 SearchResult::Buffer { buffer, .. } => break buffer,
                 SearchResult::LimitReached => panic!("incorrect result"),
-                SearchResult::WaitingForScan | SearchResult::Searching => continue,
+                SearchResult::WaitingForScan
+                | SearchResult::Searching
+                | SearchResult::PartialIndex { .. } => continue,
             }
         };
         buffer.update(&mut cx, |buffer, cx| {
@@ -739,7 +741,9 @@ async fn test_remote_project_search_reports_untitled_buffer_once(
         match result {
             SearchResult::Buffer { buffer, .. } => result_buffers.push(buffer),
             SearchResult::LimitReached => panic!("unexpected limit"),
-            SearchResult::WaitingForScan | SearchResult::Searching => {}
+            SearchResult::WaitingForScan
+            | SearchResult::Searching
+            | SearchResult::PartialIndex { .. } => {}
         }
     }
     assert_eq!(
