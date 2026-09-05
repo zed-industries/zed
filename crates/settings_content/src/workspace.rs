@@ -912,6 +912,11 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub git_status_indicator: Option<bool>,
+    /// Whether to save and restore the collapsed state of worktree roots and
+    /// directories in the project panel across sessions.
+    ///
+    /// Default: true
+    pub restore_collapse_state: Option<bool>,
 }
 
 /// Controls the width of the git diff hunk indicators in the gutter.

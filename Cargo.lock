@@ -13965,6 +13965,7 @@ dependencies = [
  "client",
  "collections",
  "criterion",
+ "db",
  "editor",
  "file_icons",
  "fs",

@@ -5597,6 +5597,29 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Restore Collapse State",
+                description: "Whether to save and restore the collapsed state of worktree roots and directories in the project panel across sessions.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("project_panel.restore_collapse_state"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .restore_collapse_state
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .restore_collapse_state = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Starts Open",
                 description: "Whether the project panel should open on startup.",
                 field: Box::new(SettingField {

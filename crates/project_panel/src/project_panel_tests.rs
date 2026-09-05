@@ -6,7 +6,7 @@ use git::{
     Oid,
     repository::{InitialGraphCommitData, LogSource, RepoPath},
 };
-use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
+use gpui::{Empty, Entity, Task, TestAppContext, VisualTestContext};
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, LanguageServerId,
     PointUtf16, Unclipped,
@@ -11407,8 +11407,23 @@ async fn test_focus_follows_mouse_into_blank_area(cx: &mut gpui::TestAppContext)
     });
 }
 
+/// Awaits the panel's debounced collapse-state save. `run_until_parked` does
+/// not wait on the database's writer thread, so reading the saved state
+/// straight after it can race the write.
+async fn await_collapse_state_save(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) {
+    panel
+        .update(cx, |panel, _| {
+            std::mem::replace(&mut panel._save_collapse_state_task, Task::ready(()))
+        })
+        .await;
+}
+
 pub(crate) fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
+        // Without a per-App database these tests share one process-wide
+        // fallback connection, where one test's `save_workspace` can cascade
+        // another's collapse-state rows away.
+        cx.set_global(db::AppDatabase::test_new());
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
@@ -11430,6 +11445,10 @@ pub(crate) fn init_test(cx: &mut TestAppContext) {
 
 fn init_test_with_editor(cx: &mut TestAppContext) {
     cx.update(|cx| {
+        // Without a per-App database these tests share one process-wide
+        // fallback connection, where one test's `save_workspace` can cascade
+        // another's collapse-state rows away.
+        cx.set_global(db::AppDatabase::test_new());
         let app_state = AppState::test(cx);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
@@ -11452,6 +11471,10 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
 
 fn init_test_with_git_ui(cx: &mut TestAppContext) {
     cx.update(|cx| {
+        // Without a per-App database these tests share one process-wide
+        // fallback connection, where one test's `save_workspace` can cascade
+        // another's collapse-state rows away.
+        cx.set_global(db::AppDatabase::test_new());
         let app_state = AppState::test(cx);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
@@ -11966,4 +11989,889 @@ async fn test_file_rows_reserve_the_chevron_slot(cx: &mut gpui::TestAppContext) 
             "{indicator:?}: a directory draws its own chevron, so it reserves nothing"
         );
     }
+}
+#[gpui::test]
+async fn test_restores_saved_collapse_state(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root1"),
+        json!({
+            "a": {
+                "b": { "f.txt": "" },
+                "c.txt": "",
+            },
+            "d": { "g.txt": "" },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/root2"),
+        json!({
+            "x": { "y.txt": "" },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/root3"),
+        json!({
+            "e": {},
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    // Seed the database with: root1 expanded (root and "a"); root3 collapsed
+    // (empty expanded set means even the root entry is collapsed). root2 has
+    // no saved entry, so it should fall back to the default-expanded baseline.
+    let panel_db = cx.update(|cx| crate::persistence::ProjectPanelDb::global(cx));
+    let mut entries: collections::HashMap<Arc<Path>, Vec<String>> = Default::default();
+    entries.insert(
+        Arc::from(Path::new(path!("/root1"))),
+        vec!["".to_string(), "a".to_string()],
+    );
+    entries.insert(Arc::from(Path::new(path!("/root3"))), vec![]);
+    panel_db
+        .save_expanded_entries(workspace_id, entries)
+        .await
+        .unwrap();
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            path!("/root1").as_ref(),
+            path!("/root2").as_ref(),
+            path!("/root3").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..30, cx),
+        &[
+            "v root1",
+            "    v a",
+            "        > b",
+            "          c.txt",
+            "    > d",
+            "v root2",
+            "    > x",
+            "> root3",
+        ],
+        "root1 should restore root+a expanded; root2 should fall back to default-expanded root; root3 should restore its collapsed root",
+    );
+}
+
+#[gpui::test]
+async fn test_saves_collapse_state_when_toggled(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {
+                "b": {},
+            },
+            "c": {},
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // Expand "a", collapse worktree root.
+    toggle_expand_dir(&panel, "root/a", cx);
+    let root_entry = find_project_entry(&panel, "root", cx).expect("root entry exists");
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_expanded(root_entry, window, cx);
+    });
+    cx.run_until_parked();
+
+    // Drive the debounced save to completion.
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
+
+    let panel_db = cx.update(|_, cx| crate::persistence::ProjectPanelDb::global(cx));
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut saved_paths = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    saved_paths.sort();
+    assert_eq!(
+        saved_paths,
+        vec!["a".to_string()],
+        "Only the explicitly expanded directory should remain in the saved state",
+    );
+}
+
+#[gpui::test]
+async fn test_skips_persistence_when_disabled(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .restore_collapse_state = Some(false);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {},
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    // Pre-seed the DB so we can verify loading is suppressed.
+    let panel_db = cx.update(|cx| crate::persistence::ProjectPanelDb::global(cx));
+    let mut entries: collections::HashMap<Arc<Path>, Vec<String>> = Default::default();
+    entries.insert(Arc::from(Path::new(path!("/root"))), vec!["a".to_string()]);
+    panel_db
+        .save_expanded_entries(workspace_id, entries.clone())
+        .await
+        .unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // With the setting disabled, the saved expanded state for "a" should not
+    // be applied — only the default-expanded root entry is visible.
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > a"]
+    );
+
+    // Toggling state should also not overwrite the existing saved state.
+    toggle_expand_dir(&panel, "root/a", cx);
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
+
+    let after = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut after_paths = after
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    after_paths.sort();
+    assert_eq!(
+        after_paths,
+        vec!["a".to_string()],
+        "Saved state should remain unchanged when restore_collapse_state is disabled",
+    );
+}
+
+#[gpui::test]
+async fn test_workspace_flush_saves_collapse_state_inside_debounce(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/root"), json!({ "a": { "b": {} } }))
+        .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_panel(panel.clone(), window, cx);
+    });
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/a", cx);
+    cx.run_until_parked();
+
+    // Deliberately no `advance_clock`: the toggle is still inside the save
+    // debounce, so only the flush can persist it.
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.flush_serialization(window, cx)
+        })
+        .await;
+
+    let panel_db = cx.update(|_, cx| crate::persistence::ProjectPanelDb::global(cx));
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut saved_paths = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    saved_paths.sort();
+    assert_eq!(
+        saved_paths,
+        vec!["".to_string(), "a".to_string()],
+        "closing the workspace inside the debounce window must still persist the toggle",
+    );
+}
+
+#[gpui::test]
+async fn test_collapse_state_save_follows_rename(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "old_name": { "child.txt": "" },
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/old_name", cx);
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
+
+    let panel_db = cx.update(|_, cx| crate::persistence::ProjectPanelDb::global(cx));
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut before = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    before.sort();
+    assert_eq!(
+        before,
+        vec!["".to_string(), "old_name".to_string()],
+        "old_name should be in the saved expanded set before rename",
+    );
+
+    select_path(&panel, "root/old_name", cx);
+    panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    let confirm = panel.update_in(cx, |panel, window, cx| {
+        panel
+            .filename_editor
+            .update(cx, |editor, cx| editor.set_text("new_name", window, cx));
+        panel.confirm_edit(true, window, cx).unwrap()
+    });
+    confirm.await.unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
+
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut after = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    after.sort();
+    assert_eq!(
+        after,
+        vec!["".to_string(), "new_name".to_string()],
+        "rename should update the persisted path even though the entry id is unchanged",
+    );
+}
+
+#[gpui::test]
+async fn test_restores_saved_collapse_state_inside_gitignored_dir(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::default());
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            ".gitignore": "/ignored\n",
+            "ignored": {
+                "nested": {
+                    "deep.txt": "",
+                },
+            },
+            "visible": {
+                "g.txt": "",
+            },
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let panel_db = cx.update(|cx| crate::persistence::ProjectPanelDb::global(cx));
+    let mut entries: collections::HashMap<Arc<Path>, Vec<String>> = Default::default();
+    entries.insert(
+        Arc::from(Path::new(path!("/root"))),
+        vec![
+            "".to_string(),
+            "ignored".to_string(),
+            "ignored/nested".to_string(),
+        ],
+    );
+    panel_db
+        .save_expanded_entries(workspace_id, entries)
+        .await
+        .unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // The contents of a gitignored directory are never scanned until
+    // something asks for them, so restoring this state is only possible if
+    // the panel opts into loading `ignored` and then `ignored/nested`.
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    > .git",
+            "    v ignored",
+            "        v nested",
+            "              deep.txt",
+            "    > visible",
+            "      .gitignore",
+        ],
+        "expansions saved inside a gitignored directory should be restored",
+    );
+
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
+
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut saved_paths = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    saved_paths.sort();
+    assert_eq!(
+        saved_paths,
+        vec![
+            "".to_string(),
+            "ignored".to_string(),
+            "ignored/nested".to_string()
+        ],
+        "restoring must not save a truncated set back over the state it just read",
+    );
+}
+
+#[gpui::test]
+async fn test_pending_path_survives_until_the_initial_scan_completes(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/root"), json!({ "a": {} })).await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let (snapshot, abs_path) = project.read_with(cx, |project, cx| {
+        let worktree = project.visible_worktrees(cx).next().unwrap();
+        let worktree = worktree.read(cx);
+        (worktree.snapshot(), worktree.abs_path())
+    });
+
+    panel.update(cx, |panel, _| {
+        panel
+            .state
+            .pending_expanded_paths
+            .insert(abs_path.clone(), vec!["does/not/exist".to_string()]);
+        let mut dirs_to_load = Vec::new();
+
+        ProjectPanel::resolve_pending_expanded_paths(
+            &mut panel.state,
+            &snapshot,
+            false,
+            &mut dirs_to_load,
+        );
+        assert_eq!(
+            panel.state.pending_expanded_paths.get(&abs_path),
+            Some(&vec!["does/not/exist".to_string()]),
+            "a path that doesn't resolve yet must stay pending while the worktree could still scan it into existence",
+        );
+
+        ProjectPanel::resolve_pending_expanded_paths(
+            &mut panel.state,
+            &snapshot,
+            true,
+            &mut dirs_to_load,
+        );
+        assert!(
+            !panel.state.pending_expanded_paths.contains_key(&abs_path),
+            "once the scan is complete, a path that still doesn't resolve no longer exists",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_save_payload_folds_in_unresolved_pending_paths(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/root"), json!({ "a": {} })).await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let abs_path = project.read_with(cx, |project, cx| {
+        project
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .abs_path()
+    });
+
+    panel.update(cx, |panel, cx| {
+        panel
+            .state
+            .pending_expanded_paths
+            .insert(abs_path.clone(), vec!["ghost".to_string()]);
+        let payload = panel
+            .current_expanded_paths(cx)
+            .expect("a worktree has been seen");
+        assert!(
+            payload
+                .get(&abs_path)
+                .is_some_and(|paths| paths.contains(&"ghost".to_string())),
+            "a path still waiting to resolve must stay in the save payload, or the save writes back less than it read",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_restores_expansion_whose_ignored_ancestor_is_collapsed(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::default());
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            ".gitignore": "/ignored\n",
+            "ignored": {
+                "nested": { "deep.txt": "" },
+            },
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    // `ignored` itself is collapsed, so nothing resolves it directly. Only the
+    // saved path underneath it can ask for the scan that makes it exist.
+    let panel_db = cx.update(|cx| crate::persistence::ProjectPanelDb::global(cx));
+    let mut entries: collections::HashMap<Arc<Path>, Vec<String>> = Default::default();
+    entries.insert(
+        Arc::from(Path::new(path!("/root"))),
+        vec!["".to_string(), "ignored/nested".to_string()],
+    );
+    panel_db
+        .save_expanded_entries(workspace_id, entries)
+        .await
+        .unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let nested = find_project_entry(&panel, "root/ignored/nested", cx)
+        .expect("the ignored directory should have been scanned on the saved path's behalf");
+    panel.update(cx, |panel, cx| {
+        let worktree_id = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .id();
+        assert!(
+            panel.state.expanded_dir_ids[&worktree_id].contains(&nested),
+            "the saved expansion should have resolved once its ancestor was loaded",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_failed_load_does_not_overwrite_saved_state(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/root"), json!({ "a": { "b": {} } }))
+        .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let panel_db = cx.update(|cx| crate::persistence::ProjectPanelDb::global(cx));
+    let mut entries: collections::HashMap<Arc<Path>, Vec<String>> = Default::default();
+    entries.insert(
+        Arc::from(Path::new(path!("/root"))),
+        vec!["".to_string(), "a".to_string()],
+    );
+    panel_db
+        .save_expanded_entries(workspace_id, entries)
+        .await
+        .unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // Stand in for a database read that failed at construction: whatever is
+    // in memory is not what's on disk, so nothing may be written back.
+    panel.update(cx, |panel, _| {
+        panel.collapse_state_load_failed = true;
+    });
+
+    toggle_expand_dir(&panel, "root/a", cx);
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
+
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut saved_paths = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    saved_paths.sort();
+    assert_eq!(
+        saved_paths,
+        vec!["".to_string(), "a".to_string()],
+        "a save after a failed load would overwrite rows we were never able to read",
+    );
+}
+
+#[gpui::test]
+async fn test_failed_write_is_retried_rather_than_cached(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/root"), json!({ "a": { "b": {} } }))
+        .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/a", cx);
+    cx.run_until_parked();
+
+    // Point the save at a workspace row that doesn't exist so the write fails
+    // on the foreign key, then let it run.
+    panel.update(cx, |panel, _| {
+        panel.collapse_state_workspace_id = Some(workspace::WorkspaceId::from_i64(i64::MAX));
+    });
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
+
+    // Nothing about the panel's state changed, so a cache updated by the
+    // failed write would make this second attempt a no-op.
+    panel.update(cx, |panel, _| {
+        panel.collapse_state_workspace_id = Some(workspace_id);
+    });
+    panel
+        .update(cx, |panel, cx| panel.flush_collapse_state(cx))
+        .await;
+
+    let panel_db = cx.update(|_, cx| crate::persistence::ProjectPanelDb::global(cx));
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut saved_paths = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    saved_paths.sort();
+    assert_eq!(
+        saved_paths,
+        vec!["".to_string(), "a".to_string()],
+        "a write that failed must be retried, not recorded as persisted",
+    );
+}
+
+#[gpui::test]
+async fn test_collapse_all_drops_unresolved_pending_paths(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::default());
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            ".gitignore": "/ignored\n",
+            "ignored": {
+                "nested": { "deep.txt": "" },
+            },
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let panel_db = cx.update(|cx| crate::persistence::ProjectPanelDb::global(cx));
+    let mut entries: collections::HashMap<Arc<Path>, Vec<String>> = Default::default();
+    entries.insert(
+        Arc::from(Path::new(path!("/root"))),
+        vec![
+            "".to_string(),
+            "ignored".to_string(),
+            "ignored/nested".to_string(),
+        ],
+    );
+    panel_db
+        .save_expanded_entries(workspace_id, entries)
+        .await
+        .unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+
+    // Collapse everything while `ignored` is still being loaded on behalf of
+    // the saved paths, so they are still pending rather than resolved.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &["v root", "    > .git", "    > ignored", "      .gitignore"],
+        "collapse all must not be undone by saved paths that were still pending",
+    );
+}
+
+#[gpui::test]
+async fn test_collapse_state_is_not_truncated_while_worktree_is_scanning(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root1"),
+        json!({
+            "a": { "b": { "c.txt": "" } },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/root2"),
+        json!({
+            "x": { "y": { "z.txt": "" } },
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let panel_db = cx.update(|cx| crate::persistence::ProjectPanelDb::global(cx));
+    let mut entries: collections::HashMap<Arc<Path>, Vec<String>> = Default::default();
+    entries.insert(
+        Arc::from(Path::new(path!("/root1"))),
+        vec!["".to_string(), "a".to_string(), "a/b".to_string()],
+    );
+    entries.insert(
+        Arc::from(Path::new(path!("/root2"))),
+        vec!["".to_string(), "x".to_string(), "x/y".to_string()],
+    );
+    panel_db
+        .save_expanded_entries(workspace_id, entries)
+        .await
+        .unwrap();
+
+    // Only root1 is present when the panel is built. root2 is added without
+    // awaiting its scan, so the panel sees it while its entries are still
+    // being filled in - the situation `Project::test` normally hides by
+    // waiting for the scan to finish before the panel exists.
+    let project = Project::test(fs.clone(), [path!("/root1").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let _worktree = project.update(cx, |project, cx| {
+        project.create_worktree(path!("/root2"), true, cx)
+    });
+
+    // Drive the panel far enough to update and save, but deliberately not far
+    // enough to guarantee root2 has finished scanning.
+    for _ in 0..20 {
+        cx.executor().tick();
+    }
+    cx.executor().advance_clock(Duration::from_millis(200));
+    for _ in 0..20 {
+        cx.executor().tick();
+    }
+
+    await_collapse_state_save(&panel, cx).await;
+
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut saved_paths = saved
+        .get(Path::new(path!("/root2")))
+        .cloned()
+        .unwrap_or_default();
+    saved_paths.sort();
+    assert_eq!(
+        saved_paths,
+        vec!["".to_string(), "x".to_string(), "x/y".to_string()],
+        "a save while the worktree is still scanning must not drop paths that simply haven't been scanned yet",
+    );
+
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "    v a",
+            "        v b",
+            "              c.txt",
+            "v root2",
+            "    v x",
+            "        v y",
+            "              z.txt",
+        ],
+        "both worktrees should end up fully restored",
+    );
+
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
+
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut saved_paths = saved
+        .get(Path::new(path!("/root2")))
+        .cloned()
+        .unwrap_or_default();
+    saved_paths.sort();
+    assert_eq!(
+        saved_paths,
+        vec!["".to_string(), "x".to_string(), "x/y".to_string()],
+        "the restored state should still be intact once scanning completes",
+    );
 }

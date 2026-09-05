@@ -7508,7 +7508,7 @@ impl Workspace {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn set_database_id(&mut self, id: WorkspaceId) {
+    pub fn set_database_id(&mut self, id: WorkspaceId) {
         self.database_id = Some(id);
     }
 
@@ -7552,9 +7552,9 @@ impl Workspace {
         })
     }
 
-    /// Bypass the serialization throttles and write workspace and item state
-    /// to the DB immediately. Returns a task the caller can await to ensure the
-    /// writes complete before the process exits.
+    /// Bypass the serialization throttles and write workspace, item and panel
+    /// state to the DB immediately. Returns a task the caller can await to
+    /// ensure the writes complete before the process exits.
     pub fn flush_serialization(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         self._schedule_serialize_workspace.take();
         self._serialize_workspace_task.take();
@@ -7580,6 +7580,16 @@ impl Workspace {
                 })
             })
             .collect::<Vec<_>>();
+
+        let mut panels: Vec<Arc<dyn PanelHandle>> = Vec::new();
+        for dock in self.all_docks() {
+            panels.extend(dock.read(cx).panels().cloned());
+        }
+        let panel_tasks: Vec<_> = panels
+            .into_iter()
+            .map(|panel| panel.flush_persistence(window, cx))
+            .collect();
+
         let bounds_task = self.save_window_bounds(window, cx);
         let serialize_task = self.serialize_workspace_internal(window, cx);
         cx.background_spawn(async move {
@@ -7588,6 +7598,7 @@ impl Workspace {
             for result in futures::future::join_all(item_tasks).await {
                 result.log_err();
             }
+            futures::future::join_all(panel_tasks).await;
         })
     }
 
