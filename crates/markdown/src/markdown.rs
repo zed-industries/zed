@@ -10,7 +10,7 @@ use gpui::EdgesRefinement;
 use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
 use language::LanguageName;
-use latex_render::{LatexColor, LatexRenderer, MathPlacement, latex_formula_element};
+use latex_render::{LatexRenderer, MathPlacement, latex_formula_element};
 
 use log::Level;
 use mermaid::{
@@ -495,7 +495,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
-    latex_renderer: Arc<LatexRenderer>,
+    latex_renderer: Option<Arc<LatexRenderer>>,
     _mermaid_theme_subscription: Option<Subscription>,
     /// Per-diagram view state (current tab, zoom, scroll position, and pending
     /// debounced re-raster) keyed by source offset. Distinct from
@@ -670,10 +670,13 @@ impl Markdown {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let latex_renderer = Arc::new(LatexRenderer::for_view(
-            cx.background_executor().clone(),
-            cx,
-        ));
+        // The renderer owns a task and a channel that views without math never use.
+        let latex_renderer = options.render_math.then(|| {
+            Arc::new(LatexRenderer::for_view(
+                cx.background_executor().clone(),
+                cx,
+            ))
+        });
 
         let theme_subscription = if options.render_mermaid_diagrams {
             Some(
@@ -1794,16 +1797,8 @@ impl MarkdownElement {
         } else {
             base_font_size
         };
-        let rgba = gpui::Rgba::from(text_style.color);
-        let color = LatexColor::new(
-            (rgba.r.clamp(0.0, 1.0) * 255.0) as u8,
-            (rgba.g.clamp(0.0, 1.0) * 255.0) as u8,
-            (rgba.b.clamp(0.0, 1.0) * 255.0) as u8,
-            (rgba.a.clamp(0.0, 1.0) * 255.0) as u8,
-        );
 
-        let math_element: AnyElement = match latex_renderer.render(content.as_ref(), color, display)
-        {
+        let math_element: AnyElement = match latex_renderer.render(content.as_ref(), display) {
             Some(Ok(formula)) => {
                 // The element resolves font size, line height, baseline, and
                 // color from the inherited text style during its own layout
@@ -1841,12 +1836,12 @@ impl MarkdownElement {
                 .my_2()
                 .child(math_element)
                 .into_any_element();
-            builder.push_sourced_element(range, block);
+            builder.push_sourced_block_element(range, block);
         } else {
-            // Match the regular image path: paragraph becomes flex_wrap so text and the
-            // math element share a line, with `items_baseline` aligning the element's
-            // bottom (which the renderer sets to the formula baseline) with text.
+            // Flex treats an item's bottom as its baseline, and the renderer puts
+            // the formula baseline there.
             builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_baseline());
+            builder.use_flex_line_breaks();
             builder.push_sourced_element(range, math_element);
         }
     }
@@ -2594,7 +2589,6 @@ impl Element for MarkdownElement {
             active_root_block,
             render_mermaid_diagrams,
             mermaid_state,
-            render_math,
             latex_renderer,
         ) = {
             let markdown = self.markdown.read(cx);
@@ -2604,7 +2598,6 @@ impl Element for MarkdownElement {
                 markdown.active_root_block,
                 markdown.options.render_mermaid_diagrams,
                 markdown.mermaid_state.clone(),
-                markdown.options.render_math,
                 markdown.latex_renderer.clone(),
             )
         };
@@ -3296,13 +3289,13 @@ impl Element for MarkdownElement {
                     builder.pop_text_style();
                 }
                 MarkdownEvent::Math { display, content } => {
-                    if render_math {
+                    if let Some(latex_renderer) = &latex_renderer {
                         self.push_markdown_math(
                             &mut builder,
                             range.clone(),
                             content,
                             *display,
-                            &latex_renderer,
+                            latex_renderer,
                             window,
                         );
                     } else {
@@ -3908,8 +3901,15 @@ impl MarkdownElementBuilder {
 
     fn push_image_child(&mut self, child: impl IntoElement) {
         self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
-        self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
+        self.use_flex_line_breaks();
         self.append_child(child.into_any_element());
+    }
+
+    /// Flex-wrap needs spacer children for line breaks, not newlines in a run.
+    fn use_flex_line_breaks(&mut self) {
+        if let Some(entry) = self.div_stack.last_mut() {
+            entry.line_break_mode = LineBreakMode::FlexWrap;
+        }
     }
 
     fn push_line_break(&mut self, source_range: Range<usize>) {
@@ -3988,6 +3988,23 @@ impl MarkdownElementBuilder {
         self.append_child(
             div()
                 .relative()
+                .child(anchor)
+                .child(element.into())
+                .into_any_element(),
+        );
+    }
+
+    fn push_sourced_block_element(
+        &mut self,
+        source_range: Range<usize>,
+        element: impl Into<AnyElement>,
+    ) {
+        self.flush_text();
+        let anchor = self.render_source_anchor(source_range);
+        self.append_child(
+            div()
+                .relative()
+                .w_full()
                 .child(anchor)
                 .child(element.into())
                 .into_any_element(),
@@ -4178,25 +4195,46 @@ impl MarkdownElementBuilder {
     }
 
     fn flush_text(&mut self) {
-        let text_align = self.text_style().text_align;
         let line = mem::take(&mut self.pending_line);
         if line.text.is_empty() {
             return;
         }
+        // Flex breaks lines between items, so a whole run was unbreakable and
+        // text after a formula dropped to the next line instead of flowing.
+        if self.uses_flex_line_breaks() {
+            let chunks = word_chunks(&line.text);
+            let last_chunk = chunks.len().saturating_sub(1);
+            for (index, chunk) in chunks.into_iter().enumerate() {
+                let chunk_line = slice_pending_line(&line, chunk);
+                let source_end = (index < last_chunk)
+                    .then(|| interpolated_source_end(&chunk_line))
+                    .flatten();
+                self.emit_line(chunk_line, source_end);
+            }
+        } else {
+            self.emit_line(line, None);
+        }
+    }
 
+    fn emit_line(&mut self, line: PendingLine, source_end: Option<usize>) {
+        if line.text.is_empty() {
+            return;
+        }
+        let text_align = self.text_style().text_align;
+        let source_end = source_end.unwrap_or(self.current_source_index);
         let highlights = line
             .source_mappings
             .first()
             .map(|first_mapping| {
                 self.highlights
-                    .highlights_for_line(first_mapping.source_index..self.current_source_index)
+                    .highlights_for_line(first_mapping.source_index..source_end)
             })
             .unwrap_or_default();
         let text = StyledText::new(line.text).with_runs(line.runs);
         let rendered_line = Rc::new(RenderedLine {
             layout: text.layout().clone(),
             source_mappings: line.source_mappings,
-            source_end: self.current_source_index,
+            source_end,
             language: self.code_block_stack.last().cloned().flatten(),
             text_align,
             highlights,
@@ -4645,6 +4683,87 @@ impl RenderedLine {
 struct SourceMapping {
     rendered_index: usize,
     source_index: usize,
+}
+
+fn word_chunks(text: &str) -> Vec<Range<usize>> {
+    let bytes = text.as_bytes();
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut index = 0;
+    // ASCII spaces never sit inside a multi-byte character.
+    while index < bytes.len() {
+        while index < bytes.len() && bytes[index] != b' ' {
+            index += 1;
+        }
+        while index < bytes.len() && bytes[index] == b' ' {
+            index += 1;
+        }
+        chunks.push(start..index);
+        start = index;
+    }
+    chunks
+}
+
+fn interpolated_source_end(line: &PendingLine) -> Option<usize> {
+    line.source_mappings
+        .last()
+        .map(|last| last.source_index + (line.text.len() - last.rendered_index))
+}
+
+fn slice_pending_line(line: &PendingLine, chunk: Range<usize>) -> PendingLine {
+    let mut source_mappings = Vec::new();
+    if let Some(source_index) = source_index_for_rendered(&line.source_mappings, chunk.start) {
+        source_mappings.push(SourceMapping {
+            rendered_index: 0,
+            source_index,
+        });
+    }
+    source_mappings.extend(
+        line.source_mappings
+            .iter()
+            .filter(|mapping| {
+                mapping.rendered_index > chunk.start && mapping.rendered_index < chunk.end
+            })
+            .map(|mapping| SourceMapping {
+                rendered_index: mapping.rendered_index - chunk.start,
+                source_index: mapping.source_index,
+            }),
+    );
+
+    let code_chips = line
+        .code_chips
+        .iter()
+        .filter_map(|(range, color)| {
+            let start = range.start.max(chunk.start);
+            let end = range.end.min(chunk.end);
+            (start < end).then(|| (start - chunk.start..end - chunk.start, *color))
+        })
+        .collect();
+
+    PendingLine {
+        text: line.text[chunk.clone()].to_string(),
+        runs: slice_runs(&line.runs, chunk),
+        source_mappings,
+        code_chips,
+    }
+}
+
+fn slice_runs(runs: &[TextRun], range: Range<usize>) -> Vec<TextRun> {
+    let mut sliced = Vec::new();
+    let mut offset = 0;
+    for run in runs {
+        let run_start = offset;
+        offset += run.len;
+        let start = run_start.max(range.start);
+        let end = offset.min(range.end);
+        if start >= end {
+            continue;
+        }
+        let mut piece = run.clone();
+        piece.len = end - start;
+        sliced.push(piece);
+    }
+    sliced
 }
 
 fn source_range_for_rendered(
@@ -5568,6 +5687,38 @@ mod tests {
         assert_eq!(
             text, "caption",
             "a soft break after an image should not insert leading whitespace before caption text; got: {text:?}"
+        );
+    }
+
+    #[test]
+    fn word_chunks_keep_trailing_spaces_with_their_word() {
+        let text = "  a bb  ccc";
+        let chunks = word_chunks(text);
+        let pieces: Vec<&str> = chunks.iter().map(|range| &text[range.clone()]).collect();
+        assert_eq!(pieces, vec!["  ", "a ", "bb  ", "ccc"]);
+        assert_eq!(pieces.concat(), text);
+    }
+
+    #[gpui::test]
+    fn test_flex_paragraph_splits_text_into_words(cx: &mut TestAppContext) {
+        // A long run in a flex paragraph drops to the next line whole.
+        let image = test_image(cx);
+        let rendered = render_markdown_with_image_resolver(
+            "![alt](https://example.com/a.png) and thus there exists a prefix-free code",
+            MarkdownOptions::default(),
+            move |_, _| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let words: Vec<_> = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect();
+        assert!(words.len() > 4, "expected a child per word, got {words:?}");
+        assert_eq!(
+            words.concat(),
+            " and thus there exists a prefix-free code",
+            "splitting must not drop or reorder text"
         );
     }
 

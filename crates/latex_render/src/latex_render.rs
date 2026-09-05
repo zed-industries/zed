@@ -17,7 +17,6 @@ use ratex_types::path_command::PathCommand;
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
 
-// Prettier rewrites `_` inside math as `\_`; sanitize back so subscripts work.
 static UNDERSCORE_ESCAPE: &str = r"\_";
 
 // Glyph outline coordinates come from ab_glyph in font design units. Most KaTeX
@@ -181,27 +180,6 @@ const KATEX_FACES: &[KatexFace] = &[
     },
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct LatexColor {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-    pub a: u8,
-}
-
-impl LatexColor {
-    pub const BLACK: Self = Self {
-        r: 0,
-        g: 0,
-        b: 0,
-        a: 255,
-    };
-
-    pub fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
-        Self { r, g, b, a }
-    }
-}
-
 /// Logical-em dimensions of a rendered formula. Multiply by the target font size to get pixel dimensions.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderedFormula {
@@ -217,21 +195,66 @@ pub struct PreparedFormula {
     pub metrics: RenderedFormula,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct CacheKey {
-    source: String,
-    color: LatexColor,
-    display: bool,
-}
-
 #[derive(Clone)]
-enum CacheEntry {
+enum CacheState {
     Pending,
     Ready(Result<PreparedFormula, Arc<String>>),
 }
 
+struct CacheEntry {
+    state: CacheState,
+    last_used: u64,
+}
+
+// Editing leaves an entry per prefix typed. Visible formulas are re-requested
+// every frame, so their timestamps keep them out of the evicted set.
+const MAX_CACHE_ENTRIES: usize = 512;
+const CACHE_EVICTION_BATCH: usize = MAX_CACHE_ENTRIES / 4;
+
+#[derive(Default)]
+struct FormulaCache {
+    inline: HashMap<String, CacheEntry>,
+    display: HashMap<String, CacheEntry>,
+    clock: u64,
+}
+
+impl FormulaCache {
+    fn entries(&mut self, display: bool) -> &mut HashMap<String, CacheEntry> {
+        if display {
+            &mut self.display
+        } else {
+            &mut self.inline
+        }
+    }
+
+    fn tick(&mut self) -> u64 {
+        self.clock += 1;
+        self.clock
+    }
+
+    fn evict_if_needed(&mut self) {
+        if self.inline.len() + self.display.len() <= MAX_CACHE_ENTRIES {
+            return;
+        }
+        let mut timestamps: Vec<u64> = self
+            .inline
+            .values()
+            .chain(self.display.values())
+            .map(|entry| entry.last_used)
+            .collect();
+        let cutoff_index = CACHE_EVICTION_BATCH.min(timestamps.len() - 1);
+        let (_, cutoff, _) = timestamps.select_nth_unstable(cutoff_index);
+        let cutoff = *cutoff;
+        let keep = |entry: &CacheEntry| {
+            entry.last_used > cutoff || matches!(entry.state, CacheState::Pending)
+        };
+        self.inline.retain(|_, entry| keep(entry));
+        self.display.retain(|_, entry| keep(entry));
+    }
+}
+
 pub struct LatexRenderer {
-    cache: Arc<Mutex<HashMap<CacheKey, CacheEntry>>>,
+    cache: Arc<Mutex<FormulaCache>>,
     executor: BackgroundExecutor,
     on_render_complete: Option<Arc<dyn Fn() + Send + Sync>>,
     _notify_task: Option<Task<()>>,
@@ -251,7 +274,7 @@ impl LatexRenderer {
             }
         });
         Self {
-            cache: Arc::new(Mutex::new(HashMap::default())),
+            cache: Arc::new(Mutex::new(FormulaCache::default())),
             executor,
             on_render_complete: Some(Arc::new(move || {
                 if tx.unbounded_send(()).is_err() {
@@ -265,44 +288,55 @@ impl LatexRenderer {
     /// Returns `None` while parsing/layout is still in progress. Returns
     /// `Some(Ok(...))` with the cached display list once ready, or `Some(Err(...))`
     /// if parsing failed.
-    pub fn render(
-        &self,
-        source: &str,
-        color: LatexColor,
-        display: bool,
-    ) -> Option<Result<PreparedFormula, String>> {
+    ///
+    /// Colorless: laying out in black lets one entry serve every theme.
+    pub fn render(&self, source: &str, display: bool) -> Option<Result<PreparedFormula, String>> {
         let clean_source = sanitize_source(source);
-        let key = CacheKey {
-            source: clean_source.clone(),
-            color,
-            display,
-        };
 
-        {
-            let cache = self.cache.lock();
-            if let Some(entry) = cache.get(&key) {
-                return match entry {
-                    CacheEntry::Pending => None,
-                    CacheEntry::Ready(result) => {
+        let owned_source = {
+            let mut cache = self.cache.lock();
+            let clock = cache.tick();
+            if let Some(entry) = cache.entries(display).get_mut(clean_source.as_ref()) {
+                entry.last_used = clock;
+                return match &entry.state {
+                    CacheState::Pending => None,
+                    CacheState::Ready(result) => {
                         Some(result.clone().map_err(|error| error.as_ref().clone()))
                     }
                 };
             }
-        }
-
-        self.cache.lock().insert(key.clone(), CacheEntry::Pending);
+            let owned_source = clean_source.into_owned();
+            cache.entries(display).insert(
+                owned_source.clone(),
+                CacheEntry {
+                    state: CacheState::Pending,
+                    last_used: clock,
+                },
+            );
+            cache.evict_if_needed();
+            owned_source
+        };
 
         self.executor
             .spawn({
                 let cache = self.cache.clone();
                 let on_complete = self.on_render_complete.clone();
-                let source = clean_source;
                 async move {
-                    let entry = match parse_and_layout(&source, color, display) {
-                        Ok(prepared) => CacheEntry::Ready(Ok(prepared)),
-                        Err(error) => CacheEntry::Ready(Err(Arc::new(error.to_string()))),
+                    let state = match parse_and_layout(&owned_source, display) {
+                        Ok(prepared) => CacheState::Ready(Ok(prepared)),
+                        Err(error) => CacheState::Ready(Err(Arc::new(error.to_string()))),
                     };
-                    cache.lock().insert(key, entry);
+                    {
+                        let mut cache = cache.lock();
+                        let clock = cache.tick();
+                        cache.entries(display).insert(
+                            owned_source,
+                            CacheEntry {
+                                state,
+                                last_used: clock,
+                            },
+                        );
+                    }
                     if let Some(callback) = on_complete {
                         callback();
                     }
@@ -314,11 +348,17 @@ impl LatexRenderer {
     }
 }
 
-fn sanitize_source(source: &str) -> String {
-    source.replace(UNDERSCORE_ESCAPE, "_").trim().to_string()
+/// Prettier rewrites `_` inside math as `\_`, which breaks subscripts.
+fn sanitize_source(source: &str) -> Cow<'_, str> {
+    let trimmed = source.trim();
+    if trimmed.contains(UNDERSCORE_ESCAPE) {
+        Cow::Owned(trimmed.replace(UNDERSCORE_ESCAPE, "_"))
+    } else {
+        Cow::Borrowed(trimmed)
+    }
 }
 
-fn parse_and_layout(source: &str, color: LatexColor, display: bool) -> Result<PreparedFormula> {
+fn parse_and_layout(source: &str, display: bool) -> Result<PreparedFormula> {
     use ratex_layout::{LayoutOptions, layout, to_display_list};
     use ratex_parser::parse;
     use ratex_types::math_style::MathStyle;
@@ -330,12 +370,7 @@ fn parse_and_layout(source: &str, color: LatexColor, display: bool) -> Result<Pr
         } else {
             MathStyle::Text
         })
-        .with_color(RatexColor::new(
-            color.r as f32 / 255.0,
-            color.g as f32 / 255.0,
-            color.b as f32 / 255.0,
-            color.a as f32 / 255.0,
-        ));
+        .with_color(RatexColor::BLACK);
     let lbox = layout(&ast, &opts);
     let dl = to_display_list(&lbox);
     let metrics = RenderedFormula {
@@ -391,7 +426,8 @@ pub struct LatexFormulaElement {
     font_scale: f32,
 }
 
-struct ResolvedFormulaLayout {
+/// Public only as this element's `Element::RequestLayoutState`.
+pub struct ResolvedFormulaLayout {
     em: f32,
     size: gpui::Size<Pixels>,
     /// Top of the painted formula relative to the element's top.
@@ -447,7 +483,7 @@ impl LatexFormulaElement {
 }
 
 impl Element for LatexFormulaElement {
-    type RequestLayoutState = ();
+    type RequestLayoutState = ResolvedFormulaLayout;
     type PrepaintState = ();
 
     fn id(&self) -> Option<ElementId> {
@@ -464,12 +500,12 @@ impl Element for LatexFormulaElement {
         _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (LayoutId, ()) {
-        let resolved = self.resolve_layout(window);
+    ) -> (LayoutId, ResolvedFormulaLayout) {
         let mut style = Style::default();
+        let resolved = self.resolve_layout(window);
         style.size.width = resolved.size.width.into();
         style.size.height = resolved.size.height.into();
-        (window.request_layout(style, [], cx), ())
+        (window.request_layout(style, [], cx), resolved)
     }
 
     fn prepaint(
@@ -477,7 +513,7 @@ impl Element for LatexFormulaElement {
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
-        _request_layout: &mut (),
+        _request_layout: &mut ResolvedFormulaLayout,
         _window: &mut Window,
         _cx: &mut App,
     ) {
@@ -488,12 +524,11 @@ impl Element for LatexFormulaElement {
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _request_layout: &mut (),
+        resolved: &mut ResolvedFormulaLayout,
         _prepaint: &mut (),
         window: &mut Window,
         _cx: &mut App,
     ) {
-        let resolved = self.resolve_layout(window);
         let color = window.text_style().color;
         let origin = point(bounds.origin.x, bounds.origin.y + px(resolved.formula_top));
         paint_display_list(
@@ -615,9 +650,7 @@ fn paint_display_list(
 }
 
 fn ratex_to_hsla(color: RatexColor, default: Hsla) -> Hsla {
-    // The layout pass stamps `LatexColor::BLACK` onto every item by default. We
-    // treat opaque black as "use the caller's color" so that the formula picks
-    // up theme text color without us having to thread it through the cache key.
+    // Layout stamps black on anything the source did not recolor itself.
     if color == RatexColor::BLACK {
         return default;
     }
@@ -958,17 +991,31 @@ fn paint_glyph_curves(
     }
 }
 
+type AtlasGlyphs = RwLock<HashMap<(FontId, char), Option<(GpuiFontId, GlyphId)>>>;
+
+fn atlas_glyphs() -> &'static AtlasGlyphs {
+    static ATLAS_GLYPHS: OnceLock<AtlasGlyphs> = OnceLock::new();
+    ATLAS_GLYPHS.get_or_init(|| RwLock::new(HashMap::default()))
+}
+
 /// Resolve a ratex font + character to a GPUI font id and glyph id suitable
 /// for `Window::paint_glyph`. Glyph indices are font-internal, and GPUI loads
 /// the same TTF bytes we query through ab_glyph, so the cmap lookup is valid
 /// for both.
 fn atlas_glyph(window: &Window, font_id: FontId, ch: char) -> Option<(GpuiFontId, GlyphId)> {
-    let gpui_font_id = resolve_katex_font(window, font_id)?;
-    let glyph_index = with_font(font_id, |font_ref| font_ref.glyph_id(ch).0)?;
-    if glyph_index == 0 {
-        return None;
+    if let Some(resolved) = atlas_glyphs().read().get(&(font_id, ch)) {
+        return *resolved;
     }
-    Some((gpui_font_id, GlyphId(glyph_index as u32)))
+    let resolved = (|| {
+        let gpui_font_id = resolve_katex_font(window, font_id)?;
+        let glyph_index = with_font(font_id, |font_ref| font_ref.glyph_id(ch).0)?;
+        if glyph_index == 0 {
+            return None;
+        }
+        Some((gpui_font_id, GlyphId(glyph_index as u32)))
+    })();
+    atlas_glyphs().write().insert((font_id, ch), resolved);
+    resolved
 }
 
 fn resolved_fonts() -> &'static RwLock<HashMap<FontId, Option<GpuiFontId>>> {
@@ -1141,35 +1188,94 @@ mod tests {
     fn sanitize_reverses_prettier_underscore_escape() {
         assert_eq!(
             sanitize_source(r"x\_{1,2} = \frac{-b}{2a} \tag{1}"),
-            r"x_{1,2} = \frac{-b}{2a} \tag{1}".to_string()
+            r"x_{1,2} = \frac{-b}{2a} \tag{1}"
         );
     }
 
     #[test]
+    fn sanitize_borrows_when_nothing_to_rewrite() {
+        // The per-frame lookup must not allocate a key.
+        assert!(matches!(
+            sanitize_source("  x^2 + y^2 = z^2  "),
+            Cow::Borrowed("x^2 + y^2 = z^2")
+        ));
+    }
+
+    fn insert_for_test(cache: &mut FormulaCache, source: &str, state: CacheState) {
+        let clock = cache.tick();
+        cache.entries(false).insert(
+            source.to_string(),
+            CacheEntry {
+                state,
+                last_used: clock,
+            },
+        );
+    }
+
+    fn failed_entry() -> CacheState {
+        CacheState::Ready(Err(Arc::new("unused".to_string())))
+    }
+
+    #[test]
+    fn cache_evicts_the_least_recently_used_entries() {
+        let mut cache = FormulaCache::default();
+        for index in 0..=MAX_CACHE_ENTRIES {
+            insert_for_test(&mut cache, &format!("x^{index}"), failed_entry());
+        }
+        cache.evict_if_needed();
+
+        assert!(cache.inline.len() < MAX_CACHE_ENTRIES);
+        assert!(
+            !cache.inline.contains_key("x^0"),
+            "the oldest entry should be gone"
+        );
+        assert!(
+            cache.inline.contains_key(&format!("x^{MAX_CACHE_ENTRIES}")),
+            "the newest entry should survive"
+        );
+    }
+
+    #[test]
+    fn cache_keeps_pending_entries_through_eviction() {
+        let mut cache = FormulaCache::default();
+        insert_for_test(&mut cache, "pending", CacheState::Pending);
+        for index in 0..=MAX_CACHE_ENTRIES {
+            insert_for_test(&mut cache, &format!("x^{index}"), failed_entry());
+        }
+        cache.evict_if_needed();
+
+        assert!(cache.inline.contains_key("pending"));
+    }
+
+    #[test]
+    fn cache_separates_inline_and_display_layouts() {
+        let mut cache = FormulaCache::default();
+        insert_for_test(&mut cache, r"\sum_{i=0}^n i", failed_entry());
+        assert!(cache.entries(false).contains_key(r"\sum_{i=0}^n i"));
+        assert!(!cache.entries(true).contains_key(r"\sum_{i=0}^n i"));
+    }
+
+    #[test]
     fn parse_and_layout_simple() {
-        let result = parse_and_layout("x^2", LatexColor::BLACK, true);
+        let result = parse_and_layout("x^2", true);
         assert!(result.is_ok(), "{:?}", result.err());
     }
 
     #[test]
     fn parse_and_layout_fraction() {
-        let result = parse_and_layout(r"\frac{a}{b}", LatexColor::BLACK, true);
+        let result = parse_and_layout(r"\frac{a}{b}", true);
         assert!(result.is_ok(), "{:?}", result.err());
     }
 
     #[test]
     fn parse_and_layout_chemistry_preserved() {
-        let result = parse_and_layout(
-            r"\ce{H2SO4 + 2NaOH -> Na2SO4 + 2H2O}",
-            LatexColor::BLACK,
-            true,
-        );
+        let result = parse_and_layout(r"\ce{H2SO4 + 2NaOH -> Na2SO4 + 2H2O}", true);
         assert!(result.is_ok(), "{:?}", result.err());
     }
 
     #[test]
     fn parse_and_layout_tag_preserved() {
-        let result = parse_and_layout(r"\tag{1} x_1 + x_2 = y", LatexColor::BLACK, true);
+        let result = parse_and_layout(r"\tag{1} x_1 + x_2 = y", true);
         assert!(result.is_ok(), "{:?}", result.err());
     }
 
@@ -1221,12 +1327,8 @@ mod tests {
         // subpaths. They must be classified as hairline strips so they paint as
         // snapped quads; tessellated they antialias into near-invisibility at
         // body sizes, depending on where the formula lands on the pixel grid.
-        let result = parse_and_layout(
-            r"\left\| \frac{\partial f}{\partial x} \right\|_2",
-            LatexColor::BLACK,
-            true,
-        )
-        .expect("layout");
+        let result = parse_and_layout(r"\left\| \frac{\partial f}{\partial x} \right\|_2", true)
+            .expect("layout");
         let bar_paths = result
             .display_list
             .items
