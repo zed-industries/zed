@@ -5318,9 +5318,10 @@ impl Editor {
             });
 
         let mut edits = Vec::new();
+        let mut ordered_list_indent_renumberings = Vec::new();
         let mut prev_edited_row = 0;
         let mut row_delta = 0;
-        for selection in &mut selections {
+        for (selection_index, selection) in selections.iter_mut().enumerate() {
             if selection.start.row != prev_edited_row {
                 row_delta = 0;
             }
@@ -5332,14 +5333,47 @@ impl Editor {
                 let settings = buffer.language_settings_at(cursor, cx);
                 if settings.indent_list_on_tab {
                     if let Some(language) = snapshot.language_scope_at(Point::new(cursor.row, 0)) {
-                        if input::is_list_prefix_row(
+                        let is_unordered_list = input::is_unordered_list_prefix_row(
                             MultiBufferRow(cursor.row),
                             &snapshot,
                             &language,
-                        ) {
+                        );
+                        let ordered_list_renumbering = (!is_unordered_list)
+                            .then(|| {
+                                let current_indent =
+                                    snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
+                                let indent_kind = if settings.hard_tabs {
+                                    IndentKind::Tab
+                                } else {
+                                    IndentKind::Space
+                                };
+                                let indent_delta = Self::indent_delta_for_line(
+                                    current_indent,
+                                    indent_kind,
+                                    settings.tab_size.get(),
+                                );
+                                input::ordered_list_indent_renumbering(
+                                    cursor,
+                                    &snapshot,
+                                    &language,
+                                    indent_delta.chars().count(),
+                                )
+                            })
+                            .flatten();
+                        if is_unordered_list || ordered_list_renumbering.is_some() {
+                            let ordered_list_renumbering = (row_delta == 0)
+                                .then_some(ordered_list_renumbering)
+                                .flatten();
                             row_delta = Self::indent_selection(
                                 buffer, &snapshot, selection, &mut edits, row_delta, cx,
                             );
+                            if let Some(renumbering) = ordered_list_renumbering {
+                                ordered_list_indent_renumberings.push((
+                                    selection_index,
+                                    cursor.column >= renumbering.marker_end_column,
+                                    renumbering,
+                                ));
+                            }
                             continue;
                         }
                     }
@@ -5420,6 +5454,94 @@ impl Editor {
             edits.push((cursor..cursor, tab_size.chars().collect::<String>()));
             row_delta += tab_size.len;
         }
+
+        let selected_marker_ranges = ordered_list_indent_renumberings
+            .iter()
+            .map(|(_, _, renumbering)| renumbering.marker_range.clone())
+            .collect::<Vec<_>>();
+        let mut replacement_numbers: Vec<u32> =
+            Vec::with_capacity(ordered_list_indent_renumberings.len());
+        for current_index in 0..ordered_list_indent_renumberings.len() {
+            let current = &ordered_list_indent_renumberings[current_index].2;
+            let replacement_number = (0..current_index)
+                .rev()
+                .find(|previous_index| {
+                    let following_edits = &ordered_list_indent_renumberings[*previous_index]
+                        .2
+                        .following_edits;
+                    following_edits
+                        .iter()
+                        .position(|edit| edit.range == current.marker_range)
+                        .is_some_and(|position| {
+                            following_edits[..position]
+                                .iter()
+                                .all(|edit| selected_marker_ranges.contains(&edit.range))
+                        })
+                })
+                .and_then(|previous_index| replacement_numbers[previous_index].checked_add(1))
+                .unwrap_or(current.replacement_number);
+            replacement_numbers.push(replacement_number);
+        }
+
+        let mut coordinated_following_edits: Vec<(input::OrderedListRenumberEdit, u32)> =
+            Vec::new();
+        for ((selection_index, cursor_is_after_marker, renumbering), replacement_number) in
+            ordered_list_indent_renumberings
+                .into_iter()
+                .zip(replacement_numbers)
+        {
+            let replacement = renumbering
+                .format
+                .replace("{1}", &replacement_number.to_string());
+            if cursor_is_after_marker {
+                let selection = &mut selections[selection_index];
+                selection.start.column = Self::adjust_column_for_replacement(
+                    selection.start.column,
+                    renumbering.marker_len,
+                    replacement.len(),
+                );
+                selection.end.column = Self::adjust_column_for_replacement(
+                    selection.end.column,
+                    renumbering.marker_len,
+                    replacement.len(),
+                );
+            }
+            if replacement_number != renumbering.number {
+                edits.push((
+                    renumbering.marker_range.start.to_point(&snapshot)
+                        ..renumbering.marker_range.end.to_point(&snapshot),
+                    replacement,
+                ));
+            }
+
+            for edit in renumbering.following_edits {
+                if selected_marker_ranges.contains(&edit.range) {
+                    continue;
+                }
+                if let Some((_, count)) = coordinated_following_edits
+                    .iter_mut()
+                    .find(|(existing, _)| existing.range == edit.range)
+                {
+                    if let Some(incremented_count) = count.checked_add(1) {
+                        *count = incremented_count;
+                    }
+                } else {
+                    coordinated_following_edits.push((edit, 1));
+                }
+            }
+        }
+        edits.extend(
+            coordinated_following_edits
+                .into_iter()
+                .filter_map(|(edit, count)| {
+                    let number = edit.number.checked_sub(count)?;
+                    let replacement = edit.format.replace("{1}", &number.to_string());
+                    Some((
+                        edit.range.start.to_point(&snapshot)..edit.range.end.to_point(&snapshot),
+                        replacement,
+                    ))
+                }),
+        );
 
         self.transact(window, cx, |this, window, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
@@ -5504,14 +5626,7 @@ impl Editor {
         let has_multiple_rows = start_row + 1 != end_row;
         for row in start_row..end_row {
             let current_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
-            let indent_delta = match (current_indent.kind, indent_kind) {
-                (IndentKind::Space, IndentKind::Space) => {
-                    let columns_to_next_tab_stop = tab_size - (current_indent.len % tab_size);
-                    IndentSize::spaces(columns_to_next_tab_stop)
-                }
-                (IndentKind::Tab, IndentKind::Space) => IndentSize::spaces(tab_size),
-                (_, IndentKind::Tab) => IndentSize::tab(),
-            };
+            let indent_delta = Self::indent_delta_for_line(current_indent, indent_kind, tab_size);
 
             let start = if has_multiple_rows || current_indent.len < selection.start.column {
                 0
@@ -5538,6 +5653,32 @@ impl Editor {
             delta_for_start_row + delta_for_end_row
         } else {
             delta_for_end_row
+        }
+    }
+
+    fn indent_delta_for_line(
+        current_indent: IndentSize,
+        indent_kind: IndentKind,
+        tab_size: u32,
+    ) -> IndentSize {
+        match (current_indent.kind, indent_kind) {
+            (IndentKind::Space, IndentKind::Space) => {
+                let columns_to_next_tab_stop = tab_size - (current_indent.len % tab_size);
+                IndentSize::spaces(columns_to_next_tab_stop)
+            }
+            (IndentKind::Tab, IndentKind::Space) => IndentSize::spaces(tab_size),
+            (_, IndentKind::Tab) => IndentSize::tab(),
+        }
+    }
+
+    fn adjust_column_for_replacement(column: u32, old_len: usize, new_len: usize) -> u32 {
+        if let Some(added_len) = new_len.checked_sub(old_len) {
+            u32::try_from(added_len).map_or(column, |added_len| column.saturating_add(added_len))
+        } else if let Some(removed_len) = old_len.checked_sub(new_len) {
+            u32::try_from(removed_len)
+                .map_or(column, |removed_len| column.saturating_sub(removed_len))
+        } else {
+            column
         }
     }
 

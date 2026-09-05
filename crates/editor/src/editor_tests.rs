@@ -42017,7 +42017,85 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
         2. ˇem
     "});
 
-    // Case 4: Adding newline after (whitespace + marker + some whitespace) does NOT add marker
+    // Case 4: Inserting an item renumbers the following ordered list items
+    cx.set_state(indoc! {"
+        1. first itemˇ
+        2. second item
+        3. third item
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+        2. ˇ
+        3. second item
+        4. third item
+    "});
+
+    // Case 5: Renumbering skips nested items
+    cx.set_state(indoc! {"
+        1. first itemˇ
+          1. nested item
+        2. second item
+          1. another nested item
+        3. third item
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+        2. ˇ
+          1. nested item
+        3. second item
+          1. another nested item
+        4. third item
+    "});
+
+    // Case 6: Renumbering continues across blank lines in a loose list
+    cx.set_state(indoc! {"
+        1. first itemˇ
+
+        2. second item
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+        2. ˇ
+
+        3. second item
+    "});
+
+    // Case 7: Multiple cursors coordinate renumbering in the same list
+    cx.set_state(indoc! {"
+        1. first itemˇ
+        2. second itemˇ
+        3. third item
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+        2. ˇ
+        3. second item
+        4. ˇ
+        5. third item
+    "});
+
+    // Case 8: Renumbering stops at a discontinuity
+    cx.set_state(indoc! {"
+        1. first itemˇ
+        4. fourth item
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+        2. ˇ
+        4. fourth item
+    "});
+
+    // Case 9: Adding newline after (whitespace + marker + some whitespace) does NOT add marker
     cx.set_state(indoc! {"
         1.  ˇ
     "});
@@ -42032,7 +42110,7 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
         .as_str(),
     );
 
-    // Case 5: Adding newline with content adds marker preserving indentation
+    // Case 10: Adding newline with content adds marker preserving indentation
     cx.set_state(indoc! {"
         1. item
           2. indentedˇ
@@ -42045,7 +42123,7 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
           3. ˇ
     "});
 
-    // Case 6: Adding newline with cursor right after marker, unindents
+    // Case 11: Adding newline with cursor right after marker, unindents
     cx.set_state(indoc! {"
         1. item
           2. sub item
@@ -42061,7 +42139,7 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.wait_for_autoindent_applied().await;
 
-    // Case 7: Adding newline with cursor right after marker, removes marker
+    // Case 12: Adding newline with cursor right after marker, removes marker
     cx.assert_editor_state(indoc! {"
         1. item
           2. sub item
@@ -42075,7 +42153,7 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
         ˇ
     "});
 
-    // Case 8: Cursor before or inside prefix does not add marker
+    // Case 13: Cursor before or inside prefix does not add marker
     cx.set_state(indoc! {"
         ˇ1. item
     "});
@@ -42095,6 +42173,30 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
         1
         ˇ. item
     "});
+}
+
+#[gpui::test]
+fn test_ordered_list_renumbering_stays_within_excerpt(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new_multibuffer(
+        cx,
+        ["«1. first item»\nhidden line\n«2. unrelated item»"],
+    );
+    cx.update_editor(|editor, _, cx| {
+        for buffer in editor.buffer().read(cx).all_buffers() {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_language(Some(markdown_language.clone()), cx)
+            });
+        }
+    });
+    cx.set_selections_state("1. first itemˇ\n2. unrelated item");
+
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.run_until_parked();
+
+    cx.assert_editor_state("1. first item\n2. ˇ\n2. unrelated item");
 }
 
 #[gpui::test]
@@ -42166,6 +42268,80 @@ async fn test_tab_list_indent(cx: &mut TestAppContext) {
         $$1. ˇfirst
     "};
     cx.assert_editor_state(expected.replace("$", " ").as_str());
+
+    cx.set_state(indoc! {"
+        1. first item
+        2. ˇsecond item
+        3. third item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        1. first item
+        $$1. ˇsecond item
+        2. third item
+    "};
+    cx.assert_editor_state(expected.replace("$", " ").as_str());
+
+    cx.set_state(indoc! {"
+        1. first item
+          1. nested item
+        2. ˇsecond item
+        3. third item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+          1. nested item
+          2. ˇsecond item
+        2. third item
+    "});
+
+    cx.set_state(indoc! {"
+        9. first item
+        10. ˇsecond item
+        11. third item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        9. first item
+          1. ˇsecond item
+        10. third item
+    "});
+
+    cx.set_state(indoc! {"
+        1. first item
+        2. ˇsecond item
+        3. ˇthird item
+        4. fourth item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+          1. ˇsecond item
+          2. ˇthird item
+        2. fourth item
+    "});
+
+    cx.set_state(indoc! {"
+        1. first item
+        2. ˇsecond item
+        3. third item
+        4. ˇfourth item
+        5. fifth item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+          1. ˇsecond item
+        2. third item
+          1. ˇfourth item
+        3. fifth item
+    "});
 
     // Case 4: With existing indentation - adds more indent
     let initial = indoc! {"

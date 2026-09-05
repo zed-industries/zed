@@ -537,7 +537,7 @@ impl Editor {
         }
 
         self.transact(window, cx, |this, window, cx| {
-            let (edits_with_flags, selection_info): (Vec<_>, Vec<_>) = {
+            let (mut edits_with_flags, selection_data): (Vec<_>, Vec<_>) = {
                 let selections = this
                     .selections
                     .all::<MultiBufferOffset>(&this.display_snapshot(cx));
@@ -555,6 +555,7 @@ impl Editor {
                         let end = selection.end;
                         let selection_is_empty = start == end;
                         let language_scope = buffer.language_scope_at(start);
+                        let mut ordered_list_continuation = None;
                         existing_indent =
                             logical_indent_for_newline(&start_point, &buffer, existing_indent);
                         let (delimiter, newline_config) = if let Some(language) = &language_scope {
@@ -633,6 +634,7 @@ impl Editor {
                                     &buffer,
                                     language,
                                     &mut newline_config,
+                                    &mut ordered_list_continuation,
                                 );
                             }) {
                                 delimiter = Some(list_delimiter);
@@ -701,7 +703,14 @@ impl Editor {
                                 }
                                 new_text.extend(additional_indent.chars());
                                 if let Some(delimiter) = &delimiter {
+                                    let delimiter_start = new_text.len();
                                     new_text.push_str(delimiter);
+                                    if let Some(ordered_list_continuation) =
+                                        &mut ordered_list_continuation
+                                    {
+                                        ordered_list_continuation.delimiter_range =
+                                            delimiter_start..new_text.len();
+                                    }
                                 }
                                 if let Some(extra_indent) = extra_line_additional_indent {
                                     new_text.push('\n');
@@ -735,11 +744,73 @@ impl Editor {
                         let new_selection = selection.map(|_| anchor);
                         (
                             ((edit_start..end, new_text), prevent_auto_indent),
-                            (newline_config.has_extra_line(), new_selection),
+                            (
+                                (newline_config.has_extra_line(), new_selection),
+                                ordered_list_continuation,
+                            ),
                         )
                     })
                     .unzip()
             };
+
+            let continuation_increments = selection_data
+                .iter()
+                .map(|(_, continuation)| {
+                    continuation.as_ref().and_then(|current_continuation| {
+                        selection_data
+                            .iter()
+                            .filter_map(|(_, continuation)| continuation.as_ref())
+                            .flat_map(|continuation| &continuation.following_edits)
+                            .filter(|edit| edit.range == current_continuation.marker_range)
+                            .try_fold(0_u32, |count, _| count.checked_add(1))
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            for (((_, new_text), _), ((_, continuation), increment)) in edits_with_flags
+                .iter_mut()
+                .zip(selection_data.iter().zip(continuation_increments))
+            {
+                let (Some(continuation), Some(increment)) = (continuation, increment) else {
+                    continue;
+                };
+                let Some(number) = continuation.number.checked_add(increment) else {
+                    continue;
+                };
+                let delimiter = continuation.format.replace("{1}", &number.to_string());
+                if let (Some(before), Some(after)) = (
+                    new_text.get(..continuation.delimiter_range.start),
+                    new_text.get(continuation.delimiter_range.end..),
+                ) {
+                    *new_text = format!("{before}{delimiter}{after}");
+                }
+            }
+
+            let mut coordinated_following_edits: Vec<(OrderedListRenumberEdit, u32)> = Vec::new();
+            for (_, continuation) in &selection_data {
+                let Some(continuation) = continuation else {
+                    continue;
+                };
+                for edit in &continuation.following_edits {
+                    if let Some((_, count)) = coordinated_following_edits
+                        .iter_mut()
+                        .find(|(existing, _)| existing.range == edit.range)
+                    {
+                        if let Some(incremented_count) = count.checked_add(1) {
+                            *count = incremented_count;
+                        }
+                    } else {
+                        coordinated_following_edits.push((edit.clone(), 1));
+                    }
+                }
+            }
+            edits_with_flags.extend(coordinated_following_edits.into_iter().filter_map(
+                |(edit, count)| {
+                    let number = edit.number.checked_add(count)?;
+                    let replacement = edit.format.replace("{1}", &number.to_string());
+                    Some(((edit.range, replacement), true))
+                },
+            ));
 
             let mut auto_indent_edits = Vec::new();
             let mut edits = Vec::new();
@@ -758,9 +829,9 @@ impl Editor {
             }
 
             let buffer = this.buffer.read(cx).snapshot(cx);
-            let new_selections = selection_info
+            let new_selections = selection_data
                 .into_iter()
-                .map(|(extra_newline_inserted, new_selection)| {
+                .map(|((extra_newline_inserted, new_selection), _)| {
                     let mut cursor = new_selection.end.to_point(&buffer);
                     if extra_newline_inserted {
                         cursor.row -= 1;
@@ -2262,7 +2333,7 @@ impl Editor {
     }
 }
 
-pub(super) fn is_list_prefix_row(
+pub(super) fn is_unordered_list_prefix_row(
     row: MultiBufferRow,
     buffer: &MultiBufferSnapshot,
     language: &LanguageScope,
@@ -2298,7 +2369,7 @@ pub(super) fn is_list_prefix_row(
         .collect();
     if let Some(max_prefix_len) = all_prefixes.iter().map(|p| p.len()).max() {
         let candidate: String = snapshot
-            .chars_for_range(range.clone())
+            .chars_for_range(range)
             .skip(num_of_whitespaces)
             .take(max_prefix_len)
             .collect();
@@ -2307,21 +2378,6 @@ pub(super) fn is_list_prefix_row(
             .any(|prefix| candidate.starts_with(*prefix))
         {
             return true;
-        }
-    }
-
-    let ordered_list_candidate: String = snapshot
-        .chars_for_range(range)
-        .skip(num_of_whitespaces)
-        .take(ORDERED_LIST_MAX_MARKER_LEN)
-        .collect();
-    for ordered_config in language.ordered_list() {
-        let regex = match Regex::new(&ordered_config.pattern) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        if let Some(captures) = regex.captures(&ordered_list_candidate) {
-            return captures.get(0).is_some();
         }
     }
 
@@ -2640,11 +2696,49 @@ fn logical_indent_for_newline(
         .unwrap_or(existing_indent)
 }
 
+struct OrderedListContinuation {
+    marker_range: Range<MultiBufferOffset>,
+    number: u32,
+    format: String,
+    delimiter_range: Range<usize>,
+    following_edits: Vec<OrderedListRenumberEdit>,
+}
+
+#[derive(Clone)]
+pub(super) struct OrderedListRenumberEdit {
+    pub(super) range: Range<MultiBufferOffset>,
+    pub(super) number: u32,
+    pub(super) format: String,
+}
+
+pub(super) struct OrderedListIndentRenumbering {
+    pub(super) marker_range: Range<MultiBufferOffset>,
+    pub(super) number: u32,
+    pub(super) replacement_number: u32,
+    pub(super) format: String,
+    pub(super) marker_len: usize,
+    pub(super) marker_end_column: u32,
+    pub(super) following_edits: Vec<OrderedListRenumberEdit>,
+}
+
+enum OrderedListRow {
+    Blank,
+    Other {
+        indentation_len: usize,
+    },
+    Item {
+        indentation_len: usize,
+        marker_len: usize,
+        number: u32,
+    },
+}
+
 fn list_delimiter_for_newline(
     start_point: &Point,
     buffer: &MultiBufferSnapshot,
     language: &LanguageScope,
     newline_config: &mut NewlineConfig,
+    ordered_list_continuation: &mut Option<OrderedListContinuation>,
 ) -> Option<Arc<str>> {
     let (snapshot, range) = buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
 
@@ -2736,9 +2830,28 @@ fn list_delimiter_for_newline(
 
             if has_content_after_marker && cursor_is_after_prefix {
                 let number: u32 = captures.get(1)?.as_str().parse().ok()?;
+                let next_number = number.checked_add(1)?;
+                let marker_start =
+                    buffer.point_to_offset(Point::new(start_point.row, num_of_whitespaces as u32));
+                let marker_end =
+                    buffer.point_to_offset(Point::new(start_point.row, end_of_prefix as u32));
+                *ordered_list_continuation = Some(OrderedListContinuation {
+                    marker_range: marker_start..marker_end,
+                    number: next_number,
+                    format: ordered_config.format.clone(),
+                    delimiter_range: 0..0,
+                    following_edits: ordered_list_renumber_edits(
+                        start_point,
+                        buffer,
+                        ordered_config,
+                        &regex,
+                        num_of_whitespaces,
+                        next_number,
+                    ),
+                });
                 let continuation = ordered_config
                     .format
-                    .replace("{1}", &(number + 1).to_string());
+                    .replace("{1}", &next_number.to_string());
                 return Some(continuation.into());
             }
 
@@ -2758,6 +2871,207 @@ fn list_delimiter_for_newline(
     }
 
     None
+}
+
+fn ordered_list_renumber_edits(
+    start_point: &Point,
+    buffer: &MultiBufferSnapshot,
+    ordered_config: &language::OrderedListConfig,
+    regex: &Regex,
+    indentation_len: usize,
+    mut expected_number: u32,
+) -> Vec<OrderedListRenumberEdit> {
+    let Some((_, excerpt_range)) = buffer.excerpt_containing(*start_point..*start_point) else {
+        return Vec::new();
+    };
+    let mut edits = Vec::new();
+
+    for row in start_point.row + 1..=buffer.max_point().row {
+        let row = MultiBufferRow(row);
+        let row_start = Point::new(row.0, 0);
+        if !buffer
+            .excerpt_containing(row_start..row_start)
+            .is_some_and(|(_, candidate)| candidate == excerpt_range)
+        {
+            break;
+        }
+        let (current_indentation_len, marker_len, number) =
+            match ordered_list_row(row, buffer, regex) {
+                OrderedListRow::Blank => continue,
+                OrderedListRow::Other {
+                    indentation_len: current_indentation_len,
+                } => {
+                    if current_indentation_len > indentation_len {
+                        continue;
+                    }
+                    break;
+                }
+                OrderedListRow::Item {
+                    indentation_len: current_indentation_len,
+                    marker_len,
+                    number,
+                } => (current_indentation_len, marker_len, number),
+            };
+
+        if current_indentation_len < indentation_len {
+            break;
+        }
+        if current_indentation_len > indentation_len {
+            continue;
+        }
+        if number != expected_number {
+            break;
+        }
+        let Some(replacement_number) = number.checked_add(1) else {
+            break;
+        };
+        let start = buffer.point_to_offset(Point::new(row.0, current_indentation_len as u32));
+        let end = buffer.point_to_offset(Point::new(
+            row.0,
+            (current_indentation_len + marker_len) as u32,
+        ));
+        edits.push(OrderedListRenumberEdit {
+            range: start..end,
+            number,
+            format: ordered_config.format.clone(),
+        });
+        expected_number = replacement_number;
+    }
+
+    edits
+}
+
+pub(super) fn ordered_list_indent_renumbering(
+    start_point: Point,
+    buffer: &MultiBufferSnapshot,
+    language: &LanguageScope,
+    added_indentation_len: usize,
+) -> Option<OrderedListIndentRenumbering> {
+    let row = MultiBufferRow(start_point.row);
+    let (_, excerpt_range) = buffer.excerpt_containing(start_point..start_point)?;
+
+    for ordered_config in language.ordered_list() {
+        let Ok(regex) = Regex::new(&ordered_config.pattern) else {
+            continue;
+        };
+        let OrderedListRow::Item {
+            indentation_len,
+            marker_len,
+            number,
+        } = ordered_list_row(row, buffer, &regex)
+        else {
+            continue;
+        };
+        let target_indentation_len = indentation_len.checked_add(added_indentation_len)?;
+        let mut replacement_number = 1;
+
+        for previous_row in (0..start_point.row).rev() {
+            let previous_row = MultiBufferRow(previous_row);
+            let previous_row_start = Point::new(previous_row.0, 0);
+            if !buffer
+                .excerpt_containing(previous_row_start..previous_row_start)
+                .is_some_and(|(_, candidate)| candidate == excerpt_range)
+            {
+                break;
+            }
+
+            match ordered_list_row(previous_row, buffer, &regex) {
+                OrderedListRow::Blank => continue,
+                OrderedListRow::Other {
+                    indentation_len: previous_indentation_len,
+                } => {
+                    if previous_indentation_len <= target_indentation_len {
+                        break;
+                    }
+                }
+                OrderedListRow::Item {
+                    indentation_len: previous_indentation_len,
+                    number: previous_number,
+                    ..
+                } => {
+                    if previous_indentation_len < target_indentation_len {
+                        break;
+                    }
+                    if previous_indentation_len == target_indentation_len {
+                        replacement_number = previous_number.checked_add(1)?;
+                        break;
+                    }
+                }
+            }
+        }
+
+        let marker_start = buffer.point_to_offset(Point::new(row.0, indentation_len as u32));
+        let marker_end =
+            buffer.point_to_offset(Point::new(row.0, (indentation_len + marker_len) as u32));
+        let marker_end_column = u32::try_from(indentation_len)
+            .ok()?
+            .checked_add(u32::try_from(marker_len).ok()?)?;
+
+        let following_edits = number
+            .checked_add(1)
+            .map_or_else(Vec::new, |expected_number| {
+                ordered_list_renumber_edits(
+                    &start_point,
+                    buffer,
+                    ordered_config,
+                    &regex,
+                    indentation_len,
+                    expected_number,
+                )
+            });
+
+        return Some(OrderedListIndentRenumbering {
+            marker_range: marker_start..marker_end,
+            number,
+            replacement_number,
+            format: ordered_config.format.clone(),
+            marker_len,
+            marker_end_column,
+            following_edits,
+        });
+    }
+
+    None
+}
+
+fn ordered_list_row(
+    row: MultiBufferRow,
+    buffer: &MultiBufferSnapshot,
+    regex: &Regex,
+) -> OrderedListRow {
+    let line_len = buffer.line_len(row);
+    let mut chars = buffer
+        .text_for_range(Point::new(row.0, 0)..Point::new(row.0, line_len))
+        .flat_map(str::chars)
+        .peekable();
+    let mut indentation_len = 0;
+    while let Some(character) = chars.next_if(|character| character.is_whitespace()) {
+        indentation_len += character.len_utf8();
+    }
+    let candidate = chars.take(ORDERED_LIST_MAX_MARKER_LEN).collect::<String>();
+    if candidate.is_empty() {
+        return OrderedListRow::Blank;
+    }
+    let Some(captures) = regex.captures(&candidate) else {
+        return OrderedListRow::Other { indentation_len };
+    };
+    let Some(full_match) = captures.get(0) else {
+        return OrderedListRow::Other { indentation_len };
+    };
+    if full_match.start() != 0 {
+        return OrderedListRow::Other { indentation_len };
+    }
+    let Some(number) = captures
+        .get(1)
+        .and_then(|capture| capture.as_str().parse::<u32>().ok())
+    else {
+        return OrderedListRow::Other { indentation_len };
+    };
+    OrderedListRow::Item {
+        indentation_len,
+        marker_len: full_match.len(),
+        number,
+    }
 }
 
 impl EntityInputHandler for Editor {
