@@ -4521,9 +4521,19 @@ impl Thread {
     fn compaction_max_output_tokens(&self, model: &Arc<dyn LanguageModel>) -> Option<u64> {
         let max_token_count = model.max_token_count();
         let default_output = model.max_output_tokens();
-        let Some(input_tokens) = self.latest_request_token_usage().map(total_input_tokens) else {
+        let Some(mut input_tokens) = self.latest_request_token_usage().map(total_input_tokens) else {
             return default_output;
         };
+
+        // `mark_token_limit_exceeded` stores `input_tokens >= max_token_count` to drive the UI.
+        // That synthetic value isn't suitable for output budgeting, so fall back to the
+        // provider's reserved input budget when we have one.
+        if input_tokens >= max_token_count {
+            if let Some(default) = default_output {
+                input_tokens = max_token_count.saturating_sub(default);
+            }
+        }
+
         let budget = max_token_count.saturating_sub(input_tokens) / 2;
         Some(match default_output {
             Some(default) => budget.min(default),
