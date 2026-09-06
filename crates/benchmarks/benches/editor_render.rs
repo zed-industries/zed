@@ -554,6 +554,76 @@ fn workbench_render(mode: &&str, cx: &mut BenchAppContext) {
     cx.bench_renderer(host, update);
 }
 
+/// The node engine's worst case: many small views, every one of them dirty on every
+/// update, so nothing is reused and each node pays its fixed bookkeeping in full.
+#[gpui::bench(
+    inputs = [64usize, 512],
+    group = "Siblings",
+    input_name = "all dirty",
+    sample_size = 20
+)]
+fn siblings_all_dirty(count: &usize, cx: &mut BenchAppContext) {
+    use gpui::{Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, px, rgb};
+
+    struct Leaf {
+        index: usize,
+        revision: usize,
+    }
+    impl Render for Leaf {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size(px(24.))
+                .m(px(2.))
+                .bg(rgb(if (self.index + self.revision).is_multiple_of(2) {
+                    0x336699
+                } else {
+                    0x996633
+                }))
+                .child(format!("{}", self.revision % 10))
+        }
+    }
+    struct Host {
+        leaves: Vec<Entity<Leaf>>,
+    }
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_wrap()
+                .bg(rgb(0x18202a))
+                .text_color(rgb(0xdde5ef))
+                .children(self.leaves.iter().cloned())
+        }
+    }
+
+    init_context(cx);
+    let count = *count;
+    let mut window = cx.add_empty_window();
+    let host = window.update(|window, cx| {
+        window.resize(gpui::size(px(1600.), px(1000.)));
+        window.bounds_changed(cx);
+        let leaves = (0..count)
+            .map(|index| cx.new(|_| Leaf { index, revision: 0 }))
+            .collect();
+        window.replace_root(cx, |_, _| Host { leaves })
+    });
+    let update = move |host: &mut Host, _: &mut Window, cx: &mut Context<Host>| {
+        for leaf in &host.leaves {
+            leaf.update(cx, |leaf, cx| {
+                leaf.revision += 1;
+                cx.notify();
+            });
+        }
+        cx.notify();
+    };
+    for _ in 0..4 {
+        cx.run_until_idle();
+        window.update(|window, cx| host.update(cx, |host, cx| update(host, window, cx)));
+    }
+    cx.bench_renderer(host, update);
+}
+
 fn init_context(cx: &mut BenchAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
@@ -578,6 +648,7 @@ gpui::bench_group!(
     open_editor_with_one_long_line,
     editor_render,
     editor_render_with_editorconfig,
-    workbench_render
+    workbench_render,
+    siblings_all_dirty
 );
 gpui::bench_main!(benches);

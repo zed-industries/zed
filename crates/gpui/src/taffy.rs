@@ -33,6 +33,10 @@ pub struct TaffyLayoutEngine {
     /// Every live node, children before parents. Taffy does not expose node iteration,
     /// and `retain` needs the nodes that are *not* reachable from the kept roots.
     allocated_nodes: Vec<LayoutId>,
+    /// The live nodes with a measurement context. Taffy's `clear` and `remove` leave
+    /// contexts in its secondary map, and a context may own frame-arena captures, so they
+    /// are released explicitly; this keeps that from visiting every node.
+    measured_nodes: Vec<LayoutId>,
     /// The layouts under the roots kept by the last `retain`, so `layout_unchanged` can
     /// compare a reused subtree against them. Its key set is also the set of kept nodes.
     previous_layouts: slotmap::SecondaryMap<slotmap::DefaultKey, taffy::Layout>,
@@ -55,6 +59,7 @@ impl TaffyLayoutEngine {
         TaffyLayoutEngine {
             taffy,
             allocated_nodes: Vec::new(),
+            measured_nodes: Vec::new(),
             previous_layouts: slotmap::SecondaryMap::new(),
             layout_inputs: FxHashMap::default(),
             absolute_layout_bounds: FxHashMap::default(),
@@ -65,14 +70,10 @@ impl TaffyLayoutEngine {
     }
 
     pub fn clear(&mut self) {
-        // Taffy's clear leaves measurement contexts behind. Release them before
-        // frame-arena storage is reused, including slots the next tree won't fill.
-        for layout in &self.allocated_nodes {
-            if self.taffy.get_node_context(layout.0).is_some() {
-                self.taffy
-                    .set_node_context(layout.0, None)
-                    .expect(EXPECT_MESSAGE);
-            }
+        for layout in self.measured_nodes.drain(..) {
+            self.taffy
+                .set_node_context(layout.0, None)
+                .expect(EXPECT_MESSAGE);
         }
         self.taffy.clear();
         self.allocated_nodes.clear();
@@ -117,17 +118,20 @@ impl TaffyLayoutEngine {
                 pending.extend(self.taffy.child_ids(layout.0).map(LayoutId));
             }
         }
+        for layout in &self.measured_nodes {
+            if !self.previous_layouts.contains_key(layout.0.into()) {
+                self.taffy
+                    .set_node_context(layout.0, None)
+                    .expect(EXPECT_MESSAGE);
+            }
+        }
+        self.measured_nodes
+            .retain(|layout| self.previous_layouts.contains_key(layout.0.into()));
         // Layouts are allocated children first. Removing parents first lets Taffy detach
         // whole child lists instead of searching each list per child.
         for layout in self.allocated_nodes.iter().rev() {
             if self.previous_layouts.contains_key(layout.0.into()) {
                 continue;
-            }
-            // Taffy's remove leaves measurement contexts in its secondary map.
-            if self.taffy.get_node_context(layout.0).is_some() {
-                self.taffy
-                    .set_node_context(layout.0, None)
-                    .expect(EXPECT_MESSAGE);
             }
             self.taffy.remove(layout.0).expect(EXPECT_MESSAGE);
             self.layout_inputs.remove(layout);
@@ -197,6 +201,7 @@ impl TaffyLayoutEngine {
             .expect(EXPECT_MESSAGE)
             .into();
         self.allocated_nodes.push(layout);
+        self.measured_nodes.push(layout);
         layout
     }
 

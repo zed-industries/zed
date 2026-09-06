@@ -125,6 +125,25 @@ Use the same `CARGO_TARGET_DIR` so the dependency build is shared. Check the loa
 average first: another build or test run on the machine widens the intervals past the
 effects being measured. `Workbench/update/{row,editor,mixed}` are the fixtures where
 reuse fires; `full` dirties every node each update and should match `main`.
+`Siblings/all dirty/{64,512}` is the engine's worst case — many trivially cheap views,
+all dirty every frame, so nothing is reused and every node pays its fixed cost — and
+bounds the overhead: about 0.7 µs per dirty node per frame, +21% / +24% on those
+fixtures, spread across the per-node steps (occurrence lookup, dependency set
+replacement, output reset, text seeding, dispatch node snapshot) with no single hot
+spot. Real views amortize it: `Workbench/update/full` (48 rows, four panels and an
+editor, all dirty) is 10% faster than `main`, and `Markdown render` (one view,
+re-rendered in full each frame) is 1% slower.
+
+### Memory
+
+`NodeStats::retained_bytes` estimates what the engine holds between frames from its
+containers' capacities (recordings, dependency sets, bookkeeping; not the shaped text
+bodies, boxed listeners or the Taffy tree). `node_engine_retained_memory_is_flat_across_reuse`
+checks it stays flat over a thousand frames that redraw one row at a time, and
+`test_workspace_rendering_stress` prints it: a 3-pane workspace at 1600×1000 with three
+editors holds 20 nodes and about 500 KB. For process-level numbers, sample RSS during
+the real-use session below (`ps -o rss= -p <pid>` once a second) alongside the frame
+log.
 
 ### Real use
 
