@@ -23,11 +23,12 @@ use crate::{
     TransformationMatrix, Underline, UnderlineStyle, ViewNodeCacheKey, ViewNodeId,
     ViewNodeRecording, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
     WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    key_dispatch::DispatchNode,
     node_engine::FrameOutput,
     point,
     prelude::*,
     px, rems, size, transparent_black,
-    view_node::{OutputItem, OutputSlot},
+    view_node::{MetadataPhase, OutputItem, OutputSlot},
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -56,7 +57,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
-    ops::{ControlFlow, DerefMut, Range},
+    ops::{ControlFlow, DerefMut},
     rc::Rc,
     sync::{
         Arc, Weak,
@@ -991,12 +992,6 @@ pub(crate) struct Frame {
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
-}
-
-#[derive(Clone, Default)]
-pub(crate) struct PrepaintStateIndex {
-    deferred_draws_index: usize,
-    dispatch_tree_index: usize,
 }
 
 impl Frame {
@@ -3543,25 +3538,6 @@ impl Window {
     }
 
     #[cfg(test)]
-    pub(crate) fn assert_metadata_unique(&self) {
-        let engine = &self.node_engine;
-        macro_rules! check {
-            ($field:ident, $total:expr) => {
-                assert!(
-                    engine
-                        .recordings()
-                        .map(|recording| recording.$field.local.len())
-                        .sum::<usize>()
-                        <= $total,
-                    "ancestor recordings duplicated {}",
-                    stringify!($field)
-                );
-            };
-        }
-        check!(dispatch_nodes, self.rendered_frame.dispatch_tree.len());
-    }
-
-    #[cfg(test)]
     pub(crate) fn clear_view_nodes_for_test(&mut self) {
         let node_engine = &mut self.node_engine;
         node_engine.clear();
@@ -3644,42 +3620,46 @@ impl Window {
         node_id: ViewNodeId,
         mut recording: ViewNodeRecording,
         has_layout: bool,
-        prepaint_range: Range<PrepaintStateIndex>,
     ) -> ViewNodeRecording {
         recording.scene = self.next_frame.scene.finish_node_scene(node_id);
-        let engine = &self.node_engine;
-        // Prepaint can visit children that are never painted and have no completed recording.
-        let children: smallvec::SmallVec<[_; 16]> = recording
-            .scene
-            .children()
-            .map(|child| (child, engine.recording(child)))
-            .collect();
         recording.has_layout = has_layout;
-        self.next_frame.dispatch_tree.record_subtree(
-            prepaint_range.start.dispatch_tree_index..prepaint_range.end.dispatch_tree_index,
-            &mut recording.dispatch_nodes,
-            &children,
-        );
-        recording.dispatch_start = prepaint_range.start.dispatch_tree_index;
+        self.node_engine
+            .snapshot_dispatch_nodes(node_id, &self.next_frame.dispatch_tree);
         recording
     }
 
-    pub(crate) fn graft_view_node_prepaint(
-        &mut self,
-        recording: &mut ViewNodeRecording,
-    ) -> Range<PrepaintStateIndex> {
-        let start = self.prepaint_index();
-        let engine = &self.node_engine;
-        if self
-            .next_frame
-            .dispatch_tree
-            .replay_subtree(recording, engine, self.focus)
-        {
+    /// Rebuilds the dispatch nodes a reused view and its descendants pushed, under the
+    /// active dispatch node.
+    pub(crate) fn graft_view_node_prepaint(&mut self, node_id: ViewNodeId) {
+        let dispatch_tree = &mut self.next_frame.dispatch_tree;
+        let mut contains_focus = false;
+        self.node_engine
+            .walk_node(node_id, MetadataPhase::Prepaint, |item| {
+                match item {
+                    OutputItem::DispatchPush(_, recorded) => {
+                        contains_focus |= dispatch_tree.push_recorded(recorded) == self.focus
+                            && self.focus.is_some();
+                    }
+                    OutputItem::DispatchPop => dispatch_tree.pop_node(),
+                    _ => {}
+                }
+                ControlFlow::Continue(())
+            });
+        if contains_focus {
             self.next_frame.focus = self.focus;
         }
-        let end = self.prepaint_index();
-        recording.dispatch_nodes.frame_range = start.dispatch_tree_index..end.dispatch_tree_index;
-        start..end
+    }
+
+    pub(crate) fn push_dispatch_node(&mut self) -> DispatchNodeId {
+        let node_id = self.next_frame.dispatch_tree.push_node();
+        self.node_engine
+            .push(OutputItem::DispatchPush(node_id, DispatchNode::default()));
+        node_id
+    }
+
+    pub(crate) fn pop_dispatch_node(&mut self) {
+        self.next_frame.dispatch_tree.pop_node();
+        self.node_engine.push(OutputItem::DispatchPop);
     }
 
     pub(crate) fn graft_view_node_paint(
@@ -3691,13 +3671,6 @@ impl Window {
         let parent = self.next_frame.scene.suspend_node_scene();
         recording.scene.replay(&mut self.next_frame.scene, engine);
         self.next_frame.scene.restore_node_scene(parent, node_id);
-    }
-
-    pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
-        PrepaintStateIndex {
-            deferred_draws_index: self.next_frame.deferred_draws.len(),
-            dispatch_tree_index: self.next_frame.dispatch_tree.len(),
-        }
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -3831,19 +3804,16 @@ impl Window {
     /// called during the prepaint phase of element drawing.
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
-        let index = self.prepaint_index();
+        let deferred_draws = self.next_frame.deferred_draws.len();
+        let dispatch_nodes = self.next_frame.dispatch_tree.len();
         let checkpoint = self.node_engine.checkpoint();
         let text_checkpoint = self.text_system.text_use_checkpoint();
         let result = f(self);
         if result.is_err() {
             self.node_engine.rollback(checkpoint);
             self.text_system.rollback_text_use(text_checkpoint);
-            self.next_frame
-                .deferred_draws
-                .truncate(index.deferred_draws_index);
-            self.next_frame
-                .dispatch_tree
-                .truncate(index.dispatch_tree_index);
+            self.next_frame.deferred_draws.truncate(deferred_draws);
+            self.next_frame.dispatch_tree.truncate(dispatch_nodes);
         }
         result
     }

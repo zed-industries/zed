@@ -400,7 +400,7 @@ impl<E: Element> Drawable<E> {
                     }
                 }
 
-                let node_id = window.next_frame.dispatch_tree.push_node();
+                let node_id = window.push_dispatch_node();
                 let mut prepaint = self.element.prepaint(
                     global_id.as_ref(),
                     inspector_id.as_ref(),
@@ -409,7 +409,7 @@ impl<E: Element> Drawable<E> {
                     window,
                     cx,
                 );
-                window.next_frame.dispatch_tree.pop_node();
+                window.pop_dispatch_node();
 
                 if pushed_a11y_node {
                     if let Some(global_id) = global_id.as_ref() {

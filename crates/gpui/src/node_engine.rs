@@ -115,13 +115,6 @@ impl NodeEngine {
         self.nodes.get_mut(node_id)?.recording.take()
     }
 
-    #[cfg(test)]
-    pub(crate) fn recordings(&self) -> impl Iterator<Item = &ViewNodeRecording> {
-        self.nodes
-            .values()
-            .filter_map(|node| node.recording.as_ref())
-    }
-
     pub(crate) fn recording(&self, node_id: ViewNodeId) -> &ViewNodeRecording {
         self.nodes
             .get(node_id)
@@ -332,6 +325,37 @@ impl NodeEngine {
             }
         }
         ControlFlow::Continue(())
+    }
+
+    /// Visits the items of one node's phase in drawing order, descending into the children
+    /// it entered. Used to replay a reused node's prepaint into the frame's dispatch tree.
+    pub(crate) fn walk_node<'a>(
+        &'a self,
+        node_id: ViewNodeId,
+        phase: MetadataPhase,
+        mut visit: impl FnMut(&'a OutputItem) -> ControlFlow<()>,
+    ) {
+        // Visiting every item; the walk only breaks when `visit` does.
+        let _ = self.walk_output(FrameOutput::Next, Some(node_id), phase, &mut |_, item| {
+            visit(item)
+        });
+    }
+
+    /// Copies the dispatch nodes a node pushed while prepainting out of the frame's dispatch
+    /// tree, now that painting has added their listeners and contexts.
+    pub(crate) fn snapshot_dispatch_nodes(
+        &mut self,
+        node_id: ViewNodeId,
+        dispatch_tree: &crate::key_dispatch::DispatchTree,
+    ) {
+        let Some(node) = self.nodes.get_mut(node_id) else {
+            return;
+        };
+        for item in &mut node.output.phase_mut(MetadataPhase::Prepaint).items {
+            if let OutputItem::DispatchPush(live, recorded) = item {
+                recorded.clone_from(dispatch_tree.node(*live));
+            }
+        }
     }
 
     /// Takes the callback at `slot` out of its output for a call, via `take` on the matching

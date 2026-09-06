@@ -38,124 +38,8 @@ pub(crate) enum MetadataPhase {
     Paint,
 }
 
-pub(crate) struct MetadataChild {
-    pub(crate) local_end: usize,
-    pub(crate) node: crate::node_engine::ViewNodeId,
-    pub(crate) phase: MetadataPhase,
-    pub(crate) len: usize,
-    pub(crate) dispatch_parent: Option<std::num::NonZeroUsize>,
-}
-
-pub(crate) struct RecordedMetadata<T> {
-    pub(crate) local: Vec<T>,
-    pub(crate) children: Vec<MetadataChild>,
-    // Ancestors capture against the current frame, even when these local entries are older.
-    pub(crate) frame_range: Range<usize>,
-}
-
-impl<T> Default for RecordedMetadata<T> {
-    fn default() -> Self {
-        Self {
-            local: Vec::new(),
-            children: Vec::new(),
-            frame_range: 0..0,
-        }
-    }
-}
-
-impl<T> RecordedMetadata<T> {
-    pub(crate) fn record<'a>(
-        &mut self,
-        range: Range<usize>,
-        children: impl Iterator<Item = (crate::node_engine::ViewNodeId, &'a ViewNodeRecording)>,
-        select: impl Fn(&ViewNodeRecording, MetadataPhase) -> Option<&Self>,
-        mut capture: impl FnMut(Range<usize>, &mut Vec<T>, usize),
-    ) {
-        self.children.clear();
-        if range.is_empty() {
-            self.local.clear();
-            self.frame_range = range;
-            return;
-        }
-        // Child layout can run inside parent prepaint; include contained spans from every phase.
-        for (node, recording) in children {
-            for phase in [
-                MetadataPhase::Layout,
-                MetadataPhase::Prepaint,
-                MetadataPhase::Paint,
-            ] {
-                let Some(recorded) = select(recording, phase) else {
-                    continue;
-                };
-                let source = &recorded.frame_range;
-                if source.start < source.end
-                    && source.start >= range.start
-                    && source.end <= range.end
-                {
-                    self.children.push(MetadataChild {
-                        local_end: source.start,
-                        node,
-                        phase,
-                        len: source.len(),
-                        dispatch_parent: None,
-                    });
-                }
-            }
-        }
-        self.children.sort_unstable_by_key(|child| child.local_end);
-        let mut cursor = range.start;
-        let mut local_end = 0;
-        for child in &mut self.children {
-            let child_start = child.local_end;
-            assert!(
-                child_start >= cursor,
-                "metadata child ranges must not overlap: node {:?}, phase {:?}, start {child_start}, cursor {cursor}, length {}, parent {range:?}",
-                child.node,
-                child.phase,
-                child.len
-            );
-            capture(cursor..child_start, &mut self.local, local_end);
-            local_end += child_start - cursor;
-            child.local_end = local_end;
-            cursor = child_start + child.len;
-        }
-        capture(cursor..range.end, &mut self.local, local_end);
-        self.local.truncate(local_end + range.end - cursor);
-        self.frame_range = range;
-    }
-
-    pub(crate) fn replay(
-        &self,
-        engine: &crate::node_engine::NodeEngine,
-        select: &impl Fn(&ViewNodeRecording, MetadataPhase) -> Option<&Self>,
-        emit: &mut impl FnMut(&[T]),
-    ) {
-        let mut start = 0;
-        for child in &self.children {
-            emit(&self.local[start..child.local_end]);
-            select(engine.recording(child.node), child.phase)
-                .expect("child metadata phase exists")
-                .replay(engine, select, emit);
-            start = child.local_end;
-        }
-        emit(&self.local[start..]);
-    }
-}
-
-pub(crate) fn capture_metadata<T: Clone>(source: &[T], target: &mut Vec<T>, start: usize) {
-    for (index, value) in source.iter().enumerate() {
-        if let Some(slot) = target.get_mut(start + index) {
-            slot.clone_from(value);
-        } else {
-            target.push(value.clone());
-        }
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct ViewNodeRecording {
-    pub(crate) dispatch_nodes: RecordedMetadata<crate::key_dispatch::DispatchNode>,
-    pub(crate) dispatch_start: usize,
     pub(crate) has_layout: bool,
     pub(crate) scene: ViewNodeScene,
 }
@@ -174,13 +58,6 @@ enum ViewNodeSceneSegment {
 }
 
 impl ViewNodeScene {
-    pub(crate) fn children(&self) -> impl Iterator<Item = crate::node_engine::ViewNodeId> + '_ {
-        self.segments.iter().filter_map(|segment| match segment {
-            ViewNodeSceneSegment::Child(child) => Some(*child),
-            ViewNodeSceneSegment::Local(_) => None,
-        })
-    }
-
     pub(crate) fn begin(&mut self) {
         self.segments.clear();
         self.operation_count = 0;
@@ -236,6 +113,10 @@ pub(crate) enum OutputItem {
     CursorStyle(CursorStyleRequest),
     WindowControl(crate::WindowControlArea, Hitbox),
     TabStop(crate::TabStopOperation),
+    /// A dispatch node pushed while prepainting; the recorded copy is refreshed once the node
+    /// has painted, and a reused view pushes it back into the frame's dispatch tree.
+    DispatchPush(crate::DispatchNodeId, crate::key_dispatch::DispatchNode),
+    DispatchPop,
     /// `None` while leased out for a call.
     MouseListener(Option<crate::window::AnyMouseListener>),
     InputHandler(Option<Box<dyn crate::InputHandler>>),

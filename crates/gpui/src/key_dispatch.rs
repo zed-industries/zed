@@ -58,7 +58,6 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
-    ops::Range,
     rc::Rc,
 };
 
@@ -246,110 +245,29 @@ impl DispatchTree {
         self.node_stack.pop();
     }
 
-    pub(crate) fn record_subtree(
-        &self,
-        range: Range<usize>,
-        recording: &mut crate::view_node::RecordedMetadata<DispatchNode>,
-        children: &[(
-            crate::node_engine::ViewNodeId,
-            &crate::view_node::ViewNodeRecording,
-        )],
-    ) {
-        let mut cursor = range.start;
-        recording.record(
-            range,
-            children.iter().copied(),
-            |recording, phase| {
-                (phase == crate::view_node::MetadataPhase::Prepaint)
-                    .then_some(&recording.dispatch_nodes)
-            },
-            |range, target, start| {
-                crate::view_node::capture_metadata(&self.nodes[range], target, start)
-            },
-        );
-        let mut local_start = 0;
-        for child in &mut recording.children {
-            cursor += child.local_end - local_start;
-            child.dispatch_parent = self.nodes[cursor]
-                .parent
-                .and_then(|parent| std::num::NonZeroUsize::new(parent.0 + 1));
-            cursor += child.len;
-            local_start = child.local_end;
+    /// Pushes a node reproduced from one recorded while a reused view drew, under the
+    /// active node. Returns its focus id so the caller can tell whether focus is inside.
+    pub(crate) fn push_recorded(&mut self, recorded: &DispatchNode) -> Option<FocusId> {
+        let node_id = self.push_node();
+        let node = &mut self.nodes[node_id.0];
+        node.key_listeners.clone_from(&recorded.key_listeners);
+        node.action_listeners.clone_from(&recorded.action_listeners);
+        node.modifiers_changed_listeners
+            .clone_from(&recorded.modifiers_changed_listeners);
+        node.context.clone_from(&recorded.context);
+        node.focus_id = recorded.focus_id;
+        node.view_id = recorded.view_id;
+        if let Some(context) = recorded.context.clone() {
+            self.context_stack.push(context);
         }
-    }
-
-    pub(crate) fn replay_subtree(
-        &mut self,
-        recording: &crate::view_node::ViewNodeRecording,
-        engine: &crate::node_engine::NodeEngine,
-        focus: Option<FocusId>,
-    ) -> bool {
-        self.replay_recorded_nodes(recording, engine, focus, self.node_stack.last().copied())
-    }
-
-    fn replay_recorded_nodes(
-        &mut self,
-        recording: &crate::view_node::ViewNodeRecording,
-        engine: &crate::node_engine::NodeEngine,
-        focus: Option<FocusId>,
-        parent: Option<DispatchNodeId>,
-    ) -> bool {
-        let nodes = &recording.dispatch_nodes;
-        let old_start = recording.dispatch_start;
-        let old_end = old_start + nodes.frame_range.len();
-        let new_start = self.nodes.len();
-        // Each child can retain IDs from a different frame; only its external parent
-        // belongs to the containing recording's coordinate space.
-        let map_parent = |source: Option<DispatchNodeId>| {
-            source
-                .filter(|source| source.0 >= old_start && source.0 < old_end)
-                .map(|source| DispatchNodeId(new_start + source.0 - old_start))
-                .or(parent)
-        };
-        let mut contains_focus = false;
-        let mut local_start = 0;
-        for child in &nodes.children {
-            contains_focus |= self.append_recorded_nodes(
-                &nodes.local[local_start..child.local_end],
-                focus,
-                &map_parent,
-            );
-            contains_focus |= self.replay_recorded_nodes(
-                engine.recording(child.node),
-                engine,
-                focus,
-                map_parent(
-                    child
-                        .dispatch_parent
-                        .map(|parent| DispatchNodeId(parent.get() - 1)),
-                ),
-            );
-            local_start = child.local_end;
+        if let Some(focus_id) = recorded.focus_id {
+            self.focusable_node_ids.insert(focus_id, node_id);
         }
-        contains_focus | self.append_recorded_nodes(&nodes.local[local_start..], focus, &map_parent)
-    }
-
-    fn append_recorded_nodes(
-        &mut self,
-        nodes: &[DispatchNode],
-        focus: Option<FocusId>,
-        map_parent: &impl Fn(Option<DispatchNodeId>) -> Option<DispatchNodeId>,
-    ) -> bool {
-        let mut contains_focus = false;
-        for source in nodes {
-            let mut node = source.clone();
-            node.parent = map_parent(node.parent);
-            let id = DispatchNodeId(self.nodes.len());
-            if let Some(focus_id) = node.focus_id {
-                self.focusable_node_ids.insert(focus_id, id);
-                contains_focus |= Some(focus_id) == focus;
-            }
-            if let Some(view_id) = node.view_id {
-                self.view_node_ids.insert(view_id, id);
-            }
-            self.nodes.push(node);
+        if let Some(view_id) = recorded.view_id {
+            self.view_node_ids.insert(view_id, node_id);
+            self.view_stack.push(view_id);
         }
-        contains_focus
+        recorded.focus_id
     }
 
     pub fn truncate(&mut self, index: usize) {

@@ -1,14 +1,14 @@
 use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, Context, Element, ElementId, Entity,
-    EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels,
-    PrepaintStateIndex, Render, RenderOnce, Style, StyleRefinement, ViewNodeCacheKey, ViewNodeId,
-    ViewNodeRecording, WeakEntity,
+    EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, Render,
+    RenderOnce, Style, StyleRefinement, ViewNodeCacheKey, ViewNodeId, ViewNodeRecording,
+    WeakEntity,
 };
 use crate::{Empty, Window};
 use anyhow::Result;
 use collections::FxHashSet;
 use refineable::Refineable;
-use std::{any::TypeId, fmt, ops::Range};
+use std::{any::TypeId, fmt};
 
 /// A dynamically-typed view handle that can be downcast to a specific `Entity<V>`.
 ///
@@ -311,7 +311,6 @@ enum ViewNodePrepaintState {
         has_layout: bool,
         node_id: ViewNodeId,
         cache_key: ViewNodeCacheKey,
-        prepaint_range: Range<PrepaintStateIndex>,
         accessed_entities: FxHashSet<EntityId>,
     },
 }
@@ -447,7 +446,7 @@ impl<V: View> Element for ViewElement<V> {
                         .matches(&cache_key, false)
                         && window.retained_layout_unchanged(node_layout.layout)
                     {
-                        window.graft_view_node_prepaint(&mut recording);
+                        window.graft_view_node_prepaint(node_id);
                         window.node_engine.recycle_dependency_set(accessed_entities);
                         window.finish_node_phase(node_id, false);
                         return ViewElementPrepaintState {
@@ -460,7 +459,6 @@ impl<V: View> Element for ViewElement<V> {
                     window.restart_node_render(node_id);
                     accessed_entities.clear();
                 }
-                let prepaint_start = window.prepaint_index();
                 let element = cx.track_reads(&mut accessed_entities, |cx| {
                     if let Some(mut element) = element.take() {
                         element.prepaint(window, cx);
@@ -483,7 +481,6 @@ impl<V: View> Element for ViewElement<V> {
                         has_layout: node_layout.has_layout,
                         node_id,
                         cache_key,
-                        prepaint_range: prepaint_start..window.prepaint_index(),
                         accessed_entities,
                     }),
                 }
@@ -545,19 +542,14 @@ impl<V: View> Element for ViewElement<V> {
                         has_layout,
                         node_id,
                         cache_key,
-                        prepaint_range,
                         mut accessed_entities,
                     } => {
                         let recording = window.begin_view_node_paint(node_id);
                         if let Some(element) = element.element.as_mut() {
                             cx.track_reads(&mut accessed_entities, |cx| element.paint(window, cx));
                         }
-                        let recording = window.capture_view_node_recording(
-                            node_id,
-                            recording,
-                            has_layout,
-                            prepaint_range,
-                        );
+                        let recording =
+                            window.capture_view_node_recording(node_id, recording, has_layout);
                         window.node_engine.store_render(
                             node_id,
                             cache_key,
@@ -1710,7 +1702,6 @@ mod tests {
                         assert!(branch.focus.contains_focused(window, cx));
                         assert!(branch.leaf.read(cx).focus.is_focused(window));
                         assert_eq!(&*root.events.borrow(), &["leaf", "branch", "root"]);
-                        window.assert_metadata_unique();
                         window.rendered_frame.scene.snapshot_for_test()
                     })
                     .expect("window open")
