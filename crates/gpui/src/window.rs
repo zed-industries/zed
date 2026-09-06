@@ -3061,8 +3061,44 @@ impl Window {
         let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
         self.invalidate_entities();
-        let previous_access_tracking = cx.entities.suspend_access_tracking();
-        cx.begin_render_notifications();
+        let (focus_before_listeners, notifications_during_draw) =
+            cx.draw_frame(|cx| self.draw_frame(cx));
+        // Keep these invalidations for the next requested frame. Scheduling
+        // here would turn focus-lost fallbacks into self-sustaining draws.
+        self.invalidator
+            .inner
+            .borrow_mut()
+            .dirty_views
+            .extend(notifications_during_draw);
+        self.reset_cursor_style(cx);
+        self.refreshing = false;
+        self.invalidator.set_phase(DrawPhase::None);
+        // Focus listeners may move focus (e.g. a dock forwarding focus to its active
+        // panel). `Window::focus` suppresses `refresh` while a draw is in progress, so
+        // schedule another frame here to render the new focus state and dispatch the
+        // resulting focus events.
+        if self.focus != focus_before_listeners {
+            self.refresh();
+        }
+        self.needs_present.set(true);
+
+        #[cfg(feature = "profiler")]
+        {
+            let draw_duration = self
+                .window_profiler
+                .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
+            self.debug_frame_overlay.record_frame(draw_duration);
+        }
+
+        // Exit the scope to obtain the arena-clear token this draw owes; the
+        // scope's teardown itself happens in `ElementArenaScope::drop`.
+        arena_scope.exit(&cx.element_arena)
+    }
+
+    /// Builds `next_frame`, swaps it in as `rendered_frame`, and dispatches focus events.
+    /// Returns the focus before focus listeners ran, so the caller can tell whether they
+    /// moved it.
+    fn draw_frame(&mut self, cx: &mut App) -> Option<FocusId> {
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
@@ -3176,41 +3212,7 @@ impl Window {
 
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.record_entities_accessed(cx);
-        let notifications_during_draw = cx.end_render_notifications();
-        {
-            // Keep these invalidations for the next requested frame. Scheduling
-            // here would turn focus-lost fallbacks into self-sustaining draws.
-            self.invalidator
-                .inner
-                .borrow_mut()
-                .dirty_views
-                .extend(notifications_during_draw);
-        }
-        cx.entities
-            .restore_access_tracking(previous_access_tracking);
-        self.reset_cursor_style(cx);
-        self.refreshing = false;
-        self.invalidator.set_phase(DrawPhase::None);
-        // Focus listeners may move focus (e.g. a dock forwarding focus to its active
-        // panel). `Window::focus` suppresses `refresh` while a draw is in progress, so
-        // schedule another frame here to render the new focus state and dispatch the
-        // resulting focus events.
-        if self.focus != focus_before_listeners {
-            self.refresh();
-        }
-        self.needs_present.set(true);
-
-        #[cfg(feature = "profiler")]
-        {
-            let draw_duration = self
-                .window_profiler
-                .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
-            self.debug_frame_overlay.record_frame(draw_duration);
-        }
-
-        // Exit the scope to obtain the arena-clear token this draw owes; the
-        // scope's teardown itself happens in `ElementArenaScope::drop`.
-        arena_scope.exit(&cx.element_arena)
+        focus_before_listeners
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {

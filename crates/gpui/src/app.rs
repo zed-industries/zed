@@ -2049,7 +2049,7 @@ impl App {
     }
 
     fn track_global<G: Global>(&self) {
-        if self.render_notifications.is_empty() {
+        if !self.is_drawing() {
             return;
         }
         // Reserve an entity identity even for absent globals, so insertion and removal
@@ -2725,9 +2725,7 @@ impl App {
         let future = A::load(source.clone(), self);
         let task = self.background_executor().spawn(future).shared();
         // Fetching alone is passive; only Window::use_asset observes completion.
-        let previous_accesses = self.entities.suspend_access_tracking();
         let completion = self.new(|_| ());
-        self.entities.restore_access_tracking(previous_accesses);
         let notification = self.spawn({
             let task = task.clone();
             let completion = completion.clone();
@@ -2761,16 +2759,29 @@ impl App {
         FocusHandle::new(&self.focus_handles)
     }
 
-    // Mid-draw notifications must survive until the next requested frame.
-    pub(crate) fn begin_render_notifications(&mut self) {
+    /// Runs a window draw. Entity accesses inside are tracked for this frame alone, and
+    /// the entities notified during the draw that the frame also read are returned, so the
+    /// window can dirty them on its next requested frame: a notification that arrives while
+    /// its window is already drawing cannot affect the frame being built.
+    pub(crate) fn draw_frame<R>(
+        &mut self,
+        draw: impl FnOnce(&mut App) -> R,
+    ) -> (R, FxHashSet<EntityId>) {
+        let previous_access_tracking = self.entities.suspend_access_tracking();
         self.render_notifications.push(FxHashSet::default());
+        let result = draw(self);
+        let mut notified = self.render_notifications.pop().unwrap_or_default();
+        {
+            let accessed_entities = self.entities.accessed_entities.borrow();
+            notified.retain(|source| accessed_entities.contains(source));
+        }
+        self.entities
+            .restore_access_tracking(previous_access_tracking);
+        (result, notified)
     }
 
-    pub(crate) fn end_render_notifications(&mut self) -> FxHashSet<EntityId> {
-        let mut sources = self.render_notifications.pop().unwrap_or_default();
-        let accessed_entities = self.entities.accessed_entities.borrow();
-        sources.retain(|source| accessed_entities.contains(source));
-        sources
+    pub(crate) fn is_drawing(&self) -> bool {
+        !self.render_notifications.is_empty()
     }
 
     /// Tell GPUI that an entity has changed and observers of it should be notified.

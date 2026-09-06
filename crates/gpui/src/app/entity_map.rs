@@ -125,8 +125,8 @@ impl EntityMap {
     where
         T: 'static,
     {
-        self.record_access(slot.entity_id);
-
+        // Creating an entity is not reading it: a render that constructs an entity without
+        // reading it does not depend on it.
         let handle = slot.0;
         self.entities.insert(handle.entity_id, Box::new(entity));
         handle
