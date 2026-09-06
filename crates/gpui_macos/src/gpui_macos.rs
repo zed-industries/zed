@@ -141,10 +141,10 @@ unsafe fn ns_string(string: &str) -> id {
 }
 
 #[cfg(all(test, feature = "test-support", feature = "font-kit"))]
-mod retained_scene_tests {
+mod node_engine_pixel_tests {
     #[test]
     #[ignore = "requires a Metal device"]
-    fn retained_scene_matches_full_refresh_pixels() {
+    fn node_engine_scene_matches_full_refresh_pixels() {
         use gpui::{
             AppContext as _, Context, Entity, HeadlessAppContext, IntoElement, ParentElement,
             Render, Styled, Window, div, px, rgb, size,
@@ -162,7 +162,7 @@ mod retained_scene_tests {
                     .bg(rgb(self.0))
                     .opacity(0.8)
                     .text_color(rgb(0xffffff))
-                    .child("Retained λ")
+                    .child("Memoized λ")
                     .child(
                         gpui::canvas(
                             |_, _, _| (),
@@ -229,7 +229,7 @@ mod retained_scene_tests {
             cx.run_until_parked();
             cx.update_window(window.into(), |_, window, cx| {
                 window.draw(cx).clear(cx);
-                if let Some(stats) = window.retained_node_stats() {
+                if let Some(stats) = window.node_stats() {
                     reused += stats.reused_subtrees;
                 }
             })
@@ -254,8 +254,8 @@ mod retained_scene_tests {
             assert!(incremental == reference, "GPU pixels differ at step {step}");
         }
         cx.update_window(window.into(), |_, window, _| {
-            if window.retained_node_stats().is_some() {
-                assert!(reused > 0, "pixel oracle must exercise retained reuse");
+            if window.node_stats().is_some() {
+                assert!(reused > 0, "pixel oracle must exercise node reuse");
             }
         })
         .expect("verify reuse");

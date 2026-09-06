@@ -358,8 +358,8 @@ mod tests {
         cx.update_window(window, |_, window, _| {
             assert!(
                 window
-                    .retained_node_stats()
-                    .expect("retained engine")
+                    .node_stats()
+                    .expect("node engine")
                     .reused_subtrees
                     > 0
             );

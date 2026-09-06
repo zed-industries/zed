@@ -23,9 +23,9 @@ pub(crate) enum NodeRenderDecision {
     },
 }
 
-/// Work performed by the retained engine in its last completed frame.
+/// Work performed by the node engine in its last completed frame.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct RetainedNodeStats {
+pub struct NodeStats {
     /// Input that forced every scope to rebuild, when present.
     pub full_refresh_reason: Option<&'static str>,
     /// Scopes with measurement captures that cannot survive the frame arena.
@@ -42,8 +42,8 @@ pub struct RetainedNodeStats {
 
 pub(crate) struct NodeEngine {
     invalidation_queue: Vec<ViewNodeId>,
-    frame_stats: RetainedNodeStats,
-    pub(crate) last_frame_stats: RetainedNodeStats,
+    frame_stats: NodeStats,
+    pub(crate) last_frame_stats: NodeStats,
     nodes: FxHashMap<ViewNodeId, Entity<ViewNode>>,
     consumers: FxHashMap<EntityId, FxHashSet<ViewNodeId>>,
     occurrences: FxHashMap<ViewOccurrence, ViewNodeId>,
@@ -70,8 +70,8 @@ impl NodeEngine {
     pub(crate) fn new() -> Self {
         Self {
             invalidation_queue: Vec::new(),
-            frame_stats: RetainedNodeStats::default(),
-            last_frame_stats: RetainedNodeStats::default(),
+            frame_stats: NodeStats::default(),
+            last_frame_stats: NodeStats::default(),
             nodes: FxHashMap::default(),
             consumers: FxHashMap::default(),
             occurrences: FxHashMap::default(),
@@ -121,12 +121,12 @@ impl NodeEngine {
         let node = self
             .nodes
             .get(&node_id)
-            .expect("retained scene child must be mounted")
+            .expect("node scene child must be mounted")
             .read(cx);
         let recording = node
             .recording
             .as_ref()
-            .expect("retained scene child must have finished painting");
+            .expect("node scene child must have finished painting");
         recording.scene.replay(scene, self, cx);
     }
 
@@ -160,9 +160,9 @@ impl NodeEngine {
             full_refresh_reason
         };
         self.full_refresh = full_refresh_reason.is_some();
-        self.frame_stats = RetainedNodeStats {
+        self.frame_stats = NodeStats {
             full_refresh_reason,
-            ..RetainedNodeStats::default()
+            ..NodeStats::default()
         };
         self.changed_bounds = None;
         self.next_roots.clear();
@@ -308,12 +308,12 @@ impl NodeEngine {
         }
 
         let graft = self.nodes.get(&node_id).and_then(|node| {
-            let retained = node.read(cx);
+            let previous = node.read(cx);
             if !self.full_refresh
                 && !self.dirty_nodes.contains(&node_id)
                 && !self.frame_bound_nodes.contains(&node_id)
-                && retained.cache_key == cache_key
-                && retained
+                && previous.cache_key == cache_key
+                && previous
                     .dependency_revisions
                     .iter()
                     .all(|(source, revision)| cx.entities.revision(*source) == Some(*revision))

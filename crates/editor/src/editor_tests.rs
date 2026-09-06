@@ -275,7 +275,7 @@ async fn test_workspace_rendering_stress(cx: &mut TestAppContext) {
         }
         cx.run_until_parked();
         let incremental = cx.update(|window, _| {
-            if let Some(stats) = window.retained_node_stats() {
+            if let Some(stats) = window.node_stats() {
                 if step < 4 {
                     eprintln!("workspace rendering step {step}: {stats:?}");
                 }
@@ -296,10 +296,10 @@ async fn test_workspace_rendering_stress(cx: &mut TestAppContext) {
             "incremental scene differs from full refresh at step {step}"
         );
     }
-    if cx.update(|window, _| window.retained_node_stats().is_some()) {
+    if cx.update(|window, _| window.node_stats().is_some()) {
         assert!(
             reused_subtrees > 0,
-            "stress workload must exercise retained reuse"
+            "stress workload must exercise node reuse"
         );
     }
     eprintln!(
@@ -648,7 +648,7 @@ fn test_accessibility_keyboard_word_completion(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_ime_platform_handler_across_retained_frames(cx: &mut TestAppContext) {
+fn test_ime_platform_handler_across_memoized_frames(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let (editor, cx) = cx.add_window_view(|window, cx| {
         let buffer = MultiBuffer::build_simple("abcde\nsecond line", cx);
@@ -672,7 +672,7 @@ fn test_ime_platform_handler_across_retained_frames(cx: &mut TestAppContext) {
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update(|window, _| {
-            if let Some(stats) = window.retained_node_stats() {
+            if let Some(stats) = window.node_stats() {
                 assert!(
                     stats.reused_subtrees > 0,
                     "IME test must replay a cached handler: {stats:?}"

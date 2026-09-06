@@ -3067,7 +3067,7 @@ impl Window {
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
 
-        // Preserve handler positions referenced by retained metadata.
+        // Preserve handler positions referenced by node recordings.
         if let Some(input_handler) = self.platform_window.take_input_handler() {
             if let Some(slot) = self
                 .rendered_frame
@@ -3629,8 +3629,8 @@ impl Window {
         sorted_indices
     }
 
-    /// Returns work counters for the retained engine's last completed frame.
-    pub fn retained_node_stats(&self) -> Option<crate::RetainedNodeStats> {
+    /// Returns work counters for the node engine's last completed frame.
+    pub fn node_stats(&self) -> Option<crate::NodeStats> {
         let engine = &self.node_engine;
         let mut stats = engine.last_frame_stats;
         stats.layout_nodes = self
@@ -3993,7 +3993,7 @@ impl Window {
                 capture_metadata(&self.next_frame.debug_bounds_history[range], target, start)
             },
         );
-        self.next_frame.dispatch_tree.record_retained_subtree(
+        self.next_frame.dispatch_tree.record_subtree(
             prepaint_range.start.dispatch_tree_index..prepaint_range.end.dispatch_tree_index,
             &mut recording.dispatch_nodes,
             &children,
@@ -4039,7 +4039,7 @@ impl Window {
         if self
             .next_frame
             .dispatch_tree
-            .replay_retained_subtree(recording, engine, cx, self.focus)
+            .replay_subtree(recording, engine, cx, self.focus)
         {
             self.next_frame.focus = self.focus;
         }
@@ -5294,7 +5294,7 @@ impl Window {
 
     /// Removes an image from the sprite atlas.
     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
-        // Retained sprites refer to atlas tiles that may be reassigned after removal.
+        // Recorded sprites refer to atlas tiles that may be reassigned after removal.
         self.atlas_invalidated = true;
         for frame_index in 0..data.frame_count() {
             let params = RenderImageParams {
@@ -7940,7 +7940,7 @@ mod tests {
     };
 
     #[gpui::test]
-    fn accessibility_activation_precedes_retained_cache_decisions(cx: &mut TestAppContext) {
+    fn accessibility_activation_precedes_node_reuse_decisions(cx: &mut TestAppContext) {
         struct Leaf(Rc<Cell<usize>>);
         impl Render for Leaf {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -7975,7 +7975,7 @@ mod tests {
                     assert_eq!(window.is_a11y_active(), enabled);
                     assert_eq!(
                         window
-                            .retained_node_stats()
+                            .node_stats()
                             .expect("node engine")
                             .full_refresh_reason,
                         enabled.then_some("accessibility")

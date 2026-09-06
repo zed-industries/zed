@@ -5035,8 +5035,8 @@ mod tests {
                 window.draw(cx).clear(cx);
                 assert_eq!(
                     window
-                        .retained_node_stats()
-                        .expect("retained engine")
+                        .node_stats()
+                        .expect("node engine")
                         .full_refresh_reason,
                     Some("prompt")
                 );

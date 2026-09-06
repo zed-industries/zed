@@ -103,7 +103,7 @@ impl Clone for DispatchNode {
     }
 
     fn clone_from(&mut self, source: &Self) {
-        // Retained recordings also reuse the listener buffers inside each node.
+        // Node recordings also reuse the listener buffers inside each node.
         self.key_listeners.clone_from(&source.key_listeners);
         self.action_listeners.clone_from(&source.action_listeners);
         self.modifiers_changed_listeners
@@ -246,7 +246,7 @@ impl DispatchTree {
         self.node_stack.pop();
     }
 
-    pub(crate) fn record_retained_subtree(
+    pub(crate) fn record_subtree(
         &self,
         range: Range<usize>,
         recording: &mut crate::view_node::RecordedMetadata<DispatchNode>,
@@ -278,7 +278,7 @@ impl DispatchTree {
         }
     }
 
-    pub(crate) fn replay_retained_subtree(
+    pub(crate) fn replay_subtree(
         &mut self,
         recording: &crate::view_node::ViewNodeRecording,
         engine: &crate::node_engine::NodeEngine,

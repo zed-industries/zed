@@ -2745,7 +2745,7 @@ impl App {
 
     pub(crate) fn track_asset<A: Asset>(&self, source: &A::Source) {
         if let Some(asset) = self.loading_assets.get(&(TypeId::of::<A>(), hash(source))) {
-            // Every retained consumer must observe completion, including those sharing a load.
+            // Every dependent node must observe completion, including those sharing a load.
             asset.completion.read(self);
         }
     }
@@ -2772,7 +2772,7 @@ impl App {
     /// Tell GPUI that an entity has changed and observers of it should be notified.
     ///
     /// Notification stops at `entity_id`: windows that read it during rendering are marked
-    /// dirty and the entity's observers run. Views and retained render nodes whose output was
+    /// dirty and the entity's observers run. Views and render nodes whose output was
     /// computed from this entity are not notified; the window's draw engine works that out
     /// from the recorded reads when it next draws.
     pub fn notify(&mut self, entity_id: EntityId) {

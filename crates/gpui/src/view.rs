@@ -255,7 +255,7 @@ pub struct ViewElement<V: View> {
     view: Option<V>,
     entity_id: Option<EntityId>,
     cached_style: Option<StyleRefinement>,
-    retained_layout: Option<RetainedViewLayout>,
+    node_layout: Option<NodeViewLayout>,
     #[cfg(debug_assertions)]
     source: &'static core::panic::Location<'static>,
 }
@@ -268,7 +268,7 @@ impl<V: View> ViewElement<V> {
         ViewElement {
             entity_id,
             cached_style: None,
-            retained_layout: None,
+            node_layout: None,
             view: Some(view),
             #[cfg(debug_assertions)]
             source: core::panic::Location::caller(),
@@ -298,7 +298,7 @@ impl<V: View> IntoElement for ViewElement<V> {
     }
 }
 
-struct RetainedViewLayout {
+struct NodeViewLayout {
     layout: LayoutId,
     layout_range: Option<Range<PrepaintStateIndex>>,
     node_id: ViewNodeId,
@@ -371,7 +371,7 @@ impl<V: View> Element for ViewElement<V> {
                 cx.entities.extend_accessed(&accessed_entities);
                 window.finish_view_node_prepaint(node_id, false, cx);
                 let layout_range = window.graft_view_node_layout(&mut recording, cx);
-                self.retained_layout = Some(RetainedViewLayout {
+                self.node_layout = Some(NodeViewLayout {
                     layout,
                     layout_range,
                     node_id,
@@ -390,7 +390,7 @@ impl<V: View> Element for ViewElement<V> {
             });
             window.store_view_node_layout(node_id, layout, cx);
             window.finish_view_node_prepaint(node_id, false, cx);
-            self.retained_layout = Some(RetainedViewLayout {
+            self.node_layout = Some(NodeViewLayout {
                 layout,
                 layout_range: Some(layout_start..window.prepaint_index()),
                 node_id,
@@ -449,20 +449,20 @@ impl<V: View> Element for ViewElement<V> {
         window: &mut Window,
         cx: &mut App,
     ) -> ViewElementPrepaintState {
-        if let Some(retained) = self.retained_layout.take() {
+        if let Some(node_layout) = self.node_layout.take() {
             let cache_key = window.view_node_key(bounds);
-            let node_id = retained.node_id;
-            let entity_id = self.entity_id.expect("retained views have an entity");
+            let node_id = node_layout.node_id;
+            let entity_id = self.entity_id.expect("node views have an entity");
             window.set_view_id(entity_id);
             window.enter_view_node_prepaint(node_id);
             return window.with_rendered_view(entity_id, |window| {
-                if let Some(mut recording) = retained.recording
+                if let Some(mut recording) = node_layout.recording
                     && window.view_node_cache_key(node_id, cx).as_ref() == Some(&cache_key)
-                    && window.retained_layout_unchanged(retained.layout)
+                    && window.retained_layout_unchanged(node_layout.layout)
                 {
                     window.graft_view_node_prepaint(&mut recording, cx);
-                    cx.entities.extend_accessed(&retained.accessed_entities);
-                    cx.entities.recycle_access_scope(retained.accessed_entities);
+                    cx.entities.extend_accessed(&node_layout.accessed_entities);
+                    cx.entities.recycle_access_scope(node_layout.accessed_entities);
                     window.finish_view_node_prepaint(node_id, false, cx);
                     return ViewElementPrepaintState {
                         element: None,
@@ -483,16 +483,16 @@ impl<V: View> Element for ViewElement<V> {
                             .view
                             .as_ref()
                             .and_then(View::retained_view)
-                            .expect("retained views can be rendered again");
+                            .expect("node views can be rendered again");
                         let mut element = view.render(window, cx).into_any_element();
                         let layout = element.request_layout(window, cx);
-                        window.replace_retained_layout(retained.layout, layout, cx);
+                        window.replace_retained_layout(node_layout.layout, layout, cx);
                         window.store_view_node_layout(node_id, layout, cx);
                         element.prepaint(window, cx);
                         element
                     }
                 });
-                let mut accessed_entities = retained.accessed_entities;
+                let mut accessed_entities = node_layout.accessed_entities;
                 if rebuilding_layout {
                     accessed_entities.clear();
                 }
@@ -502,7 +502,7 @@ impl<V: View> Element for ViewElement<V> {
                 ViewElementPrepaintState {
                     element: Some(element),
                     node: Some(ViewNodePrepaintState::Render {
-                        layout_range: retained.layout_range,
+                        layout_range: node_layout.layout_range,
                         node_id,
                         cache_key,
                         prepaint_range: prepaint_start..window.prepaint_index(),
@@ -581,7 +581,7 @@ impl<V: View> Element for ViewElement<V> {
                     };
                 }
 
-                unreachable!("retained cached views are handled before uncached views")
+                unreachable!("cached node views are handled before uncached views")
             })
         } else {
             // Stateless path: just prepaint the element.
@@ -684,7 +684,7 @@ impl<V: View> Element for ViewElement<V> {
     }
 }
 
-/// A component whose inputs can be retained and rendered again after local state changes.
+/// A component whose inputs are kept and rendered again after local state changes.
 /// Parent renders supply fresh inputs through [`component`].
 pub trait Component: 'static {
     /// Builds the component's elements from its current inputs and local state.
@@ -975,10 +975,10 @@ mod tests {
                     }))
             }
         }
-        for retained in [false, true] {
+        for memoized in [false, true] {
             for cached in [false, true] {
                 let window = cx.open_window(size(px(300.), px(100.)), |window, cx| {
-                    window.node_engine = if retained {
+                    window.node_engine = if memoized {
                         crate::NodeEngine::new()
                     } else {
                         crate::NodeEngine::new_eager()
@@ -1013,11 +1013,11 @@ mod tests {
                     cx.run_until_parked();
                     let actual = window
                         .update(cx, |_, window, _| {
-                            if retained && step == 0 {
+                            if memoized && step == 0 {
                                 assert!(
                                     window
-                                        .retained_node_stats()
-                                        .expect("retained stats")
+                                        .node_stats()
+                                        .expect("node stats")
                                         .reused_subtrees
                                         > 0
                                 );
@@ -1160,7 +1160,7 @@ mod tests {
             (1, 3, 1)
         );
 
-        let retained_scene = window
+        let memoized_scene = window
             .update(cx, |_, window, _| {
                 window.rendered_frame.scene.snapshot_for_test()
             })
@@ -1178,7 +1178,7 @@ mod tests {
             })
             .expect("test window should remain open");
 
-        assert_eq!(retained_scene, cold_scene);
+        assert_eq!(memoized_scene, cold_scene);
         assert_eq!(
             (
                 left_render_count.get(),
@@ -1275,7 +1275,7 @@ mod tests {
                 .w(px(self.width))
                 .h(px(50.))
                 .bg(rgb(self.color))
-                .child("Retained text")
+                .child("Memoized text")
         }
     }
 
@@ -1329,10 +1329,10 @@ mod tests {
             size(px(400.), px(100.)),
             build(crate::NodeEngine::new_eager()),
         );
-        let retained = cx.open_window(size(px(400.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(400.), px(100.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         for step in 0..10 {
-            for window in [eager, retained] {
+            for window in [eager, memoized] {
                 window
                     .update(cx, |root, _, cx| match step {
                         0 => {}
@@ -1397,11 +1397,11 @@ mod tests {
             };
             assert_eq!(
                 snapshot(eager, cx),
-                snapshot(retained, cx),
+                snapshot(memoized, cx),
                 "frame after step {step}"
             );
             if step == 1 {
-                retained
+                memoized
                     .update(cx, |root, _, cx| {
                         assert_eq!(
                             root.leaves
@@ -1473,10 +1473,10 @@ mod tests {
                     size(px(400.), px(200.)),
                     build(crate::NodeEngine::new_eager()),
                 );
-                let retained =
+                let memoized =
                     cx.open_window(size(px(400.), px(200.)), build(crate::NodeEngine::new()));
                 for width in [200., 300., 160., 320., 320.] {
-                    for window in [eager, retained] {
+                    for window in [eager, memoized] {
                         window
                             .update(cx, |host, _, cx| {
                                 host.width = width;
@@ -1495,7 +1495,7 @@ mod tests {
                     };
                     assert_eq!(
                         snapshot(eager, cx),
-                        snapshot(retained, cx),
+                        snapshot(memoized, cx),
                         "parent width {width}, relative {relative_width}, layout mode {layout_mode}"
                     );
                 }
@@ -1564,10 +1564,10 @@ mod tests {
             size(px(300.), px(100.)),
             build(crate::NodeEngine::new_eager()),
         );
-        let retained = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         for step in 0..8 {
-            for window in [eager, retained] {
+            for window in [eager, memoized] {
                 let mut visual = crate::VisualTestContext::from_window(window.into(), cx);
                 match step {
                     0 | 1 => {
@@ -1617,11 +1617,11 @@ mod tests {
             };
             assert_eq!(
                 snapshot(eager, cx),
-                snapshot(retained, cx),
+                snapshot(memoized, cx),
                 "interaction {step}"
             );
         }
-        retained
+        memoized
             .update(cx, |host, _, cx| {
                 let leaf = host.leaf.read(cx);
                 assert_eq!(leaf.clicks, 1, "old geometry must not retain a hit target");
@@ -1643,7 +1643,7 @@ mod tests {
                 .key_context("MetadataLeaf")
                 .w(px(100.))
                 .h(px(40.))
-                .child("retained text")
+                .child("memoized text")
                 .on_key_down(cx.listener(|this, _, _, _| this.events.borrow_mut().push("leaf")))
         }
     }
@@ -1677,11 +1677,11 @@ mod tests {
             size(px(400.), px(100.)),
             build(crate::NodeEngine::new_eager()),
         );
-        let retained = cx.open_window(size(px(400.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(400.), px(100.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         let mut reused = 0;
         for count in [2, 2, 1, 2, 3, 1, 0, 2] {
-            for window in [eager, retained] {
+            for window in [eager, memoized] {
                 window
                     .update(cx, |root, _, cx| {
                         root.count = count;
@@ -1694,7 +1694,7 @@ mod tests {
                 handle
                     .update(cx, |_, window, _| {
                         reused += window
-                            .retained_node_stats()
+                            .node_stats()
                             .expect("node statistics")
                             .reused_subtrees;
                         (
@@ -1704,7 +1704,7 @@ mod tests {
                     })
                     .expect("window open")
             };
-            assert_eq!(snapshot(eager, cx), snapshot(retained, cx));
+            assert_eq!(snapshot(eager, cx), snapshot(memoized, cx));
         }
         assert!(reused > 0);
     }
@@ -1772,10 +1772,10 @@ mod tests {
             size(px(300.), px(100.)),
             build(crate::NodeEngine::new_eager()),
         );
-        let retained = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         for step in 0..12 {
-            for handle in [eager, retained] {
+            for handle in [eager, memoized] {
                 handle
                     .update(cx, |root, _, cx| {
                         root.events.borrow_mut().clear();
@@ -1789,7 +1789,7 @@ mod tests {
                     .expect("window open");
             }
             cx.run_until_parked();
-            for handle in [eager, retained] {
+            for handle in [eager, memoized] {
                 crate::VisualTestContext::from_window(handle.into(), cx)
                     .simulate_keystrokes("enter");
             }
@@ -1808,7 +1808,7 @@ mod tests {
             };
             assert_eq!(
                 snapshot(eager, cx),
-                snapshot(retained, cx),
+                snapshot(memoized, cx),
                 "metadata frame {step}"
             );
         }
@@ -1904,10 +1904,10 @@ mod tests {
             size(px(300.), px(100.)),
             build(crate::NodeEngine::new_eager()),
         );
-        let retained = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         for step in 0..8 {
-            for handle in [eager, retained] {
+            for handle in [eager, memoized] {
                 handle
                     .update(cx, |root, _, cx| {
                         root.paint_child = step % 2 == 0;
@@ -1926,7 +1926,7 @@ mod tests {
             };
             assert_eq!(
                 snapshot(eager, cx),
-                snapshot(retained, cx),
+                snapshot(memoized, cx),
                 "optional paint {step}"
             );
         }
@@ -1991,7 +1991,7 @@ mod tests {
             size(px(300.), px(100.)),
             build(crate::NodeEngine::new_eager()),
         );
-        let retained = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         for step in 0..9 {
             if step == 1 {
@@ -2005,7 +2005,7 @@ mod tests {
                     cx.remove_global::<AmbientStyle>();
                 });
             }
-            for handle in [eager, retained] {
+            for handle in [eager, memoized] {
                 handle
                     .update(cx, |host, window, cx| {
                         if step == 4 {
@@ -2033,7 +2033,7 @@ mod tests {
             };
             assert_eq!(
                 snapshot(eager, cx),
-                snapshot(retained, cx),
+                snapshot(memoized, cx),
                 "ambient update {step}"
             );
         }
@@ -2092,10 +2092,10 @@ mod tests {
             size(px(300.), px(100.)),
             build(crate::NodeEngine::new_eager()),
         );
-        let retained = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         for step in 0..6 {
-            for handle in [eager, retained] {
+            for handle in [eager, memoized] {
                 handle
                     .update(cx, |host, _, cx| {
                         if step == 3 {
@@ -2109,7 +2109,7 @@ mod tests {
                     .expect("window open");
             }
             cx.run_until_parked();
-            for handle in [eager, retained] {
+            for handle in [eager, memoized] {
                 let mut visual = crate::VisualTestContext::from_window(handle.into(), cx);
                 visual.simulate_click(
                     crate::point(px(if step == 2 { 70. } else { 10. }), px(10.)),
@@ -2141,7 +2141,7 @@ mod tests {
             };
             assert_eq!(
                 snapshot(eager, cx),
-                snapshot(retained, cx),
+                snapshot(memoized, cx),
                 "overlap step {step}"
             );
         }
@@ -2203,7 +2203,7 @@ mod tests {
             .expect("window open");
         cx.run_until_parked();
         assert_eq!(renders.get(), 2);
-        let retained = handle
+        let memoized = handle
             .update(cx, |_, window, _| {
                 let scene = window.rendered_frame.scene.snapshot_for_test();
                 window.refresh();
@@ -2213,7 +2213,7 @@ mod tests {
         cx.run_until_parked();
         handle
             .update(cx, |_, window, _| {
-                assert_eq!(retained, window.rendered_frame.scene.snapshot_for_test());
+                assert_eq!(memoized, window.rendered_frame.scene.snapshot_for_test());
             })
             .expect("window open");
     }
@@ -2380,7 +2380,7 @@ mod tests {
             size(px(500.), px(300.)),
             build(crate::NodeEngine::new_eager()),
         );
-        let retained = cx.open_window(size(px(500.), px(300.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(500.), px(300.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         let snapshot = |window: crate::WindowHandle<SiblingHost>, cx: &mut TestAppContext| {
             window
@@ -2391,7 +2391,7 @@ mod tests {
         };
         for step in 0..6 {
             let dirty_all = step % 2 == 0;
-            for window in [eager, retained] {
+            for window in [eager, memoized] {
                 window
                     .update(cx, |host, window, cx| {
                         for leaf in host.leaves.iter().take(if dirty_all { 3 } else { 1 }) {
@@ -2407,10 +2407,10 @@ mod tests {
                     .expect("window open");
             }
             cx.run_until_parked();
-            assert_eq!(snapshot(eager, cx), snapshot(retained, cx));
-            retained
+            assert_eq!(snapshot(eager, cx), snapshot(memoized, cx));
+            memoized
                 .update(cx, |_, window, _| {
-                    let stats = window.retained_node_stats().expect("retained engine");
+                    let stats = window.node_stats().expect("node engine");
                     assert_eq!(stats.rebuilt_scopes, if dirty_all { 4 } else { 2 });
                     assert_eq!(stats.reused_subtrees, if dirty_all { 0 } else { 2 });
                 })
@@ -2499,7 +2499,7 @@ mod tests {
             .expect("window open");
         cx.run_until_parked();
         visual.simulate_click(crate::point(px(10.), px(10.)), crate::Modifiers::default());
-        assert_eq!(seen.get(), 9, "retained handlers must receive fresh inputs");
+        assert_eq!(seen.get(), 9, "recorded handlers must receive fresh inputs");
         cx.update(|cx| assert_eq!(*original.read(cx), 2));
         window
             .update(cx, |host, _, cx| {
@@ -2614,18 +2614,18 @@ mod tests {
             size(px(400.), px(200.)),
             build(crate::NodeEngine::new_eager()),
         );
-        let retained = cx.open_window(size(px(400.), px(200.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(400.), px(200.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
-        let baseline = retained
+        let baseline = memoized
             .update(cx, |_, window, _| {
                 window
-                    .retained_node_stats()
-                    .expect("retained engine")
+                    .node_stats()
+                    .expect("node engine")
                     .layout_nodes
             })
             .expect("window open");
         for step in 0..30 {
-            for window in [eager, retained] {
+            for window in [eager, memoized] {
                 window
                     .update(cx, |root, _, cx| {
                         if step % 3 == 2 {
@@ -2659,12 +2659,12 @@ mod tests {
             };
             assert_eq!(
                 snapshot(eager, cx),
-                snapshot(retained, cx),
+                snapshot(memoized, cx),
                 "nested frame {step}"
             );
-            retained
+            memoized
                 .update(cx, |_, window, _| {
-                    let stats = window.retained_node_stats().expect("retained engine");
+                    let stats = window.node_stats().expect("node engine");
                     assert_eq!(
                         stats.layout_nodes, baseline,
                         "obsolete layout trees must be collected"
