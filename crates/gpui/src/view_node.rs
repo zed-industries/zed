@@ -95,7 +95,10 @@ impl<T> RecordedMetadata<T> {
             let child_start = child.local_end;
             assert!(
                 child_start >= cursor,
-                "metadata child ranges must not overlap"
+                "metadata child ranges must not overlap: node {:?}, phase {:?}, start {child_start}, cursor {cursor}, length {}, parent {range:?}",
+                child.node,
+                child.phase,
+                child.len
             );
             capture(cursor..child_start, &mut self.local, local_end);
             local_end += child_start - cursor;
@@ -261,7 +264,7 @@ pub(crate) struct ViewNode {
     pub(crate) local_state: FxHashMap<(GlobalElementId, TypeId), NodeLocalState>,
     pub(crate) accessed_local_state: FxHashSet<(GlobalElementId, TypeId)>,
     pub(crate) layout: Option<LayoutId>,
-    pub(crate) occurrence: GlobalElementId,
+    pub(crate) occurrence: crate::node_engine::ViewOccurrence,
     pub(crate) parent: Option<super::node_engine::ViewNodeId>,
     pub(crate) children: Vec<super::node_engine::ViewNodeId>,
     pub(crate) next_children: Vec<super::node_engine::ViewNodeId>,

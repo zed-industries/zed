@@ -742,6 +742,20 @@ impl Render for EmptyView {
 #[cfg(test)]
 mod tests {
     #[gpui::test]
+    fn global_reads_outside_rendering_do_not_retain_dependency_entities(cx: &mut TestAppContext) {
+        struct Value;
+        impl crate::Global for Value {}
+        cx.update(|cx| {
+            let snapshot = cx.leak_detector_snapshot();
+            assert!(!cx.has_global::<Value>());
+            assert!(cx.try_global::<Value>().is_none());
+            cx.set_global(Value);
+            cx.global::<Value>();
+            cx.assert_no_new_leaks(&snapshot);
+        });
+    }
+
+    #[gpui::test]
     fn global_changes_only_invalidate_reading_scopes(cx: &mut TestAppContext) {
         struct LeftColor(u32);
         impl crate::Global for LeftColor {}
@@ -1632,6 +1646,67 @@ mod tests {
                 .child("retained text")
                 .on_key_down(cx.listener(|this, _, _, _| this.events.borrow_mut().push("leaf")))
         }
+    }
+
+    #[gpui::test]
+    fn repeated_view_mounts_keep_separate_recordings(cx: &mut TestAppContext) {
+        struct Repeated {
+            leaf: Entity<MetadataLeaf>,
+            count: usize,
+        }
+        impl Render for Repeated {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .flex()
+                    .children((0..self.count).map(|_| div().child(self.leaf.clone())))
+            }
+        }
+        let build = |engine| {
+            move |window: &mut Window, cx: &mut Context<Repeated>| {
+                window.node_engine = engine;
+                Repeated {
+                    leaf: cx.new(|cx| MetadataLeaf {
+                        focus: cx.focus_handle(),
+                        events: Rc::default(),
+                    }),
+                    count: 2,
+                }
+            }
+        };
+        let eager = cx.open_window(
+            size(px(400.), px(100.)),
+            build(crate::NodeEngine::new_eager()),
+        );
+        let retained = cx.open_window(size(px(400.), px(100.)), build(crate::NodeEngine::new()));
+        cx.run_until_parked();
+        let mut reused = 0;
+        for count in [2, 2, 1, 2, 3, 1, 0, 2] {
+            for window in [eager, retained] {
+                window
+                    .update(cx, |root, _, cx| {
+                        root.count = count;
+                        cx.notify();
+                    })
+                    .expect("window open");
+            }
+            cx.run_until_parked();
+            let mut snapshot = |handle: crate::WindowHandle<Repeated>, cx: &mut TestAppContext| {
+                handle
+                    .update(cx, |_, window, _| {
+                        reused += window
+                            .retained_node_stats()
+                            .expect("node statistics")
+                            .reused_subtrees;
+                        (
+                            window.rendered_frame.scene.snapshot_for_test(),
+                            window.rendered_frame.tab_stops.insertion_history.len(),
+                        )
+                    })
+                    .expect("window open")
+            };
+            assert_eq!(snapshot(eager, cx), snapshot(retained, cx));
+        }
+        assert!(reused > 0);
     }
 
     struct MetadataBranch {

@@ -5,6 +5,13 @@ use crate::{
 use collections::{FxHashMap, FxHashSet};
 pub(crate) type ViewNodeId = EntityId;
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) struct ViewOccurrence {
+    element: GlobalElementId,
+    parent: Option<ViewNodeId>,
+    index: usize,
+}
+
 pub(crate) enum NodeRenderDecision {
     Graft {
         node_id: ViewNodeId,
@@ -39,7 +46,7 @@ pub(crate) struct NodeEngine {
     pub(crate) last_frame_stats: RetainedNodeStats,
     nodes: FxHashMap<ViewNodeId, Entity<ViewNode>>,
     consumers: FxHashMap<EntityId, FxHashSet<ViewNodeId>>,
-    occurrences: FxHashMap<GlobalElementId, ViewNodeId>,
+    occurrences: FxHashMap<ViewOccurrence, ViewNodeId>,
     dirty_nodes: FxHashSet<ViewNodeId>,
     frame_bound_nodes: FxHashSet<ViewNodeId>,
     traversal_stack: Vec<ViewNodeId>,
@@ -219,6 +226,28 @@ impl NodeEngine {
         }
     }
 
+    fn next_occurrence(&self, element: GlobalElementId, cx: &App) -> ViewOccurrence {
+        let parent = self.traversal_stack.last().copied();
+        let siblings = parent
+            .and_then(|parent| self.nodes.get(&parent))
+            .map(|parent| &parent.read(cx).next_children)
+            .unwrap_or(&self.next_roots);
+        let mut occurrence = ViewOccurrence {
+            element,
+            parent,
+            index: 0,
+        };
+        // Element IDs can repeat when one view is mounted twice in the same scope.
+        while self
+            .occurrences
+            .get(&occurrence)
+            .is_some_and(|node| siblings.contains(node))
+        {
+            occurrence.index += 1;
+        }
+        occurrence
+    }
+
     pub(crate) fn begin_occurrence(
         &mut self,
         occurrence: GlobalElementId,
@@ -227,7 +256,19 @@ impl NodeEngine {
         cache_key: ViewNodeCacheKey,
         cx: &mut App,
     ) -> NodeRenderDecision {
-        let parent = self.traversal_stack.last().copied();
+        let occurrence = self.next_occurrence(occurrence, cx);
+        self.begin_resolved_occurrence(occurrence, view_id, view, cache_key, cx)
+    }
+
+    fn begin_resolved_occurrence(
+        &mut self,
+        occurrence: ViewOccurrence,
+        view_id: EntityId,
+        view: Option<AnyView>,
+        cache_key: ViewNodeCacheKey,
+        cx: &mut App,
+    ) -> NodeRenderDecision {
+        let parent = occurrence.parent;
         let node_id = if let Some(node_id) = self.occurrences.get(&occurrence).copied() {
             node_id
         } else {
@@ -259,12 +300,10 @@ impl NodeEngine {
         if let Some(parent_id) = parent {
             if let Some(parent_node) = self.nodes.get(&parent_id) {
                 parent_node.update(cx, |node, _| {
-                    if !node.next_children.contains(&node_id) {
-                        node.next_children.push(node_id);
-                    }
+                    node.next_children.push(node_id);
                 });
             }
-        } else if !self.next_roots.contains(&node_id) {
+        } else {
             self.next_roots.push(node_id);
         }
 
@@ -321,6 +360,7 @@ impl NodeEngine {
         mut cache_key: ViewNodeCacheKey,
         cx: &mut App,
     ) -> (NodeRenderDecision, Option<LayoutId>) {
+        let occurrence = self.next_occurrence(occurrence, cx);
         let previous = self
             .occurrences
             .get(&occurrence)
@@ -330,7 +370,7 @@ impl NodeEngine {
             cache_key.bounds = bounds;
         }
         let decision =
-            self.begin_occurrence(occurrence, view.entity_id(), Some(view), cache_key, cx);
+            self.begin_resolved_occurrence(occurrence, view.entity_id(), Some(view), cache_key, cx);
         (decision, previous.and_then(|(_, layout)| layout))
     }
 

@@ -2045,6 +2045,9 @@ impl App {
     }
 
     fn track_global<G: Global>(&self) {
+        if self.render_notifications.is_empty() {
+            return;
+        }
         // Reserve an entity identity even for absent globals, so insertion and removal
         // invalidate negative reads through the same graph as entity mutations.
         let mut dependencies = self.global_dependencies.borrow_mut();
