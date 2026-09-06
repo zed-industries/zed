@@ -127,12 +127,27 @@ effects being measured. `Workbench/update/{row,editor,mixed}` are the fixtures w
 reuse fires; `full` dirties every node each update and should match `main`.
 `Siblings/all dirty/{64,512}` is the engine's worst case — many trivially cheap views,
 all dirty every frame, so nothing is reused and every node pays its fixed cost — and
-bounds the overhead: about 0.7 µs per dirty node per frame, +21% / +24% on those
-fixtures, spread across the per-node steps (occurrence lookup, dependency set
-replacement, output reset, text seeding, dispatch node snapshot) with no single hot
-spot. Real views amortize it: `Workbench/update/full` (48 rows, four panels and an
-editor, all dirty) is 10% faster than `main`, and `Markdown render` (one view,
-re-rendered in full each frame) is 1% slower.
+bounds the overhead: about 0.7 µs per dirty node per frame, +22% on those fixtures.
+Real views amortize it: `Workbench/update/full` (48 rows, four panels and an editor,
+all dirty) is 10% faster than `main`, and `Markdown render` (one view, re-rendered in
+full each frame) is 1% slower. A Zed window has tens of nodes, so its worst frame pays
+tens of microseconds.
+
+Where the 0.7 µs goes, by ablation (switching one mechanism off and re-measuring the
+512 fixture; ~350 µs of overhead per frame): text-use recording, three `begin/end` pairs
+per node through the text system's `RwLock`, 15%; dependency read tracking (the
+`FxHashSet` per render), 7%; the dispatch-node snapshot after paint, 7%; building the
+`TextStyle` for the cache key, 3%; scene recording, 1%. The other two thirds is the node
+lifecycle: occurrence lookup (hashing the element path), output reset and item pushes,
+dirty propagation through `consumers` and parents, the frame walks, and the dispatch
+node each `ViewElement` pushes. Plan, in order of expected return: record text uses on
+the window's traversal stack instead of behind the text system's lock; key nodes on the
+refinement stack rather than a materialized `TextStyle`; keep dependency sets as small
+sorted vectors (most nodes read one to three entities); snapshot dispatch nodes only
+when paint added listeners or a context; give occurrences a per-parent counter so a
+repeated element id does not probe. A focused pass should halve the per-node cost;
+removing it needs the per-node steps themselves to go (fine-grained caching changes
+which ones run).
 
 ### Memory
 
@@ -141,9 +156,13 @@ containers' capacities (recordings, dependency sets, bookkeeping; not the shaped
 bodies, boxed listeners or the Taffy tree). `node_engine_retained_memory_is_flat_across_reuse`
 checks it stays flat over a thousand frames that redraw one row at a time, and
 `test_workspace_rendering_stress` prints it: a 3-pane workspace at 1600×1000 with three
-editors holds 20 nodes and about 500 KB. For process-level numbers, sample RSS during
-the real-use session below (`ps -o rss= -p <pid>` once a second) alongside the frame
-log.
+editors holds 20 nodes and about 500 KB. Against `main`, sampling the bench process's
+RSS (three runs each): `Workbench/update/full` peaks 5% lower and its median RSS is 5%
+lower; `Workbench/update/row` peaks 12% higher and its median 4% higher, but that
+growth is the harness storing per-iteration samples and the branch runs 2.2× the
+iterations in the same time, so per iteration it grows less. For process-level numbers
+in real use, sample RSS during the session below (`ps -o rss= -p <pid>` once a second)
+alongside the frame log.
 
 ### Real use
 
