@@ -21,8 +21,8 @@ use crate::{
     TabStopMap, TabStopOperation, TaffyLayoutEngine, Task, TextInputConfiguration,
     TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
     TransformationMatrix, Underline, UnderlineStyle, ViewNodeCacheKey, ViewNodeId,
-    ViewNodeRecording, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
-    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem,
     key_dispatch::DispatchNode,
     node_engine::FrameOutput,
     point,
@@ -3607,25 +3607,19 @@ impl Window {
         self.node_engine.restart_render(node_id);
     }
 
-    pub(crate) fn begin_view_node_paint(&mut self, node_id: ViewNodeId) -> ViewNodeRecording {
-        let mut recording = self.node_engine.take_recording(node_id).unwrap_or_default();
-        self.next_frame
-            .scene
-            .begin_node_scene(mem::take(&mut recording.scene));
-        recording
+    /// Starts recording the node's paint into its scene.
+    pub(crate) fn begin_view_node_paint(&mut self, node_id: ViewNodeId) {
+        let scene = self.node_engine.take_scene(node_id);
+        self.next_frame.scene.begin_node_scene(scene);
     }
 
-    pub(crate) fn capture_view_node_recording(
-        &mut self,
-        node_id: ViewNodeId,
-        mut recording: ViewNodeRecording,
-        has_layout: bool,
-    ) -> ViewNodeRecording {
-        recording.scene = self.next_frame.scene.finish_node_scene(node_id);
-        recording.has_layout = has_layout;
+    /// Stores the node's painted scene and refreshes its recorded dispatch nodes with what
+    /// paint added to them.
+    pub(crate) fn finish_view_node_paint(&mut self, node_id: ViewNodeId) {
+        let scene = self.next_frame.scene.finish_node_scene(node_id);
+        self.node_engine.store_scene(node_id, scene);
         self.node_engine
             .snapshot_dispatch_nodes(node_id, &self.next_frame.dispatch_tree);
-        recording
     }
 
     /// Rebuilds the dispatch nodes a reused view and its descendants pushed, under the
@@ -3662,14 +3656,11 @@ impl Window {
         self.node_engine.push(OutputItem::DispatchPop);
     }
 
-    pub(crate) fn graft_view_node_paint(
-        &mut self,
-        node_id: ViewNodeId,
-        recording: &mut ViewNodeRecording,
-    ) {
-        let engine = &self.node_engine;
+    /// Replays a reused node's scene into the frame, splicing it into the parent's.
+    pub(crate) fn graft_view_node_paint(&mut self, node_id: ViewNodeId) {
         let parent = self.next_frame.scene.suspend_node_scene();
-        recording.scene.replay(&mut self.next_frame.scene, engine);
+        self.node_engine
+            .replay_scene(node_id, &mut self.next_frame.scene);
         self.next_frame.scene.restore_node_scene(parent, node_id);
     }
 

@@ -1,8 +1,7 @@
 use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, Context, Element, ElementId, Entity,
     EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, Render,
-    RenderOnce, Style, StyleRefinement, ViewNodeCacheKey, ViewNodeId, ViewNodeRecording,
-    WeakEntity,
+    RenderOnce, Style, StyleRefinement, ViewNodeCacheKey, ViewNodeId, WeakEntity,
 };
 use crate::{Empty, Window};
 use anyhow::Result;
@@ -287,10 +286,9 @@ impl<V: View> IntoElement for ViewElement<V> {
 /// Carried from `request_layout` to `prepaint` for a view mounted as a node.
 struct NodeViewLayout {
     layout: LayoutId,
-    has_layout: bool,
     node_id: ViewNodeId,
-    /// The reused recording when layout was grafted; `None` when the view rendered.
-    recording: Option<ViewNodeRecording>,
+    /// Whether the layout was reused rather than rendered.
+    grafted: bool,
     /// Entities read while rendering at layout time. Empty when layout was grafted, since
     /// the node's stored dependencies already cover it.
     accessed_entities: FxHashSet<EntityId>,
@@ -305,10 +303,8 @@ pub struct ViewElementPrepaintState {
 enum ViewNodePrepaintState {
     Graft {
         node_id: ViewNodeId,
-        recording: ViewNodeRecording,
     },
     Render {
-        has_layout: bool,
         node_id: ViewNodeId,
         cache_key: ViewNodeCacheKey,
         accessed_entities: FxHashSet<EntityId>,
@@ -343,42 +339,39 @@ impl<V: View> Element for ViewElement<V> {
         {
             let cache_key = window.view_node_key(Bounds::default());
             let node_id = window.begin_node_occurrence(id.clone(), entity_id, &cache_key);
-            let (layout, element) = if let Some((mut recording, layout)) =
-                window.node_engine.reuse_layout(node_id, &cache_key)
-            {
-                cx.entities
-                    .extend_accessed(&window.node_engine.node(node_id).accessed_entities);
-                window.finish_node_phase(node_id, false);
-                self.node_layout = Some(NodeViewLayout {
-                    layout,
-                    has_layout: recording.has_layout,
-                    node_id,
-                    recording: Some(recording),
-                    accessed_entities: window.node_engine.take_dependency_set(),
-                });
-                (layout, None)
-            } else {
-                window.restart_node_render(node_id);
-                let mut accessed_entities = window.node_engine.take_dependency_set();
-                let view = self.view.take().expect("view is rendered once per frame");
-                let (layout, element) = cx.track_reads(&mut accessed_entities, |cx| {
-                    window.with_rendered_view(entity_id, |window| {
-                        let mut element = view.render(window, cx).into_any_element();
-                        let layout = element.request_layout(window, cx);
-                        (layout, element)
-                    })
-                });
-                window.node_engine.store_layout(node_id, layout);
-                window.finish_node_phase(node_id, true);
-                self.node_layout = Some(NodeViewLayout {
-                    layout,
-                    has_layout: true,
-                    node_id,
-                    recording: None,
-                    accessed_entities,
-                });
-                (layout, Some(element))
-            };
+            let (layout, element) =
+                if let Some(layout) = window.node_engine.reuse_layout(node_id, &cache_key) {
+                    cx.entities
+                        .extend_accessed(&window.node_engine.node(node_id).accessed_entities);
+                    window.finish_node_phase(node_id, false);
+                    self.node_layout = Some(NodeViewLayout {
+                        layout,
+                        node_id,
+                        grafted: true,
+                        accessed_entities: window.node_engine.take_dependency_set(),
+                    });
+                    (layout, None)
+                } else {
+                    window.restart_node_render(node_id);
+                    let mut accessed_entities = window.node_engine.take_dependency_set();
+                    let view = self.view.take().expect("view is rendered once per frame");
+                    let (layout, element) = cx.track_reads(&mut accessed_entities, |cx| {
+                        window.with_rendered_view(entity_id, |window| {
+                            let mut element = view.render(window, cx).into_any_element();
+                            let layout = element.request_layout(window, cx);
+                            (layout, element)
+                        })
+                    });
+                    window.node_engine.store_layout(node_id, layout);
+                    window.finish_node_phase(node_id, true);
+                    self.node_layout = Some(NodeViewLayout {
+                        layout,
+                        node_id,
+                        grafted: false,
+                        accessed_entities,
+                    });
+                    (layout, Some(element))
+                };
             // `.cached(style)` predates node memoization; the style it supplies now simply
             // becomes the box the view is laid out in.
             let layout = match &self.cached_style {
@@ -438,7 +431,7 @@ impl<V: View> Element for ViewElement<V> {
             window.enter_node_prepaint(node_id);
             return window.with_rendered_view(entity_id, |window| {
                 let mut accessed_entities = node_layout.accessed_entities;
-                if let Some(mut recording) = node_layout.recording {
+                if node_layout.grafted {
                     if window
                         .node_engine
                         .node(node_id)
@@ -451,7 +444,7 @@ impl<V: View> Element for ViewElement<V> {
                         window.finish_node_phase(node_id, false);
                         return ViewElementPrepaintState {
                             element: None,
-                            node: Some(ViewNodePrepaintState::Graft { node_id, recording }),
+                            node: Some(ViewNodePrepaintState::Graft { node_id }),
                         };
                     }
                     // The grafted layout is being replaced, so the reused recording and the
@@ -478,7 +471,6 @@ impl<V: View> Element for ViewElement<V> {
                 ViewElementPrepaintState {
                     element: Some(element),
                     node: Some(ViewNodePrepaintState::Render {
-                        has_layout: node_layout.has_layout,
                         node_id,
                         cache_key,
                         accessed_entities,
@@ -531,31 +523,23 @@ impl<V: View> Element for ViewElement<V> {
             window.enter_node_paint(node_id);
             if let Some(entity_id) = self.entity_id {
                 window.with_rendered_view(entity_id, |window| match node {
-                    ViewNodePrepaintState::Graft {
-                        node_id,
-                        mut recording,
-                    } => {
-                        window.graft_view_node_paint(node_id, &mut recording);
-                        window.node_engine.store_graft(node_id, recording);
+                    ViewNodePrepaintState::Graft { node_id } => {
+                        window.graft_view_node_paint(node_id);
+                        window.node_engine.store_graft();
                     }
                     ViewNodePrepaintState::Render {
-                        has_layout,
                         node_id,
                         cache_key,
                         mut accessed_entities,
                     } => {
-                        let recording = window.begin_view_node_paint(node_id);
+                        window.begin_view_node_paint(node_id);
                         if let Some(element) = element.element.as_mut() {
                             cx.track_reads(&mut accessed_entities, |cx| element.paint(window, cx));
                         }
-                        let recording =
-                            window.capture_view_node_recording(node_id, recording, has_layout);
-                        window.node_engine.store_render(
-                            node_id,
-                            cache_key,
-                            recording,
-                            accessed_entities,
-                        );
+                        window.finish_view_node_paint(node_id);
+                        window
+                            .node_engine
+                            .store_render(node_id, cache_key, accessed_entities);
                     }
                 });
             }

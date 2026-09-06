@@ -1,7 +1,6 @@
 use crate::{
     Bounds, EntityId, GlobalElementId, LayoutId, Pixels, ViewNode, ViewNodeCacheKey,
-    ViewNodeRecording,
-    view_node::{MetadataPhase, NodeOutput, OutputItem, OutputSlot},
+    view_node::{MetadataPhase, NodeOutput, OutputItem, OutputSlot, ViewNodeScene},
 };
 use collections::{FxHashMap, FxHashSet};
 use slotmap::SlotMap;
@@ -55,6 +54,8 @@ pub(crate) struct NodeEngine {
     /// Cleared dependency sets awaiting reuse as the accumulator for a rebuilding node.
     spare_dependency_sets: Vec<FxHashSet<EntityId>>,
     occurrences: FxHashMap<ViewOccurrence, ViewNodeId>,
+    /// Nodes mounted so far this frame, so a repeated element id gets the next occurrence.
+    mounted_this_frame: FxHashSet<ViewNodeId>,
     dirty_nodes: FxHashSet<ViewNodeId>,
     frame_bound_nodes: FxHashSet<ViewNodeId>,
     /// The nodes being drawn, innermost last, each with the phase it is in.
@@ -92,6 +93,7 @@ impl NodeEngine {
             consumers: FxHashMap::default(),
             spare_dependency_sets: Vec::new(),
             occurrences: FxHashMap::default(),
+            mounted_this_frame: FxHashSet::default(),
             dirty_nodes: FxHashSet::default(),
             frame_bound_nodes: FxHashSet::default(),
             traversal_stack: Vec::new(),
@@ -111,21 +113,30 @@ impl NodeEngine {
         &self.nodes[node_id]
     }
 
-    pub(crate) fn take_recording(&mut self, node_id: ViewNodeId) -> Option<ViewNodeRecording> {
-        self.nodes.get_mut(node_id)?.recording.take()
-    }
-
-    pub(crate) fn recording(&self, node_id: ViewNodeId) -> &ViewNodeRecording {
+    /// Takes the node's recorded scene so painting can record into it again.
+    pub(crate) fn take_scene(&mut self, node_id: ViewNodeId) -> ViewNodeScene {
         self.nodes
-            .get(node_id)
-            .expect("recorded child is mounted")
-            .recording
-            .as_ref()
-            .expect("recorded child has finished painting")
+            .get_mut(node_id)
+            .map(|node| std::mem::take(&mut node.output.phase_mut(MetadataPhase::Paint).scene))
+            .unwrap_or_default()
     }
 
+    pub(crate) fn store_scene(&mut self, node_id: ViewNodeId, scene: ViewNodeScene) {
+        if let Some(node) = self.nodes.get_mut(node_id) {
+            node.output.phase_mut(MetadataPhase::Paint).scene = scene;
+        }
+    }
+
+    /// Replays the node's recorded scene, and its children's where they were painted.
     pub(crate) fn replay_scene(&self, node_id: ViewNodeId, scene: &mut crate::Scene) {
-        self.recording(node_id).scene.replay(scene, self);
+        // A child only appears in its parent's scene after painting, and is removed only
+        // when the parent repaints, so it is always present here.
+        if let Some(node) = self.nodes.get(node_id) {
+            node.output
+                .phase(MetadataPhase::Paint)
+                .scene
+                .replay(scene, self);
+        }
     }
 
     pub(crate) fn current_node(&self) -> Option<ViewNodeId> {
@@ -435,6 +446,7 @@ impl NodeEngine {
         };
         self.changed_bounds = None;
         self.next_roots.clear();
+        self.mounted_this_frame.clear();
         if self.full_refresh {
             self.dirty_nodes.extend(self.nodes.keys());
         }
@@ -506,21 +518,16 @@ impl NodeEngine {
     }
 
     fn next_occurrence(&self, element: GlobalElementId) -> ViewOccurrence {
-        let parent = self.current_node();
-        let siblings = parent
-            .and_then(|parent| self.nodes.get(parent))
-            .map(|parent| &parent.next_children)
-            .unwrap_or(&self.next_roots);
         let mut occurrence = ViewOccurrence {
             element,
-            parent,
+            parent: self.current_node(),
             index: 0,
         };
         // Element IDs can repeat when one view is mounted twice in the same scope.
         while self
             .occurrences
             .get(&occurrence)
-            .is_some_and(|node| siblings.contains(node))
+            .is_some_and(|node| self.mounted_this_frame.contains(node))
         {
             occurrence.index += 1;
         }
@@ -552,12 +559,13 @@ impl NodeEngine {
                 cache_key: cache_key.clone(),
                 previous_bounds: cache_key.bounds,
                 accessed_entities: FxHashSet::default(),
-                recording: None,
+                painted: false,
             });
             self.occurrences.insert(occurrence, node_id);
             self.dirty_nodes.insert(node_id);
             node_id
         };
+        self.mounted_this_frame.insert(node_id);
 
         if let Some(parent_id) = parent {
             if let Some(parent_node) = self.nodes.get_mut(parent_id) {
@@ -570,24 +578,23 @@ impl NodeEngine {
         node_id
     }
 
-    /// Returns the node's recording and retained layout if its output can be reused for a
-    /// frame whose ambient inputs are `cache_key`. Called during layout, so bounds are not
-    /// yet known and are excluded here; prepaint compares them once they are. When `None`,
-    /// the caller restarts the node's render.
+    /// Returns the node's retained layout if its output can be reused for a frame whose
+    /// ambient inputs are `cache_key`. Called during layout, so bounds are not yet known and
+    /// are excluded here; prepaint compares them once they are. When `None`, the caller
+    /// restarts the node's render.
     pub(crate) fn reuse_layout(
         &mut self,
         node_id: ViewNodeId,
         cache_key: &ViewNodeCacheKey,
-    ) -> Option<(ViewNodeRecording, LayoutId)> {
-        let node = &mut self.nodes[node_id];
+    ) -> Option<LayoutId> {
+        let node = &self.nodes[node_id];
         if !self.full_refresh
+            && node.painted
             && !self.dirty_nodes.contains(&node_id)
             && !self.frame_bound_nodes.contains(&node_id)
             && node.cache_key.matches(cache_key, true)
-            && let Some(layout) = node.layout
-            && let Some(recording) = node.recording.take()
         {
-            Some((recording, layout))
+            node.layout
         } else {
             None
         }
@@ -654,7 +661,6 @@ impl NodeEngine {
         &mut self,
         node_id: ViewNodeId,
         cache_key: ViewNodeCacheKey,
-        recording: ViewNodeRecording,
         mut accessed_entities: FxHashSet<EntityId>,
     ) {
         let Some(node) = self.nodes.get_mut(node_id) else {
@@ -665,7 +671,7 @@ impl NodeEngine {
         accessed_entities.insert(node.view_id);
         node.cache_key = cache_key;
         node.previous_bounds = new_bounds;
-        node.recording = Some(recording);
+        node.painted = true;
         node.output.retain_accessed_element_states();
         let previous_accesses = std::mem::replace(&mut node.accessed_entities, accessed_entities);
         Self::replace_dependencies(
@@ -682,11 +688,8 @@ impl NodeEngine {
         self.include_changed_bounds(new_bounds);
     }
 
-    pub(crate) fn store_graft(&mut self, node_id: ViewNodeId, recording: ViewNodeRecording) {
+    pub(crate) fn store_graft(&mut self) {
         self.frame_stats.reused_subtrees += 1;
-        if let Some(node) = self.nodes.get_mut(node_id) {
-            node.recording = Some(recording);
-        }
     }
 
     pub(crate) fn finish_frame(&mut self) -> Option<Bounds<Pixels>> {
@@ -711,6 +714,7 @@ impl NodeEngine {
         self.nodes.clear();
         self.consumers.clear();
         self.occurrences.clear();
+        self.mounted_this_frame.clear();
         self.dirty_nodes.clear();
         self.frame_bound_nodes.clear();
         self.traversal_stack.clear();
@@ -772,5 +776,6 @@ impl NodeEngine {
         self.occurrences.remove(&node.occurrence);
         self.frame_bound_nodes.remove(&node_id);
         self.dirty_nodes.remove(&node_id);
+        self.mounted_this_frame.remove(&node_id);
     }
 }

@@ -39,12 +39,6 @@ pub(crate) enum MetadataPhase {
 }
 
 #[derive(Default)]
-pub(crate) struct ViewNodeRecording {
-    pub(crate) has_layout: bool,
-    pub(crate) scene: ViewNodeScene,
-}
-
-#[derive(Default)]
 pub(crate) struct ViewNodeScene {
     operations: Vec<crate::scene::PaintOperation>,
     segments: Vec<ViewNodeSceneSegment>,
@@ -131,6 +125,9 @@ pub(crate) struct PhaseOutput {
     pub(crate) items: Vec<OutputItem>,
     /// The line layouts looked up, held so they stay shaped while the scope is reused.
     pub(crate) text: crate::text_system::TextUse,
+    /// The primitives painted, with the children spliced where they were painted. Only
+    /// the paint phase records one.
+    pub(crate) scene: ViewNodeScene,
 }
 
 /// Everything one scope produced while drawing, by phase. A reused node keeps its output
@@ -199,7 +196,8 @@ pub(crate) struct ViewNode {
     pub(crate) cache_key: ViewNodeCacheKey,
     pub(crate) previous_bounds: Bounds<Pixels>,
     pub(crate) accessed_entities: FxHashSet<EntityId>,
-    pub(crate) recording: Option<ViewNodeRecording>,
+    /// Whether the node has painted since it was mounted, so its output is complete.
+    pub(crate) painted: bool,
 }
 
 #[cfg(test)]
