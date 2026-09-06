@@ -777,7 +777,7 @@ async fn test_agent_api_snapshot_frame_budget_prioritizes_stop_thread(
 
     let frame = |id: u64| StackFrame {
         id,
-        name: format!("Frame {id}").into(),
+        name: format!("Frame {id}"),
         source: None,
         line: 1,
         column: 1,
