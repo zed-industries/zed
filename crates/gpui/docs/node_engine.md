@@ -145,6 +145,10 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 - [ ] `uniform_list` and `list` use `request_retained_measured_layout` (their
   captures are plain values).
 - [ ] `next_occurrence` uses a per-location counter instead of `siblings.contains`.
+- [ ] Trim `TaffyLayoutEngine` bookkeeping: upstream node iteration to Taffy so
+  `allocated_nodes` can go; `stale_layouts` becomes a local; `previous_layouts` is
+  only the layout snapshot, not also the reachability marker in `retain()`;
+  `layout_inputs` lives with the node whose root it describes.
 
 ### Correctness
 
