@@ -49,6 +49,7 @@ impl RemoteClientDelegate for BenchmarkRemoteClient {
         &self,
         prompt: String,
         tx: oneshot::Sender<EncryptedPassword>,
+        _cancellation: oneshot::Receiver<()>,
         _cx: &mut gpui::AsyncApp,
     ) {
         eprintln!("SSH asking for password: {}", prompt);
@@ -141,7 +142,7 @@ fn main() -> Result<(), anyhow::Error> {
 
             cx.spawn(async move |cx| {
                 let project = if let Some(ssh_target) = args.ssh {
-                    println!("Setting up SSH connection for {}", &ssh_target);
+                    println!("Setting up SSH connection for {ssh_target}");
                     let ssh_connection_options = SshConnectionOptions::parse_command_line(&ssh_target)?;
 
                     let connection_options = remote::RemoteConnectionOptions::from(ssh_connection_options);

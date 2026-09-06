@@ -72,6 +72,7 @@ jobs:
         owner: ${{ github.repository_owner }}
         repositories: ${{ github.event.repository.name }}
         permission-contents: write
+        permission-issues: write
         permission-pull-requests: write
         permission-workflows: write
     - name: steps::checkout_repo
@@ -129,6 +130,7 @@ jobs:
         owner: zed-industries
         repositories: extensions
         permission-contents: write
+        permission-issues: write
         permission-pull-requests: write
         permission-workflows: write
     - id: short-sha

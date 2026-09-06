@@ -7,6 +7,7 @@ use crate::{
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
 use block::ConcreteBlock;
+use block2::RcBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags, NSEventType,
@@ -49,10 +50,10 @@ use objc::{
     runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
-use objc2::{rc::Retained, runtime::AnyObject as Objc2Object};
+use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject as Objc2Object};
 use objc2_app_kit::{
-    NSBeep, NSButton as Objc2NSButton, NSView as Objc2NSView, NSWindow as Objc2NSWindow,
-    NSWindowButton as Objc2NSWindowButton,
+    NSAlert, NSAlertStyle, NSBeep, NSButton as Objc2NSButton, NSView as Objc2NSView,
+    NSWindow as Objc2NSWindow, NSWindowButton as Objc2NSWindowButton,
 };
 use objc2_foundation::{NSPoint as Objc2NSPoint, NSRect as Objc2NSRect};
 use parking_lot::Mutex;
@@ -497,6 +498,94 @@ struct TrafficLightButtons {
     zoom: Retained<Objc2NSButton>,
 }
 
+// `NSApplicationPresentationOptions` bits (see `NSApplication.PresentationOptions`).
+const NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK: NSUInteger = 1 << 0;
+const NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR: NSUInteger = 1 << 2;
+
+// State captured when entering simple (borderless) fullscreen, used to restore
+// the window on exit.
+struct SimpleFullscreenState {
+    frame: NSRect,
+    bounds: Bounds<Pixels>,
+    style_mask: NSWindowStyleMask,
+}
+
+enum SimpleFullscreenPlan {
+    Enter { screen_frame: NSRect },
+    Exit(SimpleFullscreenState),
+}
+
+struct SimpleFullscreenAppState {
+    window_count: usize,
+    saved_presentation_options: NSUInteger,
+}
+
+static SIMPLE_FULLSCREEN_APP_STATE: Mutex<Option<SimpleFullscreenAppState>> = Mutex::new(None);
+
+unsafe fn push_simple_fullscreen_presentation_options() {
+    let mut app_state = SIMPLE_FULLSCREEN_APP_STATE.lock();
+    match app_state.as_mut() {
+        Some(app_state) => app_state.window_count += 1,
+        None => unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let saved_presentation_options: NSUInteger = msg_send![app, presentationOptions];
+            let _: () = msg_send![
+                app,
+                setPresentationOptions: NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK
+                    | NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR
+            ];
+            *app_state = Some(SimpleFullscreenAppState {
+                window_count: 1,
+                saved_presentation_options,
+            });
+        },
+    }
+}
+
+unsafe fn pop_simple_fullscreen_presentation_options() {
+    let mut app_state = SIMPLE_FULLSCREEN_APP_STATE.lock();
+    if let Some(state) = app_state.as_mut() {
+        state.window_count = state.window_count.saturating_sub(1);
+        if state.window_count == 0 {
+            unsafe {
+                let app = NSApplication::sharedApplication(nil);
+                let _: () = msg_send![
+                    app,
+                    setPresentationOptions: state.saved_presentation_options
+                ];
+            }
+            *app_state = None;
+        }
+    }
+}
+
+unsafe fn apply_simple_fullscreen_plan(
+    native_window: id,
+    native_view: id,
+    plan: SimpleFullscreenPlan,
+) {
+    unsafe {
+        match plan {
+            SimpleFullscreenPlan::Exit(saved) => {
+                pop_simple_fullscreen_presentation_options();
+                native_window.setStyleMask_(saved.style_mask);
+                native_window.setFrame_display_(saved.frame, YES);
+            }
+            SimpleFullscreenPlan::Enter { screen_frame } => {
+                push_simple_fullscreen_presentation_options();
+                native_window.setStyleMask_(NSWindowStyleMask::NSBorderlessWindowMask);
+                native_window.setFrame_display_(screen_frame, YES);
+            }
+        }
+
+        // Changing the style mask makes AppKit resign the window's key status and
+        // first responder, so keyboard input stops reaching the editor. Re-make the
+        // window key and restore the GPUI view as first responder.
+        native_window.makeKeyAndOrderFront_(nil);
+        native_window.makeFirstResponder_(native_view);
+    }
+}
+
 struct MacWindowState {
     handle: AnyWindowHandle,
     foreground_executor: ForegroundExecutor,
@@ -536,6 +625,7 @@ struct MacWindowState {
     // windows draw their own titlebar and move the window via `start_window_move`.
     app_owns_titlebar_drag: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
+    simple_fullscreen_state: Option<SimpleFullscreenState>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
     select_next_tab_callback: Option<Box<dyn FnMut()>>,
@@ -715,6 +805,33 @@ impl MacWindowState {
         }
     }
 
+    fn toggle_simple_fullscreen(&mut self) -> Option<SimpleFullscreenPlan> {
+        // If the window is in native fullscreen, simple fullscreen would conflict
+        // with AppKit's own fullscreen handling, so ignore the request.
+        if self.is_fullscreen() {
+            return None;
+        }
+
+        if let Some(saved) = self.simple_fullscreen_state.take() {
+            Some(SimpleFullscreenPlan::Exit(saved))
+        } else {
+            let screen = unsafe { self.native_window.screen() };
+            if screen == nil {
+                return None;
+            }
+            let screen_frame = unsafe { NSScreen::frame(screen) };
+            let bounds = self.bounds();
+
+            self.simple_fullscreen_state = Some(SimpleFullscreenState {
+                frame: unsafe { NSWindow::frame(self.native_window) },
+                bounds,
+                style_mask: unsafe { self.native_window.styleMask() },
+            });
+
+            Some(SimpleFullscreenPlan::Enter { screen_frame })
+        }
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
         let screen = unsafe { NSWindow::screen(self.native_window) };
@@ -752,6 +869,8 @@ impl MacWindowState {
     fn window_bounds(&self) -> WindowBounds {
         if self.is_fullscreen() {
             WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
+        } else if let Some(state) = &self.simple_fullscreen_state {
+            WindowBounds::Windowed(state.bounds)
         } else {
             WindowBounds::Windowed(self.bounds())
         }
@@ -760,7 +879,7 @@ impl MacWindowState {
 
 unsafe impl Send for MacWindowState {}
 
-pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
+pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>, MainThreadMarker);
 
 impl MacWindow {
     pub fn open(
@@ -784,6 +903,7 @@ impl MacWindow {
         foreground_executor: ForegroundExecutor,
         background_executor: BackgroundExecutor,
         renderer_context: renderer::Context,
+        marker: MainThreadMarker,
     ) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
@@ -893,7 +1013,7 @@ impl MacWindow {
             let native_view = NSView::initWithFrame_(native_view, NSView::bounds(content_view));
             assert!(!native_view.is_null());
 
-            let mut window = Self(Arc::new(Mutex::new(MacWindowState {
+            let state = Arc::new(Mutex::new(MacWindowState {
                 handle,
                 foreground_executor,
                 background_executor,
@@ -937,6 +1057,7 @@ impl MacWindow {
                 first_mouse: false,
                 app_owns_titlebar_drag,
                 fullscreen_restore_bounds: Bounds::default(),
+                simple_fullscreen_state: None,
                 move_tab_to_new_window_callback: None,
                 merge_all_windows_callback: None,
                 select_next_tab_callback: None,
@@ -946,7 +1067,8 @@ impl MacWindow {
                 closed: Arc::new(AtomicBool::new(false)),
                 accesskit_adapter: None,
                 sheet_parent: None,
-            })));
+            }));
+            let mut window = Self(state, marker);
 
             (*native_window).set_ivar(
                 WINDOW_STATE_IVAR,
@@ -1392,6 +1514,8 @@ impl PlatformWindow for MacWindow {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>> {
+        use objc2_foundation::{NSInteger, NSString};
+
         // NSAlert's first button keeps Return and Cancel keeps Escape, but the keyboard
         // focus (and therefore Space) defaults to Cancel, leaving the middle button of
         // prompts like "Save / Don't Save / Cancel" unreachable from the keyboard. Move
@@ -1404,69 +1528,67 @@ impl PlatformWindow for MacWindow {
             .map(|(ix, _)| ix)
             .filter(|&ix| ix > 0);
 
-        unsafe {
-            let alert: id = msg_send![class!(NSAlert), alloc];
-            let alert: id = msg_send![alert, init];
-            let alert_style = match level {
-                PromptLevel::Info => 1,
-                PromptLevel::Warning => 0,
-                PromptLevel::Critical => 2,
-            };
-            let _: () = msg_send![alert, setAlertStyle: alert_style];
-            let _: () = msg_send![alert, setMessageText: ns_string(msg)];
-            if let Some(detail) = detail {
-                let _: () = msg_send![alert, setInformativeText: ns_string(detail)];
-            }
+        let alert = NSAlert::new(self.1);
+        alert.setAlertStyle(match level {
+            PromptLevel::Critical => NSAlertStyle::Critical,
+            PromptLevel::Warning => NSAlertStyle::Warning,
+            PromptLevel::Info => NSAlertStyle::Informational,
+        });
+        let message = NSString::from_str(msg);
+        alert.setMessageText(message.as_ref());
 
-            let mut initial_focus_button: Option<id> = None;
-            for (ix, answer) in answers.iter().enumerate() {
-                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
-                let _: () = msg_send![button, setTag: ix as NSInteger];
-
-                if answer.is_cancel() {
-                    if let Some(key) = std::char::from_u32(crate::events::ESCAPE_KEY as u32) {
-                        let _: () =
-                            msg_send![button, setKeyEquivalent: ns_string(&key.to_string())];
-                    }
-                } else if Some(ix) == initial_focus_ix {
-                    initial_focus_button = Some(button);
-                }
-            }
-
-            if let Some(button) = initial_focus_button {
-                let alert_window: id = msg_send![alert, window];
-                let _: () = msg_send![alert_window, setInitialFirstResponder: button];
-            }
-
-            let (done_tx, done_rx) = oneshot::channel();
-            let done_tx = Cell::new(Some(done_tx));
-            let block = ConcreteBlock::new(move |answer: NSInteger| {
-                let _: () = msg_send![alert, release];
-                if let Some(done_tx) = done_tx.take() {
-                    let _ = done_tx.send(answer.try_into().unwrap());
-                }
-            });
-            let block = block.copy();
-            let lock = self.0.lock();
-            let native_window = lock.native_window;
-            let closed = lock.closed.clone();
-            let executor = lock.foreground_executor.clone();
-            executor
-                .spawn(async move {
-                    if !closed.load(Ordering::Acquire) {
-                        let _: () = msg_send![
-                            alert,
-                            beginSheetModalForWindow: native_window
-                            completionHandler: block
-                        ];
-                    } else {
-                        let _: () = msg_send![alert, release];
-                    }
-                })
-                .detach();
-
-            Some(done_rx)
+        if let Some(detail) = detail {
+            let detail_text = NSString::from_str(detail);
+            alert.setInformativeText(detail_text.as_ref());
         }
+
+        let mut initial_focus_button: Option<Retained<Objc2NSButton>> = None;
+        for (ix, answer) in answers.iter().enumerate() {
+            let title = NSString::from_str(answer.label());
+            let button = alert.addButtonWithTitle(&title);
+            button.setTag(ix as NSInteger);
+
+            if answer.is_cancel() {
+                if let Some(key) = core::char::from_u32(crate::events::ESCAPE_KEY as u32) {
+                    let key = NSString::from_str(&key.to_string());
+                    button.setKeyEquivalent(&key);
+                }
+            } else if Some(ix) == initial_focus_ix {
+                initial_focus_button = Some(button);
+            }
+        }
+
+        if let Some(button) = initial_focus_button {
+            alert.window().setInitialFirstResponder(Some(&button));
+        }
+
+        let (done_tx, done_rx) = oneshot::channel();
+        let done_tx = Cell::new(Some(done_tx));
+
+        let block = RcBlock::new(move |answer: NSInteger| {
+            if let Some(done_tx) = done_tx.take() {
+                let _ = done_tx.send(answer.try_into().unwrap());
+            }
+        });
+
+        let lock = self.0.lock();
+        let native_window = lock.native_window;
+        let closed = lock.closed.clone();
+        let executor = lock.foreground_executor.clone();
+        executor
+            .spawn(async move {
+                if !closed.load(Ordering::Acquire) {
+                    // SAFETY: `native_window` is an Objective-C `NSWindow` pointer
+                    // owned by the platform window; bridge it into objc2.
+                    let sheet_window: &Objc2NSWindow =
+                        unsafe { &*(native_window as *const Objc2NSWindow) };
+
+                    alert.beginSheetModalForWindow_completionHandler(sheet_window, Some(&block));
+                }
+            })
+            .detach();
+
+        Some(done_rx)
     }
 
     fn activate(&self) {
@@ -1651,6 +1773,35 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    fn toggle_simple_fullscreen(&self) {
+        let state = self.0.clone();
+        let (foreground_executor, closed) = {
+            let this = self.0.lock();
+            (this.foreground_executor.clone(), this.closed.clone())
+        };
+        foreground_executor
+            .spawn(async move {
+                if_window_not_closed(closed, move || {
+                    let (native_window, native_view, plan) = {
+                        let mut lock = state.lock();
+                        (
+                            lock.native_window,
+                            lock.native_view.as_ptr() as id,
+                            lock.toggle_simple_fullscreen(),
+                        )
+                    };
+                    if let Some(plan) = plan {
+                        unsafe { apply_simple_fullscreen_plan(native_window, native_view, plan) };
+                    }
+                })
+            })
+            .detach();
+    }
+
+    fn is_simple_fullscreen(&self) -> bool {
+        self.0.lock().simple_fullscreen_state.is_some()
+    }
+
     fn is_fullscreen(&self) -> bool {
         let this = self.0.lock();
         let window = this.native_window;
@@ -1786,6 +1937,9 @@ impl PlatformWindow for MacWindow {
 
     fn titlebar_double_click(&self, is_resizable: bool, is_minimizable: bool) {
         let this = self.0.lock();
+        if this.simple_fullscreen_state.is_some() {
+            return;
+        }
         let window = this.native_window;
         let closed = this.closed.clone();
         this.foreground_executor
@@ -1843,6 +1997,9 @@ impl PlatformWindow for MacWindow {
 
     fn start_window_move(&self) {
         let this = self.0.lock();
+        if this.simple_fullscreen_state.is_some() {
+            return;
+        }
         let window = this.native_window;
 
         unsafe {
@@ -2751,12 +2908,19 @@ extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
 
 extern "C" fn close_window(this: &Object, _: Sel) {
     unsafe {
-        let close_callback = {
+        let (close_callback, simple_fullscreen_state) = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
             lock.closed.store(true, Ordering::Release);
-            lock.close_callback.take()
+            (
+                lock.close_callback.take(),
+                lock.simple_fullscreen_state.take(),
+            )
         };
+
+        if simple_fullscreen_state.is_some() {
+            pop_simple_fullscreen_presentation_options();
+        }
 
         if let Some(callback) = close_callback {
             callback();

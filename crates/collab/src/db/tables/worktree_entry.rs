@@ -23,6 +23,7 @@ pub struct Model {
     pub scan_id: i64,
     pub is_fifo: bool,
     pub canonical_path: Option<String>,
+    pub is_unloaded: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

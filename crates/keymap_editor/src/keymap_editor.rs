@@ -2076,7 +2076,7 @@ impl Render for KeymapEditor {
                                         Button::new("edit-in-json", "Edit in JSON")
                                             .key_binding(
                                                 ui::KeyBinding::for_action_in(&zed_actions::OpenKeymapFile, &focus_handle, cx)
-                                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                                    .map(|kb| kb.size(rems_from_px(10_f32))),
                                             )
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(
@@ -2090,7 +2090,7 @@ impl Render for KeymapEditor {
                                             .style(ButtonStyle::Outlined)
                                             .key_binding(
                                                 ui::KeyBinding::for_action_in(&OpenCreateKeybindingModal, &focus_handle, cx)
-                                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                                    .map(|kb| kb.size(rems_from_px(10_f32))),
                                             )
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(
@@ -3961,7 +3961,6 @@ impl SerializableItem for KeymapEditor {
         workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut ui::Context<Self>,
     ) -> Option<gpui::Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;

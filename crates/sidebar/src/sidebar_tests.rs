@@ -24,7 +24,23 @@ use std::{
 };
 use util::{path_list::PathList, rel_path::rel_path};
 
+fn use_unique_metadata_databases(cx: &mut TestAppContext) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_TEST_DATABASE: AtomicUsize = AtomicUsize::new(0);
+    let test_database_id = NEXT_TEST_DATABASE.fetch_add(1, Ordering::SeqCst);
+    cx.update(|cx| {
+        cx.set_global(agent_ui::thread_metadata_store::TestMetadataDbName(
+            format!("SIDEBAR_THREAD_METADATA_{test_database_id}"),
+        ));
+        cx.set_global(TestTerminalMetadataDbName(format!(
+            "SIDEBAR_TERMINAL_THREAD_METADATA_{test_database_id}"
+        )));
+    });
+}
+
 fn init_test(cx: &mut TestAppContext) {
+    use_unique_metadata_databases(cx);
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
@@ -210,6 +226,50 @@ async fn init_test_project(
         .await;
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
     project::Project::test(fs, [worktree_path.as_ref()], cx).await
+}
+
+#[gpui::test]
+async fn test_workspace_menu_uses_bare_repository_worktree_name(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/zed/.bare",
+        serde_json::json!({
+            "worktrees": {
+                "glossy-walrus": {
+                    "commondir": "../..",
+                    "HEAD": "ref: refs/heads/glossy-walrus",
+                },
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/worktrees/zed/glossy-walrus/zed",
+        serde_json::json!({
+            ".git": "gitdir: /zed/.bare/worktrees/glossy-walrus",
+            "src": {},
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project =
+        project::Project::test(fs, [Path::new("/worktrees/zed/glossy-walrus/zed")], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    let labels = cx.update(|_window, cx| workspace_menu_worktree_labels(&workspace, cx));
+
+    assert_eq!(labels.len(), 1);
+    assert_eq!(labels[0].primary_name.as_ref(), "glossy-walrus");
+    assert_eq!(labels[0].secondary_name, None);
 }
 
 fn setup_sidebar(
@@ -492,6 +552,27 @@ fn focus_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
     cx.run_until_parked();
 }
 
+fn enter_renamed_title(
+    sidebar: &Entity<Sidebar>,
+    target: RenameTarget,
+    renamed_title: &str,
+    cx: &mut gpui::VisualTestContext,
+) {
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.rename_target, Some(target));
+    });
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.rename_editor.update(cx, |editor, cx| {
+            editor.set_text(renamed_title, window, cx);
+        });
+    });
+    cx.run_until_parked();
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.finish_entry_rename(window, cx);
+    });
+    cx.run_until_parked();
+}
+
 fn request_test_tool_authorization(
     thread: &Entity<AcpThread>,
     tool_call_id: &str,
@@ -561,12 +642,7 @@ fn visible_entries_as_strings(
                     ""
                 };
                 match entry {
-                    ListEntry::ProjectHeader {
-                        label,
-                        key,
-                        highlight_positions: _,
-                        ..
-                    } => {
+                    ListEntry::ProjectHeader { label, key, .. } => {
                         let icon = if sidebar.is_group_collapsed(key, cx) {
                             ">"
                         } else {
@@ -1460,8 +1536,8 @@ async fn test_keyboard_focus_in_does_not_set_selection(cx: &mut TestAppContext) 
         sidebar.selection = Some(0);
     });
 
-    cx.update(|window, _cx| {
-        window.blur();
+    cx.update(|window, cx| {
+        window.blur(cx);
     });
     cx.run_until_parked();
 
@@ -1726,6 +1802,7 @@ async fn init_test_project_with_agent_panel(
     worktree_path: &str,
     cx: &mut TestAppContext,
 ) -> Entity<project::Project> {
+    use_unique_metadata_databases(cx);
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
@@ -5085,17 +5162,17 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
 
     let renamed_title = "abcdefghijklmnopqrstuvwxyé renamed";
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.start_renaming_thread(entry_ix, thread_id, title, window, cx);
+        sidebar.start_renaming_entry(entry_ix, RenameTarget::Thread(thread_id), title, window, cx);
     });
     cx.run_until_parked();
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.thread_rename_editor.update(cx, |editor, cx| {
+        sidebar.rename_editor.update(cx, |editor, cx| {
             editor.set_text(renamed_title, window, cx);
         });
     });
     cx.run_until_parked();
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.finish_thread_rename(window, cx);
+        sidebar.finish_entry_rename(window, cx);
     });
     cx.run_until_parked();
 
@@ -5215,25 +5292,8 @@ async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut Tes
     cx.dispatch_action(RenameSelectedThread);
     cx.run_until_parked();
 
-    sidebar.read_with(cx, |sidebar, _cx| {
-        assert_eq!(
-            sidebar.renaming_thread_id,
-            Some(thread_id),
-            "dispatching RenameSelectedThread should start renaming the selected thread"
-        );
-    });
-
     let renamed_title = "Renamed via action";
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.thread_rename_editor.update(cx, |editor, cx| {
-            editor.set_text(renamed_title, window, cx);
-        });
-    });
-    cx.run_until_parked();
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.finish_thread_rename(window, cx);
-    });
-    cx.run_until_parked();
+    enter_renamed_title(&sidebar, RenameTarget::Thread(thread_id), renamed_title, cx);
 
     let metadata = cx.update(|_, cx| {
         ThreadMetadataStore::global(cx)
@@ -5243,6 +5303,72 @@ async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut Tes
             .expect("thread metadata should exist")
     });
     assert_eq!(metadata.title_override.as_deref(), Some(renamed_title));
+}
+
+#[gpui::test]
+async fn test_rename_selected_thread_action_renames_terminal(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Dev Server", true, window, cx)
+        })
+        .expect("test terminal should be inserted");
+    cx.run_until_parked();
+
+    let entry_ix = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .position(|entry| {
+                matches!(
+                    entry,
+                    ListEntry::Terminal(terminal)
+                        if terminal.metadata.terminal_id == terminal_id
+                )
+            })
+            .expect("sidebar should have a terminal entry")
+    });
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar.selection = Some(entry_ix);
+    });
+    cx.dispatch_action(RenameSelectedThread);
+    cx.run_until_parked();
+
+    let renamed_title = "Renamed Terminal";
+    enter_renamed_title(
+        &sidebar,
+        RenameTarget::Terminal(terminal_id),
+        renamed_title,
+        cx,
+    );
+
+    panel.read_with(cx, |panel, cx| {
+        let terminal = panel
+            .terminals(cx)
+            .into_iter()
+            .find(|terminal| terminal.id == terminal_id)
+            .expect("terminal should remain open after renaming");
+        assert_eq!(terminal.custom_title.as_deref(), Some(renamed_title));
+    });
+    sidebar.read_with(cx, |_sidebar, cx| {
+        let metadata = TerminalThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(terminal_id)
+            .cloned()
+            .expect("renamed terminal metadata should exist");
+        assert_eq!(metadata.custom_title.as_deref(), Some(renamed_title));
+    });
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]", "  Renamed Terminal  <== selected"]
+    );
 }
 
 #[gpui::test]

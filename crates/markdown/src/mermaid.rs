@@ -1142,6 +1142,23 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_mermaid_diagrams_with_tilde_fence() {
+        let markdown = "~~~mermaid\ngraph TD;\n~~~";
+        let events =
+            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
+        let diagrams = extract_mermaid_diagrams(markdown, &events);
+
+        assert_eq!(diagrams.len(), 1);
+        assert_eq!(
+            diagrams
+                .values()
+                .next()
+                .map(|diagram| diagram.contents.contents.as_ref()),
+            Some("graph TD;")
+        );
+    }
+
+    #[test]
     fn test_unsupported_diagram_types_are_skipped() {
         let markdown = concat!(
             "```mermaid\nsankey-beta\n```\n\n",

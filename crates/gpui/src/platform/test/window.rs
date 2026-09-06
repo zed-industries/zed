@@ -2,15 +2,18 @@ use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
     DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
+    PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TextInputConfiguration,
+    TextInputStateChange, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowParams,
 };
 use collections::HashMap;
 use gpui_util::ResultExt as _;
+#[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::{
+    cell::Cell,
     path::PathBuf,
     rc::{Rc, Weak},
     sync::{self, Arc},
@@ -35,7 +38,13 @@ pub(crate) struct TestWindowState {
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     appearance_change_callback: Option<Box<dyn FnMut()>>,
+    request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    frame_wake_count: Rc<Cell<usize>>,
+    frame_scheduled: bool,
+    frame_callback_pending: bool,
     input_handler: Option<PlatformInputHandler>,
+    text_input_configurations: Vec<TextInputConfiguration>,
+    text_input_state_changes: Vec<TextInputStateChange>,
     is_fullscreen: bool,
     appearance: WindowAppearance,
     external_drag_files: Vec<(PathBuf, bool)>,
@@ -45,11 +54,13 @@ pub(crate) struct TestWindowState {
 #[derive(Clone)]
 pub struct TestWindow(pub(crate) Rc<Mutex<TestWindowState>>);
 
+// Test windows are not backed by a real platform window, so there is no raw
+// handle to report; `NotSupported` is `raw_window_handle`'s variant for exactly this.
 impl HasWindowHandle for TestWindow {
     fn window_handle(
         &self,
     ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
-        unimplemented!("Test Windows are not backed by a real platform window")
+        Err(raw_window_handle::HandleError::NotSupported)
     }
 }
 
@@ -57,7 +68,7 @@ impl HasDisplayHandle for TestWindow {
     fn display_handle(
         &self,
     ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
-        unimplemented!("Test Windows are not backed by a real platform window")
+        Err(raw_window_handle::HandleError::NotSupported)
     }
 }
 
@@ -91,12 +102,49 @@ impl TestWindow {
             resize_callback: None,
             moved_callback: None,
             appearance_change_callback: None,
+            request_frame_callback: None,
+            frame_wake_count: Rc::new(Cell::new(0)),
+            frame_scheduled: false,
+            frame_callback_pending: false,
             input_handler: None,
+            text_input_configurations: Vec::new(),
+            text_input_state_changes: Vec::new(),
             is_fullscreen: false,
             appearance: WindowAppearance::Light,
             external_drag_files: Vec::new(),
             start_external_drag_result: false,
         })))
+    }
+    pub fn simulate_scheduled_frame(&self) -> bool {
+        let callback = {
+            let mut state = self.0.lock();
+            if !std::mem::take(&mut state.frame_scheduled) {
+                return false;
+            }
+            state.frame_callback_pending = false;
+            state.request_frame_callback.take()
+        };
+        let Some(mut callback) = callback else {
+            self.0.lock().frame_scheduled = true;
+            return false;
+        };
+
+        callback(RequestFrameOptions::default());
+        self.0.lock().request_frame_callback = Some(callback);
+        true
+    }
+
+    pub fn frame_scheduled(&self) -> bool {
+        self.0.lock().frame_scheduled
+    }
+
+    /// Every [`TextInputConfiguration`] forwarded to this window, in order.
+    pub fn text_input_configurations(&self) -> Vec<TextInputConfiguration> {
+        self.0.lock().text_input_configurations.clone()
+    }
+
+    pub fn text_input_state_changes(&self) -> Vec<TextInputStateChange> {
+        self.0.lock().text_input_state_changes.clone()
     }
 
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
@@ -131,6 +179,23 @@ impl TestWindow {
         drop(lock);
         callback();
         self.0.lock().appearance_change_callback = Some(callback);
+    }
+
+    /// Returns how many times this window's frame waker has been invoked.
+    pub fn frame_wake_count(&self) -> usize {
+        self.0.lock().frame_wake_count.get()
+    }
+
+    /// Delivers a frame request to the window, as the platform's frame source
+    /// would.
+    pub fn simulate_frame_request(&self, options: RequestFrameOptions) {
+        let mut lock = self.0.lock();
+        let Some(mut callback) = lock.request_frame_callback.take() else {
+            return;
+        };
+        drop(lock);
+        callback(options);
+        self.0.lock().request_frame_callback = Some(callback);
     }
 
     pub fn simulate_input(&mut self, event: PlatformInput) -> bool {
@@ -205,6 +270,14 @@ impl PlatformWindow for TestWindow {
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         self.0.lock().input_handler.take()
+    }
+
+    fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
+        self.0.lock().text_input_configurations.push(configuration);
+    }
+
+    fn text_input_state_changed(&self, change: TextInputStateChange) {
+        self.0.lock().text_input_state_changes.push(change);
     }
 
     fn prompt(
@@ -286,7 +359,26 @@ impl PlatformWindow for TestWindow {
         self.0.lock().is_fullscreen
     }
 
-    fn on_request_frame(&self, _callback: Box<dyn FnMut(RequestFrameOptions)>) {}
+    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
+        // Recording invocations (rather than delivering a frame) lets tests
+        // assert the wake protocol without coupling to frame timing; tests
+        // deliver frames explicitly via `simulate_frame_request`.
+        let frame_wake_count = self.0.lock().frame_wake_count.clone();
+        Some(Rc::new(move || {
+            frame_wake_count.set(frame_wake_count.get() + 1);
+        }))
+    }
+
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+        self.0.lock().request_frame_callback = Some(callback);
+    }
+
+    fn schedule_frame(&self) {
+        let mut state = self.0.lock();
+        if !state.frame_callback_pending {
+            state.frame_scheduled = true;
+        }
+    }
 
     fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>) {
         self.0.lock().input_callback = Some(callback)
@@ -325,6 +417,8 @@ impl PlatformWindow for TestWindow {
     fn draw(&self, scene: &Scene) {
         let scale_factor = self.scale_factor();
         let mut state = self.0.lock();
+        state.frame_callback_pending = true;
+        state.frame_scheduled = true;
         let device_size: Size<DevicePixels> = state.bounds.size.to_device_pixels(scale_factor);
         if let Some(renderer) = &mut state.renderer {
             renderer.render_scene(scene, device_size).warn_on_err();

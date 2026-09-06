@@ -48,5 +48,5 @@ indoc.workspace = true
 pretty_assertions.workspace = true
 tempfile.workspace = true
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]

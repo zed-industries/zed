@@ -609,7 +609,7 @@ pub fn execute_run(
     );
 
     write_pid_file(&pid_file, pid)
-        .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
+        .with_context(|| format!("failed to write pid file: {pid_file:?}"))?;
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 

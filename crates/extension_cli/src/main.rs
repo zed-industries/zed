@@ -14,7 +14,9 @@ use extension::build_debug_adapter_schema_path;
 use extension::extension_builder::CompilationConcurrency;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
+use http_client::Url;
 use language::LanguageConfig;
+use language::QueryFile;
 use reqwest_client::ReqwestClient;
 use settings_content::SemanticTokenRules;
 use snippet_provider::file_to_snippets;
@@ -22,6 +24,28 @@ use snippet_provider::format::VsSnippetsFile;
 use task::TaskTemplates;
 use tokio::process::Command;
 use tree_sitter::{Language, Query, WasmStore};
+
+struct TestingContext {
+    known_resources: BTreeSet<PathBuf>,
+}
+
+impl TestingContext {
+    fn new(manifest: &ExtensionManifest, extension_path: &Path) -> Self {
+        let known_resources = manifest
+            .snippets
+            .as_ref()
+            .map(ExtensionSnippets::paths)
+            .into_iter()
+            .flatten()
+            .map(|relative_path| extension_path.join(relative_path))
+            .collect();
+        Self { known_resources }
+    }
+
+    fn is_known_resource(&self, path: &Path) -> bool {
+        self.known_resources.contains(path)
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "zed-extension")]
@@ -92,11 +116,13 @@ async fn main() -> Result<()> {
         .await
         .context("failed to compile extension")?;
 
+    validate_extension_manifest(&manifest)?;
     let extension_provides = manifest.provides();
     validate_extension_features(&extension_provides)?;
 
+    let cx = TestingContext::new(&manifest, &extension_path);
     let grammars = test_grammars(&manifest, &extension_path, &mut wasm_store)?;
-    test_languages(&manifest, &extension_path, &grammars)?;
+    test_languages(&manifest, &extension_path, &grammars, &cx)?;
     test_themes(&manifest, &extension_path, fs.clone()).await?;
     test_snippets(&manifest, &extension_path, fs.clone()).await?;
     test_debug_adapter_schemas(&manifest, &extension_path, fs.clone()).await?;
@@ -411,6 +437,82 @@ fn validate_extension_features(
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+enum ExtensionManifestValidationError {
+    #[error("extension manifest must specify a name")]
+    MissingName,
+    #[error("extension manifest must specify a description")]
+    MissingDescription,
+    #[error("extension manifest description must be more expressive than the name")]
+    DescriptionNotLongerThanName,
+    #[error("extension manifest must specify at least one author")]
+    MissingAuthors,
+    #[error("extension manifest must specify a repository")]
+    MissingRepository,
+    #[error("extension manifest repository is not a valid URL: {0}")]
+    InvalidRepository(String),
+    #[error(
+        "extension manifest must not provide language model providers, \
+        as these are currently unsupported"
+    )]
+    LanguageModelProvidersUnsupported,
+}
+
+fn validate_extension_manifest(
+    manifest: &ExtensionManifest,
+) -> Result<(), ExtensionManifestValidationError> {
+    if manifest.name.trim().is_empty() {
+        return Err(ExtensionManifestValidationError::MissingName);
+    }
+
+    let description_is_empty = manifest
+        .description
+        .as_ref()
+        .is_none_or(|description| description.trim().is_empty());
+    if description_is_empty {
+        return Err(ExtensionManifestValidationError::MissingDescription);
+    }
+
+    let description_is_longer_than_name =
+        manifest.description.as_ref().is_some_and(|description| {
+            description.trim().chars().count() > manifest.name.trim().chars().count()
+        });
+    if !description_is_longer_than_name {
+        return Err(ExtensionManifestValidationError::DescriptionNotLongerThanName);
+    }
+
+    if manifest
+        .authors
+        .iter()
+        .all(|author| author.trim().is_empty())
+    {
+        return Err(ExtensionManifestValidationError::MissingAuthors);
+    }
+
+    let repository = manifest
+        .repository
+        .as_ref()
+        .map(|repository| repository.trim())
+        .filter(|repository| !repository.is_empty())
+        .ok_or(ExtensionManifestValidationError::MissingRepository)?;
+
+    let repository_url = repository
+        .parse::<Url>()
+        .map_err(|_| ExtensionManifestValidationError::InvalidRepository(repository.to_string()))?;
+
+    if repository_url.host_str().is_none() {
+        return Err(ExtensionManifestValidationError::InvalidRepository(
+            repository.to_string(),
+        ));
+    };
+
+    if !manifest.language_model_providers.is_empty() {
+        return Err(ExtensionManifestValidationError::LanguageModelProvidersUnsupported);
+    }
+
+    Ok(())
+}
+
 fn test_grammars(
     manifest: &ExtensionManifest,
     extension_path: &Path,
@@ -436,6 +538,7 @@ fn test_languages(
     manifest: &ExtensionManifest,
     extension_path: &Path,
     grammars: &HashMap<String, Language>,
+    context: &TestingContext,
 ) -> Result<()> {
     for relative_language_dir in &manifest.languages {
         let language_dir = extension_path.join(relative_language_dir);
@@ -483,19 +586,26 @@ fn test_languages(
                                 )
                             })?;
                 }
-                _ if file_name.ends_with(".scm") => {
-                    let grammar = grammar.with_context(|| {
-                        format! {
-                            "language {} provides query {} but no grammar",
-                            config.name,
-                            file_path.display()
-                        }
-                    })?;
+                _ => {
+                    if let Ok(_query) = file_name.parse::<QueryFile>() {
+                        let grammar = grammar.with_context(|| {
+                            format! {
+                                "language {} provides query {} but no grammar",
+                                config.name,
+                                file_path.display()
+                            }
+                        })?;
 
-                    let query_source = fs::read_to_string(&file_path)?;
-                    let _query = Query::new(grammar, &query_source)?;
+                        let query_source = fs::read_to_string(&file_path)?;
+                        let _query = Query::new(grammar, &query_source)?;
+                    } else if file_name.ends_with(".scm") {
+                        bail!("query {file_name} is not supported by Zed and should be removed")
+                    } else if !context.is_known_resource(&file_path) {
+                        bail!(
+                            "'{file_name}' is not a supported file in a language directory and should be removed"
+                        )
+                    }
                 }
-                _ => {}
             }
         }
 
@@ -606,9 +716,186 @@ async fn test_debug_adapter_schemas(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use cloud_api_types::ExtensionProvides;
+    use extension::{LanguageModelProviderManifestEntry, SchemaVersion};
 
     use super::*;
+
+    fn valid_manifest() -> ExtensionManifest {
+        ExtensionManifest {
+            id: "test".into(),
+            name: "Test Extension".to_string(),
+            version: "1.0.0".into(),
+            schema_version: SchemaVersion::ZERO,
+            description: Some("A test extension".to_string()),
+            repository: Some("https://github.com/zed-industries/zed".to_string()),
+            authors: vec!["Zed".to_string()],
+            lib: Default::default(),
+            themes: Vec::new(),
+            icon_themes: Vec::new(),
+            languages: Vec::new(),
+            grammars: BTreeMap::default(),
+            language_servers: BTreeMap::default(),
+            context_servers: BTreeMap::default(),
+            slash_commands: BTreeMap::default(),
+            snippets: None,
+            capabilities: Vec::new(),
+            debug_adapters: BTreeMap::default(),
+            debug_locators: BTreeMap::default(),
+            language_model_providers: BTreeMap::default(),
+        }
+    }
+
+    #[test]
+    fn test_validate_manifest_valid() {
+        assert!(validate_extension_manifest(&valid_manifest()).is_ok());
+    }
+
+    #[test]
+    fn test_validate_manifest_missing_name() {
+        let manifest = ExtensionManifest {
+            name: "   ".to_string(),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::MissingName),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_missing_description() {
+        let manifest = ExtensionManifest {
+            description: None,
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::MissingDescription),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_empty_description() {
+        let manifest = ExtensionManifest {
+            description: Some("  ".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::MissingDescription),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_description_equal_to_name() {
+        let manifest = ExtensionManifest {
+            description: Some("Test Extension".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::DescriptionNotLongerThanName),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_description_shorter_than_name() {
+        let manifest = ExtensionManifest {
+            description: Some("Test".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::DescriptionNotLongerThanName),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_missing_authors() {
+        let manifest = ExtensionManifest {
+            authors: Vec::new(),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::MissingAuthors),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_blank_authors() {
+        let manifest = ExtensionManifest {
+            authors: vec!["   ".to_string()],
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::MissingAuthors),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_missing_repository() {
+        let manifest = ExtensionManifest {
+            repository: None,
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::MissingRepository),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_invalid_repository() {
+        let manifest = ExtensionManifest {
+            repository: Some("not-a-valid-url".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::InvalidRepository(
+                "not-a-valid-url".to_string()
+            )),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_repository_without_host() {
+        let manifest = ExtensionManifest {
+            repository: Some("file:///some/local/path".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::InvalidRepository(
+                "file:///some/local/path".to_string()
+            )),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_language_model_providers_unsupported() {
+        let mut language_model_providers = BTreeMap::new();
+        language_model_providers.insert(
+            "provider".into(),
+            LanguageModelProviderManifestEntry {
+                name: "Provider".to_string(),
+                icon: None,
+            },
+        );
+        let manifest = ExtensionManifest {
+            language_model_providers,
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::LanguageModelProvidersUnsupported),
+        );
+    }
 
     #[test]
     fn test_validate_empty_features() {

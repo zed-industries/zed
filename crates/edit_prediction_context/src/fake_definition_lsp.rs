@@ -24,6 +24,8 @@ pub fn register_fake_definition_server(
         language::FakeLspAdapter {
             name: "fake-definition-lsp",
             initialization_options: None,
+            additional_initialization_options: HashMap::default(),
+            additional_workspace_configuration: HashMap::default(),
             prettier_plugins: Vec::new(),
             disk_based_diagnostics_progress_token: None,
             disk_based_diagnostics_sources: Vec::new(),

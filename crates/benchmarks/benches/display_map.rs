@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use editor::{MultiBuffer, display_map::*};
+use editor::{EditorStyle, MultiBuffer, display_map::*};
 use gpui::{AppContext as _, HighlightStyle, Hsla, TestDispatcher, font, px};
 use itertools::Itertools;
 use multi_buffer::MultiBufferOffset;
@@ -205,10 +205,87 @@ fn create_highlight_endpoints_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
+fn highlighted_chunks_benchmark(c: &mut Criterion) {
+    const LINE_COUNT: usize = 500;
+
+    let dispatcher = TestDispatcher::new(1);
+    let mut cx = gpui::TestAppContext::build(dispatcher, None);
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        editor::init(cx);
+    });
+
+    let corpora = [
+        (
+            "ascii",
+            "    let chunks = snapshot.highlighted_chunks(rows.clone(), language_aware, style);",
+        ),
+        (
+            "unicode",
+            "の設定を変更する — émojis 🧑\u{200d}✈\u{fe0f} und Ümläute überall, здесь тоже текст",
+        ),
+        (
+            "sparse_invisibles",
+            "normal text here\u{200b}and some more text that goes on for a while without issues",
+        ),
+        (
+            "dense_invisibles",
+            "a\u{200b}b\u{ad}c\u{2060}d\u{feff}e\u{200b}f\u{ad}g\u{2060}h",
+        ),
+    ];
+
+    let mut group = c.benchmark_group("Highlighted chunks");
+    for (name, line) in corpora {
+        let text = std::iter::repeat_n(line, LINE_COUNT)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Courier"),
+                px(16.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::default(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = cx.update(|cx| map.update(cx, |map, cx| map.snapshot(cx)));
+        let editor_style = EditorStyle::default();
+        group.bench_with_input(
+            BenchmarkId::new("highlighted_chunks", name),
+            &snapshot,
+            |bench, snapshot| {
+                bench.iter(|| {
+                    let mut total_len = 0usize;
+                    let chunks = snapshot.highlighted_chunks(
+                        DisplayRow(0)..DisplayRow(LINE_COUNT as u32),
+                        language::LanguageAwareStyling {
+                            tree_sitter: false,
+                            diagnostics: false,
+                        },
+                        &editor_style,
+                    );
+                    for chunk in chunks {
+                        total_len += black_box(chunk.text).len();
+                    }
+                    black_box(total_len);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     to_tab_point_benchmark,
     to_fold_point_benchmark,
-    create_highlight_endpoints_benchmark
+    create_highlight_endpoints_benchmark,
+    highlighted_chunks_benchmark
 );
 criterion_main!(benches);

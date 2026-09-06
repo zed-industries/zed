@@ -79,7 +79,7 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     // Selections aren't changed if editor is blurred but vim-mode is still disabled.
     cx.cx.set_state("«hjklˇ»");
     cx.assert_editor_state("«hjklˇ»");
-    cx.update_editor(|_, window, _cx| window.blur());
+    cx.update_editor(|_, window, cx| window.blur(cx));
     cx.assert_editor_state("«hjklˇ»");
     cx.update_editor(|_, window, cx| cx.focus_self(window));
     cx.assert_editor_state("«hjklˇ»");

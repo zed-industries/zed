@@ -73,7 +73,7 @@ impl LiveKitClient {
         body: Req,
     ) -> impl Future<Output = Result<Res>>
     where
-        Req: Message,
+        Req: Message + std::fmt::Debug,
         Res: Default + Message,
     {
         let client = self.http.clone();

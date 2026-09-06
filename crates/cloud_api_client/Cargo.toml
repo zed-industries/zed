@@ -14,6 +14,7 @@ path = "src/cloud_api_client.rs"
 [dependencies]
 anyhow.workspace = true
 cloud_api_types.workspace = true
+futures-lite.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true

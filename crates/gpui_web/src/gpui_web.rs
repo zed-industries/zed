@@ -9,6 +9,7 @@ mod dispatcher;
 mod display;
 mod events;
 mod http_client;
+mod ime_mirror;
 mod keyboard;
 mod logging;
 mod platform;

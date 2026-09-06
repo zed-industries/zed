@@ -656,7 +656,7 @@ impl Editor {
                     }
                     new_selection
                 }
-                None => selection.clone(),
+                None => *selection,
             })
             .collect::<Vec<_>>();
 
@@ -874,7 +874,7 @@ impl Editor {
                         reversed: selection.reversed,
                     }
                 } else {
-                    selection.clone()
+                    *selection
                 }
             })
             .collect::<Vec<_>>();
@@ -932,7 +932,7 @@ impl Editor {
                         reversed: selection.reversed,
                     }
                 } else {
-                    selection.clone()
+                    *selection
                 }
             })
             .collect::<Vec<_>>();
@@ -1248,7 +1248,7 @@ impl Editor {
         };
 
         self.change_selections(effects, window, cx, |s| {
-            s.set_pending(pending_selection.clone(), pending_mode);
+            s.set_pending(pending_selection, pending_mode);
             s.set_is_extending(true);
         });
     }
@@ -1444,7 +1444,7 @@ impl Editor {
             }
 
             self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.set_pending(pending.clone(), mode);
+                s.set_pending(pending, mode);
             });
         } else {
             log::error!("update_selection dispatched with no pending selection");
@@ -1600,6 +1600,7 @@ impl Editor {
         self.invalidate_autoclose_regions(&selection_anchors, buffer);
         self.snippet_stack.invalidate(&selection_anchors, buffer);
         self.take_rename(false, window, cx);
+        self.take_inline_input(window, cx);
 
         let newest_selection = self.selections.newest_anchor();
         let new_cursor_position = newest_selection.head();
@@ -1892,7 +1893,7 @@ impl Editor {
 
     fn pending_selection_and_mode(&self) -> Option<(Selection<Anchor>, SelectMode)> {
         Some((
-            self.selections.pending_anchor()?.clone(),
+            *self.selections.pending_anchor()?,
             self.selections.pending_mode()?,
         ))
     }
@@ -2367,7 +2368,7 @@ impl Editor {
             .iter()
             .map(|selection| {
                 if !selection.is_empty() {
-                    return selection.clone();
+                    return *selection;
                 }
 
                 let selection_pos = selection.head();
@@ -2414,7 +2415,7 @@ impl Editor {
                     &buffer,
                 );
 
-                let mut new_selection = selection.clone();
+                let mut new_selection = *selection;
                 new_selection.set_head(new_pos, SelectionGoal::None);
                 new_selection
             })

@@ -30,7 +30,6 @@ use collections::HashMap;
 use gpui_util::ResultExt;
 use refineable::Refineable;
 use smallvec::SmallVec;
-use stacksafe::{StackSafe, stacksafe};
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -44,6 +43,11 @@ use std::{
 };
 
 use super::ImageCacheProvider;
+
+#[cfg(feature = "stacker")]
+type StackSafe<T> = stacksafe::StackSafe<T>;
+#[cfg(not(feature = "stacker"))]
+type StackSafe<T> = T;
 
 const DRAG_THRESHOLD: f64 = 2.;
 const DEFAULT_TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
@@ -644,6 +648,11 @@ impl Interactivity {
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
+    /// Transitions caused by layout changes under a stationary mouse also invoke the callback.
+    ///
+    /// By default, keyboard input suppresses hover until the next mouse move, mouse down, or touch. Set
+    /// [`HoverListenerMode::InputModalityIndependent`] with [`Self::hover_listener_mode`] to
+    /// continue hit-testing hover after keyboard input.
     /// The imperative API equivalent to [`StatefulInteractiveElement::on_hover`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
@@ -656,6 +665,16 @@ impl Interactivity {
             "calling on_hover more than once on the same element is not supported"
         );
         self.hover_listener = Some(Box::new(listener));
+    }
+
+    /// Sets how [`Self::on_hover`] responds to key presses while the mouse is stationary.
+    /// This affects only the hover listener, not hover styles or tooltips. The imperative API
+    /// equivalent to [`StatefulInteractiveElement::hover_listener_mode`].
+    pub fn hover_listener_mode(&mut self, mode: HoverListenerMode)
+    where
+        Self: Sized,
+    {
+        self.hover_listener_mode = mode;
     }
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
@@ -1255,6 +1274,18 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the author-provided identifier exposed to accessibility clients.
+    ///
+    /// Unlike the GPUI element ID, this value is visible outside the process.
+    /// Keep it stable and unique within its accessibility tree.
+    /// AccessKit maps it to platform identifiers where supported, including
+    /// UIA `AutomationId` on Windows, `AXIdentifier` on macOS, and AT-SPI
+    /// `AccessibleId` on Linux stacks whose deployed adapter exposes it.
+    fn accessibility_id(mut self, id: impl Into<SharedString>) -> Self {
+        self.interactivity().aria.author_id = Some(id.into());
+        self
+    }
+
     /// Set the accessible label for this element.
     fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.interactivity().aria.label = Some(label.into());
@@ -1575,6 +1606,11 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
+    /// Transitions caused by layout changes under a stationary mouse also invoke the callback.
+    ///
+    /// By default, keyboard input suppresses hover until the next mouse move, mouse down, or touch. Set
+    /// [`HoverListenerMode::InputModalityIndependent`] with [`Self::hover_listener_mode`] to
+    /// continue hit-testing hover after keyboard input.
     /// The fluent API equivalent to [`Interactivity::on_hover`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
@@ -1583,6 +1619,17 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         Self: Sized,
     {
         self.interactivity().on_hover(listener);
+        self
+    }
+
+    /// Sets how [`Self::on_hover`] responds to key presses while the mouse is stationary.
+    /// This affects only the hover listener, not hover styles or tooltips. The fluent API
+    /// equivalent to [`Interactivity::hover_listener_mode`].
+    fn hover_listener_mode(mut self, mode: HoverListenerMode) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().hover_listener_mode(mode);
         self
     }
 
@@ -1639,6 +1686,29 @@ pub(crate) type PinchListener =
     Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
 pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+
+/// Controls how [`StatefulInteractiveElement::on_hover`] responds to key presses while the mouse
+/// is stationary.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum HoverListenerMode {
+    /// Use input-modality-aware hit testing. Keyboard input suppresses hover until the mouse moves
+    /// again, unless pointer capture or an active mouse-down interaction keeps the listener hovered.
+    #[default]
+    InputModalityAware,
+    /// Use hit testing even when the last input was from the keyboard. This changes only
+    /// keyboard-modality filtering; all other [`StatefulInteractiveElement::on_hover`] behavior
+    /// remains unchanged.
+    InputModalityIndependent,
+}
+
+impl HoverListenerMode {
+    fn is_hovered(self, hitbox: &Hitbox, window: &Window) -> bool {
+        match self {
+            Self::InputModalityAware => hitbox.is_hovered(window),
+            Self::InputModalityIndependent => hitbox.id.is_hovered_ignoring_last_input(window),
+        }
+    }
+}
 
 pub(crate) struct DragListener {
     value: Arc<dyn Any>,
@@ -1763,8 +1833,11 @@ impl InteractiveElement for Div {
 
 impl ParentElement for Div {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        #[cfg(feature = "stacker")]
         self.children
-            .extend(elements.into_iter().map(StackSafe::new))
+            .extend(elements.into_iter().map(StackSafe::new));
+        #[cfg(not(feature = "stacker"))]
+        self.children.extend(elements);
     }
 }
 
@@ -1802,7 +1875,7 @@ impl Element for Div {
         }
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -1838,7 +1911,7 @@ impl Element for Div {
         (layout_id, DivFrameState { child_layout_ids })
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -1933,7 +2006,7 @@ impl Element for Div {
         )
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -1982,6 +2055,7 @@ impl IntoElement for Div {
 
 #[derive(Default)]
 pub(crate) struct AriaProperties {
+    pub(crate) author_id: Option<SharedString>,
     pub(crate) label: Option<SharedString>,
     pub(crate) description: Option<SharedString>,
     pub(crate) keyshortcuts: Option<SharedString>,
@@ -2057,6 +2131,7 @@ pub struct Interactivity {
     pub(crate) aux_click_listeners: Vec<ClickListener>,
     pub(crate) drag_listener: Option<DragListener>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
+    pub(crate) hover_listener_mode: HoverListenerMode,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) tooltip_show_delay: Option<Duration>,
     pub(crate) window_control: Option<WindowControlArea>,
@@ -2324,7 +2399,14 @@ impl Interactivity {
             }
 
             let rem_size = window.rem_size();
-            let padding = style.padding.to_pixels(bounds.size.into(), rem_size);
+            // Taffy lays the box out with the padding snapped to the device pixel
+            // grid (`to_taffy`); recomputed unsnapped, e.g. py_1 at a fractional
+            // rem size, it exceeds `bounds` and leaves the box scrollable by the
+            // sub-pixel difference.
+            let padding = style
+                .padding
+                .to_pixels(bounds.size.into(), rem_size)
+                .map(|edge| window.pixel_snap(*edge));
             let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
             // The floating point values produced by Taffy and ours often vary
             // slightly after ~5 decimal places. This can lead to cases where after
@@ -2996,14 +3078,27 @@ impl Interactivity {
                     .get_or_insert_with(Default::default)
                     .clone();
                 let hover_listener = Rc::new(hover_listener);
+                let hover_listener_state = was_hovered.clone();
                 let update_hover = move |is_hovered: bool, window: &mut Window, cx: &mut App| {
-                    let mut was_hovered = was_hovered.borrow_mut();
+                    let mut was_hovered = hover_listener_state.borrow_mut();
                     if is_hovered != *was_hovered {
                         *was_hovered = is_hovered;
                         drop(was_hovered);
                         hover_listener(&is_hovered, window, cx);
                     }
                 };
+                let hover_listener_mode = self.hover_listener_mode;
+
+                if has_mouse_down.borrow().is_none() {
+                    let is_hovered =
+                        !cx.has_active_drag() && hover_listener_mode.is_hovered(hitbox, window);
+                    if is_hovered != *was_hovered.borrow() {
+                        let update_hover = update_hover.clone();
+                        window.defer(cx, move |window, cx| {
+                            update_hover(is_hovered, window, cx);
+                        });
+                    }
+                }
 
                 window.on_mouse_event({
                     let update_hover = update_hover.clone();
@@ -3012,7 +3107,7 @@ impl Interactivity {
                         if phase == DispatchPhase::Bubble {
                             let is_hovered = has_mouse_down.borrow().is_none()
                                 && !cx.has_active_drag()
-                                && hitbox.is_hovered(window);
+                                && hover_listener_mode.is_hovered(&hitbox, window);
                             update_hover(is_hovered, window, cx);
                         }
                     }
@@ -3276,13 +3371,14 @@ impl Interactivity {
             if let Some(group_hover) = self.group_hover_style.as_ref() {
                 let is_group_hovered =
                     if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
-                        group_hitbox_id.is_hovered(window)
+                        !window.last_input_was_touch() && group_hitbox_id.is_hovered(window)
                     } else if let Some(element_state) = element_state.as_ref() {
-                        element_state
-                            .hover_state
-                            .as_ref()
-                            .map(|state| state.borrow().group)
-                            .unwrap_or(false)
+                        !window.last_input_was_touch()
+                            && element_state
+                                .hover_state
+                                .as_ref()
+                                .map(|state| state.borrow().group)
+                                .unwrap_or(false)
                     } else {
                         false
                     };
@@ -3294,13 +3390,14 @@ impl Interactivity {
 
             if let Some(hover_style) = self.hover_style.as_ref() {
                 let is_hovered = if let Some(hitbox) = hitbox {
-                    hitbox.is_hovered(window)
+                    !window.last_input_was_touch() && hitbox.is_hovered(window)
                 } else if let Some(element_state) = element_state.as_ref() {
-                    element_state
-                        .hover_state
-                        .as_ref()
-                        .map(|state| state.borrow().element)
-                        .unwrap_or(false)
+                    !window.last_input_was_touch()
+                        && element_state
+                            .hover_state
+                            .as_ref()
+                            .map(|state| state.borrow().element)
+                            .unwrap_or(false)
                 } else {
                     false
                 };
@@ -3364,6 +3461,9 @@ impl Interactivity {
     }
 
     pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        if let Some(id) = &self.aria.author_id {
+            node.set_author_id(id.to_string());
+        }
         if let Some(label) = &self.aria.label {
             node.set_label(label.to_string());
         }
@@ -4316,6 +4416,232 @@ mod tests {
         assert_eq!(stateful_width.get(), px(10.));
     }
 
+    struct HoverListenerLayoutTestView {
+        target_left: Pixels,
+        hover_transitions: Rc<RefCell<Vec<bool>>>,
+    }
+
+    impl Render for HoverListenerLayoutTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let hover_transitions = self.hover_transitions.clone();
+            div().relative().size_full().child(
+                div()
+                    .id("hover-target")
+                    .absolute()
+                    .left(self.target_left)
+                    .top_0()
+                    .size(px(20.))
+                    .on_click(|_, _, _| {})
+                    .on_hover(move |is_hovered, _, _| {
+                        hover_transitions.borrow_mut().push(*is_hovered);
+                    }),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn default_hover_listener_updates_when_layout_changes_under_stationary_mouse(
+        cx: &mut TestAppContext,
+    ) {
+        let hover_transitions = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let hover_transitions = hover_transitions.clone();
+            move |_, _| HoverListenerLayoutTestView {
+                target_left: px(40.),
+                hover_transitions,
+            }
+        });
+        let any_window = AnyWindowHandle::from(window);
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(point(px(10.), px(10.)), cx);
+        })
+        .unwrap();
+        assert!(hover_transitions.borrow().is_empty());
+
+        window
+            .update(cx, |view, _, cx| {
+                view.target_left = px(0.);
+                cx.notify();
+            })
+            .unwrap();
+        cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true]);
+
+        window
+            .update(cx, |view, _, cx| {
+                view.target_left = px(40.);
+                cx.notify();
+            })
+            .unwrap();
+        cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true, false]);
+    }
+
+    #[gpui::test]
+    fn default_hover_listener_ends_after_key_press(cx: &mut TestAppContext) {
+        let hover_transitions = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let hover_transitions = hover_transitions.clone();
+            move |_, _| HoverListenerLayoutTestView {
+                target_left: px(0.),
+                hover_transitions,
+            }
+        });
+        let any_window = AnyWindowHandle::from(window);
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(point(px(10.), px(10.)), cx);
+        })
+        .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true]);
+
+        key_down(cx, any_window, "a");
+        cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true, false]);
+    }
+
+    struct HoverListenerModeLayoutTestView {
+        target_left: Pixels,
+        hover_transitions: Rc<RefCell<Vec<bool>>>,
+    }
+
+    impl Render for HoverListenerModeLayoutTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let hover_transitions = self.hover_transitions.clone();
+            div().relative().size_full().child(
+                div()
+                    .id("hover-target")
+                    .absolute()
+                    .left(self.target_left)
+                    .top_0()
+                    .size(px(20.))
+                    .hover_listener_mode(HoverListenerMode::InputModalityIndependent)
+                    .on_hover(move |is_hovered, _, _| {
+                        hover_transitions.borrow_mut().push(*is_hovered);
+                    }),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn input_modality_independent_hover_listener_updates_after_key_press(cx: &mut TestAppContext) {
+        let hover_transitions = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let hover_transitions = hover_transitions.clone();
+            move |_, _| HoverListenerModeLayoutTestView {
+                target_left: px(40.),
+                hover_transitions,
+            }
+        });
+        let any_window = AnyWindowHandle::from(window);
+        let pointer_position = point(px(10.), px(10.));
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(pointer_position, cx);
+        })
+        .unwrap();
+        assert!(hover_transitions.borrow().is_empty());
+
+        key_down(cx, any_window, "a");
+        window
+            .update(cx, |view, _, cx| {
+                view.target_left = px(0.);
+                cx.notify();
+            })
+            .unwrap();
+        cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true]);
+
+        key_down(cx, any_window, "b");
+        cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true]);
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.simulate_mouse_move(point(px(30.), px(10.)), cx);
+        })
+        .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true, false]);
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.simulate_mouse_move(pointer_position, cx);
+            window.dispatch_event(
+                MouseExitEvent {
+                    position: pointer_position,
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true, false, true, false]);
+    }
+
+    #[gpui::test]
+    fn default_hover_listener_remains_hovered_during_stationary_mouse_press(
+        cx: &mut TestAppContext,
+    ) {
+        let hover_transitions = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let hover_transitions = hover_transitions.clone();
+            move |_, _| HoverListenerLayoutTestView {
+                target_left: px(0.),
+                hover_transitions,
+            }
+        });
+        let any_window = AnyWindowHandle::from(window);
+        let mouse_position = point(px(10.), px(10.));
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(mouse_position, cx);
+        })
+        .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true]);
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.dispatch_event(
+                MouseDownEvent {
+                    position: mouse_position,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true]);
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.dispatch_event(
+                MouseUpEvent {
+                    position: mouse_position,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true]);
+    }
+
     struct TestTooltipView;
 
     impl Render for TestTooltipView {
@@ -4704,8 +5030,21 @@ mod tests {
     }
 
     #[test]
+    fn test_accessibility_id_builder_writes_author_id() {
+        let mut element = div()
+            .id("buffer-font-size")
+            .accessibility_id("settings.buffer-font-size");
+        let mut node = accesskit::Node::new(accesskit::Role::SpinButton);
+
+        element.interactivity().write_a11y_info(&mut node);
+
+        assert_eq!(node.author_id(), Some("settings.buffer-font-size"));
+    }
+
+    #[test]
     fn test_write_a11y_info_string_and_numeric_properties() {
         let mut interactivity = Interactivity::default();
+        interactivity.aria.author_id = Some("settings.buffer-font-size".into());
         interactivity.aria.label = Some("Buffer Font Size".into());
         interactivity.aria.value = Some("15".into());
         interactivity.aria.placeholder = Some("Search".into());
@@ -4717,6 +5056,7 @@ mod tests {
         let mut node = accesskit::Node::new(accesskit::Role::SpinButton);
         interactivity.write_a11y_info(&mut node);
 
+        assert_eq!(node.author_id(), Some("settings.buffer-font-size"));
         assert_eq!(node.label(), Some("Buffer Font Size"));
         assert_eq!(node.value(), Some("15"));
         assert_eq!(node.placeholder(), Some("Search"));
@@ -4994,5 +5334,86 @@ mod tests {
             .unwrap();
 
         assert_eq!(focused, Some(item_b.id));
+    }
+
+    #[gpui::test]
+    fn test_fractional_padding_does_not_make_a_fitting_container_scrollable(
+        cx: &mut TestAppContext,
+    ) {
+        struct PaddedContainer {
+            scroll_handle: ScrollHandle,
+        }
+
+        impl Render for PaddedContainer {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
+                // 4.25px of padding snaps to 4px in layout, so a 42px child
+                // fits the 50px box exactly.
+                div().size_full().child(
+                    div()
+                        .id("container")
+                        .h(px(50.))
+                        .w(px(100.))
+                        .py(px(4.25))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle)
+                        .child(div().w_full().h(px(42.))),
+                )
+            }
+        }
+
+        let scroll_handle = ScrollHandle::new();
+        let window: AnyWindowHandle = cx
+            .add_window({
+                let scroll_handle = scroll_handle.clone();
+                move |_, _| PaddedContainer { scroll_handle }
+            })
+            .into();
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+
+        assert_eq!(scroll_handle.max_offset().y, px(0.));
+    }
+
+    struct ContentSizedGrid;
+
+    impl Render for ContentSizedGrid {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let widths = [px(100.), px(200.), px(50.)];
+            div().size_full().child(
+                div()
+                    .w_full()
+                    .grid()
+                    .grid_cols_max_content(widths.len() as u16)
+                    .children(widths.into_iter().enumerate().map(|(index, width)| {
+                        div()
+                            .debug_selector(move || format!("cell-{index}"))
+                            .w(width)
+                            .h(px(10.))
+                    })),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn grid_cols_max_content_sizes_columns_to_their_content(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| ContentSizedGrid);
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+
+        let mut bounds = |selector: &'static str| {
+            cx.update_window(window.into(), |_, window, _| {
+                window.rendered_frame.debug_bounds.get(selector).copied()
+            })
+            .unwrap()
+            .unwrap_or_else(|| panic!("{selector} was not rendered"))
+        };
+
+        assert_eq!(bounds("cell-0").origin.x, px(0.));
+        assert_eq!(bounds("cell-1").origin.x, px(100.));
+        assert_eq!(bounds("cell-2").origin.x, px(300.));
     }
 }

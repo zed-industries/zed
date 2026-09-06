@@ -378,11 +378,7 @@ impl ModelMatcher {
             .map(|(index, model)| {
                 StringMatchCandidate::new(
                     index,
-                    &format!(
-                        "{}/{}",
-                        &model.model.provider_name().0,
-                        &model.model.name().0
-                    ),
+                    &format!("{}/{}", model.model.provider_name().0, model.model.name().0),
                 )
             })
             .collect::<Vec<_>>()

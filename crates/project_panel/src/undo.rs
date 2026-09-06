@@ -130,11 +130,13 @@
 
 //! List of "tainted files" that the user may not operate on
 
-use crate::ProjectPanel;
+use crate::{ProjectPanel, RemovalKind};
 use anyhow::{Context, Result, anyhow};
 use fs::{TrashId, TrashRestoreError};
 use futures::channel::mpsc;
-use gpui::{AppContext, AsyncApp, IntoElement, SharedString, Styled, Task, WeakEntity};
+use gpui::{
+    AppContext, AsyncApp, IntoElement, PromptLevel, SharedString, Styled, Task, WeakEntity,
+};
 use markdown::{Markdown, MarkdownElement};
 use project::Project;
 use project::{ProjectPath, WorktreeId};
@@ -143,25 +145,85 @@ use std::{collections::VecDeque, sync::Arc};
 use ui::{App, TextSize};
 use util::{paths::PathStyle, rel_path::RelPath};
 use workspace::{
-    Workspace,
+    Pane, SaveIntent, Workspace,
     notifications::{
         NotificationId, markdown_style, simple_message_notification::MessageNotification,
     },
 };
-use worktree::CreatedEntry;
+use worktree::{CreatedEntry, Worktree};
 
 enum Operation {
     Trash(ProjectPath),
     Rename(ProjectPath, ProjectPath),
     Restore(WorktreeId, TrashId),
     Batch(Vec<Operation>),
+    /// Creates an empty directory, idempotently.
+    /// Meant to only be used when decomposing a [`Self::Rename`] that has to
+    /// create parent directories.
+    CreateDir(ProjectPath),
+    /// Removes a directory, but only if it is empty.
+    /// Meant to only be used when decomposing a [`Self::Rename`].
+    RemoveDir(ProjectPath),
 }
 
 impl Operation {
-    async fn execute(self, undo_manager: &Inner, cx: &mut AsyncApp) -> Result<Change> {
-        Ok(match self {
+    /// Attempts to execute the operation, returning an `Err` if the operation
+    /// failed to execute or `Ok(None)` if the operation was cancelled by the
+    /// user, for example, cancelling trashing a file with unsaved edits.
+    async fn execute(self, undo_manager: &Inner, cx: &mut AsyncApp) -> Result<Option<Change>> {
+        let change = match self {
             Operation::Trash(project_path) => {
-                let trash_id = undo_manager.trash(&project_path, cx).await?;
+                let Some(trash_id) = undo_manager.trash(&project_path, cx).await? else {
+                    return Ok(None);
+                };
+                Change::Trashed(project_path.worktree_id, trash_id)
+            }
+            Operation::Batch(operations) => {
+                let mut trash_paths = Vec::new();
+
+                for operation in &operations {
+                    operation.trash_paths(&mut trash_paths);
+                }
+
+                if !trash_paths.is_empty()
+                    && !undo_manager.confirm_batch_trash(trash_paths, cx).await?
+                {
+                    return Ok(None);
+                }
+
+                let mut changes = Vec::new();
+
+                for operation in operations {
+                    changes.push(Box::pin(operation.execute_confirmed(undo_manager, cx)).await?);
+                }
+
+                Change::Batched(changes)
+            }
+            operation => {
+                return operation
+                    .execute_confirmed(undo_manager, cx)
+                    .await
+                    .map(Some);
+            }
+        };
+
+        Ok(Some(change))
+    }
+
+    /// Same as [`Self::execute`], but assumes the operation has already been
+    /// confirmed in order to avoid showing confirmation modals to the user.
+    ///
+    /// Useful in scenarios where undoing a batch of operations would lead to
+    /// multiple files being trashed, in which case we only ask the user once
+    /// whether they'd like to trash the files, and then execute each trash
+    /// operation without confirming each file one by one.
+    async fn execute_confirmed(self, undo_manager: &Inner, cx: &mut AsyncApp) -> Result<Change> {
+        let change = match self {
+            Operation::Trash(project_path) => {
+                let trash_id = undo_manager
+                    .trash_without_confirmation(&project_path, cx)
+                    .await?;
+
                 Change::Trashed(project_path.worktree_id, trash_id)
             }
             Operation::Rename(from, to) => {
@@ -173,13 +235,37 @@ impl Operation {
                 Change::Restored(project_path)
             }
             Operation::Batch(operations) => {
-                let mut res = Vec::new();
-                for op in operations {
-                    res.push(Box::pin(op.execute(undo_manager, cx)).await?);
+                let mut changes = Vec::new();
+
+                for operation in operations {
+                    changes.push(Box::pin(operation.execute_confirmed(undo_manager, cx)).await?);
                 }
-                Change::Batched(res)
+
+                Change::Batched(changes)
             }
-        })
+            Operation::CreateDir(path) => {
+                undo_manager.create_dir(&path, cx).await?;
+                Change::DirCreated(path)
+            }
+            Operation::RemoveDir(path) => {
+                undo_manager.remove_dir(&path, cx).await?;
+                Change::DirRemoved(path)
+            }
+        };
+
+        Ok(change)
+    }
+
+    fn trash_paths<'a>(&'a self, paths: &mut Vec<&'a ProjectPath>) {
+        match self {
+            Self::Trash(path) => paths.push(path),
+            Self::Batch(operations) => {
+                for operation in operations {
+                    operation.trash_paths(paths);
+                }
+            }
+            Self::Rename(..) | Self::Restore(..) | Self::CreateDir(..) | Self::RemoveDir(..) => {}
+        }
     }
 }
 
@@ -190,6 +276,8 @@ pub(crate) enum Change {
     Renamed(ProjectPath, ProjectPath),
     Restored(ProjectPath),
     Batched(Vec<Change>),
+    DirCreated(ProjectPath),
+    DirRemoved(ProjectPath),
 }
 
 impl Change {
@@ -199,6 +287,8 @@ impl Change {
             Change::Trashed(worktree_id, trash_id) => Operation::Restore(worktree_id, trash_id),
             Change::Renamed(from, to) => Operation::Rename(to, from),
             Change::Restored(project_path) => Operation::Trash(project_path),
+            Change::DirCreated(path) => Operation::RemoveDir(path),
+            Change::DirRemoved(path) => Operation::CreateDir(path),
             // When inverting a batch of operations, we reverse the order of
             // operations to handle dependencies between them. For example, if a
             // batch contains the following order of operations:
@@ -213,6 +303,31 @@ impl Change {
             }
         }
     }
+}
+
+/// Returns the parent directories of `path` that do not yet exist in the given
+/// worktree and would therefore be created when an entry is placed at `path`,
+/// ordered from the deepest to the shallowest.
+pub(crate) fn missing_parent_dirs(
+    worktree: &Worktree,
+    worktree_id: WorktreeId,
+    path: &RelPath,
+) -> Vec<ProjectPath> {
+    let mut dirs = Vec::new();
+    let mut current = path.parent();
+    while let Some(parent) = current {
+        if parent.is_empty() {
+            break;
+        }
+        if worktree.entry_for_path(parent).is_none() {
+            dirs.push(ProjectPath {
+                worktree_id,
+                path: parent.into_arc(),
+            });
+        }
+        current = parent.parent();
+    }
+    dirs
 }
 
 // Imagine pressing undo 10000+ times?!
@@ -449,14 +564,17 @@ impl Inner {
         // manual intervention would likely be needed in order to undo. As such,
         // we remove the change from the `history` even before attempting to
         // execute its inversion.
-        let undo_change = self
-            .history
-            .remove(before_cursor)
-            .expect("we can undo")
-            .to_inverse()
-            .execute(self, cx)
-            .await?;
-        self.history.insert(before_cursor, undo_change);
+        let change = self.history.remove(before_cursor).expect("we can undo");
+        let operation = change.clone().to_inverse();
+
+        match operation.execute(self, cx).await? {
+            Some(undo_change) => self.history.insert(before_cursor, undo_change),
+            None => {
+                self.history.insert(before_cursor, change);
+                self.cursor += 1;
+            }
+        };
+
         Ok(())
     }
 
@@ -469,15 +587,15 @@ impl Inner {
         // manual intervention would likely be needed in order to redo. As such,
         // we remove the change from the `history` even before attempting to
         // execute its inversion.
-        let redo_change = self
-            .history
-            .remove(self.cursor)
-            .expect("we can redo")
-            .to_inverse()
-            .execute(self, cx)
-            .await?;
-        self.history.insert(self.cursor, redo_change);
-        self.cursor += 1;
+        let change = self.history.remove(self.cursor).expect("we can redo");
+        let operation = change.clone().to_inverse();
+        match operation.execute(self, cx).await? {
+            Some(redo_change) => {
+                self.history.insert(self.cursor, redo_change);
+                self.cursor += 1;
+            }
+            None => self.history.insert(self.cursor, change),
+        }
         Ok(())
     }
 
@@ -569,7 +687,99 @@ impl Inner {
         })
     }
 
-    async fn trash(&self, project_path: &ProjectPath, cx: &mut AsyncApp) -> Result<TrashId> {
+    /// Creates an empty directory at `path`, doing nothing if it already
+    /// exists.
+    async fn create_dir(&self, path: &ProjectPath, cx: &mut AsyncApp) -> Result<()> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Err(anyhow!("Failed to obtain workspace."));
+        };
+
+        let task = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                if project.entry_for_path(path, cx).is_some() {
+                    return None;
+                }
+                Some(project.create_entry(path.clone(), true, cx))
+            })
+        });
+
+        if let Some(task) = task {
+            task.await?;
+        }
+
+        Ok(())
+    }
+
+    /// Removes the directory at `path`, but only if it still exists and is
+    /// empty; otherwise it is left in place.
+    async fn remove_dir(&self, path: &ProjectPath, cx: &mut AsyncApp) -> Result<()> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Err(anyhow!("Failed to obtain workspace."));
+        };
+
+        let task = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                let worktree = project.worktree_for_id(path.worktree_id, cx)?;
+
+                let entry_id = {
+                    let worktree = worktree.read(cx);
+                    let entry = worktree.entry_for_path(path.path.as_ref())?;
+                    if !entry.is_dir()
+                        || worktree.child_entries(path.path.as_ref()).next().is_some()
+                    {
+                        return None;
+                    }
+                    entry.id
+                };
+
+                project.delete_entry(entry_id, cx)
+            })
+        });
+
+        if let Some(task) = task {
+            task.await?;
+        }
+
+        Ok(())
+    }
+
+    /// Trashes the specified `project_path` after prompting the user for
+    /// confirmation. If the path has unsaved changes, the prompt also lets the
+    /// user save or discard them.
+    ///
+    /// Returns `Ok(None)` if the user cancels the operation.
+    async fn trash(
+        &self,
+        project_path: &ProjectPath,
+        cx: &mut AsyncApp,
+    ) -> Result<Option<TrashId>> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Err(anyhow!("Failed to obtain workspace."));
+        };
+
+        let name = workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().read(cx);
+            let path_style = project.path_style(cx);
+
+            project_path_display(project, project_path, path_style, cx)
+        });
+
+        if !self.confirm_trash(project_path, &name, cx).await? {
+            return Ok(None);
+        }
+
+        self.trash_without_confirmation(project_path, cx)
+            .await
+            .map(Some)
+    }
+
+    /// Same as [`Self::trash`] but proceeds without confirming if the user
+    /// wishes to trash the file.
+    async fn trash_without_confirmation(
+        &self,
+        project_path: &ProjectPath,
+        cx: &mut AsyncApp,
+    ) -> Result<TrashId> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Err(anyhow!("Failed to obtain workspace."));
         };
@@ -682,5 +892,112 @@ impl Inner {
                 })
             })
             .ok();
+    }
+
+    /// Prompts the user to confirm whether they really want to trash the file.
+    /// In the case the file has unsaved changes, the prompt will ask whether
+    /// the user wants to save or discard these changes.
+    ///
+    /// Returns `true` if the user confirmed they want to trash the file,
+    /// `false` otherwise.
+    async fn confirm_trash(
+        &self,
+        project_path: &ProjectPath,
+        name: &str,
+        cx: &mut AsyncApp,
+    ) -> Result<bool> {
+        let open_item = self.workspace.update(cx, |workspace, cx| {
+            workspace.panes().iter().find_map(|pane| {
+                pane.read(cx).items().find_map(|item| {
+                    (item.is_dirty(cx)
+                        && item
+                            .project_path(cx)
+                            .iter()
+                            .any(|item_path| item_path == project_path))
+                    .then(|| (pane.clone(), item.boxed_clone()))
+                })
+            })
+        })?;
+
+        let Some((pane, item)) = open_item else {
+            return self.trash_prompt(&[name], 0, cx).await;
+        };
+
+        let mut async_window_cx = self
+            .panel
+            .update_in(cx, |_panel, window, cx| window.to_async(cx))?;
+        let project = self
+            .panel
+            .read_with(cx, |panel, _cx| panel.project.clone())?;
+
+        Pane::save_item(
+            project,
+            pane,
+            item.as_ref(),
+            SaveIntent::Close,
+            &mut async_window_cx,
+        )
+        .await
+    }
+
+    /// Prompts the user to confirm whether they really want to trash all of the
+    /// provided `trash_paths`.
+    ///
+    /// Meant to be used when executing a batch of operations that will lead to
+    /// one or more paths being trashed.
+    ///
+    /// Returns `true` if the user confirmed they want to trash the files,
+    /// `false` otherwise.
+    async fn confirm_batch_trash(
+        &self,
+        trash_paths: Vec<&ProjectPath>,
+        cx: &mut AsyncApp,
+    ) -> Result<bool> {
+        let (names, dirty_buffers) = self.workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().read(cx);
+            let path_style = project.path_style(cx);
+            let dirty_buffers = project
+                .dirty_buffers(cx)
+                .filter(|dirty_path| trash_paths.contains(&dirty_path))
+                .count();
+            let names = trash_paths
+                .iter()
+                .map(|project_path| project_path_display(project, project_path, path_style, cx))
+                .collect::<Vec<_>>();
+
+            (names, dirty_buffers)
+        })?;
+
+        self.trash_prompt(&names, dirty_buffers, cx).await
+    }
+
+    /// Prompts the user to confirm whether they actually want to trash the
+    /// file.
+    ///
+    /// Returns `true` if the user confirms, `false` otherwise.
+    async fn trash_prompt<S>(
+        &self,
+        names: &[S],
+        dirty_buffers: usize,
+        cx: &mut AsyncApp,
+    ) -> Result<bool>
+    where
+        S: AsRef<str>,
+    {
+        let prompt = ProjectPanel::build_removal_prompt(RemovalKind::Trash, names, dirty_buffers);
+        let answer = self
+            .panel
+            .update_in(cx, |_panel, window, cx| {
+                window.prompt(
+                    PromptLevel::Info,
+                    &prompt.message,
+                    prompt.detail,
+                    &[prompt.confirmation_label, "Cancel"],
+                    cx,
+                )
+            })?
+            .await?;
+
+        Ok(answer == 0)
     }
 }

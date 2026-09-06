@@ -51,7 +51,8 @@ use super::{
 use crate::linux::{
     DEFAULT_CURSOR_ICON_NAME, LinuxClient, capslock_from_xkb, cursor_style_to_icon_names,
     get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
-    keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb, open_uri_internal,
+    keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb, new_xkb_context,
+    open_uri_internal,
     platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
     reveal_path_internal,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
@@ -320,12 +321,15 @@ impl X11Client {
                         // Insert the runnables as idle callbacks, so we make sure that user-input and X11
                         // events have higher priority and runnables are only worked off after the event
                         // callbacks.
-                        handle.insert_idle(|_| {
+                        handle.insert_idle(|client| {
                             let location = runnable.metadata().location;
                             let spawned = runnable.metadata().spawned;
                             profiler::update_running_task(spawned, location);
                             runnable.run();
                             profiler::save_task_timing();
+
+                            let xcb_connection = client.0.borrow().xcb_connection.clone();
+                            client.process_x11_events(&xcb_connection).log_err();
                         });
                     }
                 }
@@ -420,7 +424,7 @@ impl X11Client {
             ),
         )?;
 
-        let xkb_context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
+        let xkb_context = new_xkb_context()?;
         let xkb_device_id = xkbc::x11::get_core_keyboard_device_id(&xcb_connection);
         let xkb_state = {
             let xkb_keymap = xkbc::x11::keymap_new_from_device(
@@ -816,15 +820,19 @@ impl X11Client {
             Event::ClientMessage(event) => {
                 let window = self.get_window(event.window)?;
                 let [atom, arg1, arg2, arg3, arg4] = event.data.as_data32();
-                let mut state = self.0.borrow_mut();
+                let delete_window_atom = self.0.borrow().atoms.WM_DELETE_WINDOW;
 
-                if atom == state.atoms.WM_DELETE_WINDOW && window.should_close() {
-                    // window "x" button clicked by user
-                    // Rest of the close logic is handled in drop_window()
-                    drop(state);
-                    window.close();
-                    state = self.0.borrow_mut();
-                } else if atom == state.atoms._NET_WM_SYNC_REQUEST {
+                if atom == delete_window_atom {
+                    if window.should_close() {
+                        // window "x" button clicked by user
+                        // Rest of the close logic is handled in drop_window()
+                        window.close();
+                    }
+                    return Some(());
+                }
+
+                let mut state = self.0.borrow_mut();
+                if atom == state.atoms._NET_WM_SYNC_REQUEST {
                     window.state.borrow_mut().last_sync_counter =
                         Some(x11rb::protocol::sync::Int64 {
                             lo: arg2,
@@ -2811,7 +2819,7 @@ mod tests {
     }
 
     fn test_keymap_with_variant(layouts: &str, variant: &str) -> xkbc::Keymap {
-        let context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
+        let context = new_xkb_context().expect("test XKB context should initialize");
         xkbc::Keymap::new_from_names(
             &context,
             "",

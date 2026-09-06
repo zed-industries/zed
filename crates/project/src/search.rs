@@ -457,8 +457,8 @@ impl SearchQuery {
             }
         }
     }
-    /// Replaces search hits if replacement is set. `text` is assumed to be a string that matches this `SearchQuery` exactly, without any leftovers on either side.
-    pub fn replacement_for<'a>(&self, text: &'a str) -> Option<Cow<'a, str>> {
+    /// Expands `hit` against its line so lookaround assertions retain context.
+    pub fn replacement_for<'a>(&self, line: &'a str, hit: Range<usize>) -> Option<Cow<'a, str>> {
         match self {
             SearchQuery::Text { replacement, .. }
             | SearchQuery::Regex {
@@ -477,14 +477,27 @@ impl SearchQuery {
                     LazyLock::new(|| Regex::new(r"\\\\|\\n|\\t").unwrap());
                 let replacement = TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX.replace_all(
                     replacement,
-                    |c: &Captures| match c.get(0).unwrap().as_str() {
+                    |c: &Captures<str>| match c.get(0).unwrap().as_str() {
                         r"\\" => "\\",
                         r"\n" => "\n",
                         r"\t" => "\t",
                         x => unreachable!("Unexpected escape sequence: {}", x),
                     },
                 );
-                Some(regex.replace(text, replacement))
+                let captures = regex
+                    .captures_from_pos(line, hit.start)
+                    .ok()
+                    .flatten()
+                    .filter(|captures| captures.get(0).is_some_and(|m| m.range() == hit));
+                let Some(captures) = captures else {
+                    // The pattern is not guaranteed to match the whole line, for instance when
+                    // searching within a selection that starts or ends mid-line, so fall back to
+                    // matching the hit on its own.
+                    return Some(regex.replace(line.get(hit)?, replacement));
+                };
+                let mut replaced = String::new();
+                captures.expand(&replacement, &mut replaced);
+                Some(Cow::Owned(replaced))
             }
 
             SearchQuery::Regex {
@@ -613,6 +626,10 @@ impl SearchQuery {
 
     pub fn is_regex(&self) -> bool {
         matches!(self, Self::Regex { .. })
+    }
+
+    pub fn replacement_requires_context(&self) -> bool {
+        matches!(self, Self::Regex { escaped: false, .. })
     }
 
     pub fn files_to_include(&self) -> &PathMatcher {
