@@ -129,13 +129,18 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   (creating is not reading), which removes the suspend in `fetch_asset`.
 - [ ] Remove `begin/end_render_notifications`; at the end of draw, dirty the
   intersection of `pending_notifications` and the frame's accessed entities.
+- [x] Profile the full-rebuild overhead. `Workbench/update/full` (the only multi-node
+  fixture) was 12.5% slower than `main` on this machine; the cause was the line layout
+  cache evicting text that reused views never looked up, so every rebuild reshaped it
+  (CoreText at 12.5% of samples vs 0.9% on `main`). Keeping three previous frames in
+  `LineLayoutCache` made the same fixture 9% faster than `main`. Engine bookkeeping
+  (capture, scene push, dependency sets) measures at ~1.5% on `editor_render`.
 - [ ] Write frame effects into node recordings directly instead of the post-paint
-  capture pass in `capture_view_node_recording`. Includes `record_layouts`, which
-  currently re-hashes every line's `CacheKey` to pair keys with layouts.
-- [ ] Profile the full-rebuild overhead on `benchmarks/editor_render` with the engine
-  on and off, after the items above. Candidates in order: capture pass, cache-key
-  `TextStyle` clone/compare, dependency-set bookkeeping, node reads, `retain()` /
-  `layout_unchanged` walks.
+  capture pass in `capture_view_node_recording`. Measured at well under 1% on the
+  current fixtures; do this for the ownership direction (below), not for speed.
+- [ ] Any per-frame-"use" cache in GPUI (line layouts today; check atlas tiles and
+  element states) is a proxy for "still on screen" that reused views do not refresh.
+  Audit them for the same eviction pattern.
 - [ ] **Critical path.** Cut the legacy engine. `Option<NodeEngine>` becomes
   `NodeEngine`; delete the non-node branches of `ViewElement`, the duplicate
   `use_keyed_state`, and the `Window` forwarding layer. Tests wanting a reference
@@ -145,8 +150,22 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 - [ ] Deferred draws and prompts mark the current scope frame-bound instead of
   forcing a whole-window refresh.
 - [ ] Record positions relative to the node origin and translate on replay, so a
-  clean subtree that moves is replayed rather than rebuilt. `layout_unchanged` then
-  ignores the root's `location`.
+  clean subtree that moves is replayed rather than rebuilt and the cache key becomes
+  size-only. `position: absolute` children resolve inside the node and deferred draws
+  re-run through their frame-bound owner, so both stay correct. Everything recorded
+  with a position needs the translate: scene primitives (paths per vertex, or an
+  insertion offset), hitboxes, input-handler bounds, tooltip and cursor requests.
+  `layout_unchanged` then ignores the root's `location`. After ownership and identity.
+- [ ] Fine-grained caching: a dirty descendant rebuilds through clean ancestors.
+  Containment, read dependencies, and layout consequences become three separate
+  relations. Replay is mostly ready (recordings reference children by id); what is
+  missing is the ambient context at each child reference (element offset, dispatch
+  parent, element-id stack, image cache) and layout change reporting from Taffy (try
+  upstream before forking) to schedule the scopes a relayout actually moved. Keep the
+  parent walk until change reporting exists; validate with the oracle across flex
+  reflow, unchanged outer bounds with inner changes, parent movement, clipping, and
+  mount/unmount. Measure with `Workbench/update/row`: rebuilding a tiny node alone can
+  cost more than its parent's rebuild saved. After ownership, identity, and offsets.
 - [ ] `uniform_list` and `list` use `request_retained_measured_layout` (their
   captures are plain values).
 - [ ] `next_occurrence` uses a per-location counter instead of `siblings.contains`.
@@ -169,6 +188,12 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 
 - [ ] Element identity → `(node, Location::caller(), nth)`; `GlobalElementId` shrinks
   to the local suffix and full paths are computed on demand.
+- [ ] Separate mount identity from state identity. `View::entity_id()` currently
+  supplies the occurrence's identity, the dispatch tree's `view_id`, and the node's
+  own dependency; two components bound to one backing entity therefore collide. Mount
+  identity comes from the occurrence (parent node, key or location, nth), local state
+  is owned by the node, and dependencies come from reads alone, so a component never
+  impersonates its backing value or an internal editor entity.
 - [ ] Inspector: identity and per-element overrides on node state; overrides read as
   entities so edits dirty exactly one node. Deletes the inspector full-refresh
   fallback.
