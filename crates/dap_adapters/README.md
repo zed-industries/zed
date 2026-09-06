@@ -16,8 +16,7 @@ registered in `src/dap_adapters.rs` (`init`).
 ## Planned adapters
 
 Not yet implemented. Each needs an adapter module here plus a `start_session`
-launch-config shape and a feature test in the sibling `zed-debugger-demo` repo
-(see its `ROADMAP.md`).
+launch-config shape and a corresponding feature test.
 
 - [ ] Java / Kotlin — JDT debug adapter (`org.eclipse.jdt.ls` / vscode-java)
 - [ ] C# / .NET — vsdbg / OmniSharp
