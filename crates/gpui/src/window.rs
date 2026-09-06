@@ -1167,7 +1167,6 @@ pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) node_engine: crate::NodeEngine,
-    global_revision: u64,
     atlas_invalidated: bool,
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
@@ -2002,7 +2001,6 @@ impl Window {
             handle,
             invalidator,
             node_engine: crate::NodeEngine::new(),
-            global_revision: cx.global_revision,
             atlas_invalidated: false,
             removed: false,
             platform_window,
@@ -3245,9 +3243,6 @@ impl Window {
             Some("window refresh")
         } else if atlas_invalidated {
             Some("image eviction")
-        } else if self.global_revision != cx.global_revision {
-            // Global reads do not participate in entity dependency tracking.
-            Some("global change")
         } else if !self.rendered_frame.deferred_draws.is_empty() {
             Some("deferred drawing")
         } else if self.prompt.is_some() {
@@ -3260,7 +3255,6 @@ impl Window {
             None
         };
         let node_engine = &mut self.node_engine;
-        self.global_revision = cx.global_revision;
         node_engine.begin_frame(full_refresh_reason);
         // No scope can graft an old layout when every mounted node is dirty.
         // Keep the newly built tree for subsequent partial updates.

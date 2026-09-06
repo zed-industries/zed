@@ -248,7 +248,7 @@ impl EntityMap {
         completed_scope
     }
 
-    fn record_access(&self, entity_id: EntityId) {
+    pub(crate) fn record_access(&self, entity_id: EntityId) {
         self.accessed_entities.borrow_mut().insert(entity_id);
         if let Some(scope) = self.accessed_entity_scopes.borrow_mut().last_mut() {
             scope.insert(entity_id);

@@ -742,6 +742,70 @@ impl Render for EmptyView {
 #[cfg(test)]
 mod tests {
     #[gpui::test]
+    fn global_changes_only_invalidate_reading_scopes(cx: &mut TestAppContext) {
+        struct LeftColor(u32);
+        impl crate::Global for LeftColor {}
+        struct RightColor(u32);
+        impl crate::Global for RightColor {}
+        struct UnusedGlobal;
+        impl crate::Global for UnusedGlobal {}
+        struct Leaf {
+            left: bool,
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                let color = if self.left {
+                    cx.try_global::<LeftColor>().map_or(0, |color| color.0)
+                } else {
+                    cx.try_global::<RightColor>().map_or(0, |color| color.0)
+                };
+                div().size(px(40.)).bg(rgb(color))
+            }
+        }
+        struct Host(Vec<Entity<Leaf>>);
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().children(self.0.iter().cloned())
+            }
+        }
+        let left = Rc::new(Cell::new(0));
+        let right = Rc::new(Cell::new(0));
+        let _window = cx.open_window(size(px(100.), px(100.)), |_, cx| {
+            Host(vec![
+                cx.new(|_| Leaf {
+                    left: true,
+                    renders: left.clone(),
+                }),
+                cx.new(|_| Leaf {
+                    left: false,
+                    renders: right.clone(),
+                }),
+            ])
+        });
+        cx.run_until_parked();
+        assert_eq!((left.get(), right.get()), (1, 1));
+        cx.update(|cx| cx.set_global(LeftColor(0xff0000)));
+        cx.run_until_parked();
+        assert_eq!((left.get(), right.get()), (2, 1));
+        cx.update(|cx| cx.global_mut::<LeftColor>().0 = 0x00ff00);
+        cx.run_until_parked();
+        assert_eq!((left.get(), right.get()), (3, 1));
+        cx.update(|cx| {
+            cx.remove_global::<LeftColor>();
+        });
+        cx.run_until_parked();
+        assert_eq!((left.get(), right.get()), (4, 1));
+        cx.update(|cx| cx.set_global(RightColor(0x0000ff)));
+        cx.run_until_parked();
+        assert_eq!((left.get(), right.get()), (4, 2));
+        cx.update(|cx| cx.set_global(UnusedGlobal));
+        cx.run_until_parked();
+        assert_eq!((left.get(), right.get()), (4, 2));
+    }
+
+    #[gpui::test]
     fn shared_image_completion_invalidates_every_consumer(cx: &mut TestAppContext) {
         use futures::FutureExt as _;
         let mut encoded = std::io::Cursor::new(Vec::new());

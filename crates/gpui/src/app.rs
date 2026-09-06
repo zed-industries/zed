@@ -734,7 +734,7 @@ pub struct App {
     // the tokio runtime. As any task attempting to spawn a blocking tokio task,
     // might panic.
     pub(crate) globals_by_type: TypeIdHashMap<Box<dyn Any>>,
-    pub(crate) global_revision: u64,
+    global_dependencies: RefCell<TypeIdHashMap<Slot<()>>>,
 
     // assets
     loading_assets: FxHashMap<(TypeId, u64), CachedAsset>,
@@ -829,7 +829,7 @@ impl App {
                 asset_source,
                 http_client,
                 globals_by_type: Default::default(),
-                global_revision: 0,
+                global_dependencies: RefCell::default(),
                 entities,
                 new_entity_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
@@ -1664,7 +1664,14 @@ impl App {
                 }
             }
             Effect::NotifyGlobalObservers { global_type } => {
-                self.global_revision = self.global_revision.wrapping_add(1);
+                let dependency = self
+                    .global_dependencies
+                    .get_mut()
+                    .get(global_type)
+                    .map(|dependency| dependency.entity_id());
+                if let Some(dependency) = dependency {
+                    self.notify(dependency);
+                }
                 if !self.pending_global_notifications.insert(*global_type) {
                     return;
                 }
@@ -2019,14 +2026,26 @@ impl App {
         &self.text_system
     }
 
+    fn track_global<G: Global>(&self) {
+        // Reserve an entity identity even for absent globals, so insertion and removal
+        // invalidate negative reads through the same graph as entity mutations.
+        let mut dependencies = self.global_dependencies.borrow_mut();
+        let dependency = dependencies
+            .entry(TypeId::of::<G>())
+            .or_insert_with(|| self.entities.reserve::<()>());
+        self.entities.record_access(dependency.entity_id());
+    }
+
     /// Check whether a global of the given type has been assigned.
     pub fn has_global<G: Global>(&self) -> bool {
+        self.track_global::<G>();
         self.globals_by_type.contains_key(&TypeId::of::<G>())
     }
 
     /// Access the global of the given type. Panics if a global for that type has not been assigned.
     #[track_caller]
     pub fn global<G: Global>(&self) -> &G {
+        self.track_global::<G>();
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
@@ -2035,6 +2054,7 @@ impl App {
 
     /// Access the global of the given type if a value has been assigned.
     pub fn try_global<G: Global>(&self) -> Option<&G> {
+        self.track_global::<G>();
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
@@ -2043,6 +2063,7 @@ impl App {
     /// Access the global of the given type mutably. Panics if a global for that type has not been assigned.
     #[track_caller]
     pub fn global_mut<G: Global>(&mut self) -> &mut G {
+        self.track_global::<G>();
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
@@ -2054,6 +2075,7 @@ impl App {
     /// Access the global of the given type mutably. A default value is assigned if a global of this type has not
     /// yet been assigned.
     pub fn default_global<G: Global + Default>(&mut self) -> &mut G {
+        self.track_global::<G>();
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
@@ -2107,6 +2129,7 @@ impl App {
     /// Move the global of the given type to the stack.
     #[track_caller]
     pub(crate) fn lease_global<G: Global>(&mut self) -> GlobalLease<G> {
+        self.track_global::<G>();
         GlobalLease::new(
             self.globals_by_type
                 .remove(&TypeId::of::<G>())
