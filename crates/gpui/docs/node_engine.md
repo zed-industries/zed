@@ -147,8 +147,15 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   frame force a refresh.
 - [ ] `.cached(style)` becomes the ordinary node path with `style` refining the root
   layout; deprecate afterwards.
-- [ ] Deferred draws and prompts mark the current scope frame-bound instead of
-  forcing a whole-window refresh.
+- [x] Deferred draws mark the current scope frame-bound instead of forcing a
+  whole-window refresh. Prompts, accessibility, and the inspector still refresh.
+- [ ] Deferred draws as nodes. A deferred draw is a root pinned to a position whose
+  owner relationship is lifecycle, not containment. The owner's recording stores a
+  `DeferredChild { node, priority, offset, ambient context }`; replay re-schedules it
+  into the deferred pass, where the node decides reuse itself. Applies when the payload
+  is an entity view (it can re-render itself); `deferred(anchored().child(view))` keeps
+  the owner frame-bound until either anchoring moves into the view or fine-grained
+  caching can re-run `Anchored` in its recorded context.
 - [ ] Record positions relative to the node origin and translate on replay, so a
   clean subtree that moves is replayed rather than rebuilt and the cache key becomes
   size-only. `position: absolute` children resolve inside the node and deferred draws
