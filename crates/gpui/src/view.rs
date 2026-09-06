@@ -176,8 +176,9 @@ mod any_view {
     }
 }
 
-/// A renderable that participates in GPUI's reactive graph — the unifying model
-/// behind [`Render`], [`Component`], and [`RenderOnce`].
+/// What [`ViewElement`] draws: the one shape behind [`Render`], [`Component`], and
+/// [`RenderOnce`], so the node and inline element code exists once. Sealed; the public
+/// ways in are those three traits.
 ///
 /// A view with an [`element_id`](View::element_id) is mounted as a node: its output is
 /// reused until the entity backing it is notified, and `cx.notify()` on that entity
@@ -185,10 +186,8 @@ mod any_view {
 /// its parent, in an element-id scope of its own (its type and its order among inline
 /// views of that type in the enclosing node) so its internal `use_state` / `.id(..)`
 /// never collide with its siblings'.
-///
-/// You rarely implement `View` directly: `Entity<T: Render>`, any `T: Component`, and
-/// any `T: RenderOnce` are covered below.
-pub trait View: 'static + Sized {
+#[doc(hidden)]
+pub trait View: 'static + Sized + sealed::View {
     /// Identifies where this view mounts as a node. Two node views with the same id must
     /// not be rendered at the same position in the element tree (e.g. as siblings under the
     /// same parent); nesting is fine, since the id is scoped by the parent path. `None`
@@ -207,6 +206,14 @@ pub trait View: 'static + Sized {
 
     /// Render this view into an element tree, consuming `self`.
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
+}
+
+mod sealed {
+    pub trait View {}
+    impl<T: crate::RenderOnce> View for T {}
+    impl<T: crate::Render> View for crate::Entity<T> {}
+    impl View for crate::AnyView {}
+    impl<C: crate::Component> View for super::ComponentView<C> {}
 }
 
 /// A stateless component (`RenderOnce`) is a `View` with no identity.
@@ -2135,24 +2142,18 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_caches_custom_views_with_entity_identity(cx: &mut TestAppContext) {
+    fn node_engine_caches_components_over_an_entity(cx: &mut TestAppContext) {
         struct Custom {
             source: Entity<usize>,
             renders: Rc<Cell<usize>>,
         }
-        impl super::View for Custom {
-            fn element_id(&self) -> Option<crate::ElementId> {
-                Some(crate::ElementId::View(self.source.entity_id()))
+        impl PartialEq for Custom {
+            fn eq(&self, other: &Self) -> bool {
+                self.source == other.source
             }
-            fn entity(
-                &mut self,
-                _: &mut Option<crate::AnyEntity>,
-                _: &mut Window,
-                _: &mut crate::App,
-            ) -> Option<crate::EntityId> {
-                Some(self.source.entity_id())
-            }
-            fn render(self, _: &mut Window, cx: &mut crate::App) -> impl IntoElement {
+        }
+        impl Component for Custom {
+            fn render(&self, _: &mut Window, cx: &mut crate::App) -> impl IntoElement {
                 self.renders.set(self.renders.get() + 1);
                 div().size_full().child(self.source.read(cx).to_string())
             }
@@ -2163,12 +2164,12 @@ mod tests {
         }
         impl Render for Host {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div().child(
-                    super::ViewElement::new(Custom {
+                div().w(px(100.)).h(px(50.)).child(
+                    Custom {
                         source: self.source.clone(),
                         renders: self.renders.clone(),
-                    })
-                    .cached(StyleRefinement::default().w(px(100.)).h(px(50.))),
+                    }
+                    .cached(),
                 )
             }
         }

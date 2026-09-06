@@ -1,15 +1,18 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-//! View example — composing a text input from the `View` primitives.
+//! View example — composing a text input from an entity and components.
 //!
-//! The whole point: a text input is deceptively complicated, and `View` makes it
-//! easy to compose one. Three pieces, each shown in its own section:
+//! The whole point: a text input is deceptively complicated, and splitting it into
+//! an entity you refer to and components you don't makes it easy to compose one.
+//! Three pieces, each shown in its own section:
 //!
 //!   * `Editor`  — the workhorse entity: cursor, blink, focus, keyboard, and a
 //!                 specialized text renderer. All the hard parts live here.
 //!   * `String`  — the data plane. `editor.text(cx)` / `value.read(cx)` get it out.
-//!   * `Input` / `TextArea` — the shaping layer. Each takes a `String` (and grows
-//!                 the editor internally) OR an `Editor` (so you can read the cursor).
+//!   * `Input` / `TextArea` — the shaping layer, as `Component`s. Each takes a
+//!                 `String` (and grows the editor internally) OR an `Editor` (so you
+//!                 can read the cursor). The `Editor`-backed ones are `.cached()`:
+//!                 they re-render only when their inputs change.
 //!
 //! Run: `cargo run -p gpui --example view_example`
 
@@ -28,8 +31,8 @@ use example_input::Input;
 use example_text_area::TextArea;
 
 use gpui::{
-    App, Bounds, Context, Div, Entity, IntoElement, KeyBinding, Render, SharedString, Window,
-    WindowBounds, WindowOptions, actions, div, hsla, prelude::*, px, rgb, size,
+    App, Bounds, Component, Context, Div, Entity, IntoElement, KeyBinding, Render, SharedString,
+    Window, WindowBounds, WindowOptions, actions, div, hsla, prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
 
@@ -101,7 +104,7 @@ impl Render for ViewExample {
                         .flex()
                         .items_center()
                         .gap(px(12.))
-                        .child(Input::editor(owned.clone()).width(px(320.)))
+                        .child(Input::editor(owned.clone()).width(px(320.)).cached())
                         .child(CursorReadout::new(owned)),
                 ),
             )
@@ -113,12 +116,11 @@ impl Render for ViewExample {
                             .flex()
                             .items_start()
                             .gap(px(12.))
-                            .child(TextArea::editor(notes.clone(), 3).color(hsla(
-                                250. / 360.,
-                                0.7,
-                                0.4,
-                                1.,
-                            )))
+                            .child(
+                                TextArea::editor(notes.clone(), 3)
+                                    .color(hsla(250. / 360., 0.7, 0.4, 1.))
+                                    .cached(),
+                            )
                             .child(CursorReadout::new(notes)),
                     ),
             )

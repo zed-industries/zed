@@ -3,19 +3,20 @@
 //! string or an editor, exactly like [`Input`](crate::example_input::Input).
 
 use gpui::{
-    App, BoxShadow, CursorStyle, Entity, EntityId, Hsla, IntoElement, StyleRefinement, Window, div,
-    hsla, point, prelude::*, px, white,
+    App, BoxShadow, Component, CursorStyle, Entity, Hsla, IntoElement, StyleRefinement, Window,
+    div, hsla, point, prelude::*, px, white,
 };
 
 use crate::Enter;
 use crate::example_editor::{Editor, standard_actions};
 
+#[derive(PartialEq)]
 enum Source {
     Value(Entity<String>),
     Editor(Entity<Editor>),
 }
 
-#[derive(IntoElement)]
+#[derive(PartialEq)]
 pub struct TextArea {
     source: Source,
     rows: usize,
@@ -45,35 +46,14 @@ impl TextArea {
     }
 }
 
-impl TextArea {
-    fn source_id(&self) -> EntityId {
-        match &self.source {
-            Source::Value(value) => value.entity_id(),
-            Source::Editor(editor) => editor.entity_id(),
-        }
-    }
-}
-
-impl gpui::View for TextArea {
-    fn element_id(&self) -> Option<gpui::ElementId> {
-        Some(gpui::ElementId::View(self.source_id()))
-    }
-
-    fn entity(
-        &mut self,
-        _: &mut Option<gpui::AnyEntity>,
-        _: &mut Window,
-        _: &mut App,
-    ) -> Option<EntityId> {
-        Some(self.source_id())
-    }
-
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let editor = match self.source {
+impl Component for TextArea {
+    fn render(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let editor = match &self.source {
             Source::Value(value) => {
+                let value = value.clone();
                 window.use_state(cx, move |window, cx| Editor::over(value, window, cx))
             }
-            Source::Editor(editor) => editor,
+            Source::Editor(editor) => editor.clone(),
         };
 
         let focus_handle = editor.read(cx).focus_handle.clone();
