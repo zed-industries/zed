@@ -305,5 +305,8 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 - [x] Oracle helper `VisualTestContext::assert_incremental_matches_full_refresh`;
   `test_workspace_rendering_stress` in `editor` is its consumer (48 steps by default,
   `GPUI_STRESS_STEPS` to raise it).
-- [ ] A gpui-only oracle fixture (nested views, `uniform_list`, wrapped text, focus,
-  hover, scroll, deferred popover, resize) driven by a seeded step sequence.
+- [x] A gpui-only oracle fixture: `node_engine::oracle_tests` (nested views mounted and
+  unmounted, `uniform_list`, wrapped text, focus, hover, scroll, a deferred popover on a
+  nested owner so it gets replayed, resize) driven by a seeded step sequence; 5 seeds
+  in CI, `ITERATIONS=100` sweeps clean. It fails within two steps if roots are not
+  re-attached on graft.

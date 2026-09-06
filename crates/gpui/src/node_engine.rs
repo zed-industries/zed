@@ -910,3 +910,253 @@ impl NodeEngine {
         self.mounted_this_frame.remove(&node_id);
     }
 }
+
+/// The engine's oracle over a fixture that exercises every kind of frame state the
+/// engine retains: nested views mounted and unmounted, a `uniform_list`, wrapped text,
+/// focus, hover, scrolling, a deferred popover, and window resizes. A seeded sequence of
+/// updates drives it, and after each update the incrementally drawn frame must equal a
+/// full refresh from the same state. `test_workspace_rendering_stress` in `editor` is the
+/// same oracle over a real workspace.
+#[cfg(test)]
+mod oracle_tests {
+    use crate::{
+        Context, Entity, FocusHandle, Modifiers, Render, ScrollHandle, ScrollStrategy,
+        SharedString, TestAppContext, UniformListScrollHandle, VisualTestContext, Window, anchored,
+        deferred, div, point, prelude::*, px, rgb, size, uniform_list,
+    };
+    use rand::prelude::*;
+
+    struct Row {
+        index: usize,
+        color: u32,
+    }
+
+    impl Render for Row {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .h(px(20.))
+                .w_full()
+                .bg(rgb(self.color))
+                .child(SharedString::from(format!("row {}", self.index)))
+        }
+    }
+
+    /// Owns the popover, so a change elsewhere in the fixture leaves it clean and its
+    /// attached root is replayed rather than drawn again.
+    struct Panel {
+        focus_handles: Vec<FocusHandle>,
+        popover_open: bool,
+        popover_revision: usize,
+        popover_row: Option<Entity<Row>>,
+    }
+
+    impl Render for Panel {
+        fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .flex()
+                .h(px(30.))
+                .children(self.focus_handles.iter().enumerate().map(|(ix, handle)| {
+                    div()
+                        .id(("focus", ix))
+                        .track_focus(handle)
+                        .size(px(30.))
+                        .bg(rgb(0x8888ff))
+                        .when(handle.is_focused(window), |this| this.bg(rgb(0xff8800)))
+                }))
+                .children((0..3usize).map(|ix| {
+                    div()
+                        .id(("hover", ix))
+                        .size(px(30.))
+                        .bg(rgb(0x88ff88))
+                        .hover(|style| style.bg(rgb(0xff0000)))
+                }))
+                .when(self.popover_open, |this| {
+                    this.child(deferred(
+                        anchored().position(point(px(20.), px(20.))).child(
+                            div()
+                                .w(px(120.))
+                                .p(px(4.))
+                                .bg(rgb(0xffffaa))
+                                .child(SharedString::from(format!(
+                                    "popover {}",
+                                    self.popover_revision
+                                )))
+                                .children(self.popover_row.clone()),
+                        ),
+                    ))
+                })
+        }
+    }
+
+    struct Fixture {
+        panel: Entity<Panel>,
+        rows: Vec<Entity<Row>>,
+        list_scroll: UniformListScrollHandle,
+        text_scroll: ScrollHandle,
+        text_revision: usize,
+    }
+
+    impl Render for Fixture {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let rows = self.rows.clone();
+            let paragraph = format!(
+                "revision {} of a paragraph that wraps across several lines — λ→ — {}",
+                self.text_revision,
+                "words ".repeat(self.text_revision % 5 + 8)
+            );
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .bg(rgb(0xf0f0f0))
+                .child(self.panel.clone())
+                .child(
+                    uniform_list("rows", rows.len(), move |range, _, _| {
+                        rows[range].iter().cloned().collect()
+                    })
+                    .track_scroll(&self.list_scroll)
+                    .h(px(120.))
+                    .w_full(),
+                )
+                .child(
+                    div()
+                        .id("text")
+                        .overflow_y_scroll()
+                        .track_scroll(&self.text_scroll)
+                        .h(px(60.))
+                        .w(px(160.))
+                        .child(SharedString::from(paragraph)),
+                )
+        }
+    }
+
+    #[gpui::test(iterations = 5)]
+    fn node_engine_oracle(cx: &mut TestAppContext, mut rng: StdRng) {
+        let mut next_row = 0;
+        let mut new_row = |cx: &mut crate::App, rng: &mut StdRng| {
+            let row = cx.new(|_| Row {
+                index: next_row,
+                color: rng.random::<u32>() & 0xffffff,
+            });
+            next_row += 1;
+            row
+        };
+        let window = cx.open_window(size(px(300.), px(300.)), |_, cx| {
+            let rows: Vec<_> = (0..40).map(|_| new_row(cx, &mut rng)).collect();
+            let popover_row = rows.first().cloned();
+            Fixture {
+                panel: cx.new(|cx| Panel {
+                    focus_handles: (0..3).map(|_| cx.focus_handle()).collect(),
+                    popover_open: false,
+                    popover_revision: 0,
+                    popover_row,
+                }),
+                rows,
+                list_scroll: UniformListScrollHandle::new(),
+                text_scroll: ScrollHandle::new(),
+                text_revision: 0,
+            }
+        });
+        cx.run_until_parked();
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        let mut reused_subtrees = 0;
+
+        for step in 0..40 {
+            let action = rng.random_range(0..9);
+            match action {
+                0 => {
+                    let rows = window
+                        .read_with(cx, |fixture, _| fixture.rows.clone())
+                        .expect("window open");
+                    if let Some(row) = rows.choose(&mut rng) {
+                        row.update(cx, |row, cx| {
+                            row.color ^= 0x00ff00;
+                            cx.notify();
+                        });
+                    }
+                }
+                1 => window
+                    .update(cx, |fixture, _, cx| {
+                        fixture.panel.update(cx, |panel, cx| {
+                            panel.popover_open = !panel.popover_open;
+                            panel.popover_revision += 1;
+                            cx.notify();
+                        })
+                    })
+                    .expect("window open"),
+                2 => {
+                    let item = rng.random_range(0..40);
+                    window
+                        .update(cx, |fixture, _, cx| {
+                            fixture
+                                .list_scroll
+                                .scroll_to_item(item, ScrollStrategy::Top);
+                            cx.notify();
+                        })
+                        .expect("window open");
+                }
+                3 => {
+                    let position = point(
+                        px(rng.random_range(0..300) as f32),
+                        px(rng.random_range(0..300) as f32),
+                    );
+                    visual.simulate_mouse_move(position, None, Modifiers::default());
+                }
+                4 => {
+                    let ix = rng.random_range(0..3);
+                    window
+                        .update(cx, |fixture, window, cx| {
+                            let handle = fixture.panel.read(cx).focus_handles[ix].clone();
+                            window.focus(&handle, cx);
+                        })
+                        .expect("window open");
+                }
+                5 => {
+                    let width = [300., 260., 340.][rng.random_range(0..3)];
+                    visual.simulate_resize(size(px(width), px(300.)));
+                }
+                6 => window
+                    .update(cx, |fixture, _, cx| {
+                        fixture.text_revision += 1;
+                        cx.notify();
+                    })
+                    .expect("window open"),
+                7 => {
+                    let add = rng.random_bool(0.5);
+                    let row = add.then(|| cx.update(|cx| new_row(cx, &mut rng)));
+                    window
+                        .update(cx, |fixture, _, cx| {
+                            match row {
+                                Some(row) => {
+                                    let at = rng.random_range(0..=fixture.rows.len());
+                                    fixture.rows.insert(at, row);
+                                }
+                                None if fixture.rows.len() > 1 => {
+                                    let at = rng.random_range(0..fixture.rows.len());
+                                    fixture.rows.remove(at);
+                                }
+                                None => {}
+                            }
+                            cx.notify();
+                        })
+                        .expect("window open");
+                }
+                _ => {
+                    let offset = rng.random_range(0..80) as f32;
+                    window
+                        .update(cx, |fixture, _, cx| {
+                            fixture.text_scroll.set_offset(point(px(0.), px(-offset)));
+                            cx.notify();
+                        })
+                        .expect("window open");
+                }
+            }
+            cx.run_until_parked();
+            let stats = visual.assert_incremental_matches_full_refresh(format_args!(
+                "step {step} (action {action})"
+            ));
+            reused_subtrees += stats.reused_subtrees;
+        }
+        assert!(reused_subtrees > 0, "the fixture must exercise node reuse");
+    }
+}
