@@ -1,5 +1,5 @@
 use crate::{
-    AnyView, Bounds, EntityId, GlobalElementId, LayoutId, Pixels, ViewNode, ViewNodeCacheKey,
+    Bounds, EntityId, GlobalElementId, LayoutId, Pixels, ViewNode, ViewNodeCacheKey,
     ViewNodeRecording,
 };
 use collections::{FxHashMap, FxHashSet};
@@ -260,7 +260,6 @@ impl NodeEngine {
         &mut self,
         element: GlobalElementId,
         view_id: EntityId,
-        view: Option<AnyView>,
         cache_key: &ViewNodeCacheKey,
     ) -> ViewNodeId {
         let occurrence = self.next_occurrence(element);
@@ -277,7 +276,6 @@ impl NodeEngine {
                 children: Vec::new(),
                 next_children: Vec::new(),
                 view_id,
-                _view: view,
                 cache_key: cache_key.clone(),
                 previous_bounds: cache_key.bounds,
                 accessed_entities: FxHashSet::default(),
@@ -299,51 +297,28 @@ impl NodeEngine {
         node_id
     }
 
-    /// Returns the node's recording if its output can be reused for a frame whose ambient
-    /// inputs are `cache_key`. Otherwise prepares the node to render again and returns `None`.
-    pub(crate) fn reuse(
-        &mut self,
-        node_id: ViewNodeId,
-        cache_key: &ViewNodeCacheKey,
-    ) -> Option<ViewNodeRecording> {
-        if self.can_reuse(node_id, cache_key, false) {
-            self.nodes[node_id].recording.take()
-        } else {
-            self.restart_render(node_id);
-            None
-        }
-    }
-
-    /// Like `reuse`, for the layout phase: bounds are not yet known, so they are excluded
-    /// from the comparison, and reuse additionally requires a retained layout to graft.
+    /// Returns the node's recording and retained layout if its output can be reused for a
+    /// frame whose ambient inputs are `cache_key`. Called during layout, so bounds are not
+    /// yet known and are excluded here; prepaint compares them once they are. Otherwise
+    /// prepares the node to render again and returns `None`.
     pub(crate) fn reuse_layout(
         &mut self,
         node_id: ViewNodeId,
         cache_key: &ViewNodeCacheKey,
     ) -> Option<(ViewNodeRecording, LayoutId)> {
-        if self.can_reuse(node_id, cache_key, true)
-            && let Some(layout) = self.nodes[node_id].layout
-            && let Some(recording) = self.nodes[node_id].recording.take()
+        let node = &mut self.nodes[node_id];
+        if !self.full_refresh
+            && !self.dirty_nodes.contains(&node_id)
+            && !self.frame_bound_nodes.contains(&node_id)
+            && node.cache_key.matches(cache_key, true)
+            && let Some(layout) = node.layout
+            && let Some(recording) = node.recording.take()
         {
             Some((recording, layout))
         } else {
             self.restart_render(node_id);
             None
         }
-    }
-
-    fn can_reuse(
-        &self,
-        node_id: ViewNodeId,
-        cache_key: &ViewNodeCacheKey,
-        ignore_bounds: bool,
-    ) -> bool {
-        let node = &self.nodes[node_id];
-        !self.full_refresh
-            && !self.dirty_nodes.contains(&node_id)
-            && !self.frame_bound_nodes.contains(&node_id)
-            && node.recording.is_some()
-            && node.cache_key.matches(cache_key, ignore_bounds)
     }
 
     pub(crate) fn restart_render(&mut self, node_id: ViewNodeId) {

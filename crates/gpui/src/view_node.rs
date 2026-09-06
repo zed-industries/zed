@@ -1,6 +1,6 @@
 use crate::{
-    AnyView, Bounds, ContentMask, CursorStyleRequest, EntityId, GlobalElementId, Hitbox, LayoutId,
-    Pixels, Scene, TextStyle, TooltipRequest,
+    Bounds, ContentMask, CursorStyleRequest, EntityId, GlobalElementId, Hitbox, LayoutId, Pixels,
+    Scene, TextStyle, TooltipRequest,
 };
 use collections::{FxHashMap, FxHashSet};
 use std::any::TypeId;
@@ -277,7 +277,6 @@ pub(crate) struct ViewNode {
     pub(crate) children: Vec<super::node_engine::ViewNodeId>,
     pub(crate) next_children: Vec<super::node_engine::ViewNodeId>,
     pub(crate) view_id: EntityId,
-    pub(crate) _view: Option<AnyView>,
     pub(crate) cache_key: ViewNodeCacheKey,
     pub(crate) previous_bounds: Bounds<Pixels>,
     pub(crate) accessed_entities: FxHashSet<EntityId>,

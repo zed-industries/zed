@@ -8,7 +8,6 @@ use crate::{Empty, Window};
 use anyhow::Result;
 use collections::FxHashSet;
 use refineable::Refineable;
-use std::mem;
 use std::{any::TypeId, fmt, ops::Range};
 
 /// A dynamically-typed view handle that can be downcast to a specific `Entity<V>`.
@@ -86,10 +85,6 @@ impl Eq for AnyView {}
 impl View for AnyView {
     fn entity_id(&self) -> Option<EntityId> {
         Some(self.entity.entity_id())
-    }
-
-    fn retained_view(&self) -> Option<AnyView> {
-        Some(self.clone())
     }
 
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
@@ -195,11 +190,6 @@ pub trait View: 'static + Sized {
     /// fine — the id is scoped by the parent path.
     fn entity_id(&self) -> Option<EntityId>;
 
-    #[doc(hidden)]
-    fn retained_view(&self) -> Option<AnyView> {
-        None
-    }
-
     /// Render this view into an element tree, consuming `self`.
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
 }
@@ -220,10 +210,6 @@ impl<T: RenderOnce> View for T {
 impl<T: Render> View for Entity<T> {
     fn entity_id(&self) -> Option<EntityId> {
         Some(Entity::entity_id(self))
-    }
-
-    fn retained_view(&self) -> Option<AnyView> {
-        Some(self.clone().into())
     }
 
     #[inline]
@@ -353,19 +339,14 @@ impl<V: View> Element for ViewElement<V> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        if self.cached_style.is_none()
-            && let Some(entity_id) = self.entity_id
+        if let Some(entity_id) = self.entity_id
             && let Some(id) = id
-            && let Some(view) = self.view.as_ref().and_then(View::retained_view)
         {
             let cache_key = window.view_node_key(Bounds::default());
-            let node_id = window.node_engine.begin_occurrence(
-                id.clone(),
-                entity_id,
-                Some(view.clone()),
-                &cache_key,
-            );
-            if let Some((mut recording, layout)) =
+            let node_id = window
+                .node_engine
+                .begin_occurrence(id.clone(), entity_id, &cache_key);
+            let (layout, element) = if let Some((mut recording, layout)) =
                 window.node_engine.reuse_layout(node_id, &cache_key)
             {
                 cx.entities
@@ -379,50 +360,52 @@ impl<V: View> Element for ViewElement<V> {
                     recording: Some(recording),
                     accessed_entities: window.node_engine.take_dependency_set(),
                 });
-                return (layout, None);
-            }
-            let layout_start = window.prepaint_index();
-            let mut accessed_entities = window.node_engine.take_dependency_set();
-            let (layout, element) = cx.track_reads(&mut accessed_entities, |cx| {
-                window.with_rendered_view(entity_id, |window| {
-                    let mut element = view.render(window, cx).into_any_element();
-                    let layout = element.request_layout(window, cx);
-                    (layout, element)
-                })
-            });
-            window.node_engine.store_layout(node_id, layout);
-            window.node_engine.finish_prepaint(node_id, false);
-            self.node_layout = Some(NodeViewLayout {
-                layout,
-                layout_range: Some(layout_start..window.prepaint_index()),
-                node_id,
-                recording: None,
-                accessed_entities,
-            });
-            return (layout, Some(element));
+                (layout, None)
+            } else {
+                let layout_start = window.prepaint_index();
+                let mut accessed_entities = window.node_engine.take_dependency_set();
+                let view = self.view.take().expect("view is rendered once per frame");
+                let (layout, element) = cx.track_reads(&mut accessed_entities, |cx| {
+                    window.with_rendered_view(entity_id, |window| {
+                        let mut element = view.render(window, cx).into_any_element();
+                        let layout = element.request_layout(window, cx);
+                        (layout, element)
+                    })
+                });
+                window.node_engine.store_layout(node_id, layout);
+                window.node_engine.finish_prepaint(node_id, false);
+                self.node_layout = Some(NodeViewLayout {
+                    layout,
+                    layout_range: Some(layout_start..window.prepaint_index()),
+                    node_id,
+                    recording: None,
+                    accessed_entities,
+                });
+                (layout, Some(element))
+            };
+            // `.cached(style)` predates node memoization; the style it supplies now simply
+            // becomes the box the view is laid out in.
+            let layout = match &self.cached_style {
+                Some(style) => {
+                    let mut root_style = Style::default();
+                    root_style.refine(style);
+                    window.request_layout(root_style, [layout], cx)
+                }
+                None => layout,
+            };
+            return (layout, element);
         }
         if let Some(entity_id) = self.entity_id {
             // Stateful path: create a reactive boundary.
             window.with_rendered_view(entity_id, |window| {
-                let caching_disabled = window.is_inspector_picking(cx);
-                match self.cached_style.as_ref() {
-                    Some(style) if !caching_disabled => {
-                        let mut root_style = Style::default();
-                        root_style.refine(style);
-                        let layout_id = window.request_layout(root_style, None, cx);
-                        (layout_id, None)
-                    }
-                    _ => {
-                        let mut element = self
-                            .view
-                            .take()
-                            .unwrap()
-                            .render(window, cx)
-                            .into_any_element();
-                        let layout_id = element.request_layout(window, cx);
-                        (layout_id, Some(element))
-                    }
-                }
+                let mut element = self
+                    .view
+                    .take()
+                    .unwrap()
+                    .render(window, cx)
+                    .into_any_element();
+                let layout_id = element.request_layout(window, cx);
+                (layout_id, Some(element))
             })
         } else {
             // Stateless path: isolate subtree via type name (no entity identity).
@@ -444,7 +427,7 @@ impl<V: View> Element for ViewElement<V> {
 
     fn prepaint(
         &mut self,
-        global_id: Option<&GlobalElementId>,
+        _global_id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
@@ -486,11 +469,8 @@ impl<V: View> Element for ViewElement<V> {
                         element.prepaint(window, cx);
                         element
                     } else {
-                        let view = self
-                            .view
-                            .as_ref()
-                            .and_then(View::retained_view)
-                            .expect("node views can be rendered again");
+                        // Layout was grafted, so the view has not rendered this frame.
+                        let view = self.view.take().expect("view is rendered once per frame");
                         let mut element = view.render(window, cx).into_any_element();
                         let layout = element.request_layout(window, cx);
                         window.replace_retained_layout(node_layout.layout, layout, cx);
@@ -512,69 +492,16 @@ impl<V: View> Element for ViewElement<V> {
                 }
             });
         }
-        if self.cached_style.is_some()
-            && element.is_none()
-            && let Some(entity_id) = self.entity_id
-            && let Some(global_id) = global_id
-        {
-            let cache_key = window.view_node_key(bounds);
-            let node_id = window.node_engine.begin_occurrence(
-                global_id.clone(),
-                entity_id,
-                self.view.as_ref().and_then(View::retained_view),
-                &cache_key,
-            );
-            window.set_view_id(entity_id);
-            return window.with_rendered_view(entity_id, |window| {
-                if let Some(mut recording) = window.node_engine.reuse(node_id, &cache_key) {
-                    cx.entities
-                        .extend_accessed(&window.node_engine.node(node_id).accessed_entities);
-                    window.graft_view_node_prepaint(&mut recording);
-                    window.node_engine.finish_prepaint(node_id, false);
-                    return ViewElementPrepaintState {
-                        element: None,
-                        node: Some(ViewNodePrepaintState::Graft { node_id, recording }),
-                    };
-                }
-                let refreshing = mem::replace(&mut window.refreshing, true);
-                let prepaint_start = window.prepaint_index();
-                let mut accessed_entities = window.node_engine.take_dependency_set();
-                let element = cx.track_reads(&mut accessed_entities, |cx| {
-                    let view = self.view.take()?;
-                    let mut element = view.render(window, cx).into_any_element();
-                    element.layout_as_root(bounds.size.into(), window, cx);
-                    element.prepaint_at(bounds.origin, window, cx);
-                    Some(element)
-                });
-                let prepaint_range = prepaint_start..window.prepaint_index();
-                window.refreshing = refreshing;
-                window.node_engine.finish_prepaint(node_id, true);
-                ViewElementPrepaintState {
-                    element,
-                    node: Some(ViewNodePrepaintState::Render {
-                        layout_range: None,
-                        node_id,
-                        cache_key,
-                        prepaint_range,
-                        accessed_entities,
-                    }),
-                }
-            });
-        }
-
         if let Some(entity_id) = self.entity_id {
             // Stateful path.
             window.set_view_id(entity_id);
             window.with_rendered_view(entity_id, |window| {
-                if let Some(mut element) = element.take() {
-                    element.prepaint(window, cx);
-                    return ViewElementPrepaintState {
-                        element: Some(element),
-                        node: None,
-                    };
+                let mut element = element.take().expect("stateful view was laid out");
+                element.prepaint(window, cx);
+                ViewElementPrepaintState {
+                    element: Some(element),
+                    node: None,
                 }
-
-                unreachable!("cached node views are handled before uncached views")
             })
         } else {
             // Stateless path: just prepaint the element.
@@ -626,9 +553,7 @@ impl<V: View> Element for ViewElement<V> {
                         let recording = window.begin_view_node_paint(node_id);
                         let paint_start = window.paint_index();
                         if let Some(element) = element.element.as_mut() {
-                            let refreshing = mem::replace(&mut window.refreshing, true);
                             cx.track_reads(&mut accessed_entities, |cx| element.paint(window, cx));
-                            window.refreshing = refreshing;
                         }
                         let paint_range = paint_start..window.paint_index();
                         let recording = window.capture_view_node_recording(
