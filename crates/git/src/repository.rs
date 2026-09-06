@@ -1658,9 +1658,7 @@ impl GitRepository for RealGitRepository {
                 }
 
                 let path = PathBuf::from(&raw_path);
-                let path = if let Some(path) = raw_path.strip_prefix("~/") {
-                    paths::home_dir().join(path)
-                } else if path.is_relative() {
+                let path = if path.is_relative() {
                     working_directory.join(path)
                 } else {
                     path
