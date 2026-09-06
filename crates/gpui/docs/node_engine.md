@@ -84,12 +84,26 @@ and accessibility only.
 
 ### Components
 
-A component (`render(&self, window, cx)`) is inputs plus the `use_state` entities it
-creates. Its inputs belong to the parent and are replaced in place on every parent
-render; it is not remounted. It has no state of its own to notify about, so it does
-not receive its own `Context`. Memoisation is an opt-in wrapper that promotes the
-component to its own node. There is no props equality; "parent rendered" means
-"child renders".
+There are two things a render can put in the tree. **Entities** you can refer to, so
+you manage them, and notify is their contract. **Components** (`Component`,
+`render(&self, window, cx)`) are managed for you and cannot be referred to: a value
+built by the parent's render, plus the `use_state` entities it creates. It has no state
+of its own to notify about, so it gets `&mut App`, not a `Context`.
+
+A component renders inline by default, as part of its parent's node, in an element-id
+scope of `(type name, nth inline view of that type in the node)` — Flutter's
+type-and-position identity — so two siblings of one type keep separate `use_state`.
+(Every inline view, `RenderOnce` included, gets this scope; it fixes the sibling
+collision `RenderOnce` had.) `.cached()` mounts a component as a node of its own with
+an entity holding the value, and requires `PartialEq`: when the parent renders again,
+the node is re-rendered only if the new value differs from the one it last rendered, or
+something it read was notified. That is SwiftUI's `.equatable()`; it is the one place
+props equality exists, and the type system makes it opt-in, since callbacks cannot be
+compared and a hand-written `PartialEq` has to choose to skip them.
+
+Where `.cached()` shows up in practice is the data for deciding what to promote
+automatically. Auto-promotion would key on local state (`use_state`) only; promoting
+on entity reads would promote everything, since every render reads the theme.
 
 ### The oracle
 
@@ -248,9 +262,14 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   `on_release`).
 - [ ] GPU damage regions from `changed_bounds` through submission and presentation,
   with backend buffer-age handling.
-- [ ] Unify `RenderOnce` and `Component` into one `render(&self)` trait: default is
-  inline and re-rendered with the parent; `memo(key, value)` opts into a node.
-  Mechanical migration of `#[derive(IntoElement)]` and the `ui` crate.
+- [x] `Component`: inline by default, `.cached()` mounts a node and compares inputs
+  with `PartialEq`. See Decisions.
+- [ ] Retire `RenderOnce` in favour of `Component` (separate PR): mechanical migration
+  of `#[derive(IntoElement)]` and the `ui` crate, then deprecate. The `component`
+  crate's preview-registry trait shares the name; disambiguate imports as they bite.
+- [ ] Auto-promote components that hold local state to nodes, once `.cached()` usage
+  shows where it pays. Needs same-frame re-render of a promoted node and state
+  hand-off from the parent's element-state map.
 
 ### Testing and housekeeping
 
@@ -258,5 +277,3 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   and a gpui-only fixture (nested views, `uniform_list`, wrapped text, focus, hover,
   scroll, deferred popover, resize) driven by a seeded step sequence. Keep
   `test_workspace_rendering_stress` as a consumer; tune its step count for CI.
-- [ ] Resolve the `gpui::Component` / `component::Component` name clash before the
-  trait is public.

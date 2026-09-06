@@ -3561,7 +3561,6 @@ impl Window {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn invalidate_component(&mut self, source: EntityId) {
         self.mark_view_dirty(source);
         let engine = &mut self.node_engine;
@@ -3572,12 +3571,9 @@ impl Window {
     pub(crate) fn begin_node_occurrence(
         &mut self,
         element: GlobalElementId,
-        view_id: EntityId,
         cache_key: &ViewNodeCacheKey,
     ) -> ViewNodeId {
-        let node_id = self
-            .node_engine
-            .begin_occurrence(element, view_id, cache_key);
+        let node_id = self.node_engine.begin_occurrence(element, cache_key);
         self.text_system.begin_text_use();
         node_id
     }

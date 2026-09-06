@@ -3,7 +3,7 @@ use crate::{
     EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, Render,
     RenderOnce, Style, StyleRefinement, ViewNodeCacheKey, ViewNodeId, WeakEntity,
 };
-use crate::{Empty, Window};
+use crate::{AppContext as _, Empty, Window};
 use anyhow::Result;
 use collections::FxHashSet;
 use refineable::Refineable;
@@ -82,7 +82,16 @@ impl Eq for AnyView {}
 /// than a concrete type, but it participates in the reactive graph exactly like any
 /// other view via [`ViewElement`].
 impl View for AnyView {
-    fn entity_id(&self) -> Option<EntityId> {
+    fn element_id(&self) -> Option<ElementId> {
+        Some(ElementId::View(self.entity.entity_id()))
+    }
+
+    fn entity(
+        &mut self,
+        _: &mut Option<AnyEntity>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<EntityId> {
         Some(self.entity.entity_id())
     }
 
@@ -168,26 +177,33 @@ mod any_view {
 }
 
 /// A renderable that participates in GPUI's reactive graph — the unifying model
-/// behind [`Render`] and [`RenderOnce`].
+/// behind [`Render`], [`Component`], and [`RenderOnce`].
 ///
-/// When `entity_id()` returns `Some`, that id becomes the view's identity: it gets
-/// a unique element-id space (so internal `use_state` / `.id(..)` never collide
-/// across siblings) and `cx.notify()` on that entity re-renders only this view's
-/// subtree. `None` behaves like a stateless component.
+/// A view with an [`element_id`](View::element_id) is mounted as a node: its output is
+/// reused until the entity backing it is notified, and `cx.notify()` on that entity
+/// re-renders only this view's subtree. A view without one renders inline as part of
+/// its parent, in an element-id scope of its own (its type and its order among inline
+/// views of that type in the enclosing node) so its internal `use_state` / `.id(..)`
+/// never collide with its siblings'.
 ///
-/// You rarely implement `View` directly. `Entity<T: Render>` and any `T: RenderOnce`
-/// get a blanket impl below; implement it by hand only when a component needs both
-/// parent-supplied props *and* a backing entity for identity.
+/// You rarely implement `View` directly: `Entity<T: Render>`, any `T: Component`, and
+/// any `T: RenderOnce` are covered below.
 pub trait View: 'static + Sized {
-    /// This view's identity, if it has one. A view typically holds the backing
-    /// entity as a field and returns its [`EntityId`] here.
-    ///
-    /// The id becomes this view's [`ElementId`], so two views keyed on the same
-    /// entity must not be rendered at the same position in the element tree
-    /// (e.g. as siblings under the same parent): their internal element state
-    /// (`use_state`, scroll offsets, etc.) would silently collide. Nesting is
-    /// fine — the id is scoped by the parent path.
-    fn entity_id(&self) -> Option<EntityId>;
+    /// Identifies where this view mounts as a node. Two node views with the same id must
+    /// not be rendered at the same position in the element tree (e.g. as siblings under the
+    /// same parent); nesting is fine, since the id is scoped by the parent path. `None`
+    /// renders inline, without a node.
+    fn element_id(&self) -> Option<ElementId>;
+
+    /// The entity backing this view's node, given the entity the node created on a
+    /// previous mount (`owned`), which the view may replace. Called before
+    /// [`render`](View::render) for views with an element id.
+    fn entity(
+        &mut self,
+        owned: &mut Option<AnyEntity>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<EntityId>;
 
     /// Render this view into an element tree, consuming `self`.
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
@@ -195,7 +211,16 @@ pub trait View: 'static + Sized {
 
 /// A stateless component (`RenderOnce`) is a `View` with no identity.
 impl<T: RenderOnce> View for T {
-    fn entity_id(&self) -> Option<EntityId> {
+    fn element_id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn entity(
+        &mut self,
+        _: &mut Option<AnyEntity>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<EntityId> {
         None
     }
 
@@ -207,7 +232,16 @@ impl<T: RenderOnce> View for T {
 
 /// An entity that renders itself (`Render`) is a `View` keyed on its own id.
 impl<T: Render> View for Entity<T> {
-    fn entity_id(&self) -> Option<EntityId> {
+    fn element_id(&self) -> Option<ElementId> {
+        Some(ElementId::View(Entity::entity_id(self)))
+    }
+
+    fn entity(
+        &mut self,
+        _: &mut Option<AnyEntity>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<EntityId> {
         Some(Entity::entity_id(self))
     }
 
@@ -238,7 +272,12 @@ impl<T: Render> Entity<T> {
 #[doc(hidden)]
 pub struct ViewElement<V: View> {
     view: Option<V>,
+    element_id: Option<ElementId>,
+    /// The entity backing the node, resolved at layout.
     entity_id: Option<EntityId>,
+    /// This view's order among inline views of its type in the enclosing node, assigned
+    /// when it renders inline.
+    inline_occurrence: u64,
     cached_style: Option<StyleRefinement>,
     node_layout: Option<NodeViewLayout>,
     #[cfg(debug_assertions)]
@@ -249,9 +288,11 @@ impl<V: View> ViewElement<V> {
     /// Wrap a [`View`] as an element.
     #[track_caller]
     pub fn new(view: V) -> Self {
-        let entity_id = view.entity_id();
+        let element_id = view.element_id();
         ViewElement {
-            entity_id,
+            element_id,
+            entity_id: None,
+            inline_occurrence: 0,
             cached_style: None,
             node_layout: None,
             view: Some(view),
@@ -280,6 +321,34 @@ impl<V: View> IntoElement for ViewElement<V> {
 
     fn into_element(self) -> Self::Element {
         self
+    }
+}
+
+impl<V: View> ViewElement<V> {
+    /// Renders the view as part of its parent, in an element-id scope of its type and its
+    /// order among inline views of that type, so its internal ids do not collide with its
+    /// siblings'.
+    fn render_inline(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Option<AnyElement>) {
+        let view = self.view.take().expect("view is rendered once per frame");
+        self.inline_occurrence = window
+            .node_engine
+            .next_inline_occurrence(std::any::type_name::<V>());
+        self.with_inline_scope(window, |window| {
+            let mut element = view.render(window, cx).into_any_element();
+            let layout_id = element.request_layout(window, cx);
+            (layout_id, Some(element))
+        })
+    }
+
+    fn with_inline_scope<R>(&self, window: &mut Window, f: impl FnOnce(&mut Window) -> R) -> R {
+        window.with_id(
+            ElementId::NamedInteger(std::any::type_name::<V>().into(), self.inline_occurrence),
+            f,
+        )
     }
 }
 
@@ -316,7 +385,7 @@ impl<V: View> Element for ViewElement<V> {
     type PrepaintState = ViewElementPrepaintState;
 
     fn id(&self) -> Option<ElementId> {
-        self.entity_id.map(ElementId::View)
+        self.element_id.clone()
     }
 
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
@@ -334,11 +403,23 @@ impl<V: View> Element for ViewElement<V> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        if let Some(entity_id) = self.entity_id
-            && let Some(id) = id
+        if let Some(id) = id
+            && let Some(view) = self.view.as_mut()
         {
             let cache_key = window.view_node_key(Bounds::default());
-            let node_id = window.begin_node_occurrence(id.clone(), entity_id, &cache_key);
+            let node_id = window.begin_node_occurrence(id.clone(), &cache_key);
+            let mut owned = window.node_engine.take_owned_entity(node_id);
+            let entity_id = view.entity(&mut owned, window, cx);
+            window.node_engine.store_owned_entity(node_id, owned);
+            let Some(entity_id) = entity_id else {
+                // A view with an id but no entity cannot be reused, since nothing could
+                // notify it; it renders inline like a stateless one.
+                window.finish_node_phase(node_id, false);
+                window.node_engine.abandon_occurrence(node_id);
+                return self.render_inline(window, cx);
+            };
+            self.entity_id = Some(entity_id);
+            window.node_engine.set_view_id(node_id, entity_id);
             let (layout, element) =
                 if let Some(layout) = window.node_engine.reuse_layout(node_id, &cache_key) {
                     cx.entities
@@ -384,34 +465,7 @@ impl<V: View> Element for ViewElement<V> {
             };
             return (layout, element);
         }
-        if let Some(entity_id) = self.entity_id {
-            // Stateful path: create a reactive boundary.
-            window.with_rendered_view(entity_id, |window| {
-                let mut element = self
-                    .view
-                    .take()
-                    .unwrap()
-                    .render(window, cx)
-                    .into_any_element();
-                let layout_id = element.request_layout(window, cx);
-                (layout_id, Some(element))
-            })
-        } else {
-            // Stateless path: isolate subtree via type name (no entity identity).
-            window.with_id(
-                ElementId::Name(std::any::type_name::<V>().into()),
-                |window| {
-                    let mut element = self
-                        .view
-                        .take()
-                        .unwrap()
-                        .render(window, cx)
-                        .into_any_element();
-                    let layout_id = element.request_layout(window, cx);
-                    (layout_id, Some(element))
-                },
-            )
-        }
+        self.render_inline(window, cx)
     }
 
     fn prepaint(
@@ -478,29 +532,14 @@ impl<V: View> Element for ViewElement<V> {
                 }
             });
         }
-        if let Some(entity_id) = self.entity_id {
-            // Stateful path.
-            window.set_view_id(entity_id);
-            window.with_rendered_view(entity_id, |window| {
-                let mut element = element.take().expect("stateful view was laid out");
+        self.with_inline_scope(window, |window| {
+            if let Some(element) = element.as_mut() {
                 element.prepaint(window, cx);
-                ViewElementPrepaintState {
-                    element: Some(element),
-                    node: None,
-                }
-            })
-        } else {
-            // Stateless path: just prepaint the element.
-            window.with_id(
-                ElementId::Name(std::any::type_name::<V>().into()),
-                |window| {
-                    element.as_mut().unwrap().prepaint(window, cx);
-                },
-            );
-            ViewElementPrepaintState {
-                element: element.take(),
-                node: None,
             }
+        });
+        ViewElementPrepaintState {
+            element: element.take(),
+            node: None,
         }
     }
 
@@ -547,79 +586,134 @@ impl<V: View> Element for ViewElement<V> {
             return;
         }
 
-        let element = &mut element.element;
-        if let Some(entity_id) = self.entity_id {
-            // Stateful path.
-            window.with_rendered_view(entity_id, |window| {
-                element
-                    .as_mut()
-                    .expect("uncached view was prepainted")
-                    .paint(window, cx);
-            });
-        } else {
-            // Stateless path: just paint the element.
-            window.with_id(
-                ElementId::Name(std::any::type_name::<V>().into()),
-                |window| {
-                    element.as_mut().unwrap().paint(window, cx);
-                },
-            );
-        }
+        self.with_inline_scope(window, |window| {
+            if let Some(element) = element.element.as_mut() {
+                element.paint(window, cx);
+            }
+        });
     }
 }
 
-/// A component whose inputs are kept and rendered again after local state changes.
-/// Parent renders supply fresh inputs through [`component`].
+/// A component: a value built by its parent's render that renders itself from `&self`.
+/// Implementing it is enough to use the value as an element (`Input::new("…")` as a
+/// child). Components are owned by the framework rather than referred to by the program,
+/// which is what makes them cheap to write: there is no handle to manage.
 ///
-/// Crate-private until it is unified with `RenderOnce`; the name is taken by the
-/// `component` crate's trait in the rest of the workspace.
-#[cfg(test)]
-pub(crate) trait Component: 'static {
+/// By default a component renders inline, as part of the node that rendered it. It still
+/// gets its own element-id scope, so `use_state` inside it does not collide with a
+/// sibling of the same type. A component that implements `PartialEq` can instead be
+/// [`cached`](Component::cached): it is then mounted as a node of its own, and when the
+/// parent renders again it is only re-rendered if the new value differs from the one it
+/// last rendered (or something it read was notified).
+///
+/// This is what [`RenderOnce`] wanted to be; `RenderOnce` consumes `self`, so a
+/// `RenderOnce` value can never be rendered again and cannot be cached.
+pub trait Component: 'static {
     /// Builds the component's elements from its current inputs and local state.
     fn render(&self, window: &mut Window, cx: &mut App) -> impl IntoElement;
-}
 
-/// Mounts a repeatable component under a key that is unique in its containing element scope.
-/// Reusing the key preserves local state; supplying a new value replaces its inputs.
-#[cfg(test)]
-pub(crate) fn component<C: Component>(key: impl Into<ElementId>, value: C) -> impl IntoElement {
-    ComponentView {
-        key: key.into(),
-        value,
+    /// Mounts this component as a node of its own, identified by its type and its order
+    /// among cached siblings of that type. Its output is reused across frames while the
+    /// values the parent supplies compare equal.
+    ///
+    /// Callbacks cannot be compared, so a component with callbacks implements `PartialEq`
+    /// by hand over its other fields. That is sound as long as the callbacks capture
+    /// handles (entities, focus handles) and read state when they run, rather than values
+    /// computed by the parent's render, which would go stale.
+    fn cached(self) -> Cached<Self>
+    where
+        Self: Sized + PartialEq,
+    {
+        Cached(self)
     }
 }
 
-#[cfg(test)]
-#[derive(IntoElement)]
-struct ComponentView<C: Component> {
-    key: ElementId,
-    value: C,
+impl<C: Component> IntoElement for C {
+    type Element = ViewElement<ComponentView<C>>;
+
+    #[track_caller]
+    fn into_element(self) -> Self::Element {
+        ViewElement::new(ComponentView {
+            value: Some(self),
+            instance: None,
+            cached: None,
+        })
+    }
 }
 
-#[cfg(test)]
+/// A [`Component`] to be mounted as a node; see [`Component::cached`].
+pub struct Cached<C: Component + PartialEq>(C);
+
+impl<C: Component + PartialEq> IntoElement for Cached<C> {
+    type Element = ViewElement<ComponentView<C>>;
+
+    #[track_caller]
+    fn into_element(self) -> Self::Element {
+        ViewElement::new(ComponentView {
+            value: Some(self.0),
+            instance: None,
+            cached: Some(C::eq),
+        })
+    }
+}
+
+/// The [`View`] of a [`Component`]. Inline unless `cached`, in which case it mounts as a
+/// node backed by an entity holding the value.
+#[doc(hidden)]
+pub struct ComponentView<C: Component> {
+    value: Option<C>,
+    instance: Option<Entity<ComponentInstance<C>>>,
+    /// Compares the value last rendered with the one the parent supplied now, for a
+    /// cached component.
+    cached: Option<fn(&C, &C) -> bool>,
+}
+
 struct ComponentInstance<C: Component> {
     value: C,
 }
 
-#[cfg(test)]
-impl<C: Component> Render for ComponentInstance<C> {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.value.render(window, cx)
+impl<C: Component> View for ComponentView<C> {
+    fn element_id(&self) -> Option<ElementId> {
+        self.cached
+            .is_some()
+            .then(|| ElementId::Name(std::any::type_name::<C>().into()))
     }
-}
 
-#[cfg(test)]
-impl<C: Component> RenderOnce for ComponentView<C> {
+    fn entity(
+        &mut self,
+        owned: &mut Option<AnyEntity>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<EntityId> {
+        let value = self.value.take()?;
+        let unchanged = self.cached?;
+        let instance = match owned
+            .take()
+            .and_then(|entity| entity.downcast::<ComponentInstance<C>>().ok())
+        {
+            Some(instance) => {
+                if !unchanged(&instance.read(cx).value, &value) {
+                    instance.update(cx, |instance, _| instance.value = value);
+                    window.invalidate_component(instance.entity_id());
+                }
+                instance
+            }
+            None => cx.new(|_| ComponentInstance { value }),
+        };
+        *owned = Some(instance.clone().into_any());
+        let id = instance.entity_id();
+        self.instance = Some(instance);
+        Some(id)
+    }
+
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let mut value = Some(self.value);
-        let instance = window.use_keyed_state(self.key, cx, |_, _| ComponentInstance {
-            value: value.take().expect("component inputs are consumed once"),
-        });
-        if let Some(value) = value {
-            instance.update(cx, |instance, _| instance.value = value);
-            window.invalidate_component(instance.entity_id());
+        match (self.instance, self.value) {
+            (Some(instance), _) => instance.update(cx, |instance, cx| {
+                instance.value.render(window, cx).into_any_element()
+            }),
+            (None, Some(value)) => value.render(window, cx).into_any_element(),
+            (None, None) => Empty.into_any_element(),
         }
-        instance
     }
 }
 
@@ -829,8 +923,8 @@ mod tests {
     }
 
     use crate::{
-        Context, Entity, Render, StyleRefinement, TestAppContext, Window, div, prelude::*, px, rgb,
-        size,
+        Component, Context, Entity, Render, StyleRefinement, TestAppContext, Window, div,
+        prelude::*, px, rgb, size,
     };
     use std::{cell::Cell, rc::Rc};
 
@@ -2047,7 +2141,15 @@ mod tests {
             renders: Rc<Cell<usize>>,
         }
         impl super::View for Custom {
-            fn entity_id(&self) -> Option<crate::EntityId> {
+            fn element_id(&self) -> Option<crate::ElementId> {
+                Some(crate::ElementId::View(self.source.entity_id()))
+            }
+            fn entity(
+                &mut self,
+                _: &mut Option<crate::AnyEntity>,
+                _: &mut Window,
+                _: &mut crate::App,
+            ) -> Option<crate::EntityId> {
                 Some(self.source.entity_id())
             }
             fn render(self, _: &mut Window, cx: &mut crate::App) -> impl IntoElement {
@@ -2314,11 +2416,21 @@ mod tests {
     struct StatefulComponent {
         state: Rc<std::cell::RefCell<Option<Entity<usize>>>>,
         seen_revision: Rc<Cell<usize>>,
+        renders: Rc<Cell<usize>>,
         revision: usize,
     }
 
-    impl super::Component for StatefulComponent {
+    /// Only the input the component renders from takes part; the shared cells are
+    /// test plumbing, standing in for the callbacks a real component would skip.
+    impl PartialEq for StatefulComponent {
+        fn eq(&self, other: &Self) -> bool {
+            self.revision == other.revision
+        }
+    }
+
+    impl Component for StatefulComponent {
         fn render(&self, window: &mut Window, cx: &mut crate::App) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
             let count = window.use_state(cx, |_, _| 0usize);
             *self.state.borrow_mut() = Some(count.clone());
             let value = *count.read(cx);
@@ -2343,8 +2455,10 @@ mod tests {
     struct ComponentHost {
         state: Rc<std::cell::RefCell<Option<Entity<usize>>>>,
         seen_revision: Rc<Cell<usize>>,
+        component_renders: Rc<Cell<usize>>,
         revision: usize,
         show: bool,
+        cached: bool,
         renders: usize,
     }
 
@@ -2352,29 +2466,41 @@ mod tests {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             self.renders += 1;
             div().when(self.show, |element| {
-                element.child(super::component(
-                    "counter",
-                    StatefulComponent {
-                        state: self.state.clone(),
-                        seen_revision: self.seen_revision.clone(),
-                        revision: self.revision,
-                    },
-                ))
+                let component = StatefulComponent {
+                    state: self.state.clone(),
+                    seen_revision: self.seen_revision.clone(),
+                    renders: self.component_renders.clone(),
+                    revision: self.revision,
+                };
+                if self.cached {
+                    element.child(component.cached())
+                } else {
+                    element.child(component)
+                }
             })
         }
     }
 
     #[gpui::test]
     fn node_engine_component_state_callbacks_and_unmount(cx: &mut TestAppContext) {
+        for cached in [false, true] {
+            component_state_callbacks_and_unmount(cached, cx);
+        }
+    }
+
+    fn component_state_callbacks_and_unmount(cached: bool, cx: &mut TestAppContext) {
         let state = Rc::new(std::cell::RefCell::new(None));
         let seen = Rc::new(Cell::new(0));
+        let component_renders = Rc::new(Cell::new(0));
         let window = cx.open_window(size(px(200.), px(100.)), |window, _| {
             window.node_engine = crate::NodeEngine::new();
             ComponentHost {
                 state: state.clone(),
                 seen_revision: seen.clone(),
+                component_renders: component_renders.clone(),
                 revision: 1,
                 show: true,
+                cached,
                 renders: 0,
             }
         });
@@ -2384,6 +2510,44 @@ mod tests {
         assert_eq!(seen.get(), 1);
         let original = state.borrow().clone().expect("component state initialized");
         cx.update(|cx| assert_eq!(*original.read(cx), 1));
+        let renders = window
+            .update(cx, |host, _, _| host.renders)
+            .expect("window open");
+        original.update(cx, |value, cx| {
+            *value += 1;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |host, _, _| {
+                // A dirty node rebuilds its ancestors with it, so the host renders again
+                // whether the state belongs to the host's node or to a cached component's.
+                assert_eq!(
+                    host.renders,
+                    renders + 1,
+                    "a component's state change re-renders the enclosing view"
+                );
+            })
+            .expect("window open");
+        original.update(cx, |value, _| *value -= 1);
+        let renders = component_renders.get();
+        window
+            .update(cx, |_, _, cx| cx.notify())
+            .expect("window open");
+        cx.run_until_parked();
+        if cached {
+            assert_eq!(
+                component_renders.get(),
+                renders,
+                "a cached component with equal inputs is reused when its host re-renders"
+            );
+        } else {
+            assert_eq!(
+                component_renders.get(),
+                renders + 1,
+                "an inline component renders with its host"
+            );
+        }
         window
             .update(cx, |host, _, cx| {
                 host.revision = 9;
@@ -2391,6 +2555,11 @@ mod tests {
             })
             .expect("window open");
         cx.run_until_parked();
+        assert_eq!(
+            component_renders.get(),
+            renders + if cached { 1 } else { 2 },
+            "changed inputs re-render the component"
+        );
         visual.simulate_click(crate::point(px(10.), px(10.)), crate::Modifiers::default());
         assert_eq!(seen.get(), 9, "recorded handlers must receive fresh inputs");
         cx.update(|cx| assert_eq!(*original.read(cx), 2));

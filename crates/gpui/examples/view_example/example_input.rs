@@ -59,12 +59,27 @@ impl Input {
     }
 }
 
-impl gpui::View for Input {
-    fn entity_id(&self) -> Option<EntityId> {
-        Some(match &self.source {
+impl Input {
+    fn source_id(&self) -> EntityId {
+        match &self.source {
             Source::Value(value) => value.entity_id(),
             Source::Editor(editor) => editor.entity_id(),
-        })
+        }
+    }
+}
+
+impl gpui::View for Input {
+    fn element_id(&self) -> Option<gpui::ElementId> {
+        Some(gpui::ElementId::View(self.source_id()))
+    }
+
+    fn entity(
+        &mut self,
+        _: &mut Option<gpui::AnyEntity>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<EntityId> {
+        Some(self.source_id())
     }
 
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {

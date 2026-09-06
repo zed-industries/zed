@@ -582,7 +582,6 @@ impl NodeEngine {
     pub(crate) fn begin_occurrence(
         &mut self,
         element: GlobalElementId,
-        view_id: EntityId,
         cache_key: &ViewNodeCacheKey,
     ) -> ViewNodeId {
         let occurrence = self.next_occurrence(element);
@@ -597,7 +596,8 @@ impl NodeEngine {
                 parent,
                 children: Vec::new(),
                 next_children: Vec::new(),
-                view_id,
+                view_id: None,
+                owned_entity: None,
                 cache_key: cache_key.clone(),
                 previous_bounds: cache_key.bounds,
                 accessed_entities: FxHashSet::default(),
@@ -618,6 +618,58 @@ impl NodeEngine {
         }
         self.splice(node_id, MetadataPhase::Layout);
         node_id
+    }
+
+    /// Sets the entity whose notification re-renders the node.
+    pub(crate) fn set_view_id(&mut self, node_id: ViewNodeId, view_id: EntityId) {
+        if let Some(node) = self.nodes.get_mut(node_id) {
+            node.view_id = Some(view_id);
+        }
+    }
+
+    /// The entity the node created for its view on a previous mount, taken so the view can
+    /// reuse or replace it; return it with `store_owned_entity`.
+    pub(crate) fn take_owned_entity(&mut self, node_id: ViewNodeId) -> Option<crate::AnyEntity> {
+        self.nodes.get_mut(node_id)?.owned_entity.take()
+    }
+
+    pub(crate) fn store_owned_entity(
+        &mut self,
+        node_id: ViewNodeId,
+        entity: Option<crate::AnyEntity>,
+    ) {
+        if let Some(node) = self.nodes.get_mut(node_id) {
+            node.owned_entity = entity;
+        }
+    }
+
+    /// The position of the next view of type `type_name` to render inline in the scope being
+    /// drawn, counting from zero.
+    pub(crate) fn next_inline_occurrence(&mut self, type_name: &'static str) -> u64 {
+        let (_, _, output) = self.current_output();
+        let occurrence = output.inline_views.entry(type_name).or_default();
+        let index = *occurrence;
+        *occurrence += 1;
+        index
+    }
+
+    /// Undoes `begin_occurrence` for a view that turned out to have no entity to back a
+    /// node, after its phase has been finished.
+    pub(crate) fn abandon_occurrence(&mut self, node_id: ViewNodeId) {
+        let (_, phase, output) = self.current_output();
+        let items = &mut output.phase_mut(phase).items;
+        if matches!(items.last(), Some(OutputItem::Child(child, _)) if *child == node_id) {
+            items.pop();
+        }
+        match self.nodes.get(node_id).and_then(|node| node.parent) {
+            Some(parent) => {
+                if let Some(parent) = self.nodes.get_mut(parent) {
+                    parent.next_children.retain(|child| *child != node_id);
+                }
+            }
+            None => self.next_roots.retain(|root| *root != node_id),
+        }
+        self.remove_subtree(node_id);
     }
 
     /// Returns the node's retained layout if its output can be reused for a frame whose
@@ -721,7 +773,7 @@ impl NodeEngine {
         };
         let old_bounds = node.previous_bounds;
         let new_bounds = cache_key.bounds;
-        accessed_entities.insert(node.view_id);
+        accessed_entities.extend(node.view_id);
         node.cache_key = cache_key;
         node.previous_bounds = new_bounds;
         node.painted = true;

@@ -147,6 +147,9 @@ pub(crate) struct NodeOutput {
     /// survives redraws; entries not accessed by a redraw are dropped when it finishes.
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), crate::window::ElementStateBox>,
     pub(crate) accessed_element_states: FxHashSet<(GlobalElementId, TypeId)>,
+    /// How many views of each type have rendered inline in this scope so far, so siblings
+    /// of one type get distinct element-id scopes.
+    pub(crate) inline_views: FxHashMap<&'static str, u64>,
 }
 
 impl NodeOutput {
@@ -177,6 +180,7 @@ impl NodeOutput {
             phase.dispatch_pushes = 0;
         }
         self.accessed_element_states.clear();
+        self.inline_views.clear();
         self.generation += 1;
     }
 }
@@ -199,7 +203,11 @@ pub(crate) struct ViewNode {
     pub(crate) parent: Option<super::node_engine::ViewNodeId>,
     pub(crate) children: Vec<super::node_engine::ViewNodeId>,
     pub(crate) next_children: Vec<super::node_engine::ViewNodeId>,
-    pub(crate) view_id: EntityId,
+    /// The entity whose notification re-renders this node, once the view has mounted.
+    pub(crate) view_id: Option<EntityId>,
+    /// An entity the view asked the node to keep for it, such as a component's instance;
+    /// dropped with the node.
+    pub(crate) owned_entity: Option<crate::AnyEntity>,
     pub(crate) cache_key: ViewNodeCacheKey,
     pub(crate) previous_bounds: Bounds<Pixels>,
     pub(crate) accessed_entities: FxHashSet<EntityId>,
