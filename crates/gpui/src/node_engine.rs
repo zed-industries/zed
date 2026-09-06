@@ -342,7 +342,10 @@ impl NodeEngine {
             .filter_map(|(_, node)| node.layout)
     }
 
-    pub(crate) fn mark_frame_bound_layout(&mut self) {
+    /// Prevents the current node and its ancestors from reusing this frame's output. Used when
+    /// a scope produced something a recording cannot hold: a measurement closure that may
+    /// capture frame-arena elements, or a deferred draw whose element lives in the arena.
+    pub(crate) fn mark_frame_bound(&mut self) {
         self.frame_bound_nodes
             .extend(self.traversal_stack.iter().copied());
     }

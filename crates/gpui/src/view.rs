@@ -2588,6 +2588,119 @@ mod tests {
     }
 
     #[gpui::test]
+    fn node_engine_reuses_siblings_while_a_deferred_draw_is_open(cx: &mut TestAppContext) {
+        struct PopoverOwner {
+            open: bool,
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for PopoverOwner {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                div()
+                    .size(px(40.))
+                    .bg(rgb(0x336699))
+                    .when(self.open, |element| {
+                        element.child(crate::deferred(
+                            div()
+                                .absolute()
+                                .left(px(10.))
+                                .top(px(10.))
+                                .size(px(60.))
+                                .bg(rgb(0xff0000)),
+                        ))
+                    })
+            }
+        }
+        struct Host {
+            owner: Entity<PopoverOwner>,
+            changing: Entity<CountingLeaf>,
+            clean: Entity<CountingLeaf>,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .flex()
+                    .child(self.owner.clone())
+                    .child(div().size(px(40.)).child(self.changing.clone()))
+                    .child(div().size(px(40.)).child(self.clean.clone()))
+            }
+        }
+        let owner_renders = Rc::new(Cell::new(0));
+        let changing_renders = Rc::new(Cell::new(0));
+        let clean_renders = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(200.), px(100.)), |_, cx| Host {
+            owner: cx.new(|_| PopoverOwner {
+                open: true,
+                renders: owner_renders.clone(),
+            }),
+            changing: cx.new(|_| CountingLeaf {
+                render_count: changing_renders.clone(),
+                dependency: None,
+                color: 0x00ff00,
+            }),
+            clean: cx.new(|_| CountingLeaf {
+                render_count: clean_renders.clone(),
+                dependency: None,
+                color: 0x0000ff,
+            }),
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            (
+                owner_renders.get(),
+                changing_renders.get(),
+                clean_renders.get()
+            ),
+            (1, 1, 1)
+        );
+
+        // A frame caused by a sibling: the popover owner must rebuild even though nothing it
+        // read changed (its deferred draw lives outside any recording), while the untouched
+        // sibling is reused rather than the whole window refreshing.
+        window
+            .update(cx, |host, _, cx| {
+                host.changing.update(cx, |leaf, cx| {
+                    leaf.color = 0x00aa00;
+                    cx.notify();
+                })
+            })
+            .expect("window open");
+        cx.run_until_parked();
+        assert_eq!(
+            (
+                owner_renders.get(),
+                changing_renders.get(),
+                clean_renders.get()
+            ),
+            (2, 2, 1)
+        );
+        let incremental = window
+            .update(cx, |_, window, _| {
+                let stats = window.node_stats().expect("node engine");
+                assert_eq!(stats.full_refresh_reason, None);
+                assert!(
+                    stats.reused_subtrees > 0,
+                    "the clean sibling must be reused"
+                );
+                window.rendered_frame.scene.snapshot_for_test()
+            })
+            .expect("window open");
+        window
+            .update(cx, |_, window, _| window.refresh())
+            .expect("window open");
+        cx.run_until_parked();
+        let rebuilt = window
+            .update(cx, |_, window, _| {
+                window.rendered_frame.scene.snapshot_for_test()
+            })
+            .expect("window open");
+        assert_eq!(
+            incremental, rebuilt,
+            "deferred draw must survive sibling reuse"
+        );
+    }
+
+    #[gpui::test]
     fn node_engine_dependency_changes_dirty_views_without_notifying_them(cx: &mut TestAppContext) {
         let dependency = cx.new(|_| Dependency);
         let renders = Rc::new(Cell::new(0));

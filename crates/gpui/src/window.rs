@@ -3249,8 +3249,6 @@ impl Window {
             Some("window refresh")
         } else if atlas_invalidated {
             Some("image eviction")
-        } else if !self.rendered_frame.deferred_draws.is_empty() {
-            Some("deferred drawing")
         } else if self.prompt.is_some() {
             Some("prompt")
         } else if self.a11y.is_active() {
@@ -4507,6 +4505,9 @@ impl Window {
         content_mask: Option<ContentMask<Pixels>>,
     ) {
         self.invalidator.debug_assert_prepaint();
+        // The deferred element is drawn after the tree, outside every node's recording, so the
+        // scopes that requested it must run again to request it again.
+        self.node_engine.mark_frame_bound();
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
         self.next_frame.deferred_draws.push(DeferredDraw {
             current_view: self.current_view(),
@@ -5256,7 +5257,7 @@ impl Window {
             + 'static,
     {
         let engine = &mut self.node_engine;
-        engine.mark_frame_bound_layout();
+        engine.mark_frame_bound();
         self.request_retained_measured_layout(style, measure)
     }
 
