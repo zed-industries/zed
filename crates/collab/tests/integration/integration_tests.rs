@@ -7690,3 +7690,84 @@ async fn test_guest_can_rejoin_shared_project_after_leaving_call(
         );
     })
 }
+
+/// Tests that a guest's project search does not return the contents of files the host has marked
+/// private.
+#[gpui::test]
+async fn test_project_search_excludes_private_files(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_a.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |file| {
+                file.project.worktree.private_files = Some(vec!["**/.env".to_string()].into());
+            });
+        });
+    });
+
+    client_a
+        .fs()
+        .insert_tree(
+            "/root",
+            json!({
+                "dir-1": {
+                    "a.txt": "the secret is out",
+                    ".env": "API_KEY=secret",
+                }
+            }),
+        )
+        .await;
+    let (project_a, _) = client_a.build_local_project("/root/dir-1", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    let mut results = HashMap::default();
+    let search_rx = project_b.update(cx_b, |project, cx| {
+        project.search(
+            SearchQuery::text(
+                "secret",
+                false,
+                false,
+                false,
+                Default::default(),
+                Default::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx,
+        )
+    });
+    while let Ok(result) = search_rx.rx.recv().await {
+        if let SearchResult::Buffer { buffer, ranges } = result {
+            results.entry(buffer).or_insert(ranges);
+        }
+    }
+
+    let mut paths = results
+        .into_iter()
+        .map(|(buffer, _)| {
+            buffer.read_with(cx_b, |buffer, cx| buffer.file().unwrap().full_path(cx))
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+
+    assert_eq!(
+        paths,
+        &[PathBuf::from("dir-1/a.txt")],
+        "the guest's search returned a file the host marked private"
+    );
+}
