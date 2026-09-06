@@ -994,6 +994,21 @@ pub(crate) struct FreshDeferredDraw {
     accessed_entities: FxHashSet<EntityId>,
 }
 
+/// Identifies a root attached to a window's frame with [`Window::attach_root`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AttachedRootId(u64);
+
+/// A view drawn as a root of the window's frame beside the root view, at fixed bounds.
+struct AttachedRoot {
+    id: AttachedRootId,
+    view: AnyView,
+    bounds: Bounds<Pixels>,
+    /// The node the view mounted when it was last drawn.
+    node: Option<ViewNodeId>,
+    /// The generation of that node's output when its scene was last taken.
+    taken_generation: Option<u64>,
+}
+
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
@@ -1077,6 +1092,9 @@ pub struct Window {
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
+    /// Roots drawn beside `root`, in attachment order. See [`Window::attach_root`].
+    attached_roots: Vec<AttachedRoot>,
+    next_attached_root_id: u64,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
@@ -1901,6 +1919,8 @@ impl Window {
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
+            attached_roots: Vec::new(),
+            next_attached_root_id: 0,
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
@@ -3276,6 +3296,8 @@ impl Window {
         #[cfg(any(feature = "inspector", debug_assertions))]
         let inspector_element = self.prepaint_inspector(_inspector_width, cx);
 
+        let mut attached_root_elements = self.prepaint_attached_roots(cx);
+
         self.prepaint_deferred_draws(cx);
 
         let mut prompt_element = None;
@@ -3309,6 +3331,8 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector(inspector_element, cx);
+
+        self.paint_attached_roots(&mut attached_root_elements, cx);
 
         self.paint_deferred_draws(cx);
 
@@ -3353,6 +3377,156 @@ impl Window {
 
     pub(crate) fn set_draw_phase(&mut self, phase: DrawPhase) {
         self.invalidator.set_phase(phase);
+    }
+
+    /// Attaches `view` as a root of this window's frame beside the root view. It is laid
+    /// out to fill `bounds`, clipped to them, and drawn there every frame after the root
+    /// view and before deferred draws, as a node of its own: memoized, hit-tested,
+    /// focusable, and dispatched to by position like any mounted view, with its scene
+    /// part of the window's. [`Window::take_root_scene`] reads that scene back on its
+    /// own, so an embedder can compose independent surfaces in one window and ship each
+    /// surface's output separately.
+    pub fn attach_root(
+        &mut self,
+        view: impl Into<AnyView>,
+        bounds: Bounds<Pixels>,
+    ) -> AttachedRootId {
+        let id = AttachedRootId(self.next_attached_root_id);
+        self.next_attached_root_id += 1;
+        self.attached_roots.push(AttachedRoot {
+            id,
+            view: view.into(),
+            bounds,
+            node: None,
+            taken_generation: None,
+        });
+        self.invalidator.set_dirty(true);
+        id
+    }
+
+    /// Moves or resizes an attached root; the next frame lays it out at `bounds`.
+    pub fn set_root_bounds(&mut self, root: AttachedRootId, bounds: Bounds<Pixels>) {
+        if let Some(attached) = self.attached_root_mut(root)
+            && attached.bounds != bounds
+        {
+            attached.bounds = bounds;
+            self.invalidator.set_dirty(true);
+        }
+    }
+
+    /// The bounds an attached root is drawn at, if it is attached.
+    pub fn root_bounds(&self, root: AttachedRootId) -> Option<Bounds<Pixels>> {
+        self.attached_roots
+            .iter()
+            .find(|attached| attached.id == root)
+            .map(|attached| attached.bounds)
+    }
+
+    /// Detaches a root. Its node, and the state and focus within it, are dropped at the
+    /// end of the next frame.
+    pub fn detach_root(&mut self, root: AttachedRootId) {
+        let count = self.attached_roots.len();
+        self.attached_roots.retain(|attached| attached.id != root);
+        if self.attached_roots.len() != count {
+            self.invalidator.set_dirty(true);
+        }
+    }
+
+    /// The scene an attached root painted in the last frame drawn, as a scene of its own:
+    /// the root's recording followed by the deferred draws its subtree attached, in
+    /// priority order, in window coordinates. `None` before the root has been drawn and
+    /// while its recorded output has been reused unchanged since this was last called, so
+    /// an embedder that ships scenes elsewhere ships only the roots that changed.
+    pub fn take_root_scene(&mut self, root: AttachedRootId) -> Option<Scene> {
+        let node = self.attached_root_mut(root)?.node?;
+        let generation = self.node_engine.try_node(node)?.output.generation;
+        let attached = self.attached_root_mut(root)?;
+        if attached.taken_generation == Some(generation) {
+            return None;
+        }
+        attached.taken_generation = Some(generation);
+
+        let mut scene = Scene::default();
+        self.node_engine.replay_scene(node, &mut scene);
+        let mut deferred: Vec<(usize, ViewNodeId)> = self
+            .rendered_frame
+            .deferred_draws
+            .iter()
+            .filter(|draw| self.node_engine.is_within(draw.node, node))
+            .map(|draw| (draw.priority, draw.node))
+            .collect();
+        deferred.sort_by_key(|(priority, _)| *priority);
+        for (_, draw) in deferred {
+            self.node_engine.replay_scene(draw, &mut scene);
+        }
+        scene.finish();
+        Some(scene)
+    }
+
+    fn attached_root_mut(&mut self, root: AttachedRootId) -> Option<&mut AttachedRoot> {
+        self.attached_roots
+            .iter_mut()
+            .find(|attached| attached.id == root)
+    }
+
+    /// Lays out and prepaints every attached root at its bounds, each as a root of the
+    /// frame (the traversal stack is empty, so the view's node registers itself as one),
+    /// and remembers which node each mounted.
+    fn prepaint_attached_roots(&mut self, cx: &mut App) -> Vec<(AttachedRootId, AnyElement)> {
+        let mut elements = Vec::with_capacity(self.attached_roots.len());
+        for index in 0..self.attached_roots.len() {
+            let Some(attached) = self.attached_roots.get(index) else {
+                break;
+            };
+            let (id, view, bounds) = (attached.id, attached.view.clone(), attached.bounds);
+            let mut element = view.into_any_element();
+            let roots_before = self.node_engine.next_root_count();
+            self.with_root_dispatch_node(|window| {
+                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                    element.prepaint_as_root(bounds.origin, bounds.size.into(), window, cx);
+                });
+            });
+            let node = self.node_engine.next_root(roots_before);
+            if let Some(attached) = self.attached_root_mut(id) {
+                attached.node = node;
+            }
+            elements.push((id, element));
+        }
+        elements
+    }
+
+    fn paint_attached_roots(
+        &mut self,
+        elements: &mut [(AttachedRootId, AnyElement)],
+        cx: &mut App,
+    ) {
+        for (id, element) in elements {
+            let Some(bounds) = self.root_bounds(*id) else {
+                continue;
+            };
+            self.with_root_dispatch_node(|window| {
+                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                    element.paint(window, cx);
+                });
+            });
+        }
+    }
+
+    /// Runs `f` with the frame's root dispatch node active, so the dispatch nodes a root
+    /// drawn by `f` pushes hang under it (the root view's key contexts then apply to the
+    /// attached root, as they do to a deferred draw under its owner), and leaves the
+    /// dispatch stack as it found it.
+    fn with_root_dispatch_node<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let tree = &mut self.next_frame.dispatch_tree;
+        if tree.len() > 0 {
+            tree.set_active_node(tree.root_node_id());
+        }
+        let result = f(self);
+        let tree = &mut self.next_frame.dispatch_tree;
+        while tree.active_node_id().is_some() {
+            tree.pop_node();
+        }
+        result
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
