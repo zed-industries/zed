@@ -163,7 +163,6 @@ pub enum SessionState {
 pub struct RunningMode {
     client: Arc<DebugAdapterClient>,
     binary: DebugAdapterBinary,
-    adapter: DebugAdapterName,
     tmp_breakpoint: Option<SourceBreakpoint>,
     worktree: WeakEntity<Worktree>,
     executor: BackgroundExecutor,
@@ -196,7 +195,6 @@ fn client_source(abs_path: &Path) -> dap::Source {
 impl RunningMode {
     async fn new(
         session_id: SessionId,
-        adapter: DebugAdapterName,
         parent_session: Option<Entity<Session>>,
         worktree: WeakEntity<Worktree>,
         binary: DebugAdapterBinary,
@@ -223,7 +221,6 @@ impl RunningMode {
         Ok(Self {
             client: Arc::new(client),
             worktree,
-            adapter,
             tmp_breakpoint: None,
             binary,
             executor: cx.background_executor().clone(),
@@ -931,7 +928,6 @@ impl Session {
         let (messages_tx, _messages_rx) = mpsc::unbounded();
         self.state = SessionState::Running(RunningMode {
             client,
-            adapter: "fake-adapter".into(),
             binary: DebugAdapterBinary {
                 command: None,
                 arguments: Default::default(),
@@ -1008,13 +1004,11 @@ impl Session {
         })];
         self.background_tasks = background_tasks;
         let id = self.id;
-        let adapter = self.adapter.clone();
         let parent_session = self.parent_session.clone();
 
         cx.spawn(async move |this, cx| {
             let mode = RunningMode::new(
                 id,
-                adapter,
                 parent_session,
                 worktree.downgrade(),
                 binary.clone(),
