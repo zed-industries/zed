@@ -1,12 +1,12 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
-    Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    NodeStats, Pixels, Platform, Point, Render, Result, SharedString, Size, SystemNotification,
-    SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
-    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
-    app::GpuiMode, window::ElementArenaScope,
+    Element, ElementId, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, GlobalElementId,
+    InputEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, NodeStats, Pixels, Platform, Point, Render, Result, SharedString,
+    Size, SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
+    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
+    WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -941,12 +941,35 @@ impl VisualTestContext {
             let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
             window.set_draw_phase(DrawPhase::Prepaint);
+            // The element is drawn as a root of the frame that follows, ahead of the
+            // window's root view, and is gone from the frame after that.
+            let cache_key = window.view_node_key(Bounds::default());
+            let root = window.node_engine.mount_root(
+                GlobalElementId(std::sync::Arc::from([ElementId::Name(
+                    "VisualTestContext::draw".into(),
+                )])),
+                &cache_key,
+            );
+            window.restart_node_render(root);
+
             let mut element = Drawable::new(f(window, cx));
+            window.enter_node_layout(root);
             element.layout_as_root(space.into(), window, cx);
+            window.finish_node_phase(root, true);
+            window.enter_node_prepaint(root);
             window.with_absolute_element_offset(origin, |window| element.prepaint(window, cx));
+            window.finish_node_phase(root, true);
 
             window.set_draw_phase(DrawPhase::Paint);
+            window.enter_node_paint(root);
+            window.begin_view_node_paint(root);
             let (request_layout_state, prepaint_state) = element.paint(window, cx);
+            window.finish_view_node_paint(root);
+            window.finish_node_phase(root, true);
+            let accessed_entities = window.node_engine.take_dependency_set();
+            window
+                .node_engine
+                .store_render(root, cache_key, accessed_entities);
 
             window.set_draw_phase(DrawPhase::None);
             window.refresh();

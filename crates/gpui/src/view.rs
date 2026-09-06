@@ -2796,9 +2796,12 @@ mod tests {
             (1, 1, 1)
         );
 
-        // A frame caused by a sibling: the popover owner must rebuild even though nothing it
-        // read changed (its deferred draw lives outside any recording), while the untouched
-        // sibling is reused rather than the whole window refreshing.
+        let live_nodes_with_popover = window
+            .update(cx, |_, window, _| window.node_stats().live_nodes)
+            .expect("window open");
+
+        // A frame caused by a sibling: the popover owner is reused, and with it the root its
+        // recording attached, which is replayed rather than drawn again.
         window
             .update(cx, |host, _, cx| {
                 host.changing.update(cx, |leaf, cx| {
@@ -2814,32 +2817,40 @@ mod tests {
                 changing_renders.get(),
                 clean_renders.get()
             ),
-            (2, 2, 1)
+            (1, 2, 1)
         );
-        let incremental = window
-            .update(cx, |_, window, _| {
-                let stats = window.node_stats();
-                assert_eq!(stats.full_refresh_reason, None);
-                assert!(
-                    stats.reused_subtrees > 0,
-                    "the clean sibling must be reused"
-                );
-                window.rendered_frame.scene.snapshot_for_test()
-            })
-            .expect("window open");
+        let mut visual = crate::VisualTestContext::from_window(window.into(), cx);
+        let stats = visual.assert_incremental_matches_full_refresh("sibling change");
+        assert_eq!(stats.full_refresh_reason, None);
+        assert!(
+            stats.reused_subtrees > 0,
+            "the clean siblings must be reused"
+        );
+
+        // Closing the popover renders the owner without attaching the root, which drops it.
         window
-            .update(cx, |_, window, _| window.refresh())
+            .update(cx, |host, _, cx| {
+                host.owner.update(cx, |owner, cx| {
+                    owner.open = false;
+                    cx.notify();
+                })
+            })
             .expect("window open");
         cx.run_until_parked();
-        let rebuilt = window
-            .update(cx, |_, window, _| {
-                window.rendered_frame.scene.snapshot_for_test()
+        let stats = visual.assert_incremental_matches_full_refresh("popover closed");
+        assert_eq!(stats.live_nodes, live_nodes_with_popover - 1);
+
+        window
+            .update(cx, |host, _, cx| {
+                host.owner.update(cx, |owner, cx| {
+                    owner.open = true;
+                    cx.notify();
+                })
             })
             .expect("window open");
-        assert_eq!(
-            incremental, rebuilt,
-            "deferred draw must survive sibling reuse"
-        );
+        cx.run_until_parked();
+        let stats = visual.assert_incremental_matches_full_refresh("popover reopened");
+        assert_eq!(stats.live_nodes, live_nodes_with_popover);
     }
 
     #[gpui::test]

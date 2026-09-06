@@ -153,13 +153,13 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   states, the text it looked up, its scene, and a lane of recorded dispatch nodes. A
   reused node's output stays where it is; a redrawn node overwrites its own. Queries
   (`hit_test`, `cursor_style`, `mouse_listeners`, `focused_input_handler`,
-  `hit_window_control`, `tab_stops`) walk the tree in drawing order or reverse. The
-  frame root — output drawn outside every node (deferred draws, `VisualTestContext::draw`)
-  and the splices to the root nodes — is the one part rebuilt every frame, so it keeps a
-  rendered/next pair swapped where the frames swap; once deferred draws are nodes and the
-  test draw wraps its element in one, that pair collapses into `roots`/`next_roots`.
-  `Frame` is down to focus, window-active, the dispatch tree, deferred draws, and the
-  scene linearization. Gone: `RecordedMetadata`, `capture_metadata`, `PaintIndex`,
+  `hit_window_control`, `tab_stops`) walk the frame in drawing order or reverse. A frame
+  is its roots, in drawing order (`roots` for the frame events are dispatched against,
+  `next_roots` for the one being drawn): the window's root view, the roots attached by
+  `defer_draw` in priority order, then the prompt, drag overlay or tooltip; nothing is
+  recorded outside a node except the dispatch node an element pushes around a root
+  view, which is rebuilt every frame. `Frame` is down to focus, window-active, the
+  dispatch tree, the deferred-draw work queue, and the scene linearization. Gone: `RecordedMetadata`, `capture_metadata`, `PaintIndex`,
   `PrepaintStateIndex`, `ViewNodeRecording`, `LineLayoutRecording`, `record/replay_subtree`,
   `assert_metadata_unique`, `Frame::finish`'s state carry-over, `NodeLocalState`.
   - `DispatchTree` is unchanged from before the node engine: a flat per-frame tree with
@@ -193,31 +193,31 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   layout; deprecate afterwards.
 - [x] Deferred draws mark the current scope frame-bound instead of forcing a
   whole-window refresh. Prompts, accessibility, and the inspector still refresh.
-- [ ] A frame is an ordered list of roots; deferred draws are roots. Today `defer_draw`
-  marks its owner frame-bound, so a view with an open popover re-renders every frame
-  (as every frame did before the node engine), and the deferred element, the prompt,
-  the drag overlay, the tooltip and the inspector are drawn into the frame root's
-  output, the one part rebuilt every frame. Instead each of them is a root node with its
-  own recording, drawn and queried in list order: window root, deferred roots by
-  priority (rounds for nesting), prompt, drag, tooltip, inspector. The rendered/next
-  output pair goes away, and an embedded GPUI surface is one more root with an offset.
-  A deferred root has a *requested-by* link to its owner, for lifecycle and dirtiness
-  rather than containment: it is re-registered in `next_roots` only when the owner
-  renders (`defer_draw`, which also records `OutputItem::DeferredRoot(node, priority)`
-  in the owner's prepaint output) or when the owner's graft walk visits that marker
-  (the dispatch parent is whatever is active at that point, since the walk has replayed
-  the owner's pushes so far). A deferred root never re-renders by itself: its element is
-  gone with the frame arena, so a dirty deferred root dirties its owner, which
-  re-issues it, and until then it replays. That holds only while ancestors rebuild, so
-  under fine-grained caching a deferred root must instead capture the ambient context
-  it was issued in (element-id stack, text style stack, rem size, content mask, offset,
-  dispatch parent) and re-render there; do the two together. Nodes mounted while
-  laying out the deferred element are the owner's children already (layout runs in
-  the owner's traversal). `transact` rollback abandons the roots of truncated deferred
-  draws. `mark_frame_bound` must reach the owner through the requested-by link: during
-  the deferred pass only the deferred root is on the traversal stack, and a measure
-  closure inside it lives in the owner's retained Taffy subtree. Anchoring needs no
-  re-run: a clean owner has the same bounds, and a viewport change is a full refresh.
+- [x] **A frame is an ordered list of roots; deferred draws are roots.** `defer_draw`
+  mounts a root node keyed by the element-id scope it was called from, under the node
+  being drawn (the owner), and records `OutputItem::Root(node, priority)` in the owner's
+  prepaint output. That item is the whole relationship: rendering the owner emits it,
+  replaying the owner (`graft_view_node_prepaint`'s walk) sees the same item and
+  re-attaches the root, and a root survives a frame iff some drawn output attached it
+  (the existing root reconciliation). The deferred pass draws a fresh attachment inside
+  the root node's prepaint and paint, or replays the node when the owner was replayed;
+  the dispatch parent is whatever is active when the walk reaches the item, since the
+  owner's pushes have been replayed up to that point. The root's `parent` is the owner,
+  so whatever dirties the root dirties the owner, which attaches it afresh; a deferred
+  root never re-renders by itself, because its element is gone with the frame arena.
+  That holds while ancestors rebuild; under fine-grained caching a deferred root must
+  instead capture the ambient context it was attached in (element-id stack, text style
+  stack, rem size, content mask, offset, dispatch parent) and re-render there. Nodes
+  mounted while laying out the deferred element are the owner's children already.
+  `transact` rollback abandons the roots of truncated fresh attachments and leaves
+  re-attached ones, which the retry's walk attaches again. `mark_frame_bound` walks
+  `parent` links as well as the traversal stack: during the deferred pass only the
+  deferred root is on the stack, and a measure closure inside it lives in the owner's
+  retained Taffy subtree. Anchoring needs no re-run: a clean owner has the same bounds,
+  and a viewport change is a full refresh. `VisualTestContext::draw` draws its element
+  as a root of the frame that follows. Gone: the frame root output and its
+  rendered/next pair, `set_frame_phase`, `swap_frame_outputs`, `OutputSlot.owner`'s
+  `None`. An embedded GPUI surface is one more root with an offset.
 - [ ] Record positions relative to the node origin and translate on replay, so a
   clean subtree that moves is replayed rather than rebuilt and the cache key becomes
   size-only. `position: absolute` children resolve inside the node and deferred draws

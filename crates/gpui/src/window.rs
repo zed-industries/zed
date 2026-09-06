@@ -969,16 +969,29 @@ pub(crate) struct TooltipRequest {
     tooltip: AnyTooltip,
 }
 
+/// A root attached to the frame being drawn, to be drawn after the tree in priority
+/// order. Attached fresh by `defer_draw`, with the element to draw and the context it was
+/// attached in, or re-attached by replaying the recording that attached it, in which case
+/// the root's own recording is replayed too.
 pub(crate) struct DeferredDraw {
-    current_view: EntityId,
+    node: ViewNodeId,
     priority: usize,
     parent_node: DispatchNodeId,
+    fresh: Option<FreshDeferredDraw>,
+}
+
+pub(crate) struct FreshDeferredDraw {
+    current_view: EntityId,
     element_id_stack: SmallVec<[ElementId; 32]>,
     text_style_stack: Vec<TextStyleRefinement>,
     content_mask: Option<ContentMask<Pixels>>,
     rem_size: Pixels,
+    /// Taken out while the root is being drawn.
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
+    cache_key: ViewNodeCacheKey,
+    /// The entities read while drawing, accumulated across prepaint and paint.
+    accessed_entities: FxHashSet<EntityId>,
 }
 
 pub(crate) struct Frame {
@@ -3030,7 +3043,6 @@ impl Window {
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
-        self.node_engine.swap_frame_outputs();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
 
@@ -3339,16 +3351,8 @@ impl Window {
         }
     }
 
-    /// Sets the draw phase for the invalidator's assertions and for output drawn outside
-    /// every node.
     pub(crate) fn set_draw_phase(&mut self, phase: DrawPhase) {
         self.invalidator.set_phase(phase);
-        self.node_engine.set_frame_phase(match phase {
-            DrawPhase::Paint => crate::view_node::MetadataPhase::Paint,
-            DrawPhase::None | DrawPhase::Prepaint | DrawPhase::Focus => {
-                crate::view_node::MetadataPhase::Prepaint
-            }
-        });
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
@@ -3439,24 +3443,34 @@ impl Window {
             traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
 
             for deferred_draw_ix in traversal_order {
-                let (element, parent_node, current_view, rem_size, absolute_offset) = {
-                    let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
-                    self.element_id_stack
-                        .clone_from(&deferred_draw.element_id_stack);
-                    self.text_style_stack
-                        .clone_from(&deferred_draw.text_style_stack);
-                    (
-                        deferred_draw.element.take(),
-                        deferred_draw.parent_node,
-                        deferred_draw.current_view,
-                        deferred_draw.rem_size,
-                        deferred_draw.absolute_offset,
-                    )
+                let DeferredDraw {
+                    node,
+                    parent_node,
+                    fresh,
+                    ..
+                } = &mut self.next_frame.deferred_draws[deferred_draw_ix];
+                let (node, parent_node) = (*node, *parent_node);
+                let Some(fresh) = fresh else {
+                    self.next_frame.dispatch_tree.set_active_node(parent_node);
+                    self.enter_node_prepaint(node);
+                    self.graft_view_node_prepaint(node);
+                    self.finish_node_phase(node, false);
+                    continue;
                 };
+                let Some(mut element) = fresh.element.take() else {
+                    debug_assert!(false, "deferred draw is prepainted once");
+                    continue;
+                };
+                let mut accessed_entities = mem::take(&mut fresh.accessed_entities);
+                let (current_view, rem_size, absolute_offset) =
+                    (fresh.current_view, fresh.rem_size, fresh.absolute_offset);
+                self.element_id_stack.clone_from(&fresh.element_id_stack);
+                self.text_style_stack.clone_from(&fresh.text_style_stack);
                 self.next_frame.dispatch_tree.set_active_node(parent_node);
 
-                {
-                    let mut element = element.expect("deferred draw has not been prepainted");
+                self.restart_node_render(node);
+                self.enter_node_prepaint(node);
+                cx.track_reads(&mut accessed_entities, |cx| {
                     self.with_rendered_view(current_view, |window| {
                         window.with_rem_size(Some(rem_size), |window| {
                             window.with_absolute_element_offset(absolute_offset, |window| {
@@ -3464,8 +3478,15 @@ impl Window {
                             });
                         });
                     });
-                    self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
-                }
+                });
+                self.finish_node_phase(node, true);
+
+                let fresh = self.next_frame.deferred_draws[deferred_draw_ix]
+                    .fresh
+                    .as_mut()
+                    .expect("fresh deferred draw stays fresh through prepaint");
+                fresh.element = Some(element);
+                fresh.accessed_entities = accessed_entities;
             }
 
             self.element_id_stack.clear();
@@ -3486,27 +3507,45 @@ impl Window {
         let traversal_order = self.deferred_draw_traversal_order();
         let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
         for deferred_draw_ix in traversal_order {
-            let mut deferred_draw = &mut deferred_draws[deferred_draw_ix];
-            self.element_id_stack
-                .clone_from(&deferred_draw.element_id_stack);
+            let deferred_draw = &mut deferred_draws[deferred_draw_ix];
+            let node = deferred_draw.node;
             self.next_frame
                 .dispatch_tree
                 .set_active_node(deferred_draw.parent_node);
+            let Some(fresh) = &mut deferred_draw.fresh else {
+                self.enter_node_paint(node);
+                self.graft_view_node_paint(node);
+                self.finish_node_phase(node, false);
+                self.node_engine.store_graft();
+                continue;
+            };
+            self.element_id_stack.clone_from(&fresh.element_id_stack);
+            let content_mask = fresh.content_mask;
+            let (current_view, rem_size) = (fresh.current_view, fresh.rem_size);
+            let Some(element) = &mut fresh.element else {
+                debug_assert!(false, "deferred draw was prepainted");
+                continue;
+            };
+            let accessed_entities = &mut fresh.accessed_entities;
 
-            let content_mask = deferred_draw.content_mask;
-            {
-                let element = deferred_draw
-                    .element
-                    .as_mut()
-                    .expect("deferred draw was prepainted");
-                self.with_rendered_view(deferred_draw.current_view, |window| {
+            self.enter_node_paint(node);
+            self.begin_view_node_paint(node);
+            cx.track_reads(accessed_entities, |cx| {
+                self.with_rendered_view(current_view, |window| {
                     window.with_content_mask(content_mask, |window| {
-                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                        window.with_rem_size(Some(rem_size), |window| {
                             element.paint(window, cx);
                         });
                     })
                 })
-            }
+            });
+            self.finish_view_node_paint(node);
+            self.finish_node_phase(node, true);
+            self.node_engine.store_render(
+                node,
+                fresh.cache_key.clone(),
+                mem::take(&mut fresh.accessed_entities),
+            );
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
@@ -3577,6 +3616,11 @@ impl Window {
         node_id
     }
 
+    pub(crate) fn enter_node_layout(&mut self, node_id: ViewNodeId) {
+        self.node_engine.enter_layout(node_id);
+        self.text_system.begin_text_use();
+    }
+
     pub(crate) fn enter_node_prepaint(&mut self, node_id: ViewNodeId) {
         self.node_engine.enter_prepaint(node_id);
         self.text_system.begin_text_use();
@@ -3618,9 +3662,14 @@ impl Window {
     }
 
     /// Rebuilds the dispatch nodes a reused view and its descendants pushed, under the
-    /// active dispatch node.
+    /// active dispatch node, and re-attaches the roots they attached, under the dispatch
+    /// node that is active when the walk reaches them.
     pub(crate) fn graft_view_node_prepaint(&mut self, node_id: ViewNodeId) {
-        let dispatch_tree = &mut self.next_frame.dispatch_tree;
+        let Frame {
+            dispatch_tree,
+            deferred_draws,
+            ..
+        } = &mut self.next_frame;
         let engine = &self.node_engine;
         let mut contains_focus = false;
         engine.walk_node(node_id, MetadataPhase::Prepaint, |slot, item| {
@@ -3632,6 +3681,16 @@ impl Window {
                     }
                 }
                 OutputItem::DispatchPop => dispatch_tree.pop_node(),
+                OutputItem::Root(node, priority) => {
+                    if let Some(parent_node) = dispatch_tree.active_node_id() {
+                        deferred_draws.push(DeferredDraw {
+                            node: *node,
+                            priority: *priority,
+                            parent_node,
+                            fresh: None,
+                        });
+                    }
+                }
                 _ => {}
             }
             ControlFlow::Continue(())
@@ -3799,7 +3858,13 @@ impl Window {
         if result.is_err() {
             self.node_engine.rollback(checkpoint);
             self.text_system.rollback_text_use(text_checkpoint);
-            self.next_frame.deferred_draws.truncate(deferred_draws);
+            for draw in self.next_frame.deferred_draws.drain(deferred_draws..) {
+                // A re-attached root still belongs to the recording that attached it,
+                // which the retry walks again.
+                if draw.fresh.is_some() {
+                    self.node_engine.abandon_root(draw.node);
+                }
+            }
             self.next_frame.dispatch_tree.truncate(dispatch_nodes);
         }
         result
@@ -4067,20 +4132,28 @@ impl Window {
         content_mask: Option<ContentMask<Pixels>>,
     ) {
         self.invalidator.debug_assert_prepaint();
-        // The deferred element is drawn after the tree, outside every node's recording, so the
-        // scopes that requested it must run again to request it again.
-        self.node_engine.mark_frame_bound();
+        let cache_key = self.view_node_key(Bounds::default());
+        let node = self.node_engine.mount_root(
+            GlobalElementId(Arc::from(&*self.element_id_stack)),
+            &cache_key,
+        );
+        self.node_engine.push(OutputItem::Root(node, priority));
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
         self.next_frame.deferred_draws.push(DeferredDraw {
-            current_view: self.current_view(),
-            parent_node,
-            element_id_stack: self.element_id_stack.clone(),
-            text_style_stack: self.text_style_stack.clone(),
-            content_mask,
-            rem_size: self.rem_size(),
+            node,
             priority,
-            element: Some(element),
-            absolute_offset,
+            parent_node,
+            fresh: Some(FreshDeferredDraw {
+                current_view: self.current_view(),
+                element_id_stack: self.element_id_stack.clone(),
+                text_style_stack: self.text_style_stack.clone(),
+                content_mask,
+                rem_size: self.rem_size(),
+                element: Some(element),
+                absolute_offset,
+                cache_key,
+                accessed_entities: self.node_engine.take_dependency_set(),
+            }),
         });
     }
 

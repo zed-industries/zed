@@ -6,14 +6,12 @@ use collections::{FxHashMap, FxHashSet};
 use slotmap::SlotMap;
 use std::{any::TypeId, ops::ControlFlow};
 
-/// A point in a scope's output that `NodeEngine::rollback` returns to.
+/// A point in a scope's output that `NodeEngine::rollback` returns to. `None` when taken
+/// outside every node, where nothing is recorded.
 #[derive(Clone, Copy)]
-pub(crate) struct OutputCheckpoint {
-    items: usize,
-    dispatch_pushes: u32,
-}
+pub(crate) struct OutputCheckpoint(Option<(ViewNodeId, MetadataPhase, usize, u32)>);
 
-/// Which frame's root a query walks: the one drawn last, which events are dispatched
+/// Which frame's roots a query walks: the frame drawn last, which events are dispatched
 /// against, or the one being drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FrameOutput {
@@ -67,14 +65,10 @@ pub(crate) struct NodeEngine {
     frame_bound_nodes: FxHashSet<ViewNodeId>,
     /// The nodes being drawn, innermost last, each with the phase it is in.
     traversal_stack: Vec<(ViewNodeId, MetadataPhase)>,
-    /// Output drawn outside every node, and the splices to the root nodes: the root of a
-    /// frame, which walking in order reproduces. Unlike nodes, the root is rebuilt from
-    /// scratch every frame, so the frame being drawn and the frame events are dispatched
-    /// against each have their own, swapped when the window swaps its frames.
-    next_output: NodeOutput,
-    rendered_output: NodeOutput,
-    /// The phase output drawn outside every node belongs to.
-    frame_phase: MetadataPhase,
+    /// A frame is its roots, in drawing order: the window's root view, then the roots
+    /// attached by `defer_draw` in priority order, then the prompt, drag overlay or
+    /// tooltip. Walking them in order reproduces the frame. `roots` is the frame drawn
+    /// last, which events are dispatched against; `next_roots` is the frame being drawn.
     roots: Vec<ViewNodeId>,
     next_roots: Vec<ViewNodeId>,
     full_refresh: bool,
@@ -104,9 +98,6 @@ impl NodeEngine {
             dirty_nodes: FxHashSet::default(),
             frame_bound_nodes: FxHashSet::default(),
             traversal_stack: Vec::new(),
-            next_output: NodeOutput::default(),
-            rendered_output: NodeOutput::default(),
-            frame_phase: MetadataPhase::Prepaint,
             roots: Vec::new(),
             next_roots: Vec::new(),
             full_refresh: true,
@@ -150,40 +141,19 @@ impl NodeEngine {
         self.traversal_stack.last().map(|(node_id, _)| *node_id)
     }
 
-    /// Sets the phase for output drawn outside every node.
-    pub(crate) fn set_frame_phase(&mut self, phase: MetadataPhase) {
-        self.frame_phase = phase;
-    }
-
-    /// Makes the frame just drawn the one queries run against, and starts a new one.
-    pub(crate) fn swap_frame_outputs(&mut self) {
-        std::mem::swap(&mut self.next_output, &mut self.rendered_output);
-        self.next_output.reset();
-        // Root element states not accessed by the frame just drawn were not carried over.
-        self.next_output.element_states.clear();
-    }
-
-    /// Takes the state kept for `key` in the scope being drawn, recording the access so the
-    /// state survives the redraw. Outside every node, the state may still be in the
-    /// rendered frame's root.
+    /// Takes the state kept for `key` in the node being drawn, recording the access so the
+    /// state survives the redraw.
     pub(crate) fn take_element_state(
         &mut self,
         key: &(GlobalElementId, TypeId),
     ) -> Option<crate::window::ElementStateBox> {
-        match self.current_node() {
-            Some(node_id) => {
-                let output = &mut self.nodes[node_id].output;
-                output.accessed_element_states.insert(key.clone());
-                output.element_states.remove(key)
-            }
-            None => {
-                self.next_output.accessed_element_states.insert(key.clone());
-                self.next_output
-                    .element_states
-                    .remove(key)
-                    .or_else(|| self.rendered_output.element_states.remove(key))
-            }
-        }
+        let Some(node_id) = self.current_node() else {
+            debug_assert!(false, "element state is only kept inside a node");
+            return None;
+        };
+        let output = &mut self.nodes[node_id].output;
+        output.accessed_element_states.insert(key.clone());
+        output.element_states.remove(key)
     }
 
     pub(crate) fn put_element_state(
@@ -191,84 +161,81 @@ impl NodeEngine {
         key: (GlobalElementId, TypeId),
         state: crate::window::ElementStateBox,
     ) {
-        let (_, _, output) = self.current_output();
-        output.element_states.insert(key, state);
-    }
-
-    fn output(&self, root: FrameOutput, owner: Option<ViewNodeId>) -> Option<&NodeOutput> {
-        match owner {
-            Some(node_id) => self.nodes.get(node_id).map(|node| &node.output),
-            None => Some(match root {
-                FrameOutput::Rendered => &self.rendered_output,
-                FrameOutput::Next => &self.next_output,
-            }),
+        if let Some((_, _, output)) = self.current_output() {
+            output.element_states.insert(key, state);
         }
     }
 
-    /// Output slots are only leased against the rendered frame.
-    fn output_mut(&mut self, owner: Option<ViewNodeId>) -> Option<&mut NodeOutput> {
-        match owner {
-            Some(node_id) => self.nodes.get_mut(node_id).map(|node| &mut node.output),
-            None => Some(&mut self.rendered_output),
-        }
+    fn output(&self, owner: ViewNodeId) -> Option<&NodeOutput> {
+        self.nodes.get(owner).map(|node| &node.output)
     }
 
-    /// The output being drawn into right now: the innermost node's, in its phase, or the
-    /// frame's when drawing outside every node (deferred draws, roots that are not views).
-    fn current_output(&mut self) -> (Option<ViewNodeId>, MetadataPhase, &mut NodeOutput) {
-        match self.traversal_stack.last().copied() {
-            Some((node_id, phase)) => (Some(node_id), phase, &mut self.nodes[node_id].output),
-            None => (None, self.frame_phase, &mut self.next_output),
-        }
+    fn output_mut(&mut self, owner: ViewNodeId) -> Option<&mut NodeOutput> {
+        self.nodes.get_mut(owner).map(|node| &mut node.output)
     }
 
-    /// Appends `item` to the output being drawn and returns its position.
-    pub(crate) fn push(&mut self, item: OutputItem) -> OutputSlot {
-        let (owner, phase, output) = self.current_output();
-        let generation = output.generation;
-        let items = &mut output.phase_mut(phase).items;
-        items.push(item);
-        OutputSlot {
-            owner,
-            phase,
-            index: items.len() - 1,
-            generation,
+    /// The output being drawn into right now: the innermost node's, in its phase. `None`
+    /// outside every node, where nothing is recorded: the only output drawn there is the
+    /// dispatch node an element pushes around a root view, which is rebuilt every frame.
+    fn current_output(&mut self) -> Option<(ViewNodeId, MetadataPhase, &mut NodeOutput)> {
+        let (node_id, phase) = self.traversal_stack.last().copied()?;
+        Some((node_id, phase, &mut self.nodes[node_id].output))
+    }
+
+    /// Appends `item` to the output being drawn.
+    pub(crate) fn push(&mut self, item: OutputItem) {
+        match self.current_output() {
+            Some((_, phase, output)) => output.phase_mut(phase).items.push(item),
+            None => debug_assert!(
+                matches!(item, OutputItem::DispatchPush(..) | OutputItem::DispatchPop),
+                "output outside every node is lost"
+            ),
         }
     }
 
     /// Records a dispatch node pushed for the element being drawn; see
     /// [`OutputItem::DispatchPush`].
     pub(crate) fn push_dispatch_node(&mut self, live: crate::DispatchNodeId) {
-        let (_, phase, output) = self.current_output();
-        let output = output.phase_mut(phase);
-        let index = output.dispatch_pushes;
-        output.dispatch_pushes += 1;
-        self.push(OutputItem::DispatchPush(live, index));
+        if let Some((_, phase, output)) = self.current_output() {
+            let output = output.phase_mut(phase);
+            let index = output.dispatch_pushes;
+            output.dispatch_pushes += 1;
+            output.items.push(OutputItem::DispatchPush(live, index));
+        }
     }
 
     /// A point in the output being drawn that `rollback` can return to, discarding
     /// everything drawn after it.
     pub(crate) fn checkpoint(&mut self) -> OutputCheckpoint {
-        let (_, phase, output) = self.current_output();
-        let output = output.phase(phase);
-        OutputCheckpoint {
-            items: output.items.len(),
-            dispatch_pushes: output.dispatch_pushes,
-        }
+        OutputCheckpoint(self.current_output().map(|(node_id, phase, output)| {
+            let output = output.phase(phase);
+            (node_id, phase, output.items.len(), output.dispatch_pushes)
+        }))
     }
 
     pub(crate) fn rollback(&mut self, checkpoint: OutputCheckpoint) {
-        let (_, phase, output) = self.current_output();
-        let output = output.phase_mut(phase);
-        output.items.truncate(checkpoint.items);
-        output.dispatch_pushes = checkpoint.dispatch_pushes;
+        if let Some((node_id, phase, items, dispatch_pushes)) = checkpoint.0
+            && let Some(node) = self.nodes.get_mut(node_id)
+        {
+            let output = node.output.phase_mut(phase);
+            output.items.truncate(items);
+            output.dispatch_pushes = dispatch_pushes;
+        }
     }
 
-    /// Visits every item in a frame in the order it was drawn, descending into child
-    /// nodes where they were entered. Stops when `visit` breaks.
+    fn frame_roots(&self, frame: FrameOutput) -> &[ViewNodeId] {
+        match frame {
+            FrameOutput::Rendered => &self.roots,
+            FrameOutput::Next => &self.next_roots,
+        }
+    }
+
+    /// Visits every item in a frame in the order it was drawn: each phase across the roots
+    /// in order, descending into child nodes where they were entered. Stops when `visit`
+    /// breaks.
     pub(crate) fn walk<'a>(
         &'a self,
-        root: FrameOutput,
+        frame: FrameOutput,
         mut visit: impl FnMut(OutputSlot, &'a OutputItem) -> ControlFlow<()>,
     ) {
         for phase in [
@@ -276,8 +243,10 @@ impl NodeEngine {
             MetadataPhase::Prepaint,
             MetadataPhase::Paint,
         ] {
-            if self.walk_output(root, None, phase, &mut visit).is_break() {
-                return;
+            for root in self.frame_roots(frame) {
+                if self.walk_output(*root, phase, &mut visit).is_break() {
+                    return;
+                }
             }
         }
     }
@@ -285,7 +254,7 @@ impl NodeEngine {
     /// [`Self::walk`] in reverse drawing order.
     pub(crate) fn walk_rev<'a>(
         &'a self,
-        root: FrameOutput,
+        frame: FrameOutput,
         mut visit: impl FnMut(OutputSlot, &'a OutputItem) -> ControlFlow<()>,
     ) {
         for phase in [
@@ -293,30 +262,28 @@ impl NodeEngine {
             MetadataPhase::Prepaint,
             MetadataPhase::Layout,
         ] {
-            if self
-                .walk_output_rev(root, None, phase, &mut visit)
-                .is_break()
-            {
-                return;
+            for root in self.frame_roots(frame).iter().rev() {
+                if self.walk_output_rev(*root, phase, &mut visit).is_break() {
+                    return;
+                }
             }
         }
     }
 
     fn walk_output<'a>(
         &'a self,
-        root: FrameOutput,
-        owner: Option<ViewNodeId>,
+        owner: ViewNodeId,
         phase: MetadataPhase,
         visit: &mut impl FnMut(OutputSlot, &'a OutputItem) -> ControlFlow<()>,
     ) -> ControlFlow<()> {
         // A child that was removed since its parent last drew is skipped.
-        let Some(output) = self.output(root, owner) else {
+        let Some(output) = self.output(owner) else {
             return ControlFlow::Continue(());
         };
         for (index, item) in output.phase(phase).items.iter().enumerate() {
             match item {
                 OutputItem::Child(child, child_phase) => {
-                    self.walk_output(root, Some(*child), *child_phase, visit)?
+                    self.walk_output(*child, *child_phase, visit)?
                 }
                 item => visit(
                     OutputSlot {
@@ -334,18 +301,17 @@ impl NodeEngine {
 
     fn walk_output_rev<'a>(
         &'a self,
-        root: FrameOutput,
-        owner: Option<ViewNodeId>,
+        owner: ViewNodeId,
         phase: MetadataPhase,
         visit: &mut impl FnMut(OutputSlot, &'a OutputItem) -> ControlFlow<()>,
     ) -> ControlFlow<()> {
-        let Some(output) = self.output(root, owner) else {
+        let Some(output) = self.output(owner) else {
             return ControlFlow::Continue(());
         };
         for (index, item) in output.phase(phase).items.iter().enumerate().rev() {
             match item {
                 OutputItem::Child(child, child_phase) => {
-                    self.walk_output_rev(root, Some(*child), *child_phase, visit)?
+                    self.walk_output_rev(*child, *child_phase, visit)?
                 }
                 item => visit(
                     OutputSlot {
@@ -370,7 +336,7 @@ impl NodeEngine {
         mut visit: impl FnMut(OutputSlot, &'a OutputItem) -> ControlFlow<()>,
     ) {
         // Visiting every item; the walk only breaks when `visit` does.
-        let _ = self.walk_output(FrameOutput::Next, Some(node_id), phase, &mut visit);
+        let _ = self.walk_output(node_id, phase, &mut visit);
     }
 
     /// Copies the dispatch nodes a node pushed while prepainting out of the frame's dispatch
@@ -405,7 +371,7 @@ impl NodeEngine {
         slot: OutputSlot,
         index: u32,
     ) -> Option<&crate::key_dispatch::DispatchNode> {
-        self.output(FrameOutput::Next, slot.owner)?
+        self.output(slot.owner)?
             .phase(slot.phase)
             .dispatch_nodes
             .get(index as usize)
@@ -441,11 +407,18 @@ impl NodeEngine {
         }
     }
 
-    /// Records that `child` is entering `phase` inside the output being drawn, so the
-    /// child's output of that phase is walked at this point.
-    fn splice(&mut self, child: ViewNodeId, phase: MetadataPhase) {
-        self.push(OutputItem::Child(child, phase));
-        self.traversal_stack.push((child, phase));
+    /// Enters `phase` of `node`. Inside another node, records where the node's output of
+    /// that phase belongs in the enclosing output; at the top level, the node is a root of
+    /// the frame, registered in drawing order when its prepaint is entered.
+    fn splice(&mut self, node: ViewNodeId, phase: MetadataPhase) {
+        if self.traversal_stack.is_empty() {
+            if phase == MetadataPhase::Prepaint && !self.next_roots.contains(&node) {
+                self.next_roots.push(node);
+            }
+        } else {
+            self.push(OutputItem::Child(node, phase));
+        }
+        self.traversal_stack.push((node, phase));
     }
 
     /// Takes an empty set to accumulate the entities a rebuilding node reads. Returned to
@@ -487,7 +460,8 @@ impl NodeEngine {
             ..NodeStats::default()
         };
         self.changed_bounds = None;
-        self.next_roots.clear();
+        // `next_roots` is not cleared: a root drawn between frames (a test's `draw`) is
+        // part of the frame that follows it, ahead of the window root.
         self.mounted_this_frame.clear();
         if self.full_refresh {
             self.dirty_nodes.extend(self.nodes.keys());
@@ -609,15 +583,56 @@ impl NodeEngine {
         };
         self.mounted_this_frame.insert(node_id);
 
-        if let Some(parent_id) = parent {
-            if let Some(parent_node) = self.nodes.get_mut(parent_id) {
-                parent_node.next_children.push(node_id);
-            }
-        } else {
-            self.next_roots.push(node_id);
+        if let Some(parent_id) = parent
+            && let Some(parent_node) = self.nodes.get_mut(parent_id)
+        {
+            parent_node.next_children.push(node_id);
         }
         self.splice(node_id, MetadataPhase::Layout);
         node_id
+    }
+
+    /// Mounts a root that is not a view: the element of a `defer_draw`, or a test's `draw`.
+    /// It is keyed by the element-id scope it was mounted from, under the node being drawn
+    /// (the owner, for a deferred draw), so it is found again when that scope draws again.
+    /// Its `parent` is the owner, so whatever dirties the root dirties the owner, which
+    /// attaches it again; it is not one of the owner's children, since it is drawn from the
+    /// frame's root list and lives as long as some drawn output attaches it. The caller
+    /// records the attachment with [`OutputItem::Root`] where that applies.
+    pub(crate) fn mount_root(
+        &mut self,
+        element: GlobalElementId,
+        cache_key: &ViewNodeCacheKey,
+    ) -> ViewNodeId {
+        let occurrence = self.next_occurrence(element);
+        let node_id = if let Some(node_id) = self.occurrences.get(&occurrence).copied() {
+            node_id
+        } else {
+            let node_id = self.nodes.insert(ViewNode {
+                output: NodeOutput::default(),
+                layout: None,
+                occurrence: occurrence.clone(),
+                parent: occurrence.parent,
+                children: Vec::new(),
+                next_children: Vec::new(),
+                view_id: None,
+                owned_entity: None,
+                cache_key: cache_key.clone(),
+                previous_bounds: cache_key.bounds,
+                accessed_entities: FxHashSet::default(),
+                painted: false,
+            });
+            self.occurrences.insert(occurrence, node_id);
+            self.dirty_nodes.insert(node_id);
+            node_id
+        };
+        self.mounted_this_frame.insert(node_id);
+        node_id
+    }
+
+    /// Drops a root whose attachment was rolled back before it was drawn.
+    pub(crate) fn abandon_root(&mut self, node_id: ViewNodeId) {
+        self.remove_subtree(node_id);
     }
 
     /// Sets the entity whose notification re-renders the node.
@@ -646,7 +661,9 @@ impl NodeEngine {
     /// The position of the next view of type `type_name` to render inline in the scope being
     /// drawn, counting from zero.
     pub(crate) fn next_inline_occurrence(&mut self, type_name: &'static str) -> u64 {
-        let (_, _, output) = self.current_output();
+        let Some((_, _, output)) = self.current_output() else {
+            return 0;
+        };
         let occurrence = output.inline_views.entry(type_name).or_default();
         let index = *occurrence;
         *occurrence += 1;
@@ -656,18 +673,16 @@ impl NodeEngine {
     /// Undoes `begin_occurrence` for a view that turned out to have no entity to back a
     /// node, after its phase has been finished.
     pub(crate) fn abandon_occurrence(&mut self, node_id: ViewNodeId) {
-        let (_, phase, output) = self.current_output();
-        let items = &mut output.phase_mut(phase).items;
-        if matches!(items.last(), Some(OutputItem::Child(child, _)) if *child == node_id) {
-            items.pop();
-        }
-        match self.nodes.get(node_id).and_then(|node| node.parent) {
-            Some(parent) => {
-                if let Some(parent) = self.nodes.get_mut(parent) {
-                    parent.next_children.retain(|child| *child != node_id);
-                }
+        if let Some((_, phase, output)) = self.current_output() {
+            let items = &mut output.phase_mut(phase).items;
+            if matches!(items.last(), Some(OutputItem::Child(child, _)) if *child == node_id) {
+                items.pop();
             }
-            None => self.next_roots.retain(|root| *root != node_id),
+        }
+        if let Some(parent) = self.nodes.get(node_id).and_then(|node| node.parent)
+            && let Some(parent) = self.nodes.get_mut(parent)
+        {
+            parent.next_children.retain(|child| *child != node_id);
         }
         self.remove_subtree(node_id);
     }
@@ -717,10 +732,23 @@ impl NodeEngine {
 
     /// Prevents the current node and its ancestors from reusing this frame's output. Used when
     /// a scope produced something a recording cannot hold: a measurement closure that may
-    /// capture frame-arena elements, or a deferred draw whose element lives in the arena.
+    /// capture frame-arena elements. Ancestors are reached through `parent` as well as the
+    /// traversal stack: a root attached with `defer_draw` is drawn with only itself on the
+    /// stack, and its measurement closures live in its owner's retained layout.
     pub(crate) fn mark_frame_bound(&mut self) {
         self.frame_bound_nodes
             .extend(self.traversal_stack.iter().map(|(node_id, _)| *node_id));
+        let mut node_id = self.current_node();
+        while let Some(id) = node_id {
+            self.frame_bound_nodes.insert(id);
+            node_id = self.nodes.get(id).and_then(|node| node.parent);
+        }
+    }
+
+    /// Enters the layout phase of a root mounted with `mount_root`, so the nodes its element
+    /// mounts are its children. Views enter layout through `begin_occurrence`.
+    pub(crate) fn enter_layout(&mut self, node_id: ViewNodeId) {
+        self.splice(node_id, MetadataPhase::Layout);
     }
 
     pub(crate) fn enter_prepaint(&mut self, node_id: ViewNodeId) {
@@ -823,8 +851,6 @@ impl NodeEngine {
         self.dirty_nodes.clear();
         self.frame_bound_nodes.clear();
         self.traversal_stack.clear();
-        self.next_output.reset();
-        self.rendered_output.reset();
         self.roots.clear();
         self.next_roots.clear();
         self.full_refresh = true;

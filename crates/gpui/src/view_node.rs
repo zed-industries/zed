@@ -102,6 +102,12 @@ impl ViewNodeScene {
 /// frame live here; a `Child` marks where a child node's output of one phase belongs.
 pub(crate) enum OutputItem {
     Child(crate::node_engine::ViewNodeId, MetadataPhase),
+    /// A root this scope attached to the frame with `defer_draw`, drawn after the tree at
+    /// the given priority. Rendering the scope emits it; replaying the scope re-attaches
+    /// the same root, so a deferred draw survives exactly as long as some drawn output
+    /// says it is there. Not descended into by walks: roots are walked from the frame's
+    /// root list.
+    Root(crate::node_engine::ViewNodeId, usize),
     Hitbox(Hitbox),
     Tooltip(TooltipRequest),
     CursorStyle(CursorStyleRequest),
@@ -189,8 +195,7 @@ impl NodeOutput {
 /// must stay in place, such as a callback that is leased out for a call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OutputSlot {
-    /// The owning node, or `None` for output drawn outside every node.
-    pub(crate) owner: Option<crate::node_engine::ViewNodeId>,
+    pub(crate) owner: crate::node_engine::ViewNodeId,
     pub(crate) phase: MetadataPhase,
     pub(crate) index: usize,
     pub(crate) generation: u64,
