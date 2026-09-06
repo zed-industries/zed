@@ -215,7 +215,7 @@ impl NodeEngine {
     pub(crate) fn push(&mut self, item: OutputItem) -> OutputSlot {
         let (owner, phase, output) = self.current_output();
         let generation = output.generation;
-        let items = output.phase_mut(phase);
+        let items = &mut output.phase_mut(phase).items;
         items.push(item);
         OutputSlot {
             owner,
@@ -229,12 +229,12 @@ impl NodeEngine {
     /// everything drawn after it.
     pub(crate) fn checkpoint(&mut self) -> usize {
         let (_, phase, output) = self.current_output();
-        output.phase(phase).len()
+        output.phase(phase).items.len()
     }
 
     pub(crate) fn rollback(&mut self, checkpoint: usize) {
         let (_, phase, output) = self.current_output();
-        output.phase_mut(phase).truncate(checkpoint);
+        output.phase_mut(phase).items.truncate(checkpoint);
     }
 
     /// Visits every item in a frame in the order it was drawn, descending into child
@@ -286,7 +286,7 @@ impl NodeEngine {
         let Some(output) = self.output(root, owner) else {
             return ControlFlow::Continue(());
         };
-        for (index, item) in output.phase(phase).iter().enumerate() {
+        for (index, item) in output.phase(phase).items.iter().enumerate() {
             match item {
                 OutputItem::Child(child, child_phase) => {
                     self.walk_output(root, Some(*child), *child_phase, visit)?
@@ -315,7 +315,7 @@ impl NodeEngine {
         let Some(output) = self.output(root, owner) else {
             return ControlFlow::Continue(());
         };
-        for (index, item) in output.phase(phase).iter().enumerate().rev() {
+        for (index, item) in output.phase(phase).items.iter().enumerate().rev() {
             match item {
                 OutputItem::Child(child, child_phase) => {
                     self.walk_output_rev(root, Some(*child), *child_phase, visit)?
@@ -346,7 +346,7 @@ impl NodeEngine {
         if output.generation != slot.generation {
             return None;
         }
-        take(output.phase_mut(slot.phase).get_mut(slot.index)?)
+        take(output.phase_mut(slot.phase).items.get_mut(slot.index)?)
     }
 
     pub(crate) fn restore<T>(
@@ -358,7 +358,7 @@ impl NodeEngine {
         // The owner may have redrawn during the call, in which case the value is stale.
         if let Some(output) = self.output_mut(slot.owner)
             && output.generation == slot.generation
-            && let Some(item) = output.phase_mut(slot.phase).get_mut(slot.index)
+            && let Some(item) = output.phase_mut(slot.phase).items.get_mut(slot.index)
         {
             put(item, value);
         }
@@ -548,8 +548,8 @@ impl NodeEngine {
 
     /// Returns the node's recording and retained layout if its output can be reused for a
     /// frame whose ambient inputs are `cache_key`. Called during layout, so bounds are not
-    /// yet known and are excluded here; prepaint compares them once they are. Otherwise
-    /// prepares the node to render again and returns `None`.
+    /// yet known and are excluded here; prepaint compares them once they are. When `None`,
+    /// the caller restarts the node's render.
     pub(crate) fn reuse_layout(
         &mut self,
         node_id: ViewNodeId,
@@ -565,7 +565,6 @@ impl NodeEngine {
         {
             Some((recording, layout))
         } else {
-            self.restart_render(node_id);
             None
         }
     }
@@ -607,9 +606,22 @@ impl NodeEngine {
         self.splice(node_id, MetadataPhase::Paint);
     }
 
-    pub(crate) fn finish_prepaint(&mut self, node_id: ViewNodeId, rendered: bool) {
-        if rendered {
-            self.reconcile_children(node_id);
+    /// Leaves the node's current phase. When the phase `rendered` (ran the view's elements
+    /// rather than reusing its output), the text it looked up replaces the node's, and a
+    /// rendered prepaint reconciles the children it mounted.
+    pub(crate) fn finish_phase(
+        &mut self,
+        node_id: ViewNodeId,
+        rendered: bool,
+        text: crate::text_system::TextUse,
+    ) {
+        if rendered && let Some((_, phase)) = self.traversal_stack.last().copied() {
+            if phase == MetadataPhase::Prepaint {
+                self.reconcile_children(node_id);
+            }
+            if let Some(node) = self.nodes.get_mut(node_id) {
+                node.output.phase_mut(phase).text = text;
+            }
         }
         self.pop_traversal(node_id);
     }

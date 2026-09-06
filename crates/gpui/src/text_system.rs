@@ -28,7 +28,7 @@ use std::{
     cmp,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
-    ops::{Deref, DerefMut, Range},
+    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
@@ -392,33 +392,26 @@ impl WindowTextSystem {
         }
     }
 
-    pub(crate) fn layout_index(&self) -> LineLayoutIndex {
-        self.line_layout_cache.layout_index()
+    /// Starts recording the line layouts a scope looks up; see [`Self::end_text_use`].
+    pub(crate) fn begin_text_use(&self) {
+        self.line_layout_cache.begin_use()
     }
 
-    pub(crate) fn record_layouts(
-        &self,
-        range: Range<LineLayoutIndex>,
-        recording: &mut LineLayoutRecording,
-        children: &[(
-            crate::node_engine::ViewNodeId,
-            &crate::view_node::ViewNodeRecording,
-        )],
-    ) {
-        self.line_layout_cache
-            .record_layouts(range, recording, children);
+    pub(crate) fn end_text_use(&self) -> TextUse {
+        self.line_layout_cache.end_use()
     }
 
-    pub(crate) fn replay_layouts(
-        &self,
-        recording: &LineLayoutRecording,
-        engine: &crate::node_engine::NodeEngine,
-    ) {
-        self.line_layout_cache.replay_layouts(recording, engine);
+    /// Makes previously used layouts available to this frame without reshaping.
+    pub(crate) fn seed_text_use(&self, text_use: &TextUse) {
+        self.line_layout_cache.seed(text_use)
     }
 
-    pub(crate) fn truncate_layouts(&self, index: LineLayoutIndex) {
-        self.line_layout_cache.truncate_layouts(index)
+    pub(crate) fn text_use_checkpoint(&self) -> TextUseCheckpoint {
+        self.line_layout_cache.use_checkpoint()
+    }
+
+    pub(crate) fn rollback_text_use(&self, checkpoint: TextUseCheckpoint) {
+        self.line_layout_cache.rollback_use(checkpoint)
     }
 
     /// Shape the given line, at the given font_size, for painting to the screen.

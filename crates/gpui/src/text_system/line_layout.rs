@@ -4,9 +4,7 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
     borrow::Borrow,
-    collections::VecDeque,
     hash::{Hash, Hasher},
-    ops::Range,
     sync::Arc,
 };
 
@@ -452,19 +450,8 @@ impl WrappedLineLayout {
     }
 }
 
-/// How many finished frames keep their layouts available to later frames.
-///
-/// A layout is looked up only by elements that render. A view whose output the node
-/// engine reuses renders nothing, so its text goes unlooked-up for as long as the view
-/// is reused, then must not have been evicted when the view next rebuilds. Keeping one
-/// previous frame (the pre-memoization policy) reshaped every reused view's text on every
-/// rebuild; a few frames cover the common alternation of rebuilt and reused frames, and a
-/// view reused longer than this pays one reshape when it rebuilds.
-const RETAINED_PREVIOUS_FRAMES: usize = 3;
-
 pub(crate) struct LineLayoutCache {
-    /// Finished frames, newest first, up to `RETAINED_PREVIOUS_FRAMES`.
-    previous_frames: Mutex<VecDeque<FrameCache>>,
+    previous_frame: Mutex<FrameCache>,
     current_frame: RwLock<FrameCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
 }
@@ -473,8 +460,6 @@ pub(crate) struct LineLayoutCache {
 struct FrameCache {
     lines: FxHashMap<Arc<CacheKey>, Arc<LineLayout>>,
     wrapped_lines: FxHashMap<Arc<CacheKey>, Arc<WrappedLineLayout>>,
-    used_lines: Vec<Arc<CacheKey>>,
-    used_wrapped_lines: Vec<Arc<CacheKey>>,
 
     // Content-addressable caches keyed by caller-provided text hash + layout params.
     // These allow cache hits without materializing a contiguous `SharedString`.
@@ -484,255 +469,128 @@ struct FrameCache {
     // On miss, we allocate once and store under an owned `HashedCacheKey`.
     lines_by_hash: FxHashMap<Arc<HashedCacheKey>, Arc<LineLayout>>,
     wrapped_lines_by_hash: FxHashMap<Arc<HashedCacheKey>, Arc<WrappedLineLayout>>,
-    used_lines_by_hash: Vec<Arc<HashedCacheKey>>,
-    used_wrapped_lines_by_hash: Vec<Arc<HashedCacheKey>>,
+
+    /// The scopes being drawn, innermost last; every layout looked up is recorded in the
+    /// innermost. The outermost belongs to the frame itself.
+    uses: Vec<TextUse>,
 }
 
 impl FrameCache {
     fn clear(&mut self) {
         self.lines.clear();
         self.wrapped_lines.clear();
-        self.used_lines.clear();
-        self.used_wrapped_lines.clear();
         self.lines_by_hash.clear();
         self.wrapped_lines_by_hash.clear();
-        self.used_lines_by_hash.clear();
-        self.used_wrapped_lines_by_hash.clear();
+        self.uses.clear();
+        self.uses.push(TextUse::default());
+    }
+
+    fn current_use(&mut self) -> &mut TextUse {
+        if self.uses.is_empty() {
+            self.uses.push(TextUse::default());
+        }
+        self.uses.last_mut().expect("a use was just pushed")
     }
 }
 
+/// The line layouts one scope looked up while drawing. A node keeps its `TextUse`s so the
+/// layouts stay shaped for as long as the node is reused, and seeds them back into the
+/// frame cache when it redraws.
 #[derive(Default)]
-pub(crate) struct LineLayoutRecording {
-    lines: crate::view_node::RecordedMetadata<(Arc<CacheKey>, Arc<LineLayout>)>,
-    wrapped_lines: crate::view_node::RecordedMetadata<(Arc<CacheKey>, Arc<WrappedLineLayout>)>,
-    lines_by_hash: crate::view_node::RecordedMetadata<(Arc<HashedCacheKey>, Arc<LineLayout>)>,
-    wrapped_lines_by_hash:
-        crate::view_node::RecordedMetadata<(Arc<HashedCacheKey>, Arc<WrappedLineLayout>)>,
+pub(crate) struct TextUse {
+    lines: Vec<(Arc<CacheKey>, Arc<LineLayout>)>,
+    wrapped_lines: Vec<(Arc<CacheKey>, Arc<WrappedLineLayout>)>,
+    lines_by_hash: Vec<(Arc<HashedCacheKey>, Arc<LineLayout>)>,
+    wrapped_lines_by_hash: Vec<(Arc<HashedCacheKey>, Arc<WrappedLineLayout>)>,
 }
 
-impl LineLayoutRecording {
-    fn clear(&mut self) {
-        self.lines.local.clear();
-        self.lines.children.clear();
-        self.wrapped_lines.local.clear();
-        self.wrapped_lines.children.clear();
-        self.lines_by_hash.local.clear();
-        self.lines_by_hash.children.clear();
-        self.wrapped_lines_by_hash.local.clear();
-        self.wrapped_lines_by_hash.children.clear();
+impl TextUse {
+    fn checkpoint(&self) -> TextUseCheckpoint {
+        TextUseCheckpoint {
+            lines: self.lines.len(),
+            wrapped_lines: self.wrapped_lines.len(),
+            lines_by_hash: self.lines_by_hash.len(),
+            wrapped_lines_by_hash: self.wrapped_lines_by_hash.len(),
+        }
     }
 
-    pub(crate) fn set_frame_range(&mut self, range: Range<LineLayoutIndex>) {
-        self.lines.frame_range = range.start.lines_index..range.end.lines_index;
-        self.wrapped_lines.frame_range =
-            range.start.wrapped_lines_index..range.end.wrapped_lines_index;
-        self.lines_by_hash.frame_range =
-            range.start.lines_by_hash_index..range.end.lines_by_hash_index;
-        self.wrapped_lines_by_hash.frame_range =
-            range.start.wrapped_lines_by_hash_index..range.end.wrapped_lines_by_hash_index;
+    fn rollback(&mut self, checkpoint: TextUseCheckpoint) {
+        self.lines.truncate(checkpoint.lines);
+        self.wrapped_lines.truncate(checkpoint.wrapped_lines);
+        self.lines_by_hash.truncate(checkpoint.lines_by_hash);
+        self.wrapped_lines_by_hash
+            .truncate(checkpoint.wrapped_lines_by_hash);
     }
 }
 
-#[derive(Clone, Default, PartialEq, Eq)]
-pub(crate) struct LineLayoutIndex {
-    lines_index: usize,
-    wrapped_lines_index: usize,
-    lines_by_hash_index: usize,
-    wrapped_lines_by_hash_index: usize,
+#[derive(Clone, Copy)]
+pub(crate) struct TextUseCheckpoint {
+    lines: usize,
+    wrapped_lines: usize,
+    lines_by_hash: usize,
+    wrapped_lines_by_hash: usize,
 }
 
 impl LineLayoutCache {
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         Self {
-            previous_frames: Mutex::default(),
+            previous_frame: Mutex::default(),
             current_frame: RwLock::default(),
             platform_text_system,
         }
     }
 
-    pub fn layout_index(&self) -> LineLayoutIndex {
-        let frame = self.current_frame.read();
-        LineLayoutIndex {
-            lines_index: frame.used_lines.len(),
-            wrapped_lines_index: frame.used_wrapped_lines.len(),
-            lines_by_hash_index: frame.used_lines_by_hash.len(),
-            wrapped_lines_by_hash_index: frame.used_wrapped_lines_by_hash.len(),
-        }
+    /// Starts recording the layouts a scope looks up; ended by `end_use`.
+    pub(crate) fn begin_use(&self) {
+        self.current_frame.write().uses.push(TextUse::default());
     }
 
-    pub(crate) fn record_layouts(
-        &self,
-        range: Range<LineLayoutIndex>,
-        recording: &mut LineLayoutRecording,
-        children: &[(
-            crate::node_engine::ViewNodeId,
-            &crate::view_node::ViewNodeRecording,
-        )],
-    ) {
-        if range.start == range.end {
-            recording.clear();
-            recording.set_frame_range(range);
-            return;
-        }
-        let frame = self.current_frame.read();
-        recording.lines.record(
-            range.start.lines_index..range.end.lines_index,
-            children.iter().copied(),
-            |recording, phase| Some(&recording.text(phase).lines),
-            |range, target, start| {
-                Self::capture_entries(&frame.used_lines[range], &frame.lines, target, start)
-            },
-        );
-        recording.wrapped_lines.record(
-            range.start.wrapped_lines_index..range.end.wrapped_lines_index,
-            children.iter().copied(),
-            |recording, phase| Some(&recording.text(phase).wrapped_lines),
-            |range, target, start| {
-                Self::capture_entries(
-                    &frame.used_wrapped_lines[range],
-                    &frame.wrapped_lines,
-                    target,
-                    start,
-                )
-            },
-        );
-        recording.lines_by_hash.record(
-            range.start.lines_by_hash_index..range.end.lines_by_hash_index,
-            children.iter().copied(),
-            |recording, phase| Some(&recording.text(phase).lines_by_hash),
-            |range, target, start| {
-                Self::capture_entries(
-                    &frame.used_lines_by_hash[range],
-                    &frame.lines_by_hash,
-                    target,
-                    start,
-                )
-            },
-        );
-        recording.wrapped_lines_by_hash.record(
-            range.start.wrapped_lines_by_hash_index..range.end.wrapped_lines_by_hash_index,
-            children.iter().copied(),
-            |recording, phase| Some(&recording.text(phase).wrapped_lines_by_hash),
-            |range, target, start| {
-                Self::capture_entries(
-                    &frame.used_wrapped_lines_by_hash[range],
-                    &frame.wrapped_lines_by_hash,
-                    target,
-                    start,
-                )
-            },
-        );
-    }
-
-    fn capture_entries<K: Eq + Hash, V>(
-        keys: &[Arc<K>],
-        layouts: &FxHashMap<Arc<K>, Arc<V>>,
-        recording: &mut Vec<(Arc<K>, Arc<V>)>,
-        start: usize,
-    ) {
-        recording.reserve(keys.len().saturating_sub(recording.len()));
-        for (index, key) in keys.iter().enumerate() {
-            let layout = layouts.get(key).expect("used layout exists");
-            if let Some((previous_key, previous_layout)) = recording.get_mut(start + index) {
-                // Stable slots already own these leases; avoid redundant atomic refcount updates.
-                if !Arc::ptr_eq(previous_key, key) {
-                    *previous_key = key.clone();
-                }
-                if !Arc::ptr_eq(previous_layout, layout) {
-                    *previous_layout = layout.clone();
-                }
-            } else {
-                recording.push((key.clone(), layout.clone()));
-            }
-        }
-    }
-
-    #[cfg(test)]
-    fn record_entries<K: Eq + Hash, V>(
-        keys: &[Arc<K>],
-        layouts: &FxHashMap<Arc<K>, Arc<V>>,
-        recording: &mut Vec<(Arc<K>, Arc<V>)>,
-    ) {
-        Self::capture_entries(keys, layouts, recording, 0);
-        recording.truncate(keys.len());
-    }
-
-    pub(crate) fn replay_layouts(
-        &self,
-        recording: &LineLayoutRecording,
-        engine: &crate::node_engine::NodeEngine,
-    ) {
+    pub(crate) fn end_use(&self) -> TextUse {
         let mut frame = self.current_frame.write();
-        recording.lines.replay(
-            engine,
-            &|recording, phase| Some(&recording.text(phase).lines),
-            &mut |entries| {
-                for (key, layout) in entries {
-                    frame.lines.insert(key.clone(), layout.clone());
-                    frame.used_lines.push(key.clone());
-                }
-            },
-        );
-        recording.wrapped_lines.replay(
-            engine,
-            &|recording, phase| Some(&recording.text(phase).wrapped_lines),
-            &mut |entries| {
-                for (key, layout) in entries {
-                    frame.wrapped_lines.insert(key.clone(), layout.clone());
-                    frame.used_wrapped_lines.push(key.clone());
-                }
-            },
-        );
-        recording.lines_by_hash.replay(
-            engine,
-            &|recording, phase| Some(&recording.text(phase).lines_by_hash),
-            &mut |entries| {
-                for (key, layout) in entries {
-                    frame.lines_by_hash.insert(key.clone(), layout.clone());
-                    frame.used_lines_by_hash.push(key.clone());
-                }
-            },
-        );
-        recording.wrapped_lines_by_hash.replay(
-            engine,
-            &|recording, phase| Some(&recording.text(phase).wrapped_lines_by_hash),
-            &mut |entries| {
-                for (key, layout) in entries {
-                    frame
-                        .wrapped_lines_by_hash
-                        .insert(key.clone(), layout.clone());
-                    frame.used_wrapped_lines_by_hash.push(key.clone());
-                }
-            },
-        );
+        // The frame's own use stays as the outermost scope.
+        if frame.uses.len() > 1 {
+            frame.uses.pop().unwrap_or_default()
+        } else {
+            TextUse::default()
+        }
     }
 
-    pub fn truncate_layouts(&self, index: LineLayoutIndex) {
-        let mut current_frame = &mut *self.current_frame.write();
-        current_frame.used_lines.truncate(index.lines_index);
-        current_frame
-            .used_wrapped_lines
-            .truncate(index.wrapped_lines_index);
-        current_frame
-            .used_lines_by_hash
-            .truncate(index.lines_by_hash_index);
-        current_frame
-            .used_wrapped_lines_by_hash
-            .truncate(index.wrapped_lines_by_hash_index);
+    /// Makes the layouts a scope used the last time it drew available to this frame, so a
+    /// redraw finds them without reshaping.
+    pub(crate) fn seed(&self, text_use: &TextUse) {
+        let mut frame = self.current_frame.write();
+        for (key, layout) in &text_use.lines {
+            frame.lines.insert(key.clone(), layout.clone());
+        }
+        for (key, layout) in &text_use.wrapped_lines {
+            frame.wrapped_lines.insert(key.clone(), layout.clone());
+        }
+        for (key, layout) in &text_use.lines_by_hash {
+            frame.lines_by_hash.insert(key.clone(), layout.clone());
+        }
+        for (key, layout) in &text_use.wrapped_lines_by_hash {
+            frame
+                .wrapped_lines_by_hash
+                .insert(key.clone(), layout.clone());
+        }
+    }
+
+    pub(crate) fn use_checkpoint(&self) -> TextUseCheckpoint {
+        self.current_frame.write().current_use().checkpoint()
+    }
+
+    pub(crate) fn rollback_use(&self, checkpoint: TextUseCheckpoint) {
+        self.current_frame
+            .write()
+            .current_use()
+            .rollback(checkpoint)
     }
 
     pub fn finish_frame(&self) {
-        let mut previous_frames = self.previous_frames.lock();
+        let mut previous_frame = self.previous_frame.lock();
         let mut current_frame = self.current_frame.write();
-        // Recycle the oldest frame's storage as the next current frame.
-        let mut finished = if previous_frames.len() >= RETAINED_PREVIOUS_FRAMES {
-            previous_frames.pop_back().unwrap_or_default()
-        } else {
-            FrameCache::default()
-        };
-        finished.clear();
-        std::mem::swap(&mut *current_frame, &mut finished);
-        previous_frames.push_front(finished);
+        std::mem::swap(&mut *previous_frame, &mut *current_frame);
+        current_frame.clear();
     }
 
     pub fn layout_wrapped_line<Text>(
@@ -756,21 +614,26 @@ impl LineLayoutCache {
         } as &dyn AsCacheKeyRef;
 
         let current_frame = self.current_frame.upgradable_read();
-        if let Some(layout) = current_frame.wrapped_lines.get(key) {
-            return layout.clone();
+        if let Some((key, layout)) = current_frame.wrapped_lines.get_key_value(key) {
+            let (key, layout) = (key.clone(), layout.clone());
+            let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+            current_frame
+                .current_use()
+                .wrapped_lines
+                .push((key, layout.clone()));
+            return layout;
         }
 
-        let previous_frame_entry = self
-            .previous_frames
-            .lock()
-            .iter_mut()
-            .find_map(|frame| frame.wrapped_lines.remove_entry(key));
+        let previous_frame_entry = self.previous_frame.lock().wrapped_lines.remove_entry(key);
         if let Some((key, layout)) = previous_frame_entry {
             let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
             current_frame
                 .wrapped_lines
                 .insert(key.clone(), layout.clone());
-            current_frame.used_wrapped_lines.push(key);
+            current_frame
+                .current_use()
+                .wrapped_lines
+                .push((key, layout.clone()));
             layout
         } else {
             drop(current_frame);
@@ -798,7 +661,10 @@ impl LineLayoutCache {
             current_frame
                 .wrapped_lines
                 .insert(key.clone(), layout.clone());
-            current_frame.used_wrapped_lines.push(key);
+            current_frame
+                .current_use()
+                .wrapped_lines
+                .push((key, layout.clone()));
 
             layout
         }
@@ -824,19 +690,24 @@ impl LineLayoutCache {
         } as &dyn AsCacheKeyRef;
 
         let current_frame = self.current_frame.upgradable_read();
-        if let Some(layout) = current_frame.lines.get(key) {
-            return layout.clone();
+        if let Some((key, layout)) = current_frame.lines.get_key_value(key) {
+            let (key, layout) = (key.clone(), layout.clone());
+            let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+            current_frame
+                .current_use()
+                .lines
+                .push((key, layout.clone()));
+            return layout;
         }
 
         let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
-        let previous_frame_entry = self
-            .previous_frames
-            .lock()
-            .iter_mut()
-            .find_map(|frame| frame.lines.remove_entry(key));
+        let previous_frame_entry = self.previous_frame.lock().lines.remove_entry(key);
         if let Some((key, layout)) = previous_frame_entry {
             current_frame.lines.insert(key.clone(), layout.clone());
-            current_frame.used_lines.push(key);
+            current_frame
+                .current_use()
+                .lines
+                .push((key, layout.clone()));
             layout
         } else {
             let text = SharedString::from(text);
@@ -857,7 +728,10 @@ impl LineLayoutCache {
             });
             let layout = Arc::new(layout);
             current_frame.lines.insert(key.clone(), layout.clone());
-            current_frame.used_lines.push(key);
+            current_frame
+                .current_use()
+                .lines
+                .push((key, layout.clone()));
             layout
         }
     }
@@ -901,10 +775,10 @@ impl LineLayoutCache {
             return Some(layout.clone());
         }
 
-        let previous_frames = self.previous_frames.lock();
-        previous_frames
+        let previous_frame = self.previous_frame.lock();
+        previous_frame
+            .lines_by_hash
             .iter()
-            .flat_map(|frame| frame.lines_by_hash.iter())
             .find(|(key, _)| {
                 HashedCacheKeyRef {
                     text_hash: key.text_hash,
@@ -946,7 +820,7 @@ impl LineLayoutCache {
 
         // Fast path: already cached (no allocation).
         let current_frame = self.current_frame.upgradable_read();
-        if let Some((_, layout)) = current_frame.lines_by_hash.iter().find(|(key, _)| {
+        if let Some((key, layout)) = current_frame.lines_by_hash.iter().find(|(key, _)| {
             HashedCacheKeyRef {
                 text_hash: key.text_hash,
                 text_len: key.text_len,
@@ -956,40 +830,47 @@ impl LineLayoutCache {
                 force_width: key.force_width,
             } == key_ref
         }) {
-            return layout.clone();
+            let (key, layout) = (key.clone(), layout.clone());
+            let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+            current_frame
+                .current_use()
+                .lines_by_hash
+                .push((key, layout.clone()));
+            return layout;
         }
 
         let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
 
         // Try to reuse from previous frame without allocating; do a linear scan to find a matching key.
         // (We avoid `drain()` here because it would eagerly move all entries.)
-        let mut previous_frames = self.previous_frames.lock();
-        for previous_frame in previous_frames.iter_mut() {
-            let existing_key = previous_frame
-                .used_lines_by_hash
-                .iter()
-                .find(|key| {
-                    HashedCacheKeyRef {
-                        text_hash: key.text_hash,
-                        text_len: key.text_len,
-                        font_size: key.font_size,
-                        runs: key.runs.as_slice(),
-                        wrap_width: key.wrap_width,
-                        force_width: key.force_width,
-                    } == key_ref
-                })
-                .cloned();
-            if let Some(existing_key) = existing_key
-                && let Some((key, layout)) =
-                    previous_frame.lines_by_hash.remove_entry(&existing_key)
-            {
-                current_frame
-                    .lines_by_hash
-                    .insert(key.clone(), layout.clone());
-                current_frame.used_lines_by_hash.push(key);
-                return layout;
-            }
+        let mut previous_frame = self.previous_frame.lock();
+        let existing_key = previous_frame
+            .lines_by_hash
+            .keys()
+            .find(|key| {
+                HashedCacheKeyRef {
+                    text_hash: key.text_hash,
+                    text_len: key.text_len,
+                    font_size: key.font_size,
+                    runs: key.runs.as_slice(),
+                    wrap_width: key.wrap_width,
+                    force_width: key.force_width,
+                } == key_ref
+            })
+            .cloned();
+        if let Some(existing_key) = existing_key
+            && let Some((key, layout)) = previous_frame.lines_by_hash.remove_entry(&existing_key)
+        {
+            current_frame
+                .lines_by_hash
+                .insert(key.clone(), layout.clone());
+            current_frame
+                .current_use()
+                .lines_by_hash
+                .push((key, layout.clone()));
+            return layout;
         }
+        drop(previous_frame);
 
         let text = materialize_text();
         let mut layout = self
@@ -1012,7 +893,10 @@ impl LineLayoutCache {
         current_frame
             .lines_by_hash
             .insert(key.clone(), layout.clone());
-        current_frame.used_lines_by_hash.push(key);
+        current_frame
+            .current_use()
+            .lines_by_hash
+            .push((key, layout.clone()));
         layout
     }
 }
@@ -1199,37 +1083,6 @@ impl AsCacheKeyRef for CacheKeyRef<'_> {
 mod tests {
     use super::*;
     use crate::GlyphId;
-
-    #[test]
-    fn recording_updates_reordered_and_replaced_layouts_and_releases_removed_entries() {
-        let first = Arc::new(1);
-        let second = Arc::new(2);
-        let first_layout = Arc::new(LineLayout::default());
-        let second_layout = Arc::new(LineLayout::default());
-        let mut layouts = FxHashMap::default();
-        layouts.insert(first.clone(), first_layout.clone());
-        layouts.insert(second.clone(), second_layout.clone());
-        let mut recording = Vec::new();
-        LineLayoutCache::record_entries(&[first.clone(), second.clone()], &layouts, &mut recording);
-        let capacity = recording.capacity();
-        let replacement = Arc::new(LineLayout::default());
-        layouts.insert(first.clone(), replacement.clone());
-        LineLayoutCache::record_entries(&[second.clone(), first.clone()], &layouts, &mut recording);
-        let (key, layout) = recording.first().expect("first entry");
-        assert!(Arc::ptr_eq(key, &second));
-        assert!(Arc::ptr_eq(layout, &second_layout));
-        let (key, layout) = recording.last().expect("last entry");
-        assert!(Arc::ptr_eq(key, &first));
-        assert!(Arc::ptr_eq(layout, &replacement));
-        assert_eq!(Arc::strong_count(&first_layout), 1);
-        LineLayoutCache::record_entries(&[first], &layouts, &mut recording);
-        assert_eq!(recording.len(), 1);
-        assert_eq!(Arc::strong_count(&second_layout), 2);
-        LineLayoutCache::record_entries(&[], &layouts, &mut recording);
-        assert!(recording.is_empty());
-        assert_eq!(recording.capacity(), capacity);
-        assert_eq!(Arc::strong_count(&replacement), 2);
-    }
 
     fn glyph_at(x: f32, index: usize) -> ShapedGlyph {
         ShapedGlyph {

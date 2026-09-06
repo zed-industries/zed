@@ -11,18 +11,18 @@ use crate::{
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TabStopOperation, TaffyLayoutEngine, Task,
-    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    ViewNodeCacheKey, ViewNodeId, ViewNodeRecording, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    KeystrokeEvent, LayoutId, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton,
+    MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority,
+    PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
+    SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle,
+    Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController,
+    TabStopMap, TabStopOperation, TaffyLayoutEngine, Task, TextInputConfiguration,
+    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
+    TransformationMatrix, Underline, UnderlineStyle, ViewNodeCacheKey, ViewNodeId,
+    ViewNodeRecording, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     node_engine::FrameOutput,
     point,
     prelude::*,
@@ -997,12 +997,6 @@ pub(crate) struct Frame {
 pub(crate) struct PrepaintStateIndex {
     deferred_draws_index: usize,
     dispatch_tree_index: usize,
-    line_layout_index: LineLayoutIndex,
-}
-
-#[derive(Clone, Default)]
-pub(crate) struct PaintIndex {
-    line_layout_index: LineLayoutIndex,
 }
 
 impl Frame {
@@ -3598,21 +3592,43 @@ impl Window {
         engine.invalidate_consumers(source);
     }
 
-    pub(crate) fn graft_view_node_layout(
+    /// Mounts the view occurrence under the current node and enters its layout phase.
+    pub(crate) fn begin_node_occurrence(
         &mut self,
-        recording: &mut ViewNodeRecording,
-    ) -> Option<Range<PrepaintStateIndex>> {
-        recording.has_layout.then(|| {
-            let start = self.prepaint_index();
-            let engine = &self.node_engine;
-            self.text_system
-                .replay_layouts(&recording.layout_text, engine);
-            let end = self.prepaint_index();
-            recording
-                .layout_text
-                .set_frame_range(start.line_layout_index.clone()..end.line_layout_index.clone());
-            start..end
-        })
+        element: GlobalElementId,
+        view_id: EntityId,
+        cache_key: &ViewNodeCacheKey,
+    ) -> ViewNodeId {
+        let node_id = self
+            .node_engine
+            .begin_occurrence(element, view_id, cache_key);
+        self.text_system.begin_text_use();
+        node_id
+    }
+
+    pub(crate) fn enter_node_prepaint(&mut self, node_id: ViewNodeId) {
+        self.node_engine.enter_prepaint(node_id);
+        self.text_system.begin_text_use();
+    }
+
+    pub(crate) fn enter_node_paint(&mut self, node_id: ViewNodeId) {
+        self.node_engine.enter_paint(node_id);
+        self.text_system.begin_text_use();
+    }
+
+    /// Leaves the node's current phase; see [`NodeEngine::finish_phase`].
+    pub(crate) fn finish_node_phase(&mut self, node_id: ViewNodeId, rendered: bool) {
+        let text = self.text_system.end_text_use();
+        self.node_engine.finish_phase(node_id, rendered, text);
+    }
+
+    /// Prepares the node to render again. The text it used last time is seeded into the
+    /// frame cache first, so the render finds it without reshaping.
+    pub(crate) fn restart_node_render(&mut self, node_id: ViewNodeId) {
+        for phase in self.node_engine.node(node_id).output.phases() {
+            self.text_system.seed_text_use(&phase.text);
+        }
+        self.node_engine.restart_render(node_id);
     }
 
     pub(crate) fn begin_view_node_paint(&mut self, node_id: ViewNodeId) -> ViewNodeRecording {
@@ -3627,9 +3643,8 @@ impl Window {
         &mut self,
         node_id: ViewNodeId,
         mut recording: ViewNodeRecording,
-        layout_range: Option<Range<PrepaintStateIndex>>,
+        has_layout: bool,
         prepaint_range: Range<PrepaintStateIndex>,
-        paint_range: Range<PaintIndex>,
     ) -> ViewNodeRecording {
         recording.scene = self.next_frame.scene.finish_node_scene(node_id);
         let engine = &self.node_engine;
@@ -3639,24 +3654,7 @@ impl Window {
             .children()
             .map(|child| (child, engine.recording(child)))
             .collect();
-        recording.has_layout = layout_range.is_some();
-        let layout_range = layout_range.unwrap_or_default();
-        self.text_system.record_layouts(
-            layout_range.start.line_layout_index..layout_range.end.line_layout_index,
-            &mut recording.layout_text,
-            &children,
-        );
-        self.text_system.record_layouts(
-            prepaint_range.start.line_layout_index.clone()
-                ..prepaint_range.end.line_layout_index.clone(),
-            &mut recording.prepaint_text,
-            &children,
-        );
-        self.text_system.record_layouts(
-            paint_range.start.line_layout_index..paint_range.end.line_layout_index,
-            &mut recording.paint_text,
-            &children,
-        );
+        recording.has_layout = has_layout;
         self.next_frame.dispatch_tree.record_subtree(
             prepaint_range.start.dispatch_tree_index..prepaint_range.end.dispatch_tree_index,
             &mut recording.dispatch_nodes,
@@ -3672,8 +3670,6 @@ impl Window {
     ) -> Range<PrepaintStateIndex> {
         let start = self.prepaint_index();
         let engine = &self.node_engine;
-        self.text_system
-            .replay_layouts(&recording.prepaint_text, engine);
         if self
             .next_frame
             .dispatch_tree
@@ -3682,9 +3678,6 @@ impl Window {
             self.next_frame.focus = self.focus;
         }
         let end = self.prepaint_index();
-        recording
-            .prepaint_text
-            .set_frame_range(start.line_layout_index.clone()..end.line_layout_index.clone());
         recording.dispatch_nodes.frame_range = start.dispatch_tree_index..end.dispatch_tree_index;
         start..end
     }
@@ -3694,30 +3687,16 @@ impl Window {
         node_id: ViewNodeId,
         recording: &mut ViewNodeRecording,
     ) {
-        let start = self.paint_index();
         let engine = &self.node_engine;
-        self.text_system
-            .replay_layouts(&recording.paint_text, engine);
         let parent = self.next_frame.scene.suspend_node_scene();
         recording.scene.replay(&mut self.next_frame.scene, engine);
         self.next_frame.scene.restore_node_scene(parent, node_id);
-        let end = self.paint_index();
-        recording
-            .paint_text
-            .set_frame_range(start.line_layout_index..end.line_layout_index);
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
         PrepaintStateIndex {
             deferred_draws_index: self.next_frame.deferred_draws.len(),
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
-            line_layout_index: self.text_system.layout_index(),
-        }
-    }
-
-    pub(crate) fn paint_index(&self) -> PaintIndex {
-        PaintIndex {
-            line_layout_index: self.text_system.layout_index(),
         }
     }
 
@@ -3854,16 +3833,17 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
         let checkpoint = self.node_engine.checkpoint();
+        let text_checkpoint = self.text_system.text_use_checkpoint();
         let result = f(self);
         if result.is_err() {
             self.node_engine.rollback(checkpoint);
+            self.text_system.rollback_text_use(text_checkpoint);
             self.next_frame
                 .deferred_draws
                 .truncate(index.deferred_draws_index);
             self.next_frame
                 .dispatch_tree
                 .truncate(index.dispatch_tree_index);
-            self.text_system.truncate_layouts(index.line_layout_index);
         }
         result
     }

@@ -154,23 +154,10 @@ pub(crate) fn capture_metadata<T: Clone>(source: &[T], target: &mut Vec<T>, star
 
 #[derive(Default)]
 pub(crate) struct ViewNodeRecording {
-    pub(crate) layout_text: crate::text_system::LineLayoutRecording,
-    pub(crate) prepaint_text: crate::text_system::LineLayoutRecording,
-    pub(crate) paint_text: crate::text_system::LineLayoutRecording,
     pub(crate) dispatch_nodes: RecordedMetadata<crate::key_dispatch::DispatchNode>,
     pub(crate) dispatch_start: usize,
     pub(crate) has_layout: bool,
     pub(crate) scene: ViewNodeScene,
-}
-
-impl ViewNodeRecording {
-    pub(crate) fn text(&self, phase: MetadataPhase) -> &crate::text_system::LineLayoutRecording {
-        match phase {
-            MetadataPhase::Layout => &self.layout_text,
-            MetadataPhase::Prepaint => &self.prepaint_text,
-            MetadataPhase::Paint => &self.paint_text,
-        }
-    }
 }
 
 #[derive(Default)]
@@ -256,11 +243,20 @@ pub(crate) enum OutputItem {
     DebugBounds(String, Bounds<Pixels>),
 }
 
-/// Everything one scope produced while drawing, by phase, in production order. A reused
-/// node keeps its output untouched; a redrawn node overwrites it in place.
+/// What one scope produced in one phase.
+#[derive(Default)]
+pub(crate) struct PhaseOutput {
+    /// In production order.
+    pub(crate) items: Vec<OutputItem>,
+    /// The line layouts looked up, held so they stay shaped while the scope is reused.
+    pub(crate) text: crate::text_system::TextUse,
+}
+
+/// Everything one scope produced while drawing, by phase. A reused node keeps its output
+/// untouched; a redrawn node overwrites it in place.
 #[derive(Default)]
 pub(crate) struct NodeOutput {
-    phases: [Vec<OutputItem>; 3],
+    phases: [PhaseOutput; 3],
     /// Bumped whenever the output is rebuilt, so slots issued earlier stop resolving.
     pub(crate) generation: u64,
     /// State kept for elements drawn in this scope, by element id and state type. It
@@ -276,19 +272,24 @@ impl NodeOutput {
             .retain(|key, _| self.accessed_element_states.contains(key));
     }
 
-    pub(crate) fn phase(&self, phase: MetadataPhase) -> &Vec<OutputItem> {
+    pub(crate) fn phase(&self, phase: MetadataPhase) -> &PhaseOutput {
         &self.phases[phase as usize]
     }
 
-    pub(crate) fn phase_mut(&mut self, phase: MetadataPhase) -> &mut Vec<OutputItem> {
+    pub(crate) fn phase_mut(&mut self, phase: MetadataPhase) -> &mut PhaseOutput {
         &mut self.phases[phase as usize]
     }
 
+    pub(crate) fn phases(&self) -> impl Iterator<Item = &PhaseOutput> {
+        self.phases.iter()
+    }
+
     /// Clears the drawn items ahead of a redraw. Element states are kept so the redraw can
-    /// find them.
+    /// find them; text is kept until the redraw's own use replaces it, after the caller has
+    /// seeded it back into the frame cache.
     pub(crate) fn reset(&mut self) {
         for phase in &mut self.phases {
-            phase.clear();
+            phase.items.clear();
         }
         self.accessed_element_states.clear();
         self.generation += 1;
