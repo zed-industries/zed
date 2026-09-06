@@ -133,6 +133,30 @@ pub fn select_popover(
     })
 }
 
+pub fn select_multiple_popover(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    selected_branches: Vec<SharedString>,
+    on_toggle: SelectBranchCallback,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<BranchList> {
+    cx.new(|cx| {
+        let list = BranchList::new_select_multiple(
+            workspace,
+            repository,
+            BranchListStyle::Popover,
+            rems(20.),
+            selected_branches,
+            on_toggle,
+            window,
+            cx,
+        );
+        list.focus_handle(cx).focus(window, cx);
+        list
+    })
+}
+
 pub fn select_modal(
     workspace: WeakEntity<Workspace>,
     repository: Option<Entity<Repository>>,
@@ -240,6 +264,38 @@ impl BranchList {
             BranchSelectionBehavior::Select {
                 selected_branch,
                 on_select,
+            },
+            window,
+            cx,
+        );
+        this._subscriptions
+            .push(cx.subscribe(&this.picker, |this, _, _, cx| {
+                if !this.branch_filter_menu_open(cx) {
+                    cx.emit(DismissEvent);
+                }
+            }));
+        this
+    }
+
+    fn new_select_multiple(
+        workspace: WeakEntity<Workspace>,
+        repository: Option<Entity<Repository>>,
+        style: BranchListStyle,
+        width: Rems,
+        selected_branches: Vec<SharedString>,
+        on_toggle: SelectBranchCallback,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new_inner_with_behavior(
+            workspace,
+            repository,
+            style,
+            width,
+            false,
+            BranchSelectionBehavior::SelectMultiple {
+                selected_branches,
+                on_toggle,
             },
             window,
             cx,
@@ -684,6 +740,10 @@ enum BranchSelectionBehavior {
         selected_branch: Option<SharedString>,
         on_select: SelectBranchCallback,
     },
+    SelectMultiple {
+        selected_branches: Vec<SharedString>,
+        on_toggle: SelectBranchCallback,
+    },
 }
 
 impl BranchSelectionBehavior {
@@ -693,11 +753,28 @@ impl BranchSelectionBehavior {
             Self::Select {
                 selected_branch, ..
             } => selected_branch.as_ref(),
+            Self::SelectMultiple { .. } => None,
+        }
+    }
+
+    fn is_branch_selected(&self, branch: &Branch) -> bool {
+        match self {
+            Self::Select {
+                selected_branch, ..
+            } => selected_branch
+                .as_ref()
+                .is_some_and(|selected_branch| branch_matches_ref(branch, selected_branch)),
+            Self::SelectMultiple {
+                selected_branches, ..
+            } => selected_branches
+                .iter()
+                .any(|selected_branch| branch_matches_ref(branch, selected_branch)),
+            Self::Checkout => false,
         }
     }
 
     fn is_select_only(&self) -> bool {
-        matches!(self, Self::Select { .. })
+        matches!(self, Self::Select { .. } | Self::SelectMultiple { .. })
     }
 }
 
@@ -892,8 +969,19 @@ impl Render for DeleteBranchTooltip {
     }
 }
 
-fn branch_matches_ref(branch: &Branch, branch_ref: &SharedString) -> bool {
+pub(crate) fn branch_matches_ref(branch: &Branch, branch_ref: &SharedString) -> bool {
     branch.ref_name.as_ref() == branch_ref.as_ref() || branch.name() == branch_ref.as_ref()
+}
+
+fn toggle_selected_branch(selected_branches: &mut Vec<SharedString>, branch: &Branch) {
+    if let Some(index) = selected_branches
+        .iter()
+        .position(|selected_branch| branch_matches_ref(branch, selected_branch))
+    {
+        selected_branches.remove(index);
+    } else {
+        selected_branches.push(branch.ref_name.clone());
+    }
 }
 
 // Git branch names can't contain whitespace, so we replace spaces with dashes,
@@ -989,6 +1077,9 @@ impl BranchListDelegate {
             BranchSelectionBehavior::Select {
                 selected_branch, ..
             } => selected_branch.clone(),
+            BranchSelectionBehavior::SelectMultiple {
+                selected_branches, ..
+            } => selected_branches.first().cloned(),
         };
         let branch_filter = cx
             .try_global::<GlobalBranchFilter>()
@@ -1539,6 +1630,17 @@ impl PickerDelegate for BranchListDelegate {
 
         match entry {
             Entry::Branch { branch, .. } => {
+                if let BranchSelectionBehavior::SelectMultiple {
+                    selected_branches,
+                    on_toggle,
+                } = &mut self.branch_selection_behavior
+                {
+                    toggle_selected_branch(selected_branches, branch);
+                    on_toggle(branch.clone(), window, cx);
+                    cx.notify();
+                    return;
+                }
+
                 if let BranchSelectionBehavior::Select { on_select, .. } =
                     &self.branch_selection_behavior
                 {
@@ -1659,9 +1761,7 @@ impl PickerDelegate for BranchListDelegate {
         let is_head_branch = entry.as_branch().is_some_and(|branch| branch.is_head);
         let is_checked_branch = entry.as_branch().is_some_and(|branch| {
             if self.is_select_only() {
-                self.branch_selection_behavior
-                    .selected_branch()
-                    .is_some_and(|selected_branch| branch_matches_ref(branch, selected_branch))
+                self.branch_selection_behavior.is_branch_selected(branch)
             } else {
                 branch.is_head
             }
@@ -2209,6 +2309,21 @@ mod tests {
             create_test_branch("feature-ui", false, None, Some(800)),
             create_test_branch("develop", false, None, Some(700)),
         ]
+    }
+
+    #[test]
+    fn test_multi_selection_matches_and_removes_short_branch_ref() {
+        let branch = create_test_branch("main", true, None, Some(1000));
+        let behavior = BranchSelectionBehavior::SelectMultiple {
+            selected_branches: vec!["main".into()],
+            on_toggle: Arc::new(|_, _, _| {}),
+        };
+
+        assert!(behavior.is_branch_selected(&branch));
+
+        let mut selected_branches = vec!["main".into()];
+        toggle_selected_branch(&mut selected_branches, &branch);
+        assert!(selected_branches.is_empty());
     }
 
     #[test]
