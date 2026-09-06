@@ -4,6 +4,7 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
     borrow::Borrow,
+    collections::VecDeque,
     hash::{Hash, Hasher},
     ops::Range,
     sync::Arc,
@@ -451,8 +452,19 @@ impl WrappedLineLayout {
     }
 }
 
+/// How many finished frames keep their layouts available to later frames.
+///
+/// A layout is looked up only by elements that render. A view whose output the node
+/// engine reuses renders nothing, so its text goes unlooked-up for as long as the view
+/// is reused, then must not have been evicted when the view next rebuilds. Keeping one
+/// previous frame (the pre-memoization policy) reshaped every reused view's text on every
+/// rebuild; a few frames cover the common alternation of rebuilt and reused frames, and a
+/// view reused longer than this pays one reshape when it rebuilds.
+const RETAINED_PREVIOUS_FRAMES: usize = 3;
+
 pub(crate) struct LineLayoutCache {
-    previous_frame: Mutex<FrameCache>,
+    /// Finished frames, newest first, up to `RETAINED_PREVIOUS_FRAMES`.
+    previous_frames: Mutex<VecDeque<FrameCache>>,
     current_frame: RwLock<FrameCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
 }
@@ -474,6 +486,19 @@ struct FrameCache {
     wrapped_lines_by_hash: FxHashMap<Arc<HashedCacheKey>, Arc<WrappedLineLayout>>,
     used_lines_by_hash: Vec<Arc<HashedCacheKey>>,
     used_wrapped_lines_by_hash: Vec<Arc<HashedCacheKey>>,
+}
+
+impl FrameCache {
+    fn clear(&mut self) {
+        self.lines.clear();
+        self.wrapped_lines.clear();
+        self.used_lines.clear();
+        self.used_wrapped_lines.clear();
+        self.lines_by_hash.clear();
+        self.wrapped_lines_by_hash.clear();
+        self.used_lines_by_hash.clear();
+        self.used_wrapped_lines_by_hash.clear();
+    }
 }
 
 #[derive(Default)]
@@ -519,7 +544,7 @@ pub(crate) struct LineLayoutIndex {
 impl LineLayoutCache {
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         Self {
-            previous_frame: Mutex::default(),
+            previous_frames: Mutex::default(),
             current_frame: RwLock::default(),
             platform_text_system,
         }
@@ -697,18 +722,17 @@ impl LineLayoutCache {
     }
 
     pub fn finish_frame(&self) {
-        let mut prev_frame = self.previous_frame.lock();
-        let mut curr_frame = self.current_frame.write();
-        std::mem::swap(&mut *prev_frame, &mut *curr_frame);
-        curr_frame.lines.clear();
-        curr_frame.wrapped_lines.clear();
-        curr_frame.used_lines.clear();
-        curr_frame.used_wrapped_lines.clear();
-
-        curr_frame.lines_by_hash.clear();
-        curr_frame.wrapped_lines_by_hash.clear();
-        curr_frame.used_lines_by_hash.clear();
-        curr_frame.used_wrapped_lines_by_hash.clear();
+        let mut previous_frames = self.previous_frames.lock();
+        let mut current_frame = self.current_frame.write();
+        // Recycle the oldest frame's storage as the next current frame.
+        let mut finished = if previous_frames.len() >= RETAINED_PREVIOUS_FRAMES {
+            previous_frames.pop_back().unwrap_or_default()
+        } else {
+            FrameCache::default()
+        };
+        finished.clear();
+        std::mem::swap(&mut *current_frame, &mut finished);
+        previous_frames.push_front(finished);
     }
 
     pub fn layout_wrapped_line<Text>(
@@ -736,7 +760,11 @@ impl LineLayoutCache {
             return layout.clone();
         }
 
-        let previous_frame_entry = self.previous_frame.lock().wrapped_lines.remove_entry(key);
+        let previous_frame_entry = self
+            .previous_frames
+            .lock()
+            .iter_mut()
+            .find_map(|frame| frame.wrapped_lines.remove_entry(key));
         if let Some((key, layout)) = previous_frame_entry {
             let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
             current_frame
@@ -801,7 +829,12 @@ impl LineLayoutCache {
         }
 
         let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
-        if let Some((key, layout)) = self.previous_frame.lock().lines.remove_entry(key) {
+        let previous_frame_entry = self
+            .previous_frames
+            .lock()
+            .iter_mut()
+            .find_map(|frame| frame.lines.remove_entry(key));
+        if let Some((key, layout)) = previous_frame_entry {
             current_frame.lines.insert(key.clone(), layout.clone());
             current_frame.used_lines.push(key);
             layout
@@ -868,21 +901,21 @@ impl LineLayoutCache {
             return Some(layout.clone());
         }
 
-        let previous_frame = self.previous_frame.lock();
-        if let Some((_, layout)) = previous_frame.lines_by_hash.iter().find(|(key, _)| {
-            HashedCacheKeyRef {
-                text_hash: key.text_hash,
-                text_len: key.text_len,
-                font_size: key.font_size,
-                runs: key.runs.as_slice(),
-                wrap_width: key.wrap_width,
-                force_width: key.force_width,
-            } == key_ref
-        }) {
-            return Some(layout.clone());
-        }
-
-        None
+        let previous_frames = self.previous_frames.lock();
+        previous_frames
+            .iter()
+            .flat_map(|frame| frame.lines_by_hash.iter())
+            .find(|(key, _)| {
+                HashedCacheKeyRef {
+                    text_hash: key.text_hash,
+                    text_len: key.text_len,
+                    font_size: key.font_size,
+                    runs: key.runs.as_slice(),
+                    wrap_width: key.wrap_width,
+                    force_width: key.force_width,
+                } == key_ref
+            })
+            .map(|(_, layout)| layout.clone())
     }
 
     /// Layout a line of text using a caller-provided content hash as the cache key.
@@ -930,23 +963,26 @@ impl LineLayoutCache {
 
         // Try to reuse from previous frame without allocating; do a linear scan to find a matching key.
         // (We avoid `drain()` here because it would eagerly move all entries.)
-        let mut previous_frame = self.previous_frame.lock();
-        if let Some(existing_key) = previous_frame
-            .used_lines_by_hash
-            .iter()
-            .find(|key| {
-                HashedCacheKeyRef {
-                    text_hash: key.text_hash,
-                    text_len: key.text_len,
-                    font_size: key.font_size,
-                    runs: key.runs.as_slice(),
-                    wrap_width: key.wrap_width,
-                    force_width: key.force_width,
-                } == key_ref
-            })
-            .cloned()
-        {
-            if let Some((key, layout)) = previous_frame.lines_by_hash.remove_entry(&existing_key) {
+        let mut previous_frames = self.previous_frames.lock();
+        for previous_frame in previous_frames.iter_mut() {
+            let existing_key = previous_frame
+                .used_lines_by_hash
+                .iter()
+                .find(|key| {
+                    HashedCacheKeyRef {
+                        text_hash: key.text_hash,
+                        text_len: key.text_len,
+                        font_size: key.font_size,
+                        runs: key.runs.as_slice(),
+                        wrap_width: key.wrap_width,
+                        force_width: key.force_width,
+                    } == key_ref
+                })
+                .cloned();
+            if let Some(existing_key) = existing_key
+                && let Some((key, layout)) =
+                    previous_frame.lines_by_hash.remove_entry(&existing_key)
+            {
                 current_frame
                     .lines_by_hash
                     .insert(key.clone(), layout.clone());
