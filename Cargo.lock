@@ -88,6 +88,7 @@ version = "0.1.0"
 dependencies = [
  "action_log",
  "agent-client-protocol",
+ "agent_settings",
  "anyhow",
  "async-channel 2.5.0",
  "base64 0.22.1",
@@ -10164,7 +10165,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "audio",
- "cocoa 0.26.0",
  "collections",
  "core-foundation 0.10.0",
  "core-video",
@@ -10181,7 +10181,6 @@ dependencies = [
  "livekit_api",
  "log",
  "nanoid",
- "objc",
  "parking_lot",
  "postage",
  "rodio",
