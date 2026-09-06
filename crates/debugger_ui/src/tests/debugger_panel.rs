@@ -2488,6 +2488,8 @@ async fn test_adapter_shutdown_with_child_sessions_on_app_quit(
     cx: &mut TestAppContext,
 ) {
     init_test(cx);
+    // This tests successful disconnects, so do not inject an early shutdown timeout.
+    executor.set_block_on_ticks(10_000..=10_000);
 
     let fs = FakeFs::new(executor.clone());
 
@@ -2607,7 +2609,10 @@ async fn test_adapter_shutdown_with_child_sessions_on_app_quit(
 
     assert!(
         both_disconnected,
-        "Both parent and child sessions should receive disconnect requests"
+        "Both parent and child sessions should receive disconnect requests: parent={}, child={}, count={}",
+        parent_disconnect_called.load(Ordering::SeqCst),
+        child_disconnect_called.load(Ordering::SeqCst),
+        disconnect_count.load(Ordering::SeqCst)
     );
 
     assert!(
