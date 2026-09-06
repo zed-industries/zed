@@ -21,7 +21,7 @@ use std::{
 
 use crate::*;
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub(crate) struct GoDebugAdapter;
 
 impl GoDebugAdapter {

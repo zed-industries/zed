@@ -31,7 +31,7 @@ pub fn init(cx: &mut App) {
         registry.add_adapter(Arc::from(CodeLldbDebugAdapter::default()));
         registry.add_adapter(Arc::from(PythonDebugAdapter::default()));
         registry.add_adapter(Arc::from(JsDebugAdapter::default()));
-        registry.add_adapter(Arc::from(GoDebugAdapter::default()));
+        registry.add_adapter(Arc::from(GoDebugAdapter));
         registry.add_adapter(Arc::from(GdbDebugAdapter));
 
         #[cfg(any(test, feature = "test-support"))]
