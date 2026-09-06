@@ -937,8 +937,8 @@ mod tests {
     }
 
     use crate::{
-        Component, Context, Entity, Render, StyleRefinement, TestAppContext, Window, div,
-        prelude::*, px, rgb, size,
+        Bounds, Component, Context, Entity, Modifiers, Render, ScaledPixels, StyleRefinement,
+        TestAppContext, VisualTestContext, Window, div, point, prelude::*, px, rgb, size,
     };
     use std::{cell::Cell, rc::Rc};
 
@@ -1081,6 +1081,136 @@ mod tests {
                 .child(self.middle.clone().cached(leaf_style()))
                 .child(self.right.clone().cached(leaf_style()))
         }
+    }
+
+    struct EmptyRoot;
+
+    impl Render for EmptyRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    struct ClickableLeaf {
+        render_count: Rc<Cell<usize>>,
+        clicks: Rc<Cell<usize>>,
+        color: u32,
+    }
+
+    impl Render for ClickableLeaf {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.render_count.set(self.render_count.get() + 1);
+            let clicks = self.clicks.clone();
+            div()
+                .id("leaf")
+                .size_full()
+                .bg(rgb(self.color))
+                .on_click(cx.listener(move |_, _, _, _| clicks.set(clicks.get() + 1)))
+        }
+    }
+
+    #[gpui::test]
+    fn attached_roots_are_memoized_nodes_with_scenes_of_their_own(cx: &mut TestAppContext) {
+        let window = cx.open_window(size(px(400.), px(100.)), |_, _| EmptyRoot);
+        let left_renders = Rc::new(Cell::new(0));
+        let right_renders = Rc::new(Cell::new(0));
+        let left_clicks = Rc::new(Cell::new(0));
+        let right_clicks = Rc::new(Cell::new(0));
+        let left = cx.new(|_| ClickableLeaf {
+            render_count: left_renders.clone(),
+            clicks: left_clicks.clone(),
+            color: 0xff0000,
+        });
+        let right = cx.new(|_| ClickableLeaf {
+            render_count: right_renders.clone(),
+            clicks: right_clicks.clone(),
+            color: 0x0000ff,
+        });
+        let left_bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), px(100.)));
+        let right_bounds = Bounds::new(point(px(200.), px(0.)), size(px(100.), px(100.)));
+        let (left_root, right_root) = window
+            .update(cx, |_, window, _| {
+                (
+                    window.attach_root(left.clone(), left_bounds),
+                    window.attach_root(right.clone(), right_bounds),
+                )
+            })
+            .expect("window");
+        cx.run_until_parked();
+        assert_eq!((left_renders.get(), right_renders.get()), (1, 1));
+
+        // Each root's scene stands alone, in window coordinates, and is handed out once
+        // per redraw.
+        window
+            .update(cx, |_, window, _| {
+                let scale = window.scale_factor();
+                let left_scene = window.take_root_scene(left_root).expect("left was drawn");
+                assert_eq!(left_scene.quads.len(), 1);
+                assert_eq!(left_scene.quads[0].bounds.origin.x, ScaledPixels(0.));
+                let right_scene = window.take_root_scene(right_root).expect("right was drawn");
+                assert_eq!(right_scene.quads.len(), 1);
+                assert_eq!(right_scene.quads[0].bounds.origin.x, px(200.).scale(scale));
+                assert!(window.take_root_scene(left_root).is_none());
+                assert!(window.take_root_scene(right_root).is_none());
+                // The window's own scene holds both.
+                assert_eq!(window.rendered_frame.scene.quads.len(), 2);
+            })
+            .expect("window");
+
+        // Notifying one root re-renders only it, and only its scene is handed out again.
+        right.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!((left_renders.get(), right_renders.get()), (1, 2));
+        window
+            .update(cx, |_, window, _| {
+                assert!(window.take_root_scene(left_root).is_none());
+                assert!(window.take_root_scene(right_root).is_some());
+            })
+            .expect("window");
+
+        // Moving a root re-lays it out and hands its scene out at the new position.
+        let moved_bounds = Bounds::new(point(px(200.), px(0.)), size(px(50.), px(100.)));
+        window
+            .update(cx, |_, window, _| {
+                window.set_root_bounds(right_root, moved_bounds)
+            })
+            .expect("window");
+        cx.run_until_parked();
+        window
+            .update(cx, |_, window, _| {
+                let scale = window.scale_factor();
+                let right_scene = window.take_root_scene(right_root).expect("right moved");
+                assert_eq!(right_scene.quads[0].bounds.size.width, px(50.).scale(scale));
+                assert!(window.take_root_scene(left_root).is_none());
+            })
+            .expect("window");
+
+        // Input dispatches by position: a click lands in exactly one root.
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_click(point(px(50.), px(50.)), Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!((left_clicks.get(), right_clicks.get()), (1, 0));
+        visual.simulate_click(point(px(225.), px(50.)), Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!((left_clicks.get(), right_clicks.get()), (1, 1));
+        visual.simulate_click(point(px(150.), px(50.)), Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!((left_clicks.get(), right_clicks.get()), (1, 1));
+
+        // A detached root is gone from the frame.
+        window
+            .update(cx, |_, window, _| window.detach_root(left_root))
+            .expect("window");
+        cx.run_until_parked();
+        window
+            .update(cx, |_, window, _| {
+                assert!(window.take_root_scene(left_root).is_none());
+                assert_eq!(window.rendered_frame.scene.quads.len(), 1);
+            })
+            .expect("window");
+        visual.simulate_click(point(px(50.), px(50.)), Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!((left_clicks.get(), right_clicks.get()), (1, 1));
     }
 
     #[gpui::test]

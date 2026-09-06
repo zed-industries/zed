@@ -211,6 +211,35 @@ impl NodeEngine {
         self.dirty_count = self.nodes.len();
     }
 
+    /// The node, if it is still mounted.
+    pub(crate) fn try_node(&self, node_id: ViewNodeId) -> Option<&ViewNode> {
+        self.nodes.get(node_id)
+    }
+
+    /// How many roots the frame being drawn has so far; with [`Self::next_root`], the way
+    /// a caller that draws a root learns which node it mounted.
+    pub(crate) fn next_root_count(&self) -> usize {
+        self.next_roots.len()
+    }
+
+    pub(crate) fn next_root(&self, index: usize) -> Option<ViewNodeId> {
+        self.next_roots.get(index).copied()
+    }
+
+    /// Whether `node` is `ancestor` or below it through `parent` links, which for a
+    /// deferred root lead to its owner.
+    pub(crate) fn is_within(&self, mut node: ViewNodeId, ancestor: ViewNodeId) -> bool {
+        loop {
+            if node == ancestor {
+                return true;
+            }
+            match self.nodes.get(node).and_then(|node| node.parent) {
+                Some(parent) => node = parent,
+                None => return false,
+            }
+        }
+    }
+
     /// Takes the node's recorded scene so painting can record into it again.
     pub(crate) fn take_scene(&mut self, node_id: ViewNodeId) -> ViewNodeScene {
         self.nodes
