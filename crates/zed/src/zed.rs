@@ -2143,6 +2143,10 @@ pub fn handle_keymap_file_changes(
         let new_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
         let new_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
 
+        if new_disable_ai != old_disable_ai {
+            reload_menus(cx);
+        }
+
         if new_base_keymap != old_base_keymap
             || new_vim_enabled != old_vim_enabled
             || new_helix_enabled != old_helix_enabled
@@ -2313,6 +2317,11 @@ fn show_markdown_app_notification<F>(
     })
 }
 
+fn reload_menus(cx: &mut App) {
+    let menus = app_menus(cx);
+    cx.set_menus(menus);
+}
+
 fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     cx.clear_key_bindings();
     load_default_keymap(cx);
@@ -2321,9 +2330,7 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
         key_binding.set_meta(KeybindSource::User.meta());
     }
     cx.bind_keys(filter_disabled_ai_bindings(user_key_bindings, cx));
-
-    let menus = app_menus(cx);
-    cx.set_menus(menus);
+    reload_menus(cx);
     // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
     #[cfg(not(target_os = "windows"))]
     cx.set_dock_menu(vec![gpui::MenuItem::action(
@@ -2865,8 +2872,8 @@ mod tests {
     use extension::ExtensionHostProxy;
     use fs::FakeFs;
     use gpui::{
-        Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, Modifiers, TestAppContext,
-        UpdateGlobal, VisualTestContext, WindowHandle, actions, point, px,
+        Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, Modifiers, OwnedMenuItem,
+        TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions, point, px,
     };
     use http_client::BlockedHttpClient;
     use language::LanguageRegistry;
@@ -5938,7 +5945,6 @@ mod tests {
                 "outline",
                 "outline_panel",
                 "pane",
-                "panel",
                 "picker",
                 "project_panel",
                 "project_search",
@@ -8146,5 +8152,156 @@ mod tests {
         }
 
         window
+    }
+
+    #[gpui::test]
+    fn test_reload_keymaps_rebuilds_menus(cx: &mut TestAppContext) {
+        init_keymap_test(cx);
+
+        cx.update(|cx| reload_keymaps(cx, Vec::new()));
+        cx.update(|cx| {
+            assert!(
+                has_view_item(cx, "Agent Panel"),
+                "expected Agent Panel in the View menu when AI is enabled"
+            );
+            assert!(
+                has_view_item(cx, "Diagnostics"),
+                "expected Diagnostics to be in View menu"
+            );
+        });
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings_store, cx| {
+                settings_store.update_user_settings(cx, |settings| {
+                    settings.project.disable_ai = Some(SaturatingBool(true))
+                });
+            })
+        });
+        cx.update(|cx| {
+            reload_keymaps(cx, Vec::new());
+        });
+        cx.update(|cx| {
+            assert!(
+                !has_view_item(cx, "Agent Panel"),
+                "expected Agent Panel to be removed from the View menu after disabling AI"
+            );
+            assert!(
+                has_view_item(cx, "Diagnostics"),
+                "expected Diagnostics to remain in the View menu"
+            );
+        });
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings_store, cx| {
+                settings_store.update_user_settings(cx, |settings| {
+                    settings.project.disable_ai = Some(SaturatingBool(false));
+                });
+            });
+        });
+        cx.update(|cx| reload_keymaps(cx, Vec::new()));
+        cx.update(|cx| {
+            assert!(
+                has_view_item(cx, "Agent Panel"),
+                "expected Agent Panel back in the View menu after re-enabling AI"
+            );
+            assert!(
+                has_view_item(cx, "Diagnostics"),
+                "expected Diagnostics to remain in the View menu"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_disable_ai_menu_update_with_malformed_keymap(cx: &mut TestAppContext) {
+        let executor = cx.executor();
+        let app_state = init_keymap_test(cx);
+        cx.update(|cx| reload_keymaps(cx, Vec::new()));
+        cx.update(|cx| {
+            assert!(
+                has_view_item(cx, "Agent Panel"),
+                "expected Agent Panel before disabling AI"
+            );
+            assert!(
+                has_view_item(cx, "Diagnostics"),
+                "expected Diagnostics in the View menu"
+            );
+        });
+
+        app_state
+            .fs
+            .save(
+                "/keymap.json".as_ref(),
+                &r#"!@!@this is not valid json"#.into(),
+                Default::default(),
+            )
+            .await
+            .expect("failed to save malformed keymap.json to the fake fs");
+        executor.run_until_parked();
+
+        cx.update(|cx| {
+            let (keymap_rx, keymap_watcher) = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/keymap.json"),
+            );
+            watch_settings_files(app_state.fs.clone(), cx);
+            handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
+        });
+        executor.run_until_parked();
+
+        app_state
+            .fs
+            .save(
+                paths::settings_file(),
+                &r#"{"disable_ai": true}"#.into(),
+                Default::default(),
+            )
+            .await
+            .expect("failed to save disable_ai=true to the fake settings file");
+        executor.run_until_parked();
+
+        cx.update(|cx| {
+            assert!(
+                !has_view_item(cx, "Agent Panel"),
+                "expected Agent Panel removed even though the keymap file is malformed"
+            );
+            assert!(
+                has_view_item(cx, "Diagnostics"),
+                "expected Diagnostics to remain in the View menu"
+            );
+        });
+
+        app_state
+            .fs
+            .save(
+                paths::settings_file(),
+                &r#"{"disable_ai": false}"#.into(),
+                Default::default(),
+            )
+            .await
+            .expect("failed to save disable_ai=false to the fake settings file");
+        executor.run_until_parked();
+
+        cx.update(|cx| {
+            assert!(
+                has_view_item(cx, "Agent Panel"),
+                "expected Agent Panel added back even though the keymap file is malformed"
+            );
+            assert!(
+                has_view_item(cx, "Diagnostics"),
+                "expected Diagnostics to remain in the View menu"
+            );
+        });
+    }
+
+    fn has_view_item(cx: &mut App, item_name: &str) -> bool {
+        cx.get_menus()
+            .expect("reload_keymaps should populate the menu bar")
+            .iter()
+            .find(|menu| menu.name == "View")
+            .expect("expected a View menu")
+            .items
+            .iter()
+            .any(|item| matches!(item, OwnedMenuItem::Action { name, .. } if name == item_name))
     }
 }
