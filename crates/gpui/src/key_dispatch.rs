@@ -88,6 +88,14 @@ pub(crate) struct DispatchNode {
     parent: Option<DispatchNodeId>,
 }
 
+impl DispatchNode {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.key_listeners.capacity() * size_of::<KeyListener>()
+            + self.action_listeners.capacity() * size_of::<DispatchActionListener>()
+            + self.modifiers_changed_listeners.capacity() * size_of::<ModifiersChangedListener>()
+    }
+}
+
 impl Clone for DispatchNode {
     fn clone(&self) -> Self {
         Self {

@@ -505,6 +505,15 @@ pub(crate) struct TextUse {
 }
 
 impl TextUse {
+    /// The handles held; the layouts themselves are shared with the frame cache.
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.lines.capacity() * size_of::<(Arc<CacheKey>, Arc<LineLayout>)>()
+            + self.wrapped_lines.capacity() * size_of::<(Arc<CacheKey>, Arc<WrappedLineLayout>)>()
+            + self.lines_by_hash.capacity() * size_of::<(Arc<HashedCacheKey>, Arc<LineLayout>)>()
+            + self.wrapped_lines_by_hash.capacity()
+                * size_of::<(Arc<HashedCacheKey>, Arc<WrappedLineLayout>)>()
+    }
+
     pub(crate) fn append(&mut self, mut other: TextUse) {
         self.lines.append(&mut other.lines);
         self.wrapped_lines.append(&mut other.wrapped_lines);

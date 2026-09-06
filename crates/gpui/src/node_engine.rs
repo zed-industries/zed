@@ -47,6 +47,10 @@ pub struct NodeStats {
     pub live_nodes: usize,
     /// Taffy nodes retained after the frame.
     pub layout_nodes: usize,
+    /// An estimate of the heap the engine holds between frames for its nodes' recordings,
+    /// dependency sets and bookkeeping, from container capacities. Excludes what boxed
+    /// listeners, element states and shaped text point to, and the retained Taffy tree.
+    pub retained_bytes: usize,
 }
 
 pub(crate) struct NodeEngine {
@@ -109,6 +113,39 @@ impl NodeEngine {
 
     pub(crate) fn node(&self, node_id: ViewNodeId) -> &ViewNode {
         &self.nodes[node_id]
+    }
+
+    /// See [`NodeStats::retained_bytes`]. Walks every node, so it is computed on demand.
+    pub(crate) fn retained_bytes(&self) -> usize {
+        let nodes: usize = self
+            .nodes
+            .values()
+            .map(|node| {
+                size_of::<ViewNode>()
+                    + node.output.retained_bytes()
+                    + node.accessed_entities.capacity() * size_of::<EntityId>()
+                    + (node.children.capacity() + node.next_children.capacity())
+                        * size_of::<ViewNodeId>()
+            })
+            .sum();
+        let consumers: usize = self
+            .consumers
+            .values()
+            .map(|set| set.capacity() * size_of::<ViewNodeId>())
+            .sum::<usize>()
+            + self.consumers.capacity() * size_of::<(EntityId, FxHashSet<ViewNodeId>)>();
+        nodes
+            + consumers
+            + self
+                .spare_dependency_sets
+                .iter()
+                .map(|set| set.capacity() * size_of::<EntityId>())
+                .sum::<usize>()
+            + self.occurrences.capacity() * size_of::<(ViewOccurrence, ViewNodeId)>()
+            + (self.mounted_this_frame.capacity()
+                + self.dirty_nodes.capacity()
+                + self.frame_bound_nodes.capacity())
+                * size_of::<ViewNodeId>()
     }
 
     /// Takes the node's recorded scene so painting can record into it again.
@@ -1159,5 +1196,67 @@ mod oracle_tests {
             reused_subtrees += stats.reused_subtrees;
         }
         assert!(reused_subtrees > 0, "the fixture must exercise node reuse");
+    }
+
+    /// What the engine holds between frames must not grow while the same tree is redrawn:
+    /// a node redrawn in place reuses its buffers, and reused nodes allocate nothing.
+    #[gpui::test]
+    fn node_engine_retained_memory_is_flat_across_reuse(cx: &mut TestAppContext) {
+        let mut rng = StdRng::seed_from_u64(0);
+        let window = cx.open_window(size(px(300.), px(300.)), |_, cx| {
+            let rows: Vec<_> = (0..40)
+                .map(|index| {
+                    cx.new(|_| Row {
+                        index,
+                        color: rng.random::<u32>() & 0xffffff,
+                    })
+                })
+                .collect();
+            let popover_row = rows.first().cloned();
+            Fixture {
+                panel: cx.new(|cx| Panel {
+                    focus_handles: (0..3).map(|_| cx.focus_handle()).collect(),
+                    popover_open: true,
+                    popover_revision: 0,
+                    popover_row,
+                }),
+                rows,
+                list_scroll: UniformListScrollHandle::new(),
+                text_scroll: ScrollHandle::new(),
+                text_revision: 0,
+            }
+        });
+        cx.run_until_parked();
+        let mut redraw_one_row = |step: usize, cx: &mut TestAppContext| {
+            let rows = window
+                .read_with(cx, |fixture, _| fixture.rows.clone())
+                .expect("window open");
+            rows[step % rows.len()].update(cx, |row, cx| {
+                row.color ^= 0x0000ff;
+                cx.notify();
+            });
+            cx.run_until_parked();
+            window
+                .update(cx, |_, window, _| window.node_stats())
+                .expect("window open")
+        };
+        for step in 0..100 {
+            redraw_one_row(step, cx);
+        }
+        let settled = redraw_one_row(100, cx);
+        assert!(settled.reused_subtrees > 0);
+        // Which row is dirty moves one small container between two capacities.
+        let tolerance = 256;
+        for step in 101..1000 {
+            let stats = redraw_one_row(step, cx);
+            assert_eq!(stats.live_nodes, settled.live_nodes, "step {step}");
+            assert_eq!(stats.layout_nodes, settled.layout_nodes, "step {step}");
+            assert!(
+                stats.retained_bytes <= settled.retained_bytes + tolerance,
+                "step {step}: retained {} bytes, settled at {}",
+                stats.retained_bytes,
+                settled.retained_bytes
+            );
+        }
     }
 }

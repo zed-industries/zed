@@ -3567,6 +3567,7 @@ impl Window {
             .layout_engine
             .as_ref()
             .map_or(0, TaffyLayoutEngine::retained_node_count);
+        stats.retained_bytes = self.node_engine.retained_bytes();
         stats
     }
 
