@@ -695,10 +695,19 @@ async fn snapshot_session(
     for (index, dap_thread) in stopped_threads.iter().enumerate() {
         let thread_id = ThreadId(dap_thread.id);
 
-        // Delve synthesizes a "Dummy" thread for the paused program; it has
-        // no stack and only adds noise to the snapshot.
+        // Delve synthesizes a "Dummy" thread (thread id 0) before the first
+        // real goroutine exists and after `pause`; it has no stack. Keep the
+        // thread in the snapshot (with no frames) so the control path still
+        // has a thread to continue/step/pause on, instead of reporting zero
+        // threads and failing.
         if adapter == "Delve" && dap_thread.name == "Dummy" {
-            notes.push("Delve synthetic `Dummy` thread omitted from the snapshot".to_string());
+            notes.push("Delve synthetic `Dummy` thread has no stack; frames omitted".to_string());
+            threads.push(AgentDebuggerThread {
+                thread_id,
+                name: dap_thread.name.clone(),
+                status: AgentDebuggerThreadStatus::Stopped,
+                frames: Vec::new(),
+            });
             continue;
         }
 
