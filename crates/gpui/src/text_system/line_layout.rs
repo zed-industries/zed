@@ -636,12 +636,10 @@ impl LineLayoutCache {
         &self,
         recording: &LineLayoutRecording,
         engine: &crate::node_engine::NodeEngine,
-        cx: &crate::App,
     ) {
         let mut frame = self.current_frame.write();
         recording.lines.replay(
             engine,
-            cx,
             &|recording, phase| Some(&recording.text(phase).lines),
             &mut |entries| {
                 for (key, layout) in entries {
@@ -652,7 +650,6 @@ impl LineLayoutCache {
         );
         recording.wrapped_lines.replay(
             engine,
-            cx,
             &|recording, phase| Some(&recording.text(phase).wrapped_lines),
             &mut |entries| {
                 for (key, layout) in entries {
@@ -663,7 +660,6 @@ impl LineLayoutCache {
         );
         recording.lines_by_hash.replay(
             engine,
-            cx,
             &|recording, phase| Some(&recording.text(phase).lines_by_hash),
             &mut |entries| {
                 for (key, layout) in entries {
@@ -674,7 +670,6 @@ impl LineLayoutCache {
         );
         recording.wrapped_lines_by_hash.replay(
             engine,
-            cx,
             &|recording, phase| Some(&recording.text(phase).wrapped_lines_by_hash),
             &mut |entries| {
                 for (key, layout) in entries {

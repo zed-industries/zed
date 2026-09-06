@@ -104,11 +104,14 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 
 ### Engine shape
 
-- [ ] **Critical path.** Store nodes in a `SlotMap<NodeId, ViewNode>` inside
-  `NodeEngine`; `consumers: FxHashMap<EntityId, SmallVec<NodeId>>`; ancestor
-  dirtiness through the node's `parent`. Deletes `NodeRenderDecision` (becomes
-  `Option<recording>` at the call site), the access-scope pool, and node ids in
-  dependency sets. Consider laying nodes out in DFS order.
+- [x] **Critical path.** Store nodes in a `SlotMap<ViewNodeId, ViewNode>` inside
+  `NodeEngine`; ancestor dirtiness through the node's `parent`. Deleted
+  `NodeRenderDecision` (now `reuse` / `reuse_layout` returning `Option`), the
+  access-scope pool (`App::track_reads` fills a caller-owned set), the `Window`
+  forwarding layer, and node ids in dependency sets. Measured 715 → 699 µs on
+  `editor_render`; the single-node fixture barely exercised entity-map traffic, so
+  the remaining full-rebuild overhead is elsewhere. Still open: `consumers` values
+  are `FxHashSet`s and could be `SmallVec`s; DFS-order node layout.
 - [ ] Recordings own their listeners and input handlers; the frame holds
   `(NodeId, index)` references and dispatch resolves through node storage.
   `PlatformInputHandler` becomes a locator that resolves through its

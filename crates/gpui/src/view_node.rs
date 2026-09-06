@@ -17,6 +17,20 @@ pub(crate) struct ViewNodeCacheKey {
     pub(crate) image_cache: Option<EntityId>,
 }
 
+impl ViewNodeCacheKey {
+    /// Whether output recorded under `self` is valid for a frame whose ambient inputs are
+    /// `other`. Bounds are unknown during layout, so that phase compares without them.
+    pub(crate) fn matches(&self, other: &Self, ignore_bounds: bool) -> bool {
+        (ignore_bounds || self.bounds == other.bounds)
+            && self.content_mask == other.content_mask
+            && self.rem_size == other.rem_size
+            && self.scale_factor == other.scale_factor
+            && self.opacity == other.opacity
+            && self.image_cache == other.image_cache
+            && self.text_style == other.text_style
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MetadataPhase {
     Layout,
@@ -113,16 +127,15 @@ impl<T> RecordedMetadata<T> {
     pub(crate) fn replay(
         &self,
         engine: &crate::node_engine::NodeEngine,
-        cx: &crate::App,
         select: &impl Fn(&ViewNodeRecording, MetadataPhase) -> Option<&Self>,
         emit: &mut impl FnMut(&[T]),
     ) {
         let mut start = 0;
         for child in &self.children {
             emit(&self.local[start..child.local_end]);
-            select(engine.recording(child.node, cx), child.phase)
+            select(engine.recording(child.node), child.phase)
                 .expect("child metadata phase exists")
-                .replay(engine, cx, select, emit);
+                .replay(engine, select, emit);
             start = child.local_end;
         }
         emit(&self.local[start..]);
@@ -238,18 +251,13 @@ impl ViewNodeScene {
         self.operations.truncate(self.operation_count);
     }
 
-    pub(crate) fn replay(
-        &self,
-        scene: &mut Scene,
-        engine: &crate::node_engine::NodeEngine,
-        cx: &crate::App,
-    ) {
+    pub(crate) fn replay(&self, scene: &mut Scene, engine: &crate::node_engine::NodeEngine) {
         for segment in &self.segments {
             match segment {
                 ViewNodeSceneSegment::Local(local) => {
                     scene.replay_recording(&self.operations[local.clone()])
                 }
-                ViewNodeSceneSegment::Child(child) => engine.replay_scene(*child, scene, cx),
+                ViewNodeSceneSegment::Child(child) => engine.replay_scene(*child, scene),
             }
         }
     }
@@ -326,7 +334,7 @@ mod tests {
             let path = expected.paths.first().expect("path").clone();
             let pointer = path.vertices.as_ptr();
             scene.insert_primitive(path);
-            recording = scene.finish_node_scene(EntityId::from(1));
+            recording = scene.finish_node_scene(crate::node_engine::ViewNodeId::default());
             scene.finish();
             expected.finish();
             assert_eq!(scene.snapshot_for_test(), expected.snapshot_for_test());

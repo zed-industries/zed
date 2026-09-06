@@ -12,10 +12,10 @@ use crate::{
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
     KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, NodeRenderDecision, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
@@ -3083,9 +3083,9 @@ impl Window {
         }
         if !cx.mode.skip_drawing() {
             self.a11y.sync_active_flag();
-            self.begin_node_engine_frame(cx);
+            self.begin_node_engine_frame();
             self.draw_roots(cx);
-            self.finish_node_engine_frame(cx);
+            self.finish_node_engine_frame();
             #[cfg(feature = "profiler")]
             {
                 let viewport_size = self.viewport_size;
@@ -3126,7 +3126,7 @@ impl Window {
         }
 
         let engine = &self.node_engine;
-        let roots = engine.retained_layouts(cx);
+        let roots = engine.retained_layouts();
         self.layout_engine.as_mut().unwrap().retain(roots);
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
@@ -3237,7 +3237,7 @@ impl Window {
         self.invalidator.replace_views(views);
     }
 
-    fn begin_node_engine_frame(&mut self, cx: &mut App) {
+    fn begin_node_engine_frame(&mut self) {
         #[cfg(any(feature = "inspector", debug_assertions))]
         let inspector_active = self.inspector.is_some();
         #[cfg(not(any(feature = "inspector", debug_assertions)))]
@@ -3262,14 +3262,14 @@ impl Window {
         node_engine.begin_frame(full_refresh_reason);
         // No scope can graft an old layout when every mounted node is dirty.
         // Keep the newly built tree for subsequent partial updates.
-        if node_engine.discard_dirty_layouts(cx) {
+        if node_engine.discard_dirty_layouts() {
             self.layout_engine.as_mut().unwrap().clear_retained();
         }
     }
 
-    fn finish_node_engine_frame(&mut self, cx: &mut App) {
+    fn finish_node_engine_frame(&mut self) {
         let node_engine = &mut self.node_engine;
-        let changed_bounds = node_engine.finish_frame(cx);
+        let changed_bounds = node_engine.finish_frame();
         log::trace!("GPUI node engine changed view bounds: {changed_bounds:?}");
     }
 
@@ -3647,13 +3647,13 @@ impl Window {
     }
 
     #[cfg(test)]
-    pub(crate) fn assert_metadata_unique(&self, cx: &App) {
+    pub(crate) fn assert_metadata_unique(&self) {
         let engine = &self.node_engine;
         macro_rules! check {
             ($field:ident, $total:expr) => {
                 assert!(
                     engine
-                        .recordings(cx)
+                        .recordings()
                         .map(|recording| recording.$field.local.len())
                         .sum::<usize>()
                         <= $total,
@@ -3670,7 +3670,7 @@ impl Window {
         check!(cursor_styles, self.rendered_frame.cursor_styles.len());
         assert!(
             engine
-                .recordings(cx)
+                .recordings()
                 .map(|recording| recording.layout_states.local.len()
                     + recording.prepaint_states.local.len()
                     + recording.paint_states.local.len())
@@ -3710,27 +3710,15 @@ impl Window {
         engine.invalidate_consumers(source);
     }
 
-    pub(crate) fn restart_view_node_render(&mut self, node_id: ViewNodeId, cx: &mut App) {
-        let engine = &mut self.node_engine;
-        engine.restart_render(node_id, cx);
-    }
-
-    pub(crate) fn enter_view_node_prepaint(&mut self, node_id: ViewNodeId) {
-        let engine = &mut self.node_engine;
-        engine.enter_prepaint(node_id);
-    }
-
     pub(crate) fn graft_view_node_layout(
         &mut self,
         recording: &mut ViewNodeRecording,
-        cx: &App,
     ) -> Option<Range<PrepaintStateIndex>> {
         recording.has_layout.then(|| {
             let start = self.prepaint_index();
             let engine = &self.node_engine;
             recording.layout_states.replay(
                 engine,
-                cx,
                 &|recording, phase| Some(recording.states(phase)),
                 &mut |states| {
                     self.next_frame
@@ -3739,7 +3727,7 @@ impl Window {
                 },
             );
             self.text_system
-                .replay_layouts(&recording.layout_text, engine, cx);
+                .replay_layouts(&recording.layout_text, engine);
             let end = self.prepaint_index();
             recording.layout_states.frame_range =
                 start.accessed_element_states_index..end.accessed_element_states_index;
@@ -3750,89 +3738,8 @@ impl Window {
         })
     }
 
-    pub(crate) fn begin_view_node_layout(
-        &mut self,
-        occurrence: GlobalElementId,
-        view: AnyView,
-        cache_key: ViewNodeCacheKey,
-        cx: &mut App,
-    ) -> (NodeRenderDecision, Option<LayoutId>) {
-        let engine = &mut self.node_engine;
-        engine.begin_layout(occurrence, view, cache_key, cx)
-    }
-
-    pub(crate) fn store_view_node_layout(
-        &mut self,
-        node_id: ViewNodeId,
-        layout: LayoutId,
-        cx: &mut App,
-    ) {
-        let engine = &mut self.node_engine;
-        engine.store_layout(node_id, layout, cx);
-    }
-
-    pub(crate) fn view_node_cache_key(
-        &self,
-        node_id: ViewNodeId,
-        cx: &App,
-    ) -> Option<ViewNodeCacheKey> {
-        let engine = &self.node_engine;
-        engine.cache_key(node_id, cx)
-    }
-
-    pub(crate) fn begin_view_node(
-        &mut self,
-        occurrence: GlobalElementId,
-        view_id: EntityId,
-        view: Option<AnyView>,
-        cache_key: ViewNodeCacheKey,
-        cx: &mut App,
-    ) -> NodeRenderDecision {
-        self.node_engine
-            .begin_occurrence(occurrence, view_id, view, cache_key, cx)
-    }
-
-    pub(crate) fn finish_view_node_prepaint(
-        &mut self,
-        node_id: ViewNodeId,
-        rendered: bool,
-        cx: &mut App,
-    ) {
-        let node_engine = &mut self.node_engine;
-        node_engine.finish_prepaint(node_id, rendered, cx);
-    }
-
-    pub(crate) fn store_rendered_view_node(
-        &mut self,
-        node_id: ViewNodeId,
-        cache_key: ViewNodeCacheKey,
-        recording: ViewNodeRecording,
-        accessed_entities: FxHashSet<EntityId>,
-        cx: &mut App,
-    ) {
-        let node_engine = &mut self.node_engine;
-        node_engine.store_render(node_id, cache_key, recording, accessed_entities, cx);
-    }
-
-    pub(crate) fn store_grafted_view_node(
-        &mut self,
-        node_id: ViewNodeId,
-        recording: ViewNodeRecording,
-        cx: &mut App,
-    ) {
-        let node_engine = &mut self.node_engine;
-        node_engine.store_graft(node_id, recording, cx);
-    }
-
-    pub(crate) fn begin_view_node_paint(
-        &mut self,
-        node_id: ViewNodeId,
-        cx: &mut App,
-    ) -> ViewNodeRecording {
-        let mut recording = self
-            .node_engine
-            .take_recording(node_id, cx)
-            .unwrap_or_default();
+    pub(crate) fn begin_view_node_paint(&mut self, node_id: ViewNodeId) -> ViewNodeRecording {
+        let mut recording = self.node_engine.take_recording(node_id).unwrap_or_default();
         self.next_frame
             .scene
             .begin_node_scene(mem::take(&mut recording.scene));
@@ -3846,7 +3753,6 @@ impl Window {
         layout_range: Option<Range<PrepaintStateIndex>>,
         prepaint_range: Range<PrepaintStateIndex>,
         paint_range: Range<PaintIndex>,
-        cx: &App,
     ) -> ViewNodeRecording {
         use crate::view_node::{MetadataPhase, capture_metadata};
         recording.scene = self.next_frame.scene.finish_node_scene(node_id);
@@ -3855,7 +3761,7 @@ impl Window {
         let children: smallvec::SmallVec<[_; 16]> = recording
             .scene
             .children()
-            .map(|child| (child, engine.recording(child, cx)))
+            .map(|child| (child, engine.recording(child)))
             .collect();
         recording.has_layout = layout_range.is_some();
         let layout_range = layout_range.unwrap_or_default();
@@ -4005,14 +3911,12 @@ impl Window {
     pub(crate) fn graft_view_node_prepaint(
         &mut self,
         recording: &mut ViewNodeRecording,
-        cx: &App,
     ) -> Range<PrepaintStateIndex> {
         use crate::view_node::MetadataPhase;
         let start = self.prepaint_index();
         let engine = &self.node_engine;
         recording.prepaint_states.replay(
             engine,
-            cx,
             &|recording, phase| Some(recording.states(phase)),
             &mut |states| {
                 self.next_frame
@@ -4021,16 +3925,14 @@ impl Window {
             },
         );
         self.text_system
-            .replay_layouts(&recording.prepaint_text, engine, cx);
+            .replay_layouts(&recording.prepaint_text, engine);
         recording.hitboxes.replay(
             engine,
-            cx,
             &|recording, phase| (phase == MetadataPhase::Prepaint).then_some(&recording.hitboxes),
             &mut |items| self.next_frame.hitboxes.extend_from_slice(items),
         );
         recording.tooltip_requests.replay(
             engine,
-            cx,
             &|recording, phase| {
                 (phase == MetadataPhase::Prepaint).then_some(&recording.tooltip_requests)
             },
@@ -4039,7 +3941,7 @@ impl Window {
         if self
             .next_frame
             .dispatch_tree
-            .replay_subtree(recording, engine, cx, self.focus)
+            .replay_subtree(recording, engine, self.focus)
         {
             self.next_frame.focus = self.focus;
         }
@@ -4059,14 +3961,12 @@ impl Window {
         &mut self,
         node_id: ViewNodeId,
         recording: &mut ViewNodeRecording,
-        cx: &App,
     ) {
         use crate::view_node::MetadataPhase;
         let start = self.paint_index();
         let engine = &self.node_engine;
         recording.paint_states.replay(
             engine,
-            cx,
             &|recording, phase| Some(recording.states(phase)),
             &mut |states| {
                 self.next_frame
@@ -4075,16 +3975,14 @@ impl Window {
             },
         );
         self.text_system
-            .replay_layouts(&recording.paint_text, engine, cx);
+            .replay_layouts(&recording.paint_text, engine);
         recording.tab_stops.replay(
             engine,
-            cx,
             &|recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.tab_stops),
             &mut |items| self.next_frame.tab_stops.replay(items),
         );
         recording.window_controls.replay(
             engine,
-            cx,
             &|recording, phase| {
                 (phase == MetadataPhase::Paint).then_some(&recording.window_controls)
             },
@@ -4096,7 +3994,6 @@ impl Window {
         );
         recording.mouse_listeners.replay(
             engine,
-            cx,
             &|recording, phase| {
                 (phase == MetadataPhase::Paint).then_some(&recording.mouse_listeners)
             },
@@ -4104,7 +4001,6 @@ impl Window {
         );
         recording.input_handlers.replay(
             engine,
-            cx,
             &|recording, phase| {
                 (phase == MetadataPhase::Paint).then_some(&recording.input_handlers)
             },
@@ -4112,21 +4008,17 @@ impl Window {
         );
         recording.cursor_styles.replay(
             engine,
-            cx,
             &|recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.cursor_styles),
             &mut |items| self.next_frame.cursor_styles.extend_from_slice(items),
         );
         #[cfg(any(test, feature = "test-support"))]
         recording.debug_bounds.replay(
             engine,
-            cx,
             &|recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.debug_bounds),
             &mut |items| self.next_frame.replay_debug_bounds(items),
         );
         let parent = self.next_frame.scene.suspend_node_scene();
-        recording
-            .scene
-            .replay(&mut self.next_frame.scene, engine, cx);
+        recording.scene.replay(&mut self.next_frame.scene, engine);
         self.next_frame.scene.restore_node_scene(parent, node_id);
         let end = self.paint_index();
         recording.paint_states.frame_range =
@@ -4413,29 +4305,27 @@ impl Window {
         init: impl FnOnce(&mut Self, &mut Context<S>) -> S,
     ) -> Entity<S> {
         let current_view = self.current_view();
-        if let Some(node) = self.node_engine.current_node() {
+        if let Some(node_id) = self.node_engine.current_node() {
             return self.with_global_id(key.into(), |global_id, window| {
                 let key = (global_id.clone(), TypeId::of::<S>());
-                let existing = node.update(cx, |node, _| {
-                    node.accessed_local_state.insert(key.clone());
-                    node.local_state.get(&key).map(|state| state.entity.clone())
-                });
-                if let Some(existing) = existing {
+                let node = window.node_engine.node_mut(node_id);
+                node.accessed_local_state.insert(key.clone());
+                if let Some(existing) = node.local_state.get(&key) {
                     return existing
+                        .entity
+                        .clone()
                         .downcast::<S>()
                         .expect("local state is keyed by its type");
                 }
                 let state = cx.new(|cx| init(window, cx));
                 let subscription = cx.observe(&state, move |_, cx| cx.notify(current_view));
-                node.update(cx, |node, _| {
-                    node.local_state.insert(
-                        key,
-                        crate::NodeLocalState {
-                            entity: state.clone().into_any(),
-                            _subscription: subscription,
-                        },
-                    );
-                });
+                window.node_engine.node_mut(node_id).local_state.insert(
+                    key,
+                    crate::NodeLocalState {
+                        entity: state.clone().into_any(),
+                        _subscription: subscription,
+                    },
+                );
                 state
             });
         }

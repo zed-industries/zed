@@ -1,26 +1,21 @@
 use crate::{
-    AnyView, App, AppContext, Bounds, Entity, EntityId, GlobalElementId, LayoutId, Pixels,
-    ViewNode, ViewNodeCacheKey, ViewNodeRecording,
+    AnyView, App, Bounds, EntityId, GlobalElementId, LayoutId, Pixels, ViewNode, ViewNodeCacheKey,
+    ViewNodeRecording,
 };
 use collections::{FxHashMap, FxHashSet};
-pub(crate) type ViewNodeId = EntityId;
+use slotmap::SlotMap;
+
+slotmap::new_key_type! {
+    /// Identifies one mounted view occurrence. Nodes are engine storage: they are not
+    /// entities, cannot be observed or notified, and never appear in dependency sets.
+    pub(crate) struct ViewNodeId;
+}
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct ViewOccurrence {
     element: GlobalElementId,
     parent: Option<ViewNodeId>,
     index: usize,
-}
-
-pub(crate) enum NodeRenderDecision {
-    Graft {
-        node_id: ViewNodeId,
-        recording: ViewNodeRecording,
-        accessed_entities: FxHashSet<EntityId>,
-    },
-    Render {
-        node_id: ViewNodeId,
-    },
 }
 
 /// Work performed by the node engine in its last completed frame.
@@ -41,11 +36,14 @@ pub struct NodeStats {
 }
 
 pub(crate) struct NodeEngine {
-    invalidation_queue: Vec<ViewNodeId>,
     frame_stats: NodeStats,
     pub(crate) last_frame_stats: NodeStats,
-    nodes: FxHashMap<ViewNodeId, Entity<ViewNode>>,
+    nodes: SlotMap<ViewNodeId, ViewNode>,
+    /// Reverse of each node's `accessed_entities`: the nodes whose recorded output was
+    /// computed from a read of the keyed entity. Ancestors are reached through `parent`.
     consumers: FxHashMap<EntityId, FxHashSet<ViewNodeId>>,
+    /// Cleared dependency sets awaiting reuse as the accumulator for a rebuilding node.
+    spare_dependency_sets: Vec<FxHashSet<EntityId>>,
     occurrences: FxHashMap<ViewOccurrence, ViewNodeId>,
     dirty_nodes: FxHashSet<ViewNodeId>,
     frame_bound_nodes: FxHashSet<ViewNodeId>,
@@ -69,11 +67,11 @@ impl NodeEngine {
 
     pub(crate) fn new() -> Self {
         Self {
-            invalidation_queue: Vec::new(),
             frame_stats: NodeStats::default(),
             last_frame_stats: NodeStats::default(),
-            nodes: FxHashMap::default(),
+            nodes: SlotMap::with_key(),
             consumers: FxHashMap::default(),
+            spare_dependency_sets: Vec::new(),
             occurrences: FxHashMap::default(),
             dirty_nodes: FxHashSet::default(),
             frame_bound_nodes: FxHashSet::default(),
@@ -87,66 +85,63 @@ impl NodeEngine {
         }
     }
 
-    pub(crate) fn take_recording(
-        &mut self,
-        node_id: ViewNodeId,
-        cx: &mut App,
-    ) -> Option<ViewNodeRecording> {
-        self.nodes
-            .get(&node_id)?
-            .update(cx, |node, _| node.recording.take())
+    pub(crate) fn node(&self, node_id: ViewNodeId) -> &ViewNode {
+        &self.nodes[node_id]
+    }
+
+    pub(crate) fn node_mut(&mut self, node_id: ViewNodeId) -> &mut ViewNode {
+        &mut self.nodes[node_id]
+    }
+
+    pub(crate) fn take_recording(&mut self, node_id: ViewNodeId) -> Option<ViewNodeRecording> {
+        self.nodes.get_mut(node_id)?.recording.take()
     }
 
     #[cfg(test)]
-    pub(crate) fn recordings<'a>(
-        &'a self,
-        cx: &'a App,
-    ) -> impl Iterator<Item = &'a ViewNodeRecording> {
+    pub(crate) fn recordings(&self) -> impl Iterator<Item = &ViewNodeRecording> {
         self.nodes
             .values()
-            .filter_map(move |node| node.read(cx).recording.as_ref())
+            .filter_map(|node| node.recording.as_ref())
     }
 
-    pub(crate) fn recording<'a>(&self, node_id: ViewNodeId, cx: &'a App) -> &'a ViewNodeRecording {
+    pub(crate) fn recording(&self, node_id: ViewNodeId) -> &ViewNodeRecording {
         self.nodes
-            .get(&node_id)
+            .get(node_id)
             .expect("recorded child is mounted")
-            .read(cx)
             .recording
             .as_ref()
             .expect("recorded child has finished painting")
     }
 
-    pub(crate) fn replay_scene(&self, node_id: ViewNodeId, scene: &mut crate::Scene, cx: &App) {
-        let node = self
-            .nodes
-            .get(&node_id)
-            .expect("node scene child must be mounted")
-            .read(cx);
-        let recording = node
-            .recording
-            .as_ref()
-            .expect("node scene child must have finished painting");
-        recording.scene.replay(scene, self, cx);
+    pub(crate) fn replay_scene(&self, node_id: ViewNodeId, scene: &mut crate::Scene) {
+        self.recording(node_id).scene.replay(scene, self);
     }
 
-    pub(crate) fn current_node(&self) -> Option<Entity<ViewNode>> {
-        self.traversal_stack
-            .last()
-            .and_then(|node_id| self.nodes.get(node_id))
-            .cloned()
+    pub(crate) fn current_node(&self) -> Option<ViewNodeId> {
+        self.traversal_stack.last().copied()
     }
 
-    pub(crate) fn discard_dirty_layouts(&mut self, cx: &mut App) -> bool {
+    /// Takes an empty set to accumulate the entities a rebuilding node reads. Returned to
+    /// the engine by `store_render`, which swaps it with the node's previous set.
+    pub(crate) fn take_dependency_set(&mut self) -> FxHashSet<EntityId> {
+        self.spare_dependency_sets.pop().unwrap_or_default()
+    }
+
+    pub(crate) fn recycle_dependency_set(&mut self, mut set: FxHashSet<EntityId>) {
+        set.clear();
+        self.spare_dependency_sets.push(set);
+    }
+
+    pub(crate) fn discard_dirty_layouts(&mut self) -> bool {
         if !self
             .nodes
             .keys()
-            .all(|node_id| self.dirty_nodes.contains(node_id))
+            .all(|node_id| self.dirty_nodes.contains(&node_id))
         {
             return false;
         }
-        for node in self.nodes.values() {
-            node.update(cx, |node, _| node.layout = None);
+        for node in self.nodes.values_mut() {
+            node.layout = None;
         }
         true
     }
@@ -167,16 +162,19 @@ impl NodeEngine {
         self.changed_bounds = None;
         self.next_roots.clear();
         if self.full_refresh {
-            self.dirty_nodes.extend(self.nodes.keys().copied());
+            self.dirty_nodes.extend(self.nodes.keys());
         }
     }
 
+    /// Marks dirty every node whose recorded output was computed from a read of one of
+    /// `sources`, and every ancestor of such a node. Reads only establish dirtiness; the
+    /// sources' observers are not involved and no node is notified.
     pub(crate) fn invalidate_entities(&mut self, sources: &FxHashSet<EntityId>) {
         for source in sources {
             if !self.consumers.contains_key(source) {
                 // Nothing recorded a read of this entity, so nothing says which output
                 // depends on it. Rebuild everything rather than reuse stale output.
-                self.dirty_nodes.extend(self.nodes.keys().copied());
+                self.dirty_nodes.extend(self.nodes.keys());
                 return;
             }
         }
@@ -185,13 +183,20 @@ impl NodeEngine {
         }
     }
 
+    /// Marks dirty the nodes that read `source` and their ancestors. Does nothing when no
+    /// node has read `source`.
     pub(crate) fn invalidate_consumers(&mut self, source: EntityId) {
-        let pending = &mut self.invalidation_queue;
-        pending.clear();
-        pending.extend(self.consumers.get(&source).into_iter().flatten().copied());
-        while let Some(node_id) = pending.pop() {
-            if self.dirty_nodes.insert(node_id) {
-                pending.extend(self.consumers.get(&node_id).into_iter().flatten().copied());
+        let Some(consumers) = self.consumers.get(&source) else {
+            return;
+        };
+        for consumer in consumers {
+            let mut node_id = Some(*consumer);
+            // A parent's output contains its children's. Stop at the first node that is
+            // already dirty, since its ancestors were dirtied with it.
+            while let Some(id) = node_id
+                && self.dirty_nodes.insert(id)
+            {
+                node_id = self.nodes.get(id).and_then(|node| node.parent);
             }
         }
     }
@@ -226,11 +231,11 @@ impl NodeEngine {
         }
     }
 
-    fn next_occurrence(&self, element: GlobalElementId, cx: &App) -> ViewOccurrence {
+    fn next_occurrence(&self, element: GlobalElementId) -> ViewOccurrence {
         let parent = self.traversal_stack.last().copied();
         let siblings = parent
-            .and_then(|parent| self.nodes.get(&parent))
-            .map(|parent| &parent.read(cx).next_children)
+            .and_then(|parent| self.nodes.get(parent))
+            .map(|parent| &parent.next_children)
             .unwrap_or(&self.next_roots);
         let mut occurrence = ViewOccurrence {
             element,
@@ -248,32 +253,22 @@ impl NodeEngine {
         occurrence
     }
 
+    /// Mounts the view occurrence under the current traversal parent (creating its node on
+    /// first sight), records it as a child for reconciliation, and makes it the current
+    /// node until the matching `finish_prepaint`.
     pub(crate) fn begin_occurrence(
         &mut self,
-        occurrence: GlobalElementId,
+        element: GlobalElementId,
         view_id: EntityId,
         view: Option<AnyView>,
-        cache_key: ViewNodeCacheKey,
-        cx: &mut App,
-    ) -> NodeRenderDecision {
-        let occurrence = self.next_occurrence(occurrence, cx);
-        self.begin_resolved_occurrence(occurrence, view_id, view, cache_key, cx)
-    }
-
-    fn begin_resolved_occurrence(
-        &mut self,
-        occurrence: ViewOccurrence,
-        view_id: EntityId,
-        view: Option<AnyView>,
-        cache_key: ViewNodeCacheKey,
-        cx: &mut App,
-    ) -> NodeRenderDecision {
+        cache_key: &ViewNodeCacheKey,
+    ) -> ViewNodeId {
+        let occurrence = self.next_occurrence(element);
         let parent = occurrence.parent;
         let node_id = if let Some(node_id) = self.occurrences.get(&occurrence).copied() {
             node_id
         } else {
-            let previous_bounds = cache_key.bounds;
-            let node = ViewNode {
+            let node_id = self.nodes.insert(ViewNode {
                 local_state: FxHashMap::default(),
                 accessed_local_state: FxHashSet::default(),
                 layout: None,
@@ -284,116 +279,100 @@ impl NodeEngine {
                 view_id,
                 _view: view,
                 cache_key: cache_key.clone(),
-                previous_bounds,
+                previous_bounds: cache_key.bounds,
                 accessed_entities: FxHashSet::default(),
                 dependency_revisions: Vec::new(),
                 recording: None,
-            };
-            let node = cx.new(|_| node);
-            let node_id = node.entity_id();
-            self.nodes.insert(node_id, node);
+            });
             self.occurrences.insert(occurrence, node_id);
             self.dirty_nodes.insert(node_id);
             node_id
         };
 
         if let Some(parent_id) = parent {
-            if let Some(parent_node) = self.nodes.get(&parent_id) {
-                parent_node.update(cx, |node, _| {
-                    node.next_children.push(node_id);
-                });
+            if let Some(parent_node) = self.nodes.get_mut(parent_id) {
+                parent_node.next_children.push(node_id);
             }
         } else {
             self.next_roots.push(node_id);
         }
-
-        let graft = self.nodes.get(&node_id).and_then(|node| {
-            let previous = node.read(cx);
-            if !self.full_refresh
-                && !self.dirty_nodes.contains(&node_id)
-                && !self.frame_bound_nodes.contains(&node_id)
-                && previous.cache_key == cache_key
-                && previous
-                    .dependency_revisions
-                    .iter()
-                    .all(|(source, revision)| cx.entities.revision(*source) == Some(*revision))
-            {
-                node.update(cx, |node, cx| {
-                    node.recording.take().map(|recording| {
-                        let mut accessed_entities = cx.entities.take_access_scope();
-                        accessed_entities.extend(node.accessed_entities.iter().copied());
-                        (recording, accessed_entities)
-                    })
-                })
-            } else {
-                None
-            }
-        });
-
         self.traversal_stack.push(node_id);
-        if let Some((recording, accessed_entities)) = graft {
-            NodeRenderDecision::Graft {
-                node_id,
-                recording,
-                accessed_entities,
-            }
-        } else {
-            self.restart_render(node_id, cx);
-            NodeRenderDecision::Render { node_id }
-        }
+        node_id
     }
 
-    pub(crate) fn restart_render(&mut self, node_id: ViewNodeId, cx: &mut App) {
-        self.frame_bound_nodes.remove(&node_id);
-        if let Some(node) = self.nodes.get(&node_id) {
-            node.update(cx, |node, _| {
-                node.next_children.clear();
-                node.accessed_local_state.clear();
-            });
-        }
-    }
-
-    pub(crate) fn begin_layout(
+    /// Returns the node's recording if its output can be reused for a frame whose ambient
+    /// inputs are `cache_key`. Otherwise prepares the node to render again and returns `None`.
+    pub(crate) fn reuse(
         &mut self,
-        occurrence: GlobalElementId,
-        view: AnyView,
-        mut cache_key: ViewNodeCacheKey,
-        cx: &mut App,
-    ) -> (NodeRenderDecision, Option<LayoutId>) {
-        let occurrence = self.next_occurrence(occurrence, cx);
-        let previous = self
-            .occurrences
-            .get(&occurrence)
-            .and_then(|node_id| self.nodes.get(node_id))
-            .map(|node| (node.read(cx).cache_key.bounds, node.read(cx).layout));
-        if let Some((bounds, _)) = previous {
-            cache_key.bounds = bounds;
-        }
-        let decision =
-            self.begin_resolved_occurrence(occurrence, view.entity_id(), Some(view), cache_key, cx);
-        (decision, previous.and_then(|(_, layout)| layout))
-    }
-
-    pub(crate) fn store_layout(&mut self, node_id: ViewNodeId, layout: LayoutId, cx: &mut App) {
-        if let Some(node) = self.nodes.get(&node_id) {
-            node.update(cx, |node, _| node.layout = Some(layout));
+        node_id: ViewNodeId,
+        cache_key: &ViewNodeCacheKey,
+        cx: &App,
+    ) -> Option<ViewNodeRecording> {
+        if self.can_reuse(node_id, cache_key, false, cx) {
+            self.nodes[node_id].recording.take()
+        } else {
+            self.restart_render(node_id);
+            None
         }
     }
 
-    pub(crate) fn cache_key(&self, node_id: ViewNodeId, cx: &App) -> Option<ViewNodeCacheKey> {
-        self.nodes
-            .get(&node_id)
-            .map(|node| node.read(cx).cache_key.clone())
+    /// Like `reuse`, for the layout phase: bounds are not yet known, so they are excluded
+    /// from the comparison, and reuse additionally requires a retained layout to graft.
+    pub(crate) fn reuse_layout(
+        &mut self,
+        node_id: ViewNodeId,
+        cache_key: &ViewNodeCacheKey,
+        cx: &App,
+    ) -> Option<(ViewNodeRecording, LayoutId)> {
+        if self.can_reuse(node_id, cache_key, true, cx)
+            && let Some(layout) = self.nodes[node_id].layout
+            && let Some(recording) = self.nodes[node_id].recording.take()
+        {
+            Some((recording, layout))
+        } else {
+            self.restart_render(node_id);
+            None
+        }
     }
 
-    pub(crate) fn retained_layouts<'a>(
-        &'a self,
-        cx: &'a App,
-    ) -> impl Iterator<Item = LayoutId> + 'a {
+    fn can_reuse(
+        &self,
+        node_id: ViewNodeId,
+        cache_key: &ViewNodeCacheKey,
+        ignore_bounds: bool,
+        cx: &App,
+    ) -> bool {
+        let node = &self.nodes[node_id];
+        !self.full_refresh
+            && !self.dirty_nodes.contains(&node_id)
+            && !self.frame_bound_nodes.contains(&node_id)
+            && node.recording.is_some()
+            && node.cache_key.matches(cache_key, ignore_bounds)
+            && node
+                .dependency_revisions
+                .iter()
+                .all(|(source, revision)| cx.entities.revision(*source) == Some(*revision))
+    }
+
+    pub(crate) fn restart_render(&mut self, node_id: ViewNodeId) {
+        self.frame_bound_nodes.remove(&node_id);
+        if let Some(node) = self.nodes.get_mut(node_id) {
+            node.next_children.clear();
+            node.accessed_local_state.clear();
+        }
+    }
+
+    pub(crate) fn store_layout(&mut self, node_id: ViewNodeId, layout: LayoutId) {
+        if let Some(node) = self.nodes.get_mut(node_id) {
+            node.layout = Some(layout);
+        }
+    }
+
+    pub(crate) fn retained_layouts(&self) -> impl Iterator<Item = LayoutId> + '_ {
         self.nodes
             .iter()
             .filter(|(node_id, _)| !self.frame_bound_nodes.contains(node_id))
-            .filter_map(|(_, node)| node.read(cx).layout)
+            .filter_map(|(_, node)| node.layout)
     }
 
     pub(crate) fn mark_frame_bound_layout(&mut self) {
@@ -405,9 +384,9 @@ impl NodeEngine {
         self.traversal_stack.push(node_id);
     }
 
-    pub(crate) fn finish_prepaint(&mut self, node_id: ViewNodeId, rendered: bool, cx: &mut App) {
+    pub(crate) fn finish_prepaint(&mut self, node_id: ViewNodeId, rendered: bool) {
         if rendered {
-            self.reconcile_children(node_id, cx);
+            self.reconcile_children(node_id);
         }
         self.pop_traversal(node_id);
     }
@@ -418,50 +397,34 @@ impl NodeEngine {
         cache_key: ViewNodeCacheKey,
         recording: ViewNodeRecording,
         mut accessed_entities: FxHashSet<EntityId>,
-        cx: &mut App,
+        cx: &App,
     ) {
-        let Some(node) = self.nodes.get(&node_id) else {
+        let Some(node) = self.nodes.get_mut(node_id) else {
             return;
         };
-        let node = node.read(cx);
         let old_bounds = node.previous_bounds;
         let new_bounds = cache_key.bounds;
         accessed_entities.insert(node.view_id);
-        // A parent's output contains its children's, so a dirty child dirties its ancestors
-        // through the same graph as any other dependency.
-        accessed_entities.extend(node.children.iter().copied());
-        accessed_entities.remove(&node_id);
-
-        if let Some(node) = self.nodes.get(&node_id) {
-            let previous_accesses = node.update(cx, |node, cx| {
-                node.cache_key = cache_key;
-                node.previous_bounds = new_bounds;
-                let previous_accesses =
-                    std::mem::replace(&mut node.accessed_entities, accessed_entities);
-                node.dependency_revisions.clear();
-                node.dependency_revisions.extend(
-                    node.accessed_entities
-                        .iter()
-                        .filter(|source| !self.nodes.contains_key(source))
-                        .filter_map(|source| {
-                            cx.entities
-                                .revision(*source)
-                                .map(|revision| (*source, revision))
-                        }),
-                );
-                node.recording = Some(recording);
-                node.local_state
-                    .retain(|key, _| node.accessed_local_state.contains(key));
-                previous_accesses
-            });
-            Self::replace_dependencies(
-                &mut self.consumers,
-                node_id,
-                &previous_accesses,
-                &node.read(cx).accessed_entities,
-            );
-            cx.entities.recycle_access_scope(previous_accesses);
-        }
+        node.cache_key = cache_key;
+        node.previous_bounds = new_bounds;
+        node.dependency_revisions.clear();
+        node.dependency_revisions
+            .extend(accessed_entities.iter().filter_map(|source| {
+                cx.entities
+                    .revision(*source)
+                    .map(|revision| (*source, revision))
+            }));
+        node.recording = Some(recording);
+        node.local_state
+            .retain(|key, _| node.accessed_local_state.contains(key));
+        let previous_accesses = std::mem::replace(&mut node.accessed_entities, accessed_entities);
+        Self::replace_dependencies(
+            &mut self.consumers,
+            node_id,
+            &previous_accesses,
+            &node.accessed_entities,
+        );
+        self.recycle_dependency_set(previous_accesses);
 
         self.dirty_nodes.remove(&node_id);
         self.frame_stats.rebuilt_scopes += 1;
@@ -469,27 +432,20 @@ impl NodeEngine {
         self.include_changed_bounds(new_bounds);
     }
 
-    pub(crate) fn store_graft(
-        &mut self,
-        node_id: ViewNodeId,
-        recording: ViewNodeRecording,
-        cx: &mut App,
-    ) {
+    pub(crate) fn store_graft(&mut self, node_id: ViewNodeId, recording: ViewNodeRecording) {
         self.frame_stats.reused_subtrees += 1;
-        if let Some(node) = self.nodes.get(&node_id) {
-            node.update(cx, |node, _| {
-                node.recording = Some(recording);
-            });
+        if let Some(node) = self.nodes.get_mut(node_id) {
+            node.recording = Some(recording);
         }
     }
 
-    pub(crate) fn finish_frame(&mut self, cx: &mut App) -> Option<Bounds<Pixels>> {
+    pub(crate) fn finish_frame(&mut self) -> Option<Bounds<Pixels>> {
         debug_assert!(self.traversal_stack.is_empty());
         std::mem::swap(&mut self.roots, &mut self.next_roots);
         let mut stale_roots = std::mem::take(&mut self.next_roots);
         for root_id in stale_roots.drain(..) {
             if !self.roots.contains(&root_id) {
-                self.remove_subtree(root_id, cx);
+                self.remove_subtree(root_id);
             }
         }
         self.next_roots = stale_roots;
@@ -504,7 +460,6 @@ impl NodeEngine {
     pub(crate) fn clear(&mut self) {
         self.nodes.clear();
         self.consumers.clear();
-        self.invalidation_queue.clear();
         self.occurrences.clear();
         self.dirty_nodes.clear();
         self.frame_bound_nodes.clear();
@@ -528,57 +483,41 @@ impl NodeEngine {
         debug_assert_eq!(popped, Some(node_id));
     }
 
-    fn reconcile_children(&mut self, node_id: ViewNodeId, cx: &mut App) {
-        let Some(node) = self.nodes.get(&node_id) else {
+    fn reconcile_children(&mut self, node_id: ViewNodeId) {
+        let Some(node) = self.nodes.get_mut(node_id) else {
             return;
         };
-        let (mut stale_children, current_children) = node.update(cx, |node, _| {
-            (
-                std::mem::take(&mut node.children),
-                std::mem::take(&mut node.next_children),
-            )
-        });
+        let mut stale_children = std::mem::take(&mut node.children);
+        let current_children = std::mem::take(&mut node.next_children);
         for child_id in &current_children {
-            if let Some(child) = self.nodes.get(child_id) {
-                child.update(cx, |child, _| child.parent = Some(node_id));
+            if let Some(child) = self.nodes.get_mut(*child_id) {
+                child.parent = Some(node_id);
             }
         }
         for child_id in stale_children.drain(..) {
             if !current_children.contains(&child_id) {
-                self.remove_subtree(child_id, cx);
+                self.remove_subtree(child_id);
             }
         }
-        if let Some(node) = self.nodes.get(&node_id) {
-            node.update(cx, |node, _| {
-                node.children = current_children;
-                node.next_children = stale_children;
-            });
+        if let Some(node) = self.nodes.get_mut(node_id) {
+            node.children = current_children;
+            node.next_children = stale_children;
         }
     }
 
-    fn remove_subtree(&mut self, node_id: ViewNodeId, cx: &mut App) {
-        let Some(node) = self.nodes.remove(&node_id) else {
+    fn remove_subtree(&mut self, node_id: ViewNodeId) {
+        let Some(node) = self.nodes.remove(node_id) else {
             return;
         };
-        let (bounds, children, occurrence, accessed_entities) = node.update(cx, |node, _| {
-            node.recording = None;
-            node.local_state.clear();
-            (
-                node.previous_bounds,
-                std::mem::take(&mut node.children),
-                node.occurrence.clone(),
-                std::mem::take(&mut node.accessed_entities),
-            )
-        });
-        for source in &accessed_entities {
+        for source in &node.accessed_entities {
             Self::remove_dependency(&mut self.consumers, node_id, *source);
         }
-        cx.entities.recycle_access_scope(accessed_entities);
-        self.include_changed_bounds(bounds);
-        for child_id in children {
-            self.remove_subtree(child_id, cx);
+        self.recycle_dependency_set(node.accessed_entities);
+        self.include_changed_bounds(node.previous_bounds);
+        for child_id in node.children {
+            self.remove_subtree(child_id);
         }
-        self.occurrences.remove(&occurrence);
+        self.occurrences.remove(&node.occurrence);
         self.frame_bound_nodes.remove(&node_id);
         self.dirty_nodes.remove(&node_id);
     }

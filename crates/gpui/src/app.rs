@@ -1120,14 +1120,18 @@ impl App {
         })
     }
 
-    pub(crate) fn collect_accessed_entities<R>(
+    /// Runs `callback`, adding every entity it reads to `reads`. Nested calls also count
+    /// their reads towards the enclosing call. This is how the node engine learns which
+    /// entities a view's render depends on.
+    pub(crate) fn track_reads<R>(
         &mut self,
+        reads: &mut FxHashSet<EntityId>,
         callback: impl FnOnce(&mut App) -> R,
-    ) -> (R, FxHashSet<EntityId>) {
+    ) -> R {
         self.entities.begin_access_scope();
         let result = callback(self);
-        let accessed_entities = self.entities.end_access_scope();
-        (result, accessed_entities)
+        self.entities.end_access_scope(reads);
+        result
     }
 
     pub(crate) fn record_entities_accessed(

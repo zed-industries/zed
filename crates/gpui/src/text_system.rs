@@ -413,9 +413,8 @@ impl WindowTextSystem {
         &self,
         recording: &LineLayoutRecording,
         engine: &crate::node_engine::NodeEngine,
-        cx: &crate::App,
     ) {
-        self.line_layout_cache.replay_layouts(recording, engine, cx);
+        self.line_layout_cache.replay_layouts(recording, engine);
     }
 
     pub(crate) fn truncate_layouts(&self, index: LineLayoutIndex) {

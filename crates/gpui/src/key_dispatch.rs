@@ -282,23 +282,15 @@ impl DispatchTree {
         &mut self,
         recording: &crate::view_node::ViewNodeRecording,
         engine: &crate::node_engine::NodeEngine,
-        cx: &App,
         focus: Option<FocusId>,
     ) -> bool {
-        self.replay_recorded_nodes(
-            recording,
-            engine,
-            cx,
-            focus,
-            self.node_stack.last().copied(),
-        )
+        self.replay_recorded_nodes(recording, engine, focus, self.node_stack.last().copied())
     }
 
     fn replay_recorded_nodes(
         &mut self,
         recording: &crate::view_node::ViewNodeRecording,
         engine: &crate::node_engine::NodeEngine,
-        cx: &App,
         focus: Option<FocusId>,
         parent: Option<DispatchNodeId>,
     ) -> bool {
@@ -323,9 +315,8 @@ impl DispatchTree {
                 &map_parent,
             );
             contains_focus |= self.replay_recorded_nodes(
-                engine.recording(child.node, cx),
+                engine.recording(child.node),
                 engine,
-                cx,
                 focus,
                 map_parent(
                     child

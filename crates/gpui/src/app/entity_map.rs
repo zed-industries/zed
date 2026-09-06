@@ -220,32 +220,28 @@ impl EntityMap {
         debug_assert!(self.accessed_entity_scopes.get_mut().is_empty());
     }
 
-    pub(crate) fn take_access_scope(&mut self) -> FxHashSet<EntityId> {
-        self.recycled_access_scopes.pop().unwrap_or_default()
-    }
-
-    pub(crate) fn recycle_access_scope(&mut self, mut scope: FxHashSet<EntityId>) {
-        scope.clear();
-        self.recycled_access_scopes.push(scope);
-    }
-
-    pub fn begin_access_scope(&mut self) {
-        let scope = self.take_access_scope();
+    /// Opens a scope that collects the entities accessed until the matching
+    /// `end_access_scope`. Scopes nest; a completed scope's accesses also count for its parent.
+    pub(crate) fn begin_access_scope(&mut self) {
+        let scope = self.recycled_access_scopes.pop().unwrap_or_default();
         self.accessed_entity_scopes.get_mut().push(scope);
     }
 
-    pub fn end_access_scope(&mut self) -> FxHashSet<EntityId> {
+    /// Closes the innermost scope, adding the entities it collected to `accessed`.
+    pub(crate) fn end_access_scope(&mut self, accessed: &mut FxHashSet<EntityId>) {
         let scopes = self.accessed_entity_scopes.get_mut();
         let completed_scope = scopes.pop();
         debug_assert!(
             completed_scope.is_some(),
             "entity access scope stack underflow"
         );
-        let completed_scope = completed_scope.unwrap_or_default();
+        let mut completed_scope = completed_scope.unwrap_or_default();
         if let Some(parent_scope) = scopes.last_mut() {
             parent_scope.extend(completed_scope.iter().copied());
         }
-        completed_scope
+        accessed.extend(completed_scope.iter().copied());
+        completed_scope.clear();
+        self.recycled_access_scopes.push(completed_scope);
     }
 
     pub(crate) fn record_access(&self, entity_id: EntityId) {
@@ -1260,6 +1256,7 @@ impl fmt::Debug for BacktraceFormatter {
 #[cfg(test)]
 mod test {
     use crate::EntityMap;
+    use collections::FxHashSet;
 
     struct TestEntity {
         pub i: i32,
@@ -1362,8 +1359,10 @@ mod test {
         assert_eq!(entity_map.read(&entity).i, 1);
         entity_map.begin_access_scope();
         assert_eq!(entity_map.read(&entity).i, 1);
-        let inner_accesses = entity_map.end_access_scope();
-        let outer_accesses = entity_map.end_access_scope();
+        let mut inner_accesses = FxHashSet::default();
+        entity_map.end_access_scope(&mut inner_accesses);
+        let mut outer_accesses = FxHashSet::default();
+        entity_map.end_access_scope(&mut outer_accesses);
 
         assert_eq!(inner_accesses.len(), 1);
         assert!(inner_accesses.contains(&entity.entity_id()));
