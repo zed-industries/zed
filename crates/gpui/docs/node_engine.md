@@ -132,27 +132,47 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 - [x] Profile the full-rebuild overhead. `Workbench/update/full` (the only multi-node
   fixture) was 12.5% slower than `main` on this machine; the cause was the line layout
   cache evicting text that reused views never looked up, so every rebuild reshaped it
-  (CoreText at 12.5% of samples vs 0.9% on `main`). Keeping three previous frames in
-  `LineLayoutCache` made the same fixture 9% faster than `main`. Engine bookkeeping
-  (capture, scene push, dependency sets) measures at ~1.5% on `editor_render`.
-- [x] Painted callbacks live in the engine, not the frame. Mouse listeners and input
-  handlers are stored once in per-owner `CallbackSlots` (one per node, plus one
-  frame-scoped owner for output painted outside every node); `Frame` and recordings hold
-  only positions, and a call leases the closure out of its slot. This removed both
-  `Rc<RefCell<…>>` wrappers and made `PlatformInputHandler` a window handle that
-  resolves to the drawn frame's focused handler.
-- [ ] Nodes are the frame. `Frame` is the tree flattened into per-kind vectors
-  (hitboxes, listeners, tooltips, cursor styles, tab stops, dispatch nodes, deferred
-  draws), and `RecordedMetadata` exists only to re-derive the tree from slices of them.
-  Move each kind into the node that painted it, so a frame is the traversal (root order
-  plus deferred roots), replay is a tree walk, and `record`/`replay`/`frame_range`,
-  `PaintIndex`/`PrepaintStateIndex`, `capture_view_node_recording`, and
-  `assert_metadata_unique` go away. Dispatch reads the tree in paint order. Callbacks
-  (above) are the first kind moved; do the rest one kind at a time, keeping the oracle
-  green after each.
-- [ ] Any per-frame-"use" cache in GPUI (line layouts today; check atlas tiles and
-  element states) is a proxy for "still on screen" that reused views do not refresh.
-  Audit them for the same eviction pattern.
+  (CoreText at 12.5% of samples vs 0.9% on `main`). Resolved by node-owned text (below).
+  Engine bookkeeping measures at ~1.5% on `editor_render`.
+- [x] **Nodes are the frame.** Each node owns what it drew, per phase, in one
+  `Vec<OutputItem>` (hitboxes, tooltips, cursor styles, window controls, tab stop
+  operations, mouse listeners, input handlers, dispatch push/pop, test debug bounds),
+  with `Child(node, phase)` items marking where a child's output belongs, plus element
+  states, the text it looked up, its scene, and a lane of recorded dispatch nodes. A
+  reused node's output stays where it is; a redrawn node overwrites its own. Queries
+  (`hit_test`, `cursor_style`, `mouse_listeners`, `focused_input_handler`,
+  `hit_window_control`, `tab_stops`) walk the tree in drawing order or reverse. The
+  frame root — output drawn outside every node (deferred draws, `VisualTestContext::draw`)
+  and the splices to the root nodes — is the one part rebuilt every frame, so it keeps a
+  rendered/next pair swapped where the frames swap; once deferred draws are nodes and the
+  test draw wraps its element in one, that pair collapses into `roots`/`next_roots`.
+  `Frame` is down to focus, window-active, the dispatch tree, deferred draws, and the
+  scene linearization. Gone: `RecordedMetadata`, `capture_metadata`, `PaintIndex`,
+  `PrepaintStateIndex`, `ViewNodeRecording`, `LineLayoutRecording`, `record/replay_subtree`,
+  `assert_metadata_unique`, `Frame::finish`'s state carry-over, `NodeLocalState`.
+  - `DispatchTree` is unchanged from before the node engine: a flat per-frame tree with
+    unstable ids. A node records its pushes and pops; once it has painted, the recorded
+    nodes are refreshed from the live tree, and reuse walks the items pushing them back
+    under the active node. Making the dispatch tree itself node-owned is a possible
+    follow-up; it is not needed for correctness or the measured performance.
+  - `use_state`/`use_keyed_state` are `with_element_state` storing
+    `(Entity, Subscription)`; there is one element-state map, per node.
+  - Text: the node is the retention. Each phase holds the `(key, layout)` pairs its
+    elements looked up (`TextUse`), including text shaped inside Taffy measure closures
+    (attributed to the node that requested the measured layout, since measuring runs
+    outside the traversal). A redraw seeds the node's text into the frame cache first.
+    The cache is back to one previous frame, as before the node engine.
+  - One flat list vs. lanes: measured on `Workbench/update/full` (223 elements, 814
+    items, `OutputItem` 88 bytes after moving dispatch node snapshots to their own lane),
+    a hit test walks the frame in ~0.85µs and collecting mouse listeners ~1.2µs, about
+    1ns per item; items are ~55% dispatch push/pop, ~30% mouse listeners, ~10%
+    hitboxes. A real window is perhaps 10–30k items, so ~10–30µs per query and two or
+    three queries per mouse event. Per-kind lanes with a shared splice table would let a
+    hit test touch only hitboxes (~10× less) at the cost of a counts table per splice;
+    do it if a walk shows up in a profile of real use, not before.
+- [ ] Any per-frame-"use" cache in GPUI (atlas tiles; text is now node-owned) is a
+  proxy for "still on screen" that reused views do not refresh. Audit for the same
+  eviction pattern.
 - [x] **Critical path.** Cut the legacy engine. `Option<NodeEngine>` becomes
   `NodeEngine`; delete the non-node branches of `ViewElement`, the duplicate
   `use_keyed_state`, and the `Window` forwarding layer. Tests wanting a reference
