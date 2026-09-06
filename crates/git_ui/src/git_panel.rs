@@ -64,7 +64,7 @@ use multi_buffer::ExcerptBoundaryInfo;
 use notifications::status_toast::StatusToast;
 use project::git_store::GitAccess;
 use project::{
-    Fs, Project, ProjectPath,
+    DisableAiSettings, Fs, Project, ProjectPath,
     git_store::{
         CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op,
     },
@@ -1350,9 +1350,9 @@ impl GitPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            let mut was_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+            let mut was_ai_enabled = !DisableAiSettings::get_global(cx).disable_ai;
             let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-                let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+                let is_ai_enabled = !DisableAiSettings::get_global(cx).disable_ai;
                 if was_ai_enabled != is_ai_enabled {
                     was_ai_enabled = is_ai_enabled;
                     cx.notify();
@@ -4032,7 +4032,7 @@ impl GitPanel {
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
-        if !self.can_commit() || !AgentSettings::get_global(cx).enabled(cx) {
+        if !self.can_commit() || DisableAiSettings::get_global(cx).disable_ai {
             return;
         }
 
@@ -6044,7 +6044,7 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        if !agent_settings::AgentSettings::get_global(cx).enabled(cx) {
+        if DisableAiSettings::get_global(cx).disable_ai {
             return None;
         }
 
