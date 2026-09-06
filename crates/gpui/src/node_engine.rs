@@ -6,6 +6,13 @@ use collections::{FxHashMap, FxHashSet};
 use slotmap::SlotMap;
 use std::{any::TypeId, ops::ControlFlow};
 
+/// A point in a scope's output that `NodeEngine::rollback` returns to.
+#[derive(Clone, Copy)]
+pub(crate) struct OutputCheckpoint {
+    items: usize,
+    dispatch_pushes: u32,
+}
+
 /// Which frame's root a query walks: the one drawn last, which events are dispatched
 /// against, or the one being drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -229,16 +236,32 @@ impl NodeEngine {
         }
     }
 
-    /// A point in the output being drawn that `rollback` can return to, discarding
-    /// everything drawn after it.
-    pub(crate) fn checkpoint(&mut self) -> usize {
+    /// Records a dispatch node pushed for the element being drawn; see
+    /// [`OutputItem::DispatchPush`].
+    pub(crate) fn push_dispatch_node(&mut self, live: crate::DispatchNodeId) {
         let (_, phase, output) = self.current_output();
-        output.phase(phase).items.len()
+        let output = output.phase_mut(phase);
+        let index = output.dispatch_pushes;
+        output.dispatch_pushes += 1;
+        self.push(OutputItem::DispatchPush(live, index));
     }
 
-    pub(crate) fn rollback(&mut self, checkpoint: usize) {
+    /// A point in the output being drawn that `rollback` can return to, discarding
+    /// everything drawn after it.
+    pub(crate) fn checkpoint(&mut self) -> OutputCheckpoint {
         let (_, phase, output) = self.current_output();
-        output.phase_mut(phase).items.truncate(checkpoint);
+        let output = output.phase(phase);
+        OutputCheckpoint {
+            items: output.items.len(),
+            dispatch_pushes: output.dispatch_pushes,
+        }
+    }
+
+    pub(crate) fn rollback(&mut self, checkpoint: OutputCheckpoint) {
+        let (_, phase, output) = self.current_output();
+        let output = output.phase_mut(phase);
+        output.items.truncate(checkpoint.items);
+        output.dispatch_pushes = checkpoint.dispatch_pushes;
     }
 
     /// Visits every item in a frame in the order it was drawn, descending into child
@@ -344,16 +367,15 @@ impl NodeEngine {
         &'a self,
         node_id: ViewNodeId,
         phase: MetadataPhase,
-        mut visit: impl FnMut(&'a OutputItem) -> ControlFlow<()>,
+        mut visit: impl FnMut(OutputSlot, &'a OutputItem) -> ControlFlow<()>,
     ) {
         // Visiting every item; the walk only breaks when `visit` does.
-        let _ = self.walk_output(FrameOutput::Next, Some(node_id), phase, &mut |_, item| {
-            visit(item)
-        });
+        let _ = self.walk_output(FrameOutput::Next, Some(node_id), phase, &mut visit);
     }
 
     /// Copies the dispatch nodes a node pushed while prepainting out of the frame's dispatch
-    /// tree, now that painting has added their listeners and contexts.
+    /// tree, now that painting has added their listeners and contexts. Existing slots are
+    /// cloned into so their listener buffers are reused.
     pub(crate) fn snapshot_dispatch_nodes(
         &mut self,
         node_id: ViewNodeId,
@@ -362,11 +384,31 @@ impl NodeEngine {
         let Some(node) = self.nodes.get_mut(node_id) else {
             return;
         };
-        for item in &mut node.output.phase_mut(MetadataPhase::Prepaint).items {
-            if let OutputItem::DispatchPush(live, recorded) = item {
-                recorded.clone_from(dispatch_tree.node(*live));
+        let output = node.output.phase_mut(MetadataPhase::Prepaint);
+        for item in &output.items {
+            if let OutputItem::DispatchPush(live, index) = item {
+                let recorded = dispatch_tree.node(*live);
+                match output.dispatch_nodes.get_mut(*index as usize) {
+                    Some(slot) => slot.clone_from(recorded),
+                    None => output.dispatch_nodes.push(recorded.clone()),
+                }
             }
         }
+        output
+            .dispatch_nodes
+            .truncate(output.dispatch_pushes as usize);
+    }
+
+    /// The recorded copy of a dispatch node a reused view pushed.
+    pub(crate) fn recorded_dispatch_node(
+        &self,
+        slot: OutputSlot,
+        index: u32,
+    ) -> Option<&crate::key_dispatch::DispatchNode> {
+        self.output(FrameOutput::Next, slot.owner)?
+            .phase(slot.phase)
+            .dispatch_nodes
+            .get(index as usize)
     }
 
     /// Takes the callback at `slot` out of its output for a call, via `take` on the matching

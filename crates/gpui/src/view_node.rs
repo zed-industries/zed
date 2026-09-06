@@ -107,9 +107,10 @@ pub(crate) enum OutputItem {
     CursorStyle(CursorStyleRequest),
     WindowControl(crate::WindowControlArea, Hitbox),
     TabStop(crate::TabStopOperation),
-    /// A dispatch node pushed while prepainting; the recorded copy is refreshed once the node
-    /// has painted, and a reused view pushes it back into the frame's dispatch tree.
-    DispatchPush(crate::DispatchNodeId, crate::key_dispatch::DispatchNode),
+    /// A dispatch node pushed while prepainting. Its recorded copy lives in
+    /// [`PhaseOutput::dispatch_nodes`] at the given index, refreshed once the node has
+    /// painted; a reused view pushes it back into the frame's dispatch tree.
+    DispatchPush(crate::DispatchNodeId, u32),
     DispatchPop,
     /// `None` while leased out for a call.
     MouseListener(Option<crate::window::AnyMouseListener>),
@@ -128,6 +129,11 @@ pub(crate) struct PhaseOutput {
     /// The primitives painted, with the children spliced where they were painted. Only
     /// the paint phase records one.
     pub(crate) scene: ViewNodeScene,
+    /// Recorded copies of the dispatch nodes pushed in this phase, in push order. Kept out
+    /// of `items` because they are wide and pushed for every element. Entries beyond
+    /// `dispatch_pushes` are stale slots kept for their buffers.
+    pub(crate) dispatch_nodes: Vec<crate::key_dispatch::DispatchNode>,
+    pub(crate) dispatch_pushes: u32,
 }
 
 /// Everything one scope produced while drawing, by phase. A reused node keeps its output
@@ -168,6 +174,7 @@ impl NodeOutput {
     pub(crate) fn reset(&mut self) {
         for phase in &mut self.phases {
             phase.items.clear();
+            phase.dispatch_pushes = 0;
         }
         self.accessed_element_states.clear();
         self.generation += 1;

@@ -23,7 +23,6 @@ use crate::{
     TransformationMatrix, Underline, UnderlineStyle, ViewNodeCacheKey, ViewNodeId,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
     WindowOptions, WindowParams, WindowTextSystem,
-    key_dispatch::DispatchNode,
     node_engine::FrameOutput,
     point,
     prelude::*,
@@ -3627,19 +3626,21 @@ impl Window {
     /// active dispatch node.
     pub(crate) fn graft_view_node_prepaint(&mut self, node_id: ViewNodeId) {
         let dispatch_tree = &mut self.next_frame.dispatch_tree;
+        let engine = &self.node_engine;
         let mut contains_focus = false;
-        self.node_engine
-            .walk_node(node_id, MetadataPhase::Prepaint, |item| {
-                match item {
-                    OutputItem::DispatchPush(_, recorded) => {
+        engine.walk_node(node_id, MetadataPhase::Prepaint, |slot, item| {
+            match item {
+                OutputItem::DispatchPush(_, index) => {
+                    if let Some(recorded) = engine.recorded_dispatch_node(slot, *index) {
                         contains_focus |= dispatch_tree.push_recorded(recorded) == self.focus
                             && self.focus.is_some();
                     }
-                    OutputItem::DispatchPop => dispatch_tree.pop_node(),
-                    _ => {}
                 }
-                ControlFlow::Continue(())
-            });
+                OutputItem::DispatchPop => dispatch_tree.pop_node(),
+                _ => {}
+            }
+            ControlFlow::Continue(())
+        });
         if contains_focus {
             self.next_frame.focus = self.focus;
         }
@@ -3647,8 +3648,7 @@ impl Window {
 
     pub(crate) fn push_dispatch_node(&mut self) -> DispatchNodeId {
         let node_id = self.next_frame.dispatch_tree.push_node();
-        self.node_engine
-            .push(OutputItem::DispatchPush(node_id, DispatchNode::default()));
+        self.node_engine.push_dispatch_node(node_id);
         node_id
     }
 
