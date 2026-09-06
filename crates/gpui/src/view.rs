@@ -1611,7 +1611,9 @@ mod tests {
                             .reused_subtrees;
                         (
                             window.rendered_frame.scene.snapshot_for_test(),
-                            window.rendered_frame.tab_stops.insertion_history.len(),
+                            window
+                                .tab_stops(crate::node_engine::FrameOutput::Rendered)
+                                .operation_count(),
                         )
                     })
                     .expect("window open")

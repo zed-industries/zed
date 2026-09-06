@@ -157,7 +157,6 @@ pub(crate) struct ViewNodeRecording {
     pub(crate) layout_text: crate::text_system::LineLayoutRecording,
     pub(crate) prepaint_text: crate::text_system::LineLayoutRecording,
     pub(crate) paint_text: crate::text_system::LineLayoutRecording,
-    pub(crate) tab_stops: RecordedMetadata<crate::TabStopOperation>,
     pub(crate) dispatch_nodes: RecordedMetadata<crate::key_dispatch::DispatchNode>,
     pub(crate) dispatch_start: usize,
     pub(crate) has_layout: bool,
@@ -249,6 +248,7 @@ pub(crate) enum OutputItem {
     Tooltip(TooltipRequest),
     CursorStyle(CursorStyleRequest),
     WindowControl(crate::WindowControlArea, Hitbox),
+    TabStop(crate::TabStopOperation),
     /// `None` while leased out for a call.
     MouseListener(Option<crate::window::AnyMouseListener>),
     InputHandler(Option<Box<dyn crate::InputHandler>>),

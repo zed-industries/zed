@@ -18,11 +18,11 @@ use crate::{
     RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, ViewNodeCacheKey, ViewNodeId,
-    ViewNodeRecording, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
-    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    SystemWindowTabController, TabStopMap, TabStopOperation, TaffyLayoutEngine, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    ViewNodeCacheKey, ViewNodeId, ViewNodeRecording, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     node_engine::FrameOutput,
     point,
     prelude::*,
@@ -991,7 +991,6 @@ pub(crate) struct Frame {
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
-    pub(crate) tab_stops: TabStopMap,
 }
 
 #[derive(Clone, Default)]
@@ -1003,7 +1002,6 @@ pub(crate) struct PrepaintStateIndex {
 
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
-    tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
 }
 
@@ -1021,7 +1019,6 @@ impl Frame {
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector_hitboxes: FxHashMap::default(),
-            tab_stops: TabStopMap::default(),
         }
     }
 
@@ -1029,7 +1026,6 @@ impl Frame {
         self.dispatch_tree.clear();
         self.scene.clear();
         self.deferred_draws.clear();
-        self.tab_stops.clear();
         self.focus = None;
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -2160,7 +2156,10 @@ impl Window {
             return;
         }
 
-        if let Some(handle) = self.rendered_frame.tab_stops.next(self.focus.as_ref()) {
+        if let Some(handle) = self
+            .tab_stops(FrameOutput::Rendered)
+            .next(self.focus.as_ref())
+        {
             self.focus(&handle, cx)
         }
     }
@@ -2171,9 +2170,31 @@ impl Window {
             return;
         }
 
-        if let Some(handle) = self.rendered_frame.tab_stops.prev(self.focus.as_ref()) {
+        if let Some(handle) = self
+            .tab_stops(FrameOutput::Rendered)
+            .prev(self.focus.as_ref())
+        {
             self.focus(&handle, cx)
         }
+    }
+
+    /// The tab order of a frame, built from the tab stop operations in the tree.
+    pub(crate) fn tab_stops(&self, root: FrameOutput) -> TabStopMap {
+        let mut tab_stops = TabStopMap::default();
+        self.node_engine.walk(root, |_, item| {
+            if let OutputItem::TabStop(operation) = item {
+                tab_stops.apply(operation);
+            }
+            ControlFlow::Continue(())
+        });
+        tab_stops
+    }
+
+    pub(crate) fn insert_tab_stop(&mut self, focus_handle: &FocusHandle) {
+        self.node_engine
+            .push(OutputItem::TabStop(TabStopOperation::Insert(
+                focus_handle.clone(),
+            )));
     }
 
     /// Accessor for the text system.
@@ -3315,7 +3336,7 @@ impl Window {
             let frame_info = crate::window::a11y::debug::FrameDebugInfo {
                 viewport_size: self.viewport_size,
                 scale_factor: self.scale_factor,
-                tab_stop_count: self.next_frame.tab_stops.tab_stop_count(),
+                tab_stop_count: self.tab_stops(FrameOutput::Next).tab_stop_count(),
             };
             // clear the builder state regardless
             let tree_update = self.a11y.end_frame(frame_info);
@@ -3610,7 +3631,6 @@ impl Window {
         prepaint_range: Range<PrepaintStateIndex>,
         paint_range: Range<PaintIndex>,
     ) -> ViewNodeRecording {
-        use crate::view_node::{MetadataPhase, capture_metadata};
         recording.scene = self.next_frame.scene.finish_node_scene(node_id);
         let engine = &self.node_engine;
         // Prepaint can visit children that are never painted and have no completed recording.
@@ -3633,21 +3653,9 @@ impl Window {
             &children,
         );
         self.text_system.record_layouts(
-            paint_range.start.line_layout_index.clone()..paint_range.end.line_layout_index.clone(),
+            paint_range.start.line_layout_index..paint_range.end.line_layout_index,
             &mut recording.paint_text,
             &children,
-        );
-        recording.tab_stops.record(
-            paint_range.start.tab_handle_index..paint_range.end.tab_handle_index,
-            children.iter().copied(),
-            |recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.tab_stops),
-            |range, target, start| {
-                capture_metadata(
-                    &self.next_frame.tab_stops.insertion_history[range],
-                    target,
-                    start,
-                )
-            },
         );
         self.next_frame.dispatch_tree.record_subtree(
             prepaint_range.start.dispatch_tree_index..prepaint_range.end.dispatch_tree_index,
@@ -3686,24 +3694,17 @@ impl Window {
         node_id: ViewNodeId,
         recording: &mut ViewNodeRecording,
     ) {
-        use crate::view_node::MetadataPhase;
         let start = self.paint_index();
         let engine = &self.node_engine;
         self.text_system
             .replay_layouts(&recording.paint_text, engine);
-        recording.tab_stops.replay(
-            engine,
-            &|recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.tab_stops),
-            &mut |items| self.next_frame.tab_stops.replay(items),
-        );
         let parent = self.next_frame.scene.suspend_node_scene();
         recording.scene.replay(&mut self.next_frame.scene, engine);
         self.next_frame.scene.restore_node_scene(parent, node_id);
         let end = self.paint_index();
         recording
             .paint_text
-            .set_frame_range(start.line_layout_index.clone()..end.line_layout_index.clone());
-        recording.tab_stops.frame_range = start.tab_handle_index..end.tab_handle_index;
+            .set_frame_range(start.line_layout_index..end.line_layout_index);
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
@@ -3716,7 +3717,6 @@ impl Window {
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
-            tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
@@ -4103,9 +4103,11 @@ impl Window {
     #[inline]
     pub fn with_tab_group<R>(&mut self, index: Option<isize>, f: impl FnOnce(&mut Self) -> R) -> R {
         if let Some(index) = index {
-            self.next_frame.tab_stops.begin_group(index);
+            self.node_engine
+                .push(OutputItem::TabStop(TabStopOperation::Group(index)));
             let result = f(self);
-            self.next_frame.tab_stops.end_group();
+            self.node_engine
+                .push(OutputItem::TabStop(TabStopOperation::GroupEnd));
             result
         } else {
             f(self)

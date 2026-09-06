@@ -2502,7 +2502,7 @@ impl Interactivity {
                                         // every item, and `focus_next` from a container would jump
                                         // to the first item in the whole window instead of its own.
                                         if let Some(focus_handle) = &self.tracked_focus_handle {
-                                            window.next_frame.tab_stops.insert(focus_handle);
+                                            window.insert_tab_stop(focus_handle);
                                         }
                                         if let Some(hitbox) = hitbox {
                                             #[cfg(debug_assertions)]
