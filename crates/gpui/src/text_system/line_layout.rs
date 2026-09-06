@@ -505,6 +505,14 @@ pub(crate) struct TextUse {
 }
 
 impl TextUse {
+    pub(crate) fn append(&mut self, mut other: TextUse) {
+        self.lines.append(&mut other.lines);
+        self.wrapped_lines.append(&mut other.wrapped_lines);
+        self.lines_by_hash.append(&mut other.lines_by_hash);
+        self.wrapped_lines_by_hash
+            .append(&mut other.wrapped_lines_by_hash);
+    }
+
     fn checkpoint(&self) -> TextUseCheckpoint {
         TextUseCheckpoint {
             lines: self.lines.len(),

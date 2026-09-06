@@ -637,6 +637,17 @@ impl NodeEngine {
         self.splice(node_id, MetadataPhase::Paint);
     }
 
+    /// Adds text looked up on the node's behalf outside its traversal, such as while
+    /// measuring its layout.
+    pub(crate) fn append_text(&mut self, node_id: ViewNodeId, text: crate::text_system::TextUse) {
+        if let Some(node) = self.nodes.get_mut(node_id) {
+            node.output
+                .phase_mut(MetadataPhase::Layout)
+                .text
+                .append(text);
+        }
+    }
+
     /// Leaves the node's current phase. When the phase `rendered` (ran the view's elements
     /// rather than reusing its output), the text it looked up replaces the node's, and a
     /// rendered prepaint reconciles the children it mounted.

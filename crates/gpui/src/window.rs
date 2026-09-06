@@ -4842,6 +4842,19 @@ impl Window {
 
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
+        // Measuring runs inside `compute_layout`, outside every node's traversal, so the
+        // text it shapes is attributed to the node that requested the layout here.
+        let owner = self.node_engine.current_node();
+        let measure =
+            move |known_dimensions, available_space, window: &mut Window, cx: &mut App| {
+                window.text_system.begin_text_use();
+                let size = measure(known_dimensions, available_space, window, cx);
+                let text = window.text_system.end_text_use();
+                if let Some(owner) = owner {
+                    window.node_engine.append_text(owner, text);
+                }
+                size
+            };
         self.layout_engine
             .as_mut()
             .unwrap()
