@@ -7633,6 +7633,54 @@ mod tests {
         );
     }
 
+    // A `.safetensors` file starts with an 8-byte little-endian length for its
+    // JSON header, followed by that JSON, so the sniffed prefix is a handful of
+    // NUL bytes in front of a kilobyte of ASCII.
+    fn build_safetensors_bytes(header_len: u64) -> Vec<u8> {
+        let mut bytes = header_len.to_le_bytes().to_vec();
+        let json = br#"{"__metadata__":{"format":"pt"},"encoder.conv_in.weight":{"dtype":"BF16","shape":[128,3,3,3],"data_offsets":[0,6912]},"#;
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            let take = (FILE_ANALYSIS_BYTES - bytes.len()).min(json.len());
+            bytes.extend_from_slice(&json[..take]);
+        }
+        bytes
+    }
+
+    #[test]
+    fn test_safetensors_detected_as_binary() {
+        // Header lengths spanning what real models carry, from a single small
+        // tensor up to the tens of kilobytes of a full diffusion model.
+        for header_len in [120, 4660, 28 * 1024, 1 << 24] {
+            let bytes = build_safetensors_bytes(header_len);
+            assert_eq!(bytes.len(), FILE_ANALYSIS_BYTES);
+
+            assert_eq!(
+                analyze_byte_content(&bytes),
+                ByteContent::Binary,
+                "safetensors with a {header_len} byte JSON header should be detected as Binary"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sparse_nulls_not_misdetected_as_utf16() {
+        // One NUL byte satisfies the even/odd skew comparison trivially, and
+        // ASCII read as UTF-16 lands on code units above U+00FF, which the
+        // plausibility check counts as word-like. Nothing but the NUL density
+        // requirement keeps this out of the UTF-16 branch.
+        let mut bytes = b"# config\nkey = value\n\0".to_vec();
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            bytes.extend_from_slice(b"another = line\n");
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+
+        assert_eq!(
+            analyze_byte_content(&bytes),
+            ByteContent::Binary,
+            "text with a single stray NUL byte should not be read as UTF-16"
+        );
+    }
+
     #[test]
     fn test_utf16le_text_detected_as_utf16le() {
         let text = "Hello, world! This is a UTF-16 test string. ";

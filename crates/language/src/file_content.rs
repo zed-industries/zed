@@ -100,9 +100,9 @@ pub enum ByteContent {
     Unknown,
 }
 
-// Heuristic check using null byte distribution plus a generic text-likeness
-// heuristic. This prefers UTF-16 when many bytes are NUL and otherwise
-// distinguishes between text-like and binary-like content.
+// Heuristic check based on NUL bytes: content without any is treated as text,
+// content with them is UTF-16 when its NUL distribution and code units look
+// like UTF-16 text, and binary otherwise.
 pub fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
     if bytes.len() < 2 {
         return ByteContent::Unknown;
@@ -115,7 +115,6 @@ pub fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
     let limit = bytes.len().min(FILE_ANALYSIS_BYTES);
     let mut even_null_count = 0usize;
     let mut odd_null_count = 0usize;
-    let mut non_text_like_count = 0usize;
 
     for (i, &byte) in bytes[..limit].iter().enumerate() {
         if byte == 0 {
@@ -124,20 +123,6 @@ pub fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
             } else {
                 odd_null_count += 1;
             }
-            non_text_like_count += 1;
-            continue;
-        }
-
-        let is_text_like = match byte {
-            b'\t' | b'\n' | b'\r' | 0x0C => true,
-            0x20..=0x7E => true,
-            // Treat bytes that are likely part of UTF-8 or single-byte encodings as text-like.
-            0x80..=0xBF | 0xC2..=0xF4 => true,
-            _ => false,
-        };
-
-        if !is_text_like {
-            non_text_like_count += 1;
         }
     }
 
@@ -148,6 +133,11 @@ pub fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
         return ByteContent::Unknown;
     }
 
+    // UTF-16 text spends roughly half its bytes on NUL, so this density check
+    // is what rules the encoding out below rather than merely failing to
+    // confirm it: with a single NUL byte the skew comparisons pass trivially,
+    // and ASCII read as UTF-16 lands on code units that
+    // `is_plausible_utf16_text` counts as word-like.
     let has_significant_nulls = total_null_count >= limit / 16;
     let nulls_skew_to_even = even_null_count > odd_null_count * 4;
     let nulls_skew_to_odd = odd_null_count > even_null_count * 4;
@@ -165,15 +155,14 @@ pub fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
         if nulls_skew_to_odd && is_plausible_utf16_text(sample, true) {
             return ByteContent::Utf16Le;
         }
-
-        return ByteContent::Binary;
     }
 
-    if non_text_like_count * 100 < limit * 8 {
-        ByteContent::Unknown
-    } else {
-        ByteContent::Binary
-    }
+    // Not UTF-16, and NUL bytes are present. Weighing how many of them there
+    // are against how text-like the rest of the prefix looks would let through
+    // container formats that put a short binary header in front of an ASCII
+    // payload: a `.safetensors` file spends eight bytes on a little-endian
+    // header length and the whole rest of the sniffed prefix on JSON.
+    ByteContent::Binary
 }
 
 fn is_known_binary_header(bytes: &[u8]) -> bool {
