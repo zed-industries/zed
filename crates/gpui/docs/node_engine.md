@@ -193,28 +193,31 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   layout; deprecate afterwards.
 - [x] Deferred draws mark the current scope frame-bound instead of forcing a
   whole-window refresh. Prompts, accessibility, and the inspector still refresh.
-- [ ] Deferred draws as nodes. Today `defer_draw` marks its owner frame-bound, so a view
-  with an open popover re-renders every frame (as every frame did before the node
-  engine); the deferred element is drawn into the frame root's output. Design, replay
-  only: a deferred node never re-renders by itself, because whatever dirties it dirties
-  its owner (ancestor dirtiness), and a re-rendered owner issues the deferred draw
-  afresh. So `defer_draw` mounts a node under the current one (occurrence keyed by the
-  element-id stack, distinguished from view occurrences), pushes
-  `OutputItem::DeferredChild(node, priority)` into the owner's prepaint output, and
-  queues the element; the deferred pass draws it inside `enter_node_prepaint/paint` of
-  that node, so the frame root gets the `Child` splice in priority order and the
-  recording lands in the node. When the owner is grafted, `graft_view_node_prepaint`'s
-  walk visits the `DeferredChild` and queues a replay entry (no element; the dispatch
-  parent is whatever is active when the item is visited, since the walk has replayed
-  the owner's pushes up to that point); the passes graft such entries instead of
-  drawing. Nodes mounted while laying out the deferred element are the owner's
-  children already (layout runs in the owner's traversal). `transact` rollback abandons
-  the nodes of truncated deferred draws. `mark_frame_bound` must also walk `parent`
-  links from the innermost node: during the deferred pass only the deferred node is on
-  the traversal stack, and a measure closure inside it lives in the owner's retained
-  Taffy subtree. Anchoring needs no re-run: a clean owner has the same bounds, and a
-  viewport change is a full refresh. Worth doing with fine-grained caching, which
-  needs the same "replay a child in its ambient context" plumbing.
+- [ ] A frame is an ordered list of roots; deferred draws are roots. Today `defer_draw`
+  marks its owner frame-bound, so a view with an open popover re-renders every frame
+  (as every frame did before the node engine), and the deferred element, the prompt,
+  the drag overlay, the tooltip and the inspector are drawn into the frame root's
+  output, the one part rebuilt every frame. Instead each of them is a root node with its
+  own recording, drawn and queried in list order: window root, deferred roots by
+  priority (rounds for nesting), prompt, drag, tooltip, inspector. The rendered/next
+  output pair goes away, and an embedded GPUI surface is one more root with an offset.
+  A deferred root has a *requested-by* link to its owner, for lifecycle and dirtiness
+  rather than containment: it is re-registered in `next_roots` only when the owner
+  renders (`defer_draw`, which also records `OutputItem::DeferredRoot(node, priority)`
+  in the owner's prepaint output) or when the owner's graft walk visits that marker
+  (the dispatch parent is whatever is active at that point, since the walk has replayed
+  the owner's pushes so far). A deferred root never re-renders by itself: its element is
+  gone with the frame arena, so a dirty deferred root dirties its owner, which
+  re-issues it, and until then it replays. That holds only while ancestors rebuild, so
+  under fine-grained caching a deferred root must instead capture the ambient context
+  it was issued in (element-id stack, text style stack, rem size, content mask, offset,
+  dispatch parent) and re-render there; do the two together. Nodes mounted while
+  laying out the deferred element are the owner's children already (layout runs in
+  the owner's traversal). `transact` rollback abandons the roots of truncated deferred
+  draws. `mark_frame_bound` must reach the owner through the requested-by link: during
+  the deferred pass only the deferred root is on the traversal stack, and a measure
+  closure inside it lives in the owner's retained Taffy subtree. Anchoring needs no
+  re-run: a clean owner has the same bounds, and a viewport change is a full refresh.
 - [ ] Record positions relative to the node origin and translate on replay, so a
   clean subtree that moves is replayed rather than rebuilt and the cache key becomes
   size-only. `position: absolute` children resolve inside the node and deferred draws
