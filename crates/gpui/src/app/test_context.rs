@@ -534,7 +534,7 @@ impl TestAppContext {
         use crate::PlatformWindow as _;
         let mut window = self.test_window(window);
         let handler = window.take_input_handler()?;
-        window.set_input_handler(handler.clone());
+        window.set_input_handler(handler.resolving_again());
         Some(handler)
     }
 

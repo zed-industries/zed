@@ -1436,12 +1436,15 @@ impl From<TileId> for etagere::AllocId {
     }
 }
 
-/// The platform's handle to the window's text input. Every call resolves to the
-/// [`InputHandler`] the focused element registered in the most recently drawn frame, so a
-/// handle never goes stale; it is installed only while such a handler exists.
-#[derive(Clone)]
+/// The platform's handle to the window's text input. The window's own handle resolves every
+/// call to the [`InputHandler`] the focused element registered in the most recently drawn
+/// frame, so it never goes stale; it is installed only while such a handler exists.
 pub struct PlatformInputHandler {
     cx: AsyncWindowContext,
+    /// A handler given by the caller, driven directly. The window's own platform handler
+    /// has none: it resolves the focused handler out of the drawn frame on every call, so
+    /// it stays valid across frames.
+    handler: Option<Box<dyn InputHandler>>,
 }
 
 #[expect(missing_docs)]
@@ -1453,18 +1456,37 @@ pub struct PlatformInputHandler {
     allow(dead_code)
 )]
 impl PlatformInputHandler {
-    pub(crate) fn new(cx: AsyncWindowContext) -> Self {
-        Self { cx }
+    pub fn new(cx: AsyncWindowContext, handler: Box<dyn InputHandler>) -> Self {
+        Self {
+            cx,
+            handler: Some(handler),
+        }
     }
 
-    /// Runs `f` against the focused handler inside the window. `None` when the window is
-    /// gone or the drawn frame has no input handler.
+    pub(crate) fn for_focused(cx: AsyncWindowContext) -> Self {
+        Self { cx, handler: None }
+    }
+
+    /// Another handle resolving the same window's focused handler; only the window's own
+    /// handle, which drives no handler of its own, can be duplicated.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn resolving_again(&self) -> Self {
+        debug_assert!(self.handler.is_none());
+        Self::for_focused(self.cx.clone())
+    }
+
+    /// Runs `f` against the handler inside the window. `None` when the window is gone or,
+    /// for the window's own platform handler, when the drawn frame has no input handler.
     fn update<R>(
         &mut self,
         f: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
     ) -> Option<R> {
+        let handler = self.handler.as_mut();
         self.cx
-            .update(|window, cx| Self::with_handler(window, cx, f))
+            .update(|window, cx| match handler {
+                Some(handler) => Some(f(handler.as_mut(), window, cx)),
+                None => Self::with_handler(window, cx, f),
+            })
             .ok()
             .flatten()
     }

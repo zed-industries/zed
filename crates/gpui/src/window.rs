@@ -3051,7 +3051,7 @@ impl Window {
         // The platform handle resolves through `rendered_frame`, so it is installed once the
         // new frame is in place.
         let focused_text_input_active = if self.focused_input_handler().is_some() {
-            let mut input_handler = PlatformInputHandler::new(self.to_async(cx));
+            let mut input_handler = PlatformInputHandler::for_focused(self.to_async(cx));
             let accepts_text_input = input_handler.accepts_text_input(self, cx);
             self.platform_window.set_input_handler(input_handler);
             accepts_text_input
