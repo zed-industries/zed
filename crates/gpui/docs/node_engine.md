@@ -126,23 +126,21 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   `editor_render`; the single-node fixture barely exercised entity-map traffic, so
   the remaining full-rebuild overhead is elsewhere. Still open: `consumers` values
   are `FxHashSet`s and could be `SmallVec`s; DFS-order node layout.
-- [ ] Recordings own their listeners and input handlers; the frame holds
-  `(NodeId, index)` references and dispatch resolves through node storage.
-  `PlatformInputHandler` becomes a locator that resolves through its
-  `AsyncWindowContext`. Removes both `Rc<RefCell<…>>` wrappers, the re-entrancy
-  panic, and strong entity captures outliving the frame.
+- [x] Recordings own their listeners and input handlers (`OutputItem::MouseListener`,
+  `OutputItem::InputHandler`, leased out of their slot for a call). `PlatformInputHandler`
+  resolves the rendered frame's input handler through its context on every call. A
+  nested mouse-event dispatch runs no listeners, as before the node engine.
 - [x] **Critical path.** Notify is the contract: removed entity revisions,
   `dependency_revisions`, `EntityMap::end_query`, `ElementInputHandler::query`.
   The oracle (gpui, editor at 200 stress steps, workspace, project/outline panel,
   terminal, title bar) surfaced no missing `cx.notify()` in those suites. Interactive
   use of Zed is the remaining discovery surface; a view that goes stale under the node
   engine is a mutation without notify at that site.
-- [ ] Collapse the access API to one `cx.track_reads(|cx| …) -> (R, ReadSet)`.
-  Remove `begin/end_access_scope`, `take/recycle_access_scope`,
-  `suspend/restore_access_tracking`. `EntityMap::insert` must not record an access
-  (creating is not reading), which removes the suspend in `fetch_asset`.
-- [ ] Remove `begin/end_render_notifications`; at the end of draw, dirty the
-  intersection of `pending_notifications` and the frame's accessed entities.
+- [x] Collapse the access API to `cx.track_reads(&mut set, |cx| …)`;
+  `begin/end_access_scope` remain as its private halves. Still open:
+  `suspend/restore_access_tracking` is used once, around a render's notifications
+  (`render_notifications`), which could instead dirty the intersection of
+  `pending_notifications` and the frame's reads at the end of draw.
 - [x] Profile the full-rebuild overhead. `Workbench/update/full` (the only multi-node
   fixture) was 12.5% slower than `main` on this machine; the cause was the line layout
   cache evicting text that reused views never looked up, so every rebuild reshaped it
@@ -229,10 +227,12 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 
 ### Correctness
 
-- [ ] A `Graft` decision that falls through to render (no previous layout) must
-  call `restart_render`; otherwise `next_children` is stale.
-- [ ] Replace `expect` with a fallback render in `replay_scene`, `replace_layout`,
-  and similar paths where reuse can simply be declined.
+- [x] A grafted layout whose bounds or ambient inputs then differ at prepaint calls
+  `restart_render` before rendering, so `next_children` and the dependency set start
+  clean.
+- [ ] The `expect`s in `taffy.rs` (`replace_layout`: "retained layout was computed
+  before prepaint") are engine invariants, kept as panics so a violated invariant is
+  found rather than papered over by a fallback render.
 - [ ] Track remaining ambient inputs as dependencies instead of `refresh()`: focus,
   window active state, viewport size, mouse position. Focus is the largest source of
   full rebuilds. Globals are already tracked.
@@ -241,12 +241,12 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 
 - [ ] Element identity → `(node, Location::caller(), nth)`; `GlobalElementId` shrinks
   to the local suffix and full paths are computed on demand.
-- [ ] Separate mount identity from state identity. `View::entity_id()` currently
-  supplies the occurrence's identity, the dispatch tree's `view_id`, and the node's
-  own dependency; two components bound to one backing entity therefore collide. Mount
-  identity comes from the occurrence (parent node, key or location, nth), local state
-  is owned by the node, and dependencies come from reads alone, so a component never
-  impersonates its backing value or an internal editor entity.
+- [x] Separate mount identity from state identity. `View::element_id()` says where a
+  node mounts and `View::entity()` which entity backs it; a cached component mounts by
+  `(type, nth)` and owns its instance entity, so it never impersonates its inputs. An
+  `Entity<T: Render>` uses its own id for both, as before the node engine; a repeated
+  mount of one entity gets the next occurrence, and element state is per node, so
+  sibling mounts of one entity keep separate recordings and local state.
 - [ ] Inspector: identity and per-element overrides on node state; overrides read as
   entities so edits dirty exactly one node. Deletes the inspector full-refresh
   fallback.
