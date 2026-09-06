@@ -13,7 +13,6 @@ anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
 env_logger.workspace = true
 schemars = { workspace = true, features = ["indexmap2"] }
-serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 theme.workspace = true

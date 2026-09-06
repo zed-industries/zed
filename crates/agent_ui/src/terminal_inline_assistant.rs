@@ -244,6 +244,7 @@ impl TerminalInlineAssistant {
         )?;
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
+        let session_id = assist.codegen.read(cx).session_id().to_string();
 
         let mention_set = prompt_editor.read(cx).mention_set().clone();
         let load_context_task = load_context(&mention_set, cx);
@@ -263,7 +264,7 @@ impl TerminalInlineAssistant {
             request_message.content.push(prompt.into());
 
             LanguageModelRequest {
-                thread_id: None,
+                thread_id: Some(session_id),
                 prompt_id: None,
                 intent: Some(CompletionIntent::TerminalInlineAssist),
                 messages: vec![request_message],
@@ -274,6 +275,7 @@ impl TerminalInlineAssistant {
                 thinking_allowed: false,
                 thinking_effort: None,
                 speed: None,
+                compact_at_tokens: None,
             }
         }))
     }

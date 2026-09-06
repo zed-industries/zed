@@ -176,6 +176,7 @@ impl TabSwitcher {
                 } else {
                     Picker::nonsearchable_list(delegate, window, cx)
                 }
+                .initial_width(rems(PANEL_WIDTH_REMS))
             }),
             init_modifiers,
         }
@@ -274,7 +275,9 @@ impl TabMatch {
                 let project = project.read(cx);
                 let entry = project.entry_for_path(&path, cx)?;
                 let git_status = project
-                    .project_path_git_status(&path, cx)
+                    .git_store()
+                    .read(cx)
+                    .display_status_for_project_path(&path, cx)
                     .map(|status| status.summary())
                     .unwrap_or_default();
                 Some(entry_git_aware_label_color(
@@ -717,6 +720,10 @@ impl TabSwitcherDelegate {
 impl PickerDelegate for TabSwitcherDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "tab switcher"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search all tabs…".into()
     }
@@ -831,6 +838,7 @@ impl PickerDelegate for TabSwitcherDelegate {
             preview: tab_match.preview,
             deemphasized: false,
             max_title_len: Some(usize::MAX),
+            truncate_title_middle: true,
         };
         let label = tab_match.item.tab_content(params, window, cx);
 
@@ -875,7 +883,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .inset(true)
                 .toggle_state(selected)
-                .child(h_flex().w_full().child(label))
+                .child(h_flex().w_full().min_w_0().overflow_hidden().child(label))
                 .start_slot::<DecoratedIcon>(icon)
                 .map(|el| {
                     if self.selected_index == ix {

@@ -14,7 +14,7 @@ It covers which settings import automatically, which shortcuts map cleanly, and 
 Zed is available on macOS, Windows, and Linux.
 
 For macOS, you can download it from zed.dev/download, or install via Homebrew:
-`brew install zed-editor/zed/zed`
+`brew install --cask zed`
 
 For most Linux users, the easiest way to install Zed is through our installation script:
 `curl -f https://zed.dev/install.sh | sh`
@@ -62,6 +62,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `editor.hover.sticky`                       | `hover_popover_sticky`                         |
 | `editor.hover.hidingDelay`                  | `hover_popover_hiding_delay`                   |
 | `editor.parameterHints.enabled`             | `auto_signature_help`                          |
+| `workbench.editor.languageDetection`        | `language_detection`                           |
 | `editor.multiCursorModifier`                | `multi_cursor_modifier`                        |
 | `editor.selectionHighlight`                 | `selection_highlight`                          |
 | `editor.roundedSelection`                   | `rounded_selection`                            |
@@ -155,14 +156,14 @@ The following VS Code settings are automatically imported when you use **Import 
 
 **Other**
 
-| VS Code Setting            | Zed Setting                                              |
-| -------------------------- | -------------------------------------------------------- |
-| `http.proxy`               | `proxy`                                                  |
-| `npm.packageManager`       | `node.npm_path`                                          |
-| `telemetry.telemetryLevel` | `telemetry.metrics`, `telemetry.diagnostics`             |
-| `outline.icons`            | `outline_panel.file_icons`, `outline_panel.folder_icons` |
-| `chat.agent.enabled`       | `agent.enabled`                                          |
-| `mcp`                      | `context_servers`                                        |
+| VS Code Setting            | Zed Setting                                                  |
+| -------------------------- | ------------------------------------------------------------ |
+| `http.proxy`               | `proxy`                                                      |
+| `npm.packageManager`       | `node.npm_path`                                              |
+| `telemetry.telemetryLevel` | `telemetry.metrics`, `telemetry.diagnostics`                 |
+| `outline.icons`            | `outline_panel.file_icons`, `outline_panel.folder_indicator` |
+| `chat.agent.enabled`       | `agent.enabled`                                              |
+| `mcp`                      | `context_servers`                                            |
 
 Zed doesn’t import extensions or keybindings, but this import gets core editor behavior close to your VS Code setup. If you skip that step during setup, you can still import settings manually later via the command palette:
 

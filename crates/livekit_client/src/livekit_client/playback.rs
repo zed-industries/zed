@@ -31,6 +31,8 @@ use std::time::{Duration, Instant};
 use std::{borrow::Cow, collections::VecDeque, sync::Arc};
 use util::{ResultExt as _, maybe};
 
+use crate::RemoteAudioPlaybackStats;
+
 struct TimestampedFrame {
     frame: AudioFrame<'static>,
     captured_at: Instant,
@@ -91,6 +93,7 @@ impl AudioStack {
             sample_rate: SAMPLE_RATE.get(),
             num_channels: CHANNEL_COUNT.get() as u32,
             buffer: Arc::default(),
+            diagnostics: Arc::default(),
         };
         self.mixer.lock().add_source(source.clone());
 
@@ -109,6 +112,7 @@ impl AudioStack {
             }
         });
 
+        let diagnostics = source.diagnostics.clone();
         let mixer = self.mixer.clone();
         let on_drop = util::defer(move || {
             mixer.lock().remove_source(source.ssrc);
@@ -116,8 +120,9 @@ impl AudioStack {
             drop(output_task);
         });
 
-        AudioStream::Output {
+        AudioStream {
             _drop: Box::new(on_drop),
+            remote_playback_diagnostics: Some(diagnostics),
         }
     }
 
@@ -211,8 +216,9 @@ impl AudioStack {
         });
         Ok((
             super::LocalAudioTrack(track),
-            AudioStream::Output {
+            AudioStream {
                 _drop: Box::new(on_drop),
+                remote_playback_diagnostics: None,
             },
             input_lag_us,
         ))
@@ -226,7 +232,10 @@ impl AudioStack {
         _num_channels: u32,
         output_audio_device: Option<DeviceId>,
     ) -> Result<()> {
-        let _prevent_app_nap = executor.prevent_app_nap("Audio playback in progress");
+        // Prevent App Nap from throttling audio playback on macOS.
+        // This guard is held for the entire duration of audio output.
+        #[cfg(target_os = "macos")]
+        let _prevent_app_nap = PreventAppNapGuard::new();
 
         loop {
             let mut device_change_listener = DeviceChangeListener::new(false)?;
@@ -414,9 +423,17 @@ pub struct Speaker {
 
 use super::LocalVideoTrack;
 
-pub enum AudioStream {
-    Input { _task: Task<()> },
-    Output { _drop: Box<dyn std::any::Any> },
+pub struct AudioStream {
+    _drop: Box<dyn std::any::Any>,
+    remote_playback_diagnostics: Option<Arc<RemoteAudioPlaybackCounters>>,
+}
+
+impl AudioStream {
+    pub fn remote_playback_stats(&self) -> Option<RemoteAudioPlaybackStats> {
+        self.remote_playback_diagnostics
+            .as_ref()
+            .map(|diagnostics| diagnostics.snapshot())
+    }
 }
 
 pub(crate) async fn capture_local_video_track(
@@ -465,6 +482,28 @@ struct AudioMixerSource {
     sample_rate: u32,
     num_channels: u32,
     buffer: Arc<Mutex<VecDeque<Vec<i16>>>>,
+    diagnostics: Arc<RemoteAudioPlaybackCounters>,
+}
+
+#[derive(Default)]
+struct RemoteAudioPlaybackCounters {
+    frames_received: AtomicU64,
+    frames_dropped: AtomicU64,
+    queue_underflows: AtomicU64,
+    current_queue_depth: AtomicU64,
+    maximum_queue_depth: AtomicU64,
+}
+
+impl RemoteAudioPlaybackCounters {
+    fn snapshot(&self) -> RemoteAudioPlaybackStats {
+        RemoteAudioPlaybackStats {
+            frames_received: self.frames_received.load(Ordering::Relaxed),
+            frames_dropped: self.frames_dropped.load(Ordering::Relaxed),
+            queue_underflows: self.queue_underflows.load(Ordering::Relaxed),
+            current_queue_depth: self.current_queue_depth.load(Ordering::Relaxed),
+            maximum_queue_depth: self.maximum_queue_depth.load(Ordering::Relaxed),
+        }
+    }
 }
 
 impl AudioMixerSource {
@@ -476,8 +515,23 @@ impl AudioMixerSource {
 
         let mut buffer = self.buffer.lock();
         buffer.push_back(frame.data.to_vec());
+        self.diagnostics
+            .frames_received
+            .fetch_add(1, Ordering::Relaxed);
         while buffer.len() > 10 {
             buffer.pop_front();
+            self.diagnostics
+                .frames_dropped
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        let queue_depth = buffer.len() as u64;
+        self.diagnostics
+            .current_queue_depth
+            .store(queue_depth, Ordering::Relaxed);
+        if queue_depth > self.diagnostics.maximum_queue_depth.load(Ordering::Relaxed) {
+            self.diagnostics
+                .maximum_queue_depth
+                .fetch_max(queue_depth, Ordering::Relaxed);
         }
     }
 }
@@ -493,7 +547,16 @@ impl libwebrtc::native::audio_mixer::AudioMixerSource for AudioMixerSource {
 
     fn get_audio_frame_with_info<'a>(&self, target_sample_rate: u32) -> Option<AudioFrame<'_>> {
         assert_eq!(self.sample_rate, target_sample_rate);
-        let buf = self.buffer.lock().pop_front()?;
+        let mut buffer = self.buffer.lock();
+        let Some(buf) = buffer.pop_front() else {
+            self.diagnostics
+                .queue_underflows
+                .fetch_add(1, Ordering::Relaxed);
+            return None;
+        };
+        self.diagnostics
+            .current_queue_depth
+            .store(buffer.len() as u64, Ordering::Relaxed);
         Some(AudioFrame {
             data: Cow::Owned(buf),
             sample_rate: self.sample_rate,
@@ -765,6 +828,10 @@ trait DeviceChangeListenerApi: Stream<Item = ()> + Sized {
 
 #[cfg(target_os = "macos")]
 mod macos {
+    use cocoa::{
+        base::{id, nil},
+        foundation::{NSProcessInfo, NSString},
+    };
     use coreaudio::sys::{
         AudioObjectAddPropertyListener, AudioObjectID, AudioObjectPropertyAddress,
         AudioObjectRemovePropertyListener, OSStatus, kAudioHardwarePropertyDefaultInputDevice,
@@ -772,6 +839,52 @@ mod macos {
         kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
     };
     use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
+    use objc::{msg_send, sel, sel_impl};
+
+    /// A guard that prevents App Nap while held.
+    ///
+    /// On macOS, App Nap can throttle background apps to save power. This can cause
+    /// audio artifacts when the app is not in the foreground. This guard tells macOS
+    /// that we're doing latency-sensitive work and should not be throttled.
+    ///
+    /// See Apple's documentation on prioritizing work at the app level:
+    /// https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/PrioritizeWorkAtTheAppLevel.html
+    pub struct PreventAppNapGuard {
+        activity: id,
+    }
+
+    // The activity token returned by NSProcessInfo is thread-safe
+    unsafe impl Send for PreventAppNapGuard {}
+
+    // From NSProcessInfo.h
+    const NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED: u64 = 1 << 20;
+    const NS_ACTIVITY_USER_INITIATED: u64 = 0x00FFFFFF | NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED;
+    const NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP: u64 =
+        NS_ACTIVITY_USER_INITIATED & !NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED;
+
+    impl PreventAppNapGuard {
+        pub fn new() -> Self {
+            unsafe {
+                let process_info = NSProcessInfo::processInfo(nil);
+                #[allow(clippy::disallowed_methods)]
+                let reason = NSString::alloc(nil).init_str("Audio playback in progress");
+                let activity: id = msg_send![process_info, beginActivityWithOptions:NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP reason:reason];
+                let _: () = msg_send![reason, release];
+                let _: () = msg_send![activity, retain];
+                Self { activity }
+            }
+        }
+    }
+
+    impl Drop for PreventAppNapGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let process_info = NSProcessInfo::processInfo(nil);
+                let _: () = msg_send![process_info, endActivity:self.activity];
+                let _: () = msg_send![self.activity, release];
+            }
+        }
+    }
 
     /// Implementation from: https://github.com/zed-industries/cpal/blob/fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50/src/host/coreaudio/macos/property_listener.rs#L15
     pub struct CoreAudioDefaultDeviceChangeListener {
@@ -952,6 +1065,8 @@ mod macos {
 
 #[cfg(target_os = "macos")]
 type DeviceChangeListener = macos::CoreAudioDefaultDeviceChangeListener;
+#[cfg(target_os = "macos")]
+use macos::PreventAppNapGuard;
 
 #[cfg(not(target_os = "macos"))]
 mod noop_change_listener {

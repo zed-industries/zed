@@ -14,10 +14,9 @@ use std::{mem, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
 use theme::SyntaxTheme;
 use ui::{
-    ButtonCommon, ButtonLike, ButtonStyle, Color, ContextMenu, FluentBuilder as _, IconButton,
-    IconName, IconPosition, IconSize, Label, LabelCommon, LabelSize, PopoverMenu,
-    PopoverMenuHandle, StyledExt, Toggleable, Tooltip, WithScrollbar, h_flex, v_flex,
+    ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, WithScrollbar, prelude::*,
 };
+
 use workspace::{
     Event as WorkspaceEvent, SplitDirection, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
@@ -983,9 +982,8 @@ impl HighlightsTreeToolbarItemView {
 
         PopoverMenu::new("highlights-tree-settings")
             .trigger_with_tooltip(
-                IconButton::new("toggle-highlights-settings-icon", IconName::Sliders)
+                IconButton::new("toggle-highlights-settings-icon", IconName::Filter)
                     .icon_size(IconSize::Small)
-                    .style(ButtonStyle::Subtle)
                     .toggle_state(self.toggle_settings_handle.is_deployed()),
                 Tooltip::text("Highlights Settings"),
             )

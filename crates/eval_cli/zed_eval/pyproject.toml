@@ -1,9 +1,16 @@
 [project]
 name = "zed-eval"
-version = "0.1.0"
-description = "Harbor agent wrapper for Zed's eval-cli"
+version = "0.2.0"
+description = "Harbor agent wrapper and remote orchestration CLI for Zed's eval-cli"
 requires-python = ">=3.12"
-dependencies = ["harbor==0.13.0"]
+dependencies = ["harbor==0.15.0", "modal==1.5.0"]
+
+[project.scripts]
+zed-eval = "zed_eval.cli:main"
+
+[tool.setuptools]
+packages = ["zed_eval"]
+package-dir = { zed_eval = "." }
 
 [build-system]
 requires = ["setuptools"]

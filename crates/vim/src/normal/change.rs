@@ -167,41 +167,44 @@ fn expand_changed_word_selection(
     use_subword: bool,
     always_advance: bool,
 ) -> Option<MotionKind> {
-    let is_in_word = || {
-        let classifier = map
-            .buffer_snapshot()
-            .char_classifier_at(selection.start.to_point(map));
+    let classifier = map
+        .buffer_snapshot()
+        .char_classifier_at(selection.start.to_point(map));
 
-        map.buffer_chars_at(selection.head().to_offset(map, Bias::Left))
-            .next()
-            .map(|(c, _)| !classifier.is_whitespace(c))
-            .unwrap_or_default()
-    };
-    if (times.is_none() || times.unwrap() == 1) && is_in_word() {
+    let is_in_word = map
+        .buffer_chars_at(selection.head().to_offset(map, Bias::Left))
+        .next()
+        .map(|(c, _)| !classifier.is_whitespace(c))
+        .unwrap_or_default();
+
+    if is_in_word {
+        let advance_end = |point, times, always_advance| {
+            if use_subword {
+                motion::next_subword_end(map, point, ignore_punctuation, times, false)
+            } else {
+                motion::next_word_end(map, point, ignore_punctuation, times, false, always_advance)
+            }
+        };
+
         let next_char = map
             .buffer_chars_at(
                 motion::next_char(map, selection.end, false).to_offset(map, Bias::Left),
             )
             .next();
-        match next_char {
-            Some((' ', _)) => selection.end = motion::next_char(map, selection.end, false),
-            _ => {
-                if use_subword {
-                    selection.end =
-                        motion::next_subword_end(map, selection.end, ignore_punctuation, 1, false);
-                } else {
-                    selection.end = motion::next_word_end(
-                        map,
-                        selection.end,
-                        ignore_punctuation,
-                        1,
-                        false,
-                        always_advance,
-                    );
-                }
-                selection.end = motion::next_char(map, selection.end, false);
-            }
+
+        if let Some((next, _)) = next_char
+            && next != ' '
+        {
+            selection.end = advance_end(selection.end, 1, always_advance);
         }
+
+        if let Some(times) = times
+            && times > 1
+        {
+            selection.end = advance_end(selection.end, times - 1, true);
+        }
+
+        selection.end = motion::next_char(map, selection.end, false);
         Some(MotionKind::Inclusive)
     } else {
         let motion = if use_subword {
@@ -299,6 +302,18 @@ mod test {
         // on last character of word, `cw` doesn't eat subsequent punctuation
         // see https://github.com/zed-industries/zed/issues/35269
         cx.simulate("c w", "tesˇt-test").await.assert_matches();
+
+        cx.simulate("c 2 w", "ˇTest test test")
+            .await
+            .assert_matches();
+        cx.simulate("c 2 w", "Tˇest test test")
+            .await
+            .assert_matches();
+        cx.simulate("c 2 w", "tesˇt-test").await.assert_matches();
+
+        cx.simulate("c 2 shift-w", "Test teˇst-test test Test")
+            .await
+            .assert_matches();
     }
 
     #[gpui::test]

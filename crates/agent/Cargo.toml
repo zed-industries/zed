@@ -41,6 +41,7 @@ handlebars = { workspace = true, features = ["rust-embed"] }
 heck.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
+http_proxy.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
@@ -52,8 +53,9 @@ paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 quick-xml.workspace = true
+rand.workspace = true
 regex.workspace = true
-rust-embed.workspace = true
+sandbox.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -77,14 +79,18 @@ web_search.workspace = true
 zed_env_vars.workspace = true
 zstd.workspace = true
 
+# Used only on Windows to resolve the running release channel/version so the WSL
+# sandbox helper can fetch a matching Linux `zed`.
+[target.'cfg(target_os = "windows")'.dependencies]
+release_channel.workspace = true
+
 [dev-dependencies]
-assets.workspace = true
+acp_thread = { workspace = true, features = ["test-support"] }
 async-io.workspace = true
 agent_servers = { workspace = true, "features" = ["test-support"] }
 client = { workspace = true, "features" = ["test-support"] }
 clock = { workspace = true, "features" = ["test-support"] }
 context_server = { workspace = true, "features" = ["test-support"] }
-criterion.workspace = true
 ctor.workspace = true
 db = { workspace = true, "features" = ["test-support"] }
 editor = { workspace = true, "features" = ["test-support"] }
@@ -100,7 +106,6 @@ lsp = { workspace = true, "features" = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, "features" = ["test-support"] }
 proptest.workspace = true
-rand.workspace = true
 reqwest_client.workspace = true
 settings = { workspace = true, "features" = ["test-support"] }
 
@@ -111,7 +116,5 @@ unindent = { workspace = true }
 
 zlog.workspace = true
 
-[[bench]]
-name = "edit_file_tool"
-harness = false
-required-features = ["test-support"]
+[package.metadata.cargo-shear]
+ignored = ["editor"]

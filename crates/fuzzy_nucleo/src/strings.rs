@@ -24,8 +24,8 @@ pub struct StringMatchCandidate {
 }
 
 impl StringMatchCandidate {
-    pub fn new(id: usize, string: impl ToString) -> Self {
-        Self::from_shared(id, SharedString::new(string.to_string()))
+    pub fn new(id: usize, string: impl Into<SharedString>) -> Self {
+        Self::from_shared(id, string.into())
     }
 
     pub fn from_shared(id: usize, string: SharedString) -> Self {
@@ -161,7 +161,7 @@ where
     }
 
     let mut results = segment_results.concat();
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }
 
@@ -198,7 +198,7 @@ where
     .ok();
 
     matcher::return_matcher(matcher);
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }
 
@@ -298,7 +298,7 @@ mod tests {
         strings
             .iter()
             .enumerate()
-            .map(|(id, s)| StringMatchCandidate::new(id, s))
+            .map(|(id, s)| StringMatchCandidate::new(id, *s))
             .collect()
     }
 

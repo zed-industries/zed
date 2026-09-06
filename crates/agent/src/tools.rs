@@ -1,4 +1,5 @@
 mod apply_code_action_tool;
+mod ask_user_tool;
 mod context_server_registry;
 mod copy_path_tool;
 mod create_directory_tool;
@@ -25,13 +26,15 @@ mod spawn_agent_tool;
 mod symbol_locator;
 mod terminal_tool;
 mod tool_permissions;
-mod update_plan_tool;
-mod update_title_tool;
 mod web_search_tool;
 mod write_file_tool;
 
 use crate::AgentTool;
-use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
+use feature_flags::{
+    CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag,
+};
+use gpui::App;
+use language_model::LanguageModelRequestTool;
 use serde::{
     Deserialize, Deserializer,
     de::{DeserializeOwned, Error as _},
@@ -45,22 +48,30 @@ where
     T: DeserializeOwned,
     D: Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum ValueOrJsonString<T> {
-        Value(T),
-        String(String),
+    fn to_custom_error<E>(e: serde_json::Error) -> E
+    where
+        E: serde::de::Error,
+    {
+        E::custom(format!("{e}"))
     }
 
-    match ValueOrJsonString::<T>::deserialize(deserializer)? {
-        ValueOrJsonString::Value(value) => Ok(value),
-        ValueOrJsonString::String(string) => serde_json::from_str::<T>(&string).map_err(|error| {
-            D::Error::custom(format!("failed to parse stringified value: {error}"))
-        }),
+    let raw_value = serde_json::Value::deserialize(deserializer)
+        .map_err(|error| D::Error::custom(format!("invalid JSON: {error}")))?;
+
+    match T::deserialize(&raw_value) {
+        Ok(value) => Ok(value),
+        Err(original_error) => {
+            let Some(string) = raw_value.as_str() else {
+                return Err(to_custom_error(original_error));
+            };
+
+            serde_json::from_str(string).map_err(to_custom_error)
+        }
     }
 }
 
 pub use apply_code_action_tool::*;
+pub use ask_user_tool::*;
 pub use context_server_registry::*;
 pub use copy_path_tool::*;
 pub use create_directory_tool::*;
@@ -82,10 +93,9 @@ pub use rename_tool::*;
 pub use skill_tool::*;
 pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
+
 pub use terminal_tool::*;
 pub use tool_permissions::*;
-pub use update_plan_tool::*;
-pub use update_title_tool::*;
 pub use web_search_tool::*;
 pub use write_file_tool::*;
 
@@ -137,15 +147,29 @@ macro_rules! tools {
             false
         }
 
+        /// Returns whether the tool with the given name may be provided to an
+        /// agent in a restricted workspace. Unknown tools (e.g. MCP tools) are
+        /// considered allowed.
+        pub fn tool_allowed_in_restricted_mode(name: &str) -> bool {
+            $(
+                if name == <$tool>::NAME {
+                    return <$tool>::allow_in_restricted_mode();
+                }
+            )*
+            true
+        }
+
         /// A list of all built-in tools
         pub fn built_in_tools() -> impl Iterator<Item = LanguageModelRequestTool> {
             fn language_model_tool<T: AgentTool>() -> LanguageModelRequestTool {
-                LanguageModelRequestTool {
-                    name: T::NAME.to_string(),
-                    description: T::description().to_string(),
-                    input_schema: T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
-                    use_input_streaming: T::supports_input_streaming(),
-                }
+                let mut input_schema = T::input_schema().to_value();
+                language_model::tool_schema::normalize_tool_schema(&mut input_schema);
+                LanguageModelRequestTool::function(
+                    T::NAME.to_string(),
+                    T::description().to_string(),
+                    input_schema,
+                    T::supports_input_streaming(),
+                )
             }
             [
                 $(
@@ -158,7 +182,7 @@ macro_rules! tools {
 }
 
 // Adding a tool here (and constructing it in `Thread::add_default_tools`) is
-// not enough to make the model actually receive it. Two further gates will
+// not enough to make the model actually receive it. Three further gates will
 // silently drop the tool rather than fail to compile:
 //
 // 1. `assets/settings/default.json`: the `write` and `ask` agent profiles each
@@ -169,8 +193,12 @@ macro_rules! tools {
 //    `crates/settings_ui/src/pages/tool_permissions_setup.rs`: every tool must
 //    be in the permission-UI `TOOLS` list (if it calls
 //    `decide_permission_from_settings`) or in `EXCLUDED_TOOLS`.
+// 3. `tool_feature_flag_enabled`: some tools are gated behind a feature flag and
+//    are dropped unless it is active. The agent-profile UI uses the same gate so
+//    it never offers a tool the agent can't actually use.
 tools! {
     ApplyCodeActionTool,
+    AskUserTool,
     CopyPathTool,
     CreateDirectoryTool,
     CreateThreadTool,
@@ -191,8 +219,76 @@ tools! {
     SkillTool,
     SpawnAgentTool,
     TerminalTool,
-    UpdatePlanTool,
-    UpdateTitleTool,
     WebSearchTool,
     WriteFileTool,
+}
+
+/// Some built-in tools are gated behind a feature flag and only become usable
+/// once that flag is active. Tools without a flag are always available.
+///
+/// This is the single source of truth for that gating: `Thread::enabled_tools`
+/// uses it to decide what the model receives, and the agent-profile
+/// configuration UI uses it to decide what to offer — so the UI can never list
+/// a tool the agent would silently drop (see #56778).
+pub fn tool_feature_flag_enabled(tool_name: &str, cx: &App) -> bool {
+    match tool_name {
+        RenameTool::NAME => cx.has_flag::<RenameToolFeatureFlag>(),
+        FindReferencesTool::NAME
+        | GetCodeActionsTool::NAME
+        | ApplyCodeActionTool::NAME
+        | GoToDefinitionTool::NAME => cx.has_flag::<LspToolFeatureFlag>(),
+        CreateThreadTool::NAME | ListAgentsAndModelsTool::NAME => {
+            cx.has_flag::<CreateThreadToolFeatureFlag>()
+        }
+        _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn built_in_tool_schemas_are_normalized() {
+        let tools = built_in_tools().collect::<Vec<_>>();
+
+        assert_eq!(tools.len(), ALL_TOOL_NAMES.len());
+        for tool in tools {
+            let language_model::LanguageModelRequestToolInput::Function { input_schema, .. } =
+                tool.input
+            else {
+                panic!("built-in tool `{}` should use a JSON schema", tool.name);
+            };
+            assert_eq!(input_schema.get("$schema"), None, "tool `{}`", tool.name);
+            assert_eq!(input_schema.get("title"), None, "tool `{}`", tool.name);
+            assert_eq!(
+                input_schema.get("description"),
+                None,
+                "tool `{}`",
+                tool.name
+            );
+            assert!(
+                input_schema["properties"].is_object(),
+                "tool `{}` should have object properties",
+                tool.name
+            );
+        }
+    }
+
+    #[test]
+    fn fetch_and_terminal_are_forbidden_in_restricted_mode() {
+        assert!(!tool_allowed_in_restricted_mode(FetchTool::NAME));
+        assert!(!tool_allowed_in_restricted_mode(TerminalTool::NAME));
+
+        // Every other built-in tool, and unknown (e.g. MCP) tools, are allowed.
+        for name in ALL_TOOL_NAMES {
+            let expected = *name != FetchTool::NAME && *name != TerminalTool::NAME;
+            assert_eq!(
+                tool_allowed_in_restricted_mode(name),
+                expected,
+                "unexpected restricted-mode policy for tool `{name}`"
+            );
+        }
+        assert!(tool_allowed_in_restricted_mode("some_mcp_tool"));
+    }
 }

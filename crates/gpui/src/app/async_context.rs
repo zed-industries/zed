@@ -146,7 +146,9 @@ impl AsyncApp {
     pub fn refresh(&self) {
         let app = self.app();
         let mut lock = app.borrow_mut();
-        lock.refresh_windows();
+        // A direct call would leave the refresh effect queued, which cannot wake
+        // a platform render loop that has already parked.
+        lock.update(|cx| cx.refresh_windows());
     }
 
     /// Get an executor which can be used to spawn futures in the background.

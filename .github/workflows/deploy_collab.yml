@@ -7,6 +7,8 @@ on:
   push:
     tags:
     - collab-production
+permissions:
+  contents: read
 jobs:
   style:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -66,14 +68,16 @@ jobs:
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
+      uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
+      with:
+        tool: nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
     - name: deploy_collab::tests::run_collab_tests
       run: cargo nextest run --package collab --no-fail-fast
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
@@ -87,7 +91,7 @@ jobs:
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: deploy_collab::publish::install_doctl
-      uses: digitalocean/action-doctl@v2
+      uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
       with:
         token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
     - name: deploy_collab::publish::sign_into_registry
@@ -117,7 +121,7 @@ jobs:
       with:
         clean: false
     - name: deploy_collab::deploy::install_doctl
-      uses: digitalocean/action-doctl@v2
+      uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
       with:
         token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
     - name: deploy_collab::deploy::sign_into_kubernetes

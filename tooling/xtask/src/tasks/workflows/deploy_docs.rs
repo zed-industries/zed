@@ -6,8 +6,8 @@ use gh_workflow::{
 use crate::tasks::workflows::{
     runners,
     steps::{
-        self, CommonJobConditions, FluentBuilder as _, NamedJob, UploadArtifactStep, named,
-        release_job,
+        self, CommonJobConditions, CommonPermissionSets, FluentBuilder as _, NamedJob,
+        UploadArtifactStep, named, release_job,
     },
     vars::{self, StepOutput, WorkflowInput},
 };
@@ -162,7 +162,7 @@ pub(crate) fn check_docs() -> NamedJob {
     NamedJob {
         name: "check_docs".to_owned(),
         job: docs_build_steps(
-            release_job(&[]),
+            release_job(&[]).add_step(steps::harden_runner()),
             None,
             DocsChannel::Stable.channel_name(),
             DocsChannel::Stable.site_url(),
@@ -258,7 +258,9 @@ pub(crate) fn deploy_docs_workflow_call(
             "zed-industries",
             "zed",
             ".github/workflows/deploy_docs.yml",
-            "main",
+            // Pinned to a commit rather than the mutable `main` ref (supply-chain hardening).
+            // Same-repo reusable workflow; bump via Dependabot or alongside deploy_docs.yml changes.
+            "3f16f7b9082f8828e4d6ae207d2349b1ef932517",
         )
         .with(
             Input::default()
@@ -312,6 +314,7 @@ pub(crate) fn deploy_docs() -> Workflow {
     let deploy_docs = deploy_docs_job(&channel, &checkout_ref);
 
     named::workflow()
+        .with_minimal_permissions()
         .add_event(
             Event::default().workflow_dispatch(
                 WorkflowDispatch::default()
@@ -364,6 +367,7 @@ pub(crate) fn deploy_nightly_docs() -> Workflow {
 
     named::workflow()
         .name("deploy_nightly_docs")
+        .permissions(Permissions::default())
         .add_event(Event::default().push(Push::default().add_branch("main")))
         .add_job(deploy_docs.name, deploy_docs.job)
 }

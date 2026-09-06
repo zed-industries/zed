@@ -178,7 +178,7 @@ impl ReplStore {
         let active_toolchain = project.read(cx).active_toolchain(
             ProjectPath {
                 worktree_id,
-                path: RelPath::empty().into(),
+                path: RelPath::empty_arc(),
             },
             LanguageName::new_static("Python"),
             cx,

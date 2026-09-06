@@ -919,14 +919,14 @@ mod tests {
     #[test]
     fn explicit_diff_hunk_colors_take_precedence_over_fallbacks() {
         let mut colors = ThemeColorsContent::default();
-        colors.editor_diff_hunk_added_background = Some("#112233".to_string());
-        colors.editor_diff_hunk_added_hollow_background = Some("#223344".to_string());
-        colors.editor_diff_hunk_added_hollow_border = Some("#334455".to_string());
-        colors.editor_diff_hunk_deleted_background = Some("#445566".to_string());
-        colors.editor_diff_hunk_deleted_hollow_background = Some("#556677".to_string());
-        colors.editor_diff_hunk_deleted_hollow_border = Some("#667788".to_string());
-        colors.version_control_added = Some("#00ff00".to_string());
-        colors.version_control_deleted = Some("#ff0000".to_string());
+        colors.editor_diff_hunk_added_background = Some("#112233".into());
+        colors.editor_diff_hunk_added_hollow_background = Some("#223344".into());
+        colors.editor_diff_hunk_added_hollow_border = Some("#334455".into());
+        colors.editor_diff_hunk_deleted_background = Some("#445566".into());
+        colors.editor_diff_hunk_deleted_hollow_background = Some("#556677".into());
+        colors.editor_diff_hunk_deleted_hollow_border = Some("#667788".into());
+        colors.version_control_added = Some("#00ff00".into());
+        colors.version_control_deleted = Some("#ff0000".into());
 
         let refinement = theme_colors_refinement(
             &colors,
@@ -963,8 +963,8 @@ mod tests {
     #[test]
     fn diff_hunk_colors_fallback_to_version_control_colors() {
         let mut colors = ThemeColorsContent::default();
-        colors.version_control_added = Some("#00ff00".to_string());
-        colors.version_control_deleted = Some("#ff0000".to_string());
+        colors.version_control_added = Some("#00ff00".into());
+        colors.version_control_deleted = Some("#ff0000".into());
 
         let refinement = theme_colors_refinement(
             &colors,
@@ -1004,7 +1004,7 @@ mod tests {
     #[test]
     fn diff_hunk_opacity_fallbacks_use_correct_values_for_light_and_dark_themes() {
         let mut colors = ThemeColorsContent::default();
-        colors.version_control_added = Some("#00ff00".to_string());
+        colors.version_control_added = Some("#00ff00".into());
 
         let light_refinement = theme_colors_refinement(
             &colors,
@@ -1091,7 +1091,7 @@ mod tests {
 
         let override_refinement = theme_colors_refinement(
             &ThemeColorsContent {
-                vim_helix_jump_label_foreground: Some("#00ff00".to_string()),
+                vim_helix_jump_label_foreground: Some("#00ff00".into()),
                 ..Default::default()
             },
             &status_colors,

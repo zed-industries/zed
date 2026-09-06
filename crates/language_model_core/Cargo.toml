@@ -10,12 +10,12 @@ workspace = true
 
 [lib]
 path = "src/language_model_core.rs"
-doctest = false
 
 [dependencies]
 anyhow.workspace = true
 async-lock.workspace = true
 cloud_llm_client.workspace = true
+collections.workspace = true
 futures.workspace = true
 gpui_shared_string.workspace = true
 http_client.workspace = true
@@ -26,3 +26,6 @@ serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true

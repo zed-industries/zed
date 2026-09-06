@@ -2,8 +2,9 @@ use anyhow::Result;
 use futures::{Stream, StreamExt};
 use language_model_core::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
-    StopReason, TokenUsage,
+    LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolUse,
+    LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role, StopReason,
+    TokenUsage,
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -20,20 +21,18 @@ pub fn into_google(
     mut request: LanguageModelRequest,
     model_id: String,
     mode: GoogleModelMode,
-) -> crate::GenerateContentRequest {
-    fn map_content(content: Vec<MessageContent>) -> Vec<Part> {
-        content
-            .into_iter()
-            .flat_map(|content| match content {
+) -> Result<crate::GenerateContentRequest> {
+    fn map_content(content: Vec<MessageContent>) -> Result<Vec<Part>> {
+        let mut mapped_parts = Vec::new();
+        for content in content {
+            match content {
                 MessageContent::Text(text) => {
                     if !text.is_empty() {
-                        vec![Part::TextPart(TextPart {
+                        mapped_parts.push(Part::TextPart(TextPart {
                             text,
                             thought: false,
                             thought_signature: None,
-                        })]
-                    } else {
-                        vec![]
+                        }));
                     }
                 }
                 MessageContent::Thinking {
@@ -41,39 +40,37 @@ pub fn into_google(
                     signature: Some(signature),
                 } => {
                     if !signature.is_empty() {
-                        vec![Part::TextPart(TextPart {
+                        mapped_parts.push(Part::TextPart(TextPart {
                             text,
                             thought: true,
                             thought_signature: Some(signature),
-                        })]
-                    } else {
-                        vec![]
+                        }));
                     }
                 }
-                MessageContent::Thinking { .. } => {
-                    vec![]
-                }
-                MessageContent::RedactedThinking(_) => vec![],
+                MessageContent::Thinking { .. } => {}
+                MessageContent::RedactedThinking(_) | MessageContent::Compaction(_) => {}
                 MessageContent::Image(image) => {
-                    vec![Part::InlineDataPart(InlineDataPart {
+                    mapped_parts.push(Part::InlineDataPart(InlineDataPart {
                         inline_data: GenerativeContentBlob {
                             mime_type: "image/png".to_string(),
                             data: image.source.to_string(),
                         },
-                    })]
+                    }));
                 }
                 MessageContent::ToolUse(tool_use) => {
-                    // Normalize empty string signatures to None
                     let thought_signature = tool_use.thought_signature.filter(|s| !s.is_empty());
+                    let LanguageModelToolUseInput::Json(input) = tool_use.input else {
+                        anyhow::bail!("Google AI does not support custom tool calls");
+                    };
 
-                    vec![Part::FunctionCallPart(crate::FunctionCallPart {
+                    mapped_parts.push(Part::FunctionCallPart(crate::FunctionCallPart {
                         function_call: crate::FunctionCall {
                             name: tool_use.name.to_string(),
-                            args: tool_use.input,
+                            args: input,
                             id: Some(tool_use.id.to_string()),
                         },
                         thought_signature,
-                    })]
+                    }));
                 }
                 MessageContent::ToolResult(tool_result) => {
                     let mut text_output = String::new();
@@ -98,7 +95,7 @@ pub fn into_google(
                     } else {
                         text_output
                     };
-                    let mut parts = vec![Part::FunctionResponsePart(crate::FunctionResponsePart {
+                    mapped_parts.push(Part::FunctionResponsePart(crate::FunctionResponsePart {
                         function_response: crate::FunctionResponse {
                             name: tool_result.tool_name.to_string(),
                             // The API expects a valid JSON object
@@ -107,12 +104,12 @@ pub fn into_google(
                             }),
                             id: Some(tool_result.tool_use_id.to_string()),
                         },
-                    })];
-                    parts.extend(images.into_iter().map(Part::InlineDataPart));
-                    parts
+                    }));
+                    mapped_parts.extend(images.into_iter().map(Part::InlineDataPart));
                 }
-            })
-            .collect()
+            }
+        }
+        Ok(mapped_parts)
     }
 
     let thinking_config = thinking_config_for_request(&request, &model_id, mode);
@@ -124,33 +121,60 @@ pub fn into_google(
     {
         let message = request.messages.remove(0);
         Some(SystemInstruction {
-            parts: map_content(message.content),
+            parts: map_content(message.content)?,
         })
     } else {
         None
     };
 
-    crate::GenerateContentRequest {
+    let tools = if request.tools.is_empty() {
+        None
+    } else {
+        Some(vec![crate::Tool {
+            function_declarations: request
+                .tools
+                .into_iter()
+                .map(|tool| match tool.input {
+                    LanguageModelRequestToolInput::Function { input_schema, .. } => {
+                        Ok(FunctionDeclaration {
+                            name: tool.name,
+                            description: tool.description,
+                            parameters: None,
+                            parameters_json_schema: Some(input_schema),
+                        })
+                    }
+                    LanguageModelRequestToolInput::Custom { .. } => {
+                        Err(anyhow::anyhow!("Google AI does not support custom tools"))
+                    }
+                })
+                .collect::<Result<_>>()?,
+        }])
+    };
+
+    Ok(crate::GenerateContentRequest {
         model: ModelName { model_id },
         system_instruction: system_instructions,
         contents: request
             .messages
             .into_iter()
-            .filter_map(|message| {
-                let parts = map_content(message.content);
+            .map(|message| {
+                let parts = map_content(message.content)?;
                 if parts.is_empty() {
-                    None
+                    Ok(None)
                 } else {
-                    Some(Content {
+                    Ok(Some(Content {
                         parts,
                         role: match message.role {
                             Role::User => crate::Role::User,
                             Role::Assistant => crate::Role::Model,
                             Role::System => crate::Role::User, // Google AI doesn't have a system role
                         },
-                    })
+                    }))
                 }
             })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
             .collect(),
         generation_config: Some(GenerationConfig {
             candidate_count: Some(1),
@@ -162,19 +186,7 @@ pub fn into_google(
             top_k: None,
         }),
         safety_settings: None,
-        tools: (!request.tools.is_empty()).then(|| {
-            vec![crate::Tool {
-                function_declarations: request
-                    .tools
-                    .into_iter()
-                    .map(|tool| FunctionDeclaration {
-                        name: tool.name,
-                        description: tool.description,
-                        parameters: tool.input_schema,
-                    })
-                    .collect(),
-            }]
-        }),
+        tools,
         tool_config: request.tool_choice.map(|choice| ToolConfig {
             function_calling_config: FunctionCallingConfig {
                 mode: match choice {
@@ -185,7 +197,7 @@ pub fn into_google(
                 allowed_function_names: None,
             },
         }),
-    }
+    })
 }
 
 fn thinking_config_for_request(
@@ -238,7 +250,13 @@ fn is_google_thinking_model(model_id: &str) -> bool {
 
 fn disabled_thinking_level(model_id: &str) -> Option<ThinkingLevel> {
     match model_id {
-        model_id if model_id.starts_with("gemini-3") && model_id.contains("-pro") => {
+        // Gemini 3.7 and 3.8 Flash reject `MINIMAL` with a validation error, so
+        // `LOW` is the lowest level available to them.
+        model_id
+            if model_id.starts_with("gemini-3.7-flash")
+                || model_id.starts_with("gemini-3.8-flash")
+                || (model_id.starts_with("gemini-3") && model_id.contains("-pro")) =>
+        {
             Some(ThinkingLevel::Low)
         }
         model_id if model_id.starts_with("gemini-3") => Some(ThinkingLevel::Minimal),
@@ -404,7 +422,9 @@ impl GoogleEventMapper {
                                     name,
                                     is_input_complete: true,
                                     raw_input: function_call_part.function_call.args.to_string(),
-                                    input: function_call_part.function_call.args,
+                                    input: LanguageModelToolUseInput::Json(
+                                        function_call_part.function_call.args,
+                                    ),
                                     thought_signature,
                                 },
                             )));
@@ -466,7 +486,7 @@ mod tests {
         Content, FunctionCall, FunctionCallPart, GenerateContentCandidate, GenerateContentResponse,
         Part, Role as GoogleRole,
     };
-    use language_model_core::LanguageModelRequestMessage;
+    use language_model_core::{LanguageModelRequestMessage, LanguageModelRequestTool};
     use serde_json::json;
 
     fn text_request() -> LanguageModelRequest {
@@ -493,7 +513,8 @@ mod tests {
             GoogleModelMode::Thinking {
                 budget_tokens: None,
             },
-        );
+        )
+        .unwrap();
 
         let thinking_config = request.generation_config.unwrap().thinking_config.unwrap();
         assert_eq!(thinking_config.include_thoughts, Some(true));
@@ -502,6 +523,43 @@ mod tests {
         let serialized = serde_json::to_value(thinking_config).unwrap();
         assert_eq!(serialized["thinkingLevel"], "LOW");
         assert_eq!(serialized["includeThoughts"], true);
+    }
+
+    #[test]
+    fn into_google_uses_json_schema_function_parameters() {
+        let input_schema = json!({
+            "type": "object",
+            "properties": {
+                "globs": {
+                    "anyOf": [
+                        { "type": "string" },
+                        {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
+                    ]
+                }
+            }
+        });
+        let mut request = text_request();
+        request.tools = vec![LanguageModelRequestTool::function(
+            "grep".to_string(),
+            "Search files".to_string(),
+            input_schema.clone(),
+            false,
+        )];
+
+        let request = into_google(
+            request,
+            "gemini-3.5-flash".to_string(),
+            GoogleModelMode::Default,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(request).unwrap();
+        let declaration = &serialized["tools"][0]["functionDeclarations"][0];
+
+        assert_eq!(declaration["parametersJsonSchema"], input_schema);
+        assert_eq!(declaration.get("parameters"), None);
     }
 
     #[test]
@@ -515,7 +573,8 @@ mod tests {
             GoogleModelMode::Thinking {
                 budget_tokens: None,
             },
-        );
+        )
+        .unwrap();
 
         let thinking_config = request.generation_config.unwrap().thinking_config.unwrap();
         assert_eq!(thinking_config.thinking_budget, Some(0));
@@ -533,7 +592,8 @@ mod tests {
             GoogleModelMode::Thinking {
                 budget_tokens: None,
             },
-        );
+        )
+        .unwrap();
 
         let thinking_config = request.generation_config.unwrap().thinking_config.unwrap();
         assert_eq!(thinking_config.thinking_level, Some(ThinkingLevel::Minimal));
@@ -561,7 +621,8 @@ mod tests {
             GoogleModelMode::Thinking {
                 budget_tokens: None,
             },
-        );
+        )
+        .unwrap();
 
         let Part::TextPart(text_part) = &request.contents[0].parts[0] else {
             panic!("expected text part");
@@ -685,6 +746,27 @@ mod tests {
 
         mapper.map_event(response);
         assert_eq!(mapper.stop_reason, StopReason::Refusal);
+    }
+
+    #[test]
+    fn test_disabled_thinking_level_per_model() {
+        assert_eq!(
+            disabled_thinking_level("gemini-3.8-flash"),
+            Some(ThinkingLevel::Low)
+        );
+        assert_eq!(
+            disabled_thinking_level("gemini-3.7-flash"),
+            Some(ThinkingLevel::Low)
+        );
+        assert_eq!(
+            disabled_thinking_level("gemini-3.1-pro-preview"),
+            Some(ThinkingLevel::Low)
+        );
+        assert_eq!(
+            disabled_thinking_level("gemini-3.6-flash"),
+            Some(ThinkingLevel::Minimal)
+        );
+        assert_eq!(disabled_thinking_level("gemini-2.5-flash"), None);
     }
 
     #[test]

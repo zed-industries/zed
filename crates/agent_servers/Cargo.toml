@@ -61,10 +61,6 @@ util.workspace = true
 watch.workspace = true
 zed_credentials_provider.workspace = true
 
-[target.'cfg(unix)'.dependencies]
-libc.workspace = true
-nix.workspace = true
-
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true

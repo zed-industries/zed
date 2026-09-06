@@ -324,7 +324,7 @@ impl ChannelView {
             return;
         };
 
-        let link = channel.notes_link(closest_heading.map(|heading| heading.text), cx);
+        let link = channel.notes_link(closest_heading.map(|heading| heading.text.to_string()), cx);
         cx.write_to_clipboard(ClipboardItem::new_string(link));
         self.workspace
             .update(cx, |workspace, cx| {
@@ -457,8 +457,8 @@ impl Item for ChannelView {
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {
         let channel = self.channel(cx)?;
         let icon = match channel.visibility {
-            ChannelVisibility::Public => IconName::Public,
-            ChannelVisibility::Members => IconName::Hash,
+            ChannelVisibility::Public => IconName::Hash,
+            ChannelVisibility::Members => IconName::Lock,
         };
 
         Some(Icon::new(icon))

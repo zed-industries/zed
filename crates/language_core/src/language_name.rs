@@ -51,6 +51,16 @@ impl LanguageName {
             language_name => language_name.to_lowercase(),
         }
     }
+
+    /// Identifier used to name and look up this language's snippet file.
+    ///
+    /// Path separators are stripped from the `lsp_id` because the snippet file
+    /// is stored as a flat file directly under the snippets directory; a `/`
+    /// (or `\`) would otherwise place it in a subdirectory that is never
+    /// scanned, making the snippet impossible to use.
+    pub fn snippet_scope_id(&self) -> String {
+        self.lsp_id().replace(['/', '\\'], "")
+    }
 }
 
 impl From<LanguageName> for SharedString {
@@ -105,5 +115,28 @@ impl From<LanguageName> for String {
     fn from(value: LanguageName) -> Self {
         let value: &str = &value.0;
         Self::from(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snippet_scope_id_strips_path_separators() {
+        // A `/` or `\` in the language name would route the snippet file into a
+        // subdirectory that is never scanned (see issue #59620).
+        assert_eq!(LanguageName::new("PL/X").snippet_scope_id(), "plx");
+        assert_eq!(LanguageName::new("a\\b").snippet_scope_id(), "ab");
+        // Names without separators are unchanged beyond `lsp_id`'s lowercasing.
+        assert_eq!(LanguageName::new("Rust").snippet_scope_id(), "rust");
+        assert_eq!(
+            LanguageName::new("Shell Script").snippet_scope_id(),
+            "shell script"
+        );
+        assert_eq!(
+            LanguageName::new("Plain Text").snippet_scope_id(),
+            "plaintext"
+        );
     }
 }
