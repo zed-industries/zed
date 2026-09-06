@@ -154,8 +154,6 @@ pub(crate) fn capture_metadata<T: Clone>(source: &[T], target: &mut Vec<T>, star
 
 #[derive(Default)]
 pub(crate) struct ViewNodeRecording {
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds: RecordedMetadata<(String, Bounds<Pixels>)>,
     pub(crate) layout_states: RecordedMetadata<(GlobalElementId, TypeId)>,
     pub(crate) prepaint_states: RecordedMetadata<(GlobalElementId, TypeId)>,
     pub(crate) paint_states: RecordedMetadata<(GlobalElementId, TypeId)>,
@@ -163,16 +161,10 @@ pub(crate) struct ViewNodeRecording {
     pub(crate) prepaint_text: crate::text_system::LineLayoutRecording,
     pub(crate) paint_text: crate::text_system::LineLayoutRecording,
     pub(crate) tab_stops: RecordedMetadata<crate::TabStopOperation>,
-    pub(crate) window_controls: RecordedMetadata<(crate::WindowControlArea, Hitbox)>,
-    pub(crate) mouse_listeners: RecordedMetadata<NodeCallback>,
-    pub(crate) input_handlers: RecordedMetadata<NodeCallback>,
     pub(crate) dispatch_nodes: RecordedMetadata<crate::key_dispatch::DispatchNode>,
     pub(crate) dispatch_start: usize,
     pub(crate) has_layout: bool,
     pub(crate) scene: ViewNodeScene,
-    pub(crate) hitboxes: RecordedMetadata<Hitbox>,
-    pub(crate) tooltip_requests: RecordedMetadata<Option<TooltipRequest>>,
-    pub(crate) cursor_styles: RecordedMetadata<CursorStyleRequest>,
 }
 
 impl ViewNodeRecording {
@@ -263,35 +255,54 @@ impl ViewNodeScene {
     }
 }
 
-slotmap::new_key_type! {
-    /// A scope that owns painted callbacks: a view node, or the frame itself for output
-    /// painted outside every node.
-    pub(crate) struct CallbackOwnerId;
+/// One thing a scope produced while drawing. Kinds that are only read by walking the
+/// frame live here; a `Child` marks where a child node's output of one phase belongs.
+pub(crate) enum OutputItem {
+    Child(crate::node_engine::ViewNodeId, MetadataPhase),
+    Hitbox(Hitbox),
+    Tooltip(TooltipRequest),
+    CursorStyle(CursorStyleRequest),
+    WindowControl(crate::WindowControlArea, Hitbox),
+    /// `None` while leased out for a call.
+    MouseListener(Option<crate::window::AnyMouseListener>),
+    InputHandler(Option<Box<dyn crate::InputHandler>>),
+    #[cfg(any(test, feature = "test-support"))]
+    DebugBounds(String, Bounds<Pixels>),
 }
 
-/// Callbacks registered while an owner's output was painted. Slots are `None` while leased
-/// out for a call.
+/// Everything one scope produced while drawing, by phase, in production order. A reused
+/// node keeps its output untouched; a redrawn node overwrites it in place.
 #[derive(Default)]
-pub(crate) struct CallbackSlots {
-    pub(crate) mouse_listeners: Vec<Option<crate::window::AnyMouseListener>>,
-    pub(crate) input_handlers: Vec<Option<Box<dyn crate::InputHandler>>>,
-    /// Bumped whenever the lists are rebuilt, so positions issued earlier stop resolving.
+pub(crate) struct NodeOutput {
+    phases: [Vec<OutputItem>; 3],
+    /// Bumped whenever the output is rebuilt, so slots issued earlier stop resolving.
     pub(crate) generation: u64,
 }
 
-impl CallbackSlots {
+impl NodeOutput {
+    pub(crate) fn phase(&self, phase: MetadataPhase) -> &Vec<OutputItem> {
+        &self.phases[phase as usize]
+    }
+
+    pub(crate) fn phase_mut(&mut self, phase: MetadataPhase) -> &mut Vec<OutputItem> {
+        &mut self.phases[phase as usize]
+    }
+
     pub(crate) fn reset(&mut self) {
-        self.mouse_listeners.clear();
-        self.input_handlers.clear();
+        for phase in &mut self.phases {
+            phase.clear();
+        }
         self.generation += 1;
     }
 }
 
-/// The position of a callback in the [`CallbackSlots`] that own it. Frames and recordings
-/// hold these instead of the closures.
+/// The position of one item in a scope's output. Held instead of the item when the item
+/// must stay in place, such as a callback that is leased out for a call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NodeCallback {
-    pub(crate) owner: CallbackOwnerId,
+pub(crate) struct OutputSlot {
+    /// The owning node, or `None` for output drawn outside every node.
+    pub(crate) owner: Option<crate::node_engine::ViewNodeId>,
+    pub(crate) phase: MetadataPhase,
     pub(crate) index: usize,
     pub(crate) generation: u64,
 }
@@ -302,7 +313,7 @@ pub(crate) struct NodeLocalState {
 }
 
 pub(crate) struct ViewNode {
-    pub(crate) callbacks: CallbackOwnerId,
+    pub(crate) output: NodeOutput,
     pub(crate) local_state: FxHashMap<(GlobalElementId, TypeId), NodeLocalState>,
     pub(crate) accessed_local_state: FxHashSet<(GlobalElementId, TypeId)>,
     pub(crate) layout: Option<LayoutId>,

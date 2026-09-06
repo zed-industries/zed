@@ -2472,9 +2472,7 @@ impl Interactivity {
 
                 #[cfg(any(feature = "test-support", test))]
                 if let Some(debug_selector) = &self.debug_selector {
-                    window
-                        .next_frame
-                        .record_debug_bounds(debug_selector, bounds);
+                    window.record_debug_bounds(debug_selector, bounds);
                 }
 
                 self.paint_hover_group_handler(window, cx);
@@ -5041,9 +5039,7 @@ mod tests {
                     Some("prompt")
                 );
                 let position = window
-                    .rendered_frame
-                    .hitboxes
-                    .last()
+                    .last_hitbox_for_test()
                     .expect("prompt button")
                     .bounds
                     .center();
@@ -5457,11 +5453,9 @@ mod tests {
             .unwrap();
 
         let mut bounds = |selector: &'static str| {
-            cx.update_window(window.into(), |_, window, _| {
-                window.rendered_frame.debug_bounds.get(selector).copied()
-            })
-            .unwrap()
-            .unwrap_or_else(|| panic!("{selector} was not rendered"))
+            cx.update_window(window.into(), |_, window, _| window.debug_bounds(selector))
+                .unwrap()
+                .unwrap_or_else(|| panic!("{selector} was not rendered"))
         };
 
         assert_eq!(bounds("cell-0").origin.x, px(0.));

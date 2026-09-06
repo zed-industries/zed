@@ -897,7 +897,7 @@ impl VisualTestContext {
 
     /// debug_bounds returns the bounds of the element with the given selector.
     pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
-        self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())
+        self.update(|window, _| window.debug_bounds(selector))
     }
 
     /// Draw an element to the window. Useful for simulating events or actions
@@ -913,15 +913,15 @@ impl VisualTestContext {
         self.update(|window, cx| {
             let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
-            window.invalidator.set_phase(DrawPhase::Prepaint);
+            window.set_draw_phase(DrawPhase::Prepaint);
             let mut element = Drawable::new(f(window, cx));
             element.layout_as_root(space.into(), window, cx);
             window.with_absolute_element_offset(origin, |window| element.prepaint(window, cx));
 
-            window.invalidator.set_phase(DrawPhase::Paint);
+            window.set_draw_phase(DrawPhase::Paint);
             let (request_layout_state, prepaint_state) = element.paint(window, cx);
 
-            window.invalidator.set_phase(DrawPhase::None);
+            window.set_draw_phase(DrawPhase::None);
             window.refresh();
 
             drop(element);

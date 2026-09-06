@@ -533,7 +533,7 @@ impl<V: View> Element for ViewElement<V> {
                 ViewNodePrepaintState::Graft { node_id, .. }
                 | ViewNodePrepaintState::Render { node_id, .. } => *node_id,
             };
-            window.node_engine.enter_prepaint(node_id);
+            window.node_engine.enter_paint(node_id);
             if let Some(entity_id) = self.entity_id {
                 window.with_rendered_view(entity_id, |window| match node {
                     ViewNodePrepaintState::Graft {
@@ -931,7 +931,7 @@ mod tests {
                                     window.node_stats().expect("node stats").reused_subtrees > 0
                                 );
                             }
-                            window.rendered_frame.debug_bounds.clone()
+                            window.all_debug_bounds()
                         })
                         .expect("window");
                     if step == 2 {
@@ -952,9 +952,7 @@ mod tests {
                         .expect("window");
                     cx.run_until_parked();
                     let expected = window
-                        .update(cx, |_, window, _| {
-                            window.rendered_frame.debug_bounds.clone()
-                        })
+                        .update(cx, |_, window, _| window.all_debug_bounds())
                         .expect("window");
                     assert_eq!(actual, expected);
                 }

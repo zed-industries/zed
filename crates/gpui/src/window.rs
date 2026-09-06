@@ -22,8 +22,12 @@ use crate::{
     TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
     TransformationMatrix, Underline, UnderlineStyle, ViewNodeCacheKey, ViewNodeId,
     ViewNodeRecording, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
-    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems,
-    size, transparent_black, view_node::NodeCallback,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    node_engine::FrameOutput,
+    point,
+    prelude::*,
+    px, rems, size, transparent_black,
+    view_node::{OutputItem, OutputSlot},
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -37,8 +41,6 @@ use futures::FutureExt;
 use futures::channel::oneshot;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
-use itertools::FoldWhile::{Continue, Done};
-use itertools::Itertools;
 use parking_lot::RwLock;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
@@ -54,7 +56,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
-    ops::{DerefMut, Range},
+    ops::{ControlFlow, DerefMut, Range},
     rc::Rc,
     sync::{
         Arc, Weak,
@@ -861,7 +863,7 @@ impl Hitbox {
     /// Checks whether this hitbox would be hovered at `position`, regardless of the current input
     /// modality or mouse position.
     pub fn is_hovered_at(&self, position: Point<Pixels>, window: &Window) -> bool {
-        let hit_test = window.rendered_frame.hit_test(position);
+        let hit_test = window.hit_test(FrameOutput::Rendered, position);
         hit_test
             .ids
             .iter()
@@ -984,20 +986,9 @@ pub(crate) struct Frame {
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     accessed_element_states: Vec<(GlobalElementId, TypeId)>,
-    /// Painted in order; the closures live in the owning nodes.
-    pub(crate) mouse_listeners: Vec<NodeCallback>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
-    pub(crate) hitboxes: Vec<Hitbox>,
-    pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
-    pub(crate) input_handlers: Vec<NodeCallback>,
-    pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
-    pub(crate) cursor_styles: Vec<CursorStyleRequest>,
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
-    #[cfg(any(test, feature = "test-support"))]
-    debug_bounds_history: Vec<(String, Bounds<Pixels>)>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1007,8 +998,6 @@ pub(crate) struct Frame {
 
 #[derive(Clone, Default)]
 pub(crate) struct PrepaintStateIndex {
-    hitboxes_index: usize,
-    tooltips_index: usize,
     deferred_draws_index: usize,
     dispatch_tree_index: usize,
     accessed_element_states_index: usize,
@@ -1017,53 +1006,21 @@ pub(crate) struct PrepaintStateIndex {
 
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
-    window_controls_index: usize,
-    mouse_listeners_index: usize,
-    input_handlers_index: usize,
-    cursor_styles_index: usize,
     accessed_element_states_index: usize,
     tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
-    #[cfg(any(test, feature = "test-support"))]
-    debug_bounds_index: usize,
 }
 
 impl Frame {
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn record_debug_bounds(&mut self, selector: &str, bounds: Bounds<Pixels>) {
-        self.debug_bounds.insert(selector.to_owned(), bounds);
-        // Selectors can repeat across scopes; replay must preserve the last writer.
-        self.debug_bounds_history
-            .push((selector.to_owned(), bounds));
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn replay_debug_bounds(&mut self, entries: &[(String, Bounds<Pixels>)]) {
-        for (selector, bounds) in entries {
-            self.record_debug_bounds(selector, *bounds);
-        }
-    }
-
     pub(crate) fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
             focus: None,
             window_active: false,
             element_states: FxHashMap::default(),
             accessed_element_states: Vec::new(),
-            mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
-            hitboxes: Vec::new(),
-            window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
-            input_handlers: Vec::new(),
-            tooltip_requests: Vec::new(),
-            cursor_styles: Vec::new(),
-
-            #[cfg(any(test, feature = "test-support"))]
-            debug_bounds: FxHashMap::default(),
-            #[cfg(any(test, feature = "test-support"))]
-            debug_bounds_history: Vec::new(),
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             next_inspector_instance_ids: FxHashMap::default(),
@@ -1077,68 +1034,17 @@ impl Frame {
     pub(crate) fn clear(&mut self) {
         self.element_states.clear();
         self.accessed_element_states.clear();
-        self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
-        self.input_handlers.clear();
-        self.tooltip_requests.clear();
-        self.cursor_styles.clear();
-        self.hitboxes.clear();
-        self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
         self.tab_stops.clear();
         self.focus = None;
-
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            self.debug_bounds.clear();
-            self.debug_bounds_history.clear();
-        }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         {
             self.next_inspector_instance_ids.clear();
             self.inspector_hitboxes.clear();
         }
-    }
-
-    pub(crate) fn cursor_style(&self, window: &Window) -> Option<CursorStyle> {
-        self.cursor_styles
-            .iter()
-            .rev()
-            .fold_while(None, |style, request| match request.hitbox_id {
-                None => Done(Some(request.style)),
-                Some(hitbox_id) => Continue(style.or_else(|| {
-                    hitbox_id
-                        .is_hovered_ignoring_last_input(window)
-                        .then_some(request.style)
-                })),
-            })
-            .into_inner()
-    }
-
-    pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
-        let mut set_hover_hitbox_count = false;
-        let mut hit_test = HitTest::default();
-        for hitbox in self.hitboxes.iter().rev() {
-            let bounds = hitbox.bounds.intersect(&hitbox.content_mask.bounds);
-            if bounds.contains(&position) {
-                hit_test.ids.push(hitbox.id);
-                if !set_hover_hitbox_count
-                    && hitbox.behavior == HitboxBehavior::BlockMouseExceptScroll
-                {
-                    hit_test.hover_hitbox_count = hit_test.ids.len();
-                    set_hover_hitbox_count = true;
-                }
-                if hitbox.behavior == HitboxBehavior::BlockMouse {
-                    break;
-                }
-            }
-        }
-        if !set_hover_hitbox_count {
-            hit_test.hover_hitbox_count = hit_test.ids.len();
-        }
-        hit_test
     }
 
     pub(crate) fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
@@ -1216,6 +1122,7 @@ pub struct Window {
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     mouse_hit_test: HitTest,
+    dispatching_mouse_event: bool,
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
@@ -1932,14 +1839,7 @@ impl Window {
             let mut cx = cx.to_async();
             Box::new(move || {
                 handle
-                    .update(&mut cx, |_, window, _cx| {
-                        for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
-                            if window.mouse_hit_test.ids.contains(&hitbox.id) {
-                                return Some(*area);
-                            }
-                        }
-                        None
-                    })
+                    .update(&mut cx, |_, window, _cx| window.hit_window_control())
                     .log_err()
                     .unwrap_or(None)
             })
@@ -2042,6 +1942,7 @@ impl Window {
             default_prevented: true,
             mouse_position,
             mouse_hit_test: HitTest::default(),
+            dispatching_mouse_event: false,
             modifiers,
             capslock,
             scale_factor,
@@ -3136,6 +3037,7 @@ impl Window {
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
+        self.node_engine.swap_frame_outputs();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
 
@@ -3329,7 +3231,7 @@ impl Window {
     }
 
     fn draw_roots(&mut self, cx: &mut App) {
-        self.invalidator.set_phase(DrawPhase::Prepaint);
+        self.set_draw_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
         if self.a11y.is_active() {
@@ -3394,10 +3296,10 @@ impl Window {
             tooltip_element = self.prepaint_tooltip(cx);
         }
 
-        self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
+        self.mouse_hit_test = self.hit_test(FrameOutput::Next, self.mouse_position);
 
         // Now actually paint the elements.
-        self.invalidator.set_phase(DrawPhase::Paint);
+        self.set_draw_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -3444,18 +3346,28 @@ impl Window {
         }
     }
 
+    /// Sets the draw phase for the invalidator's assertions and for output drawn outside
+    /// every node.
+    pub(crate) fn set_draw_phase(&mut self, phase: DrawPhase) {
+        self.invalidator.set_phase(phase);
+        self.node_engine.set_frame_phase(match phase {
+            DrawPhase::Paint => crate::view_node::MetadataPhase::Paint,
+            DrawPhase::None | DrawPhase::Prepaint | DrawPhase::Focus => {
+                crate::view_node::MetadataPhase::Prepaint
+            }
+        });
+    }
+
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
-        // Use indexing instead of iteration to avoid borrowing self for the duration of the loop.
-        for tooltip_request_index in (0..self.next_frame.tooltip_requests.len()).rev() {
-            let Some(Some(tooltip_request)) = self
-                .next_frame
-                .tooltip_requests
-                .get(tooltip_request_index)
-                .cloned()
-            else {
-                log::error!("Unexpectedly absent TooltipRequest");
-                continue;
-            };
+        // Cloned so the tree can be drawn into while placing the tooltip.
+        let mut tooltip_requests = Vec::new();
+        self.node_engine.walk_rev(FrameOutput::Next, |_, item| {
+            if let OutputItem::Tooltip(request) = item {
+                tooltip_requests.push(request.clone());
+            }
+            ControlFlow::Continue(())
+        });
+        for tooltip_request in tooltip_requests {
             let mut element = tooltip_request.tooltip.view.clone().into_any_element();
             let mouse_position = tooltip_request.tooltip.mouse_position;
             let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self, cx);
@@ -3647,12 +3559,7 @@ impl Window {
                 );
             };
         }
-        check!(mouse_listeners, self.rendered_frame.mouse_listeners.len());
         check!(dispatch_nodes, self.rendered_frame.dispatch_tree.len());
-        check!(hitboxes, self.rendered_frame.hitboxes.len());
-        check!(input_handlers, self.rendered_frame.input_handlers.len());
-        check!(tooltip_requests, self.rendered_frame.tooltip_requests.len());
-        check!(cursor_styles, self.rendered_frame.cursor_styles.len());
         assert!(
             engine
                 .recordings()
@@ -3817,73 +3724,6 @@ impl Window {
                 )
             },
         );
-        recording.window_controls.record(
-            paint_range.start.window_controls_index..paint_range.end.window_controls_index,
-            children.iter().copied(),
-            |recording, phase| {
-                (phase == MetadataPhase::Paint).then_some(&recording.window_controls)
-            },
-            |range, target, start| {
-                capture_metadata(
-                    &self.next_frame.window_control_hitboxes[range],
-                    target,
-                    start,
-                )
-            },
-        );
-        recording.mouse_listeners.record(
-            paint_range.start.mouse_listeners_index..paint_range.end.mouse_listeners_index,
-            children.iter().copied(),
-            |recording, phase| {
-                (phase == MetadataPhase::Paint).then_some(&recording.mouse_listeners)
-            },
-            |range, target, start| {
-                capture_metadata(&self.next_frame.mouse_listeners[range], target, start)
-            },
-        );
-        recording.input_handlers.record(
-            paint_range.start.input_handlers_index..paint_range.end.input_handlers_index,
-            children.iter().copied(),
-            |recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.input_handlers),
-            |range, target, start| {
-                capture_metadata(&self.next_frame.input_handlers[range], target, start)
-            },
-        );
-        recording.hitboxes.record(
-            prepaint_range.start.hitboxes_index..prepaint_range.end.hitboxes_index,
-            children.iter().copied(),
-            |recording, phase| (phase == MetadataPhase::Prepaint).then_some(&recording.hitboxes),
-            |range, target, start| {
-                capture_metadata(&self.next_frame.hitboxes[range], target, start)
-            },
-        );
-        recording.tooltip_requests.record(
-            prepaint_range.start.tooltips_index..prepaint_range.end.tooltips_index,
-            children.iter().copied(),
-            |recording, phase| {
-                (phase == MetadataPhase::Prepaint).then_some(&recording.tooltip_requests)
-            },
-            |range, target, start| {
-                capture_metadata(&self.next_frame.tooltip_requests[range], target, start)
-            },
-        );
-        recording.cursor_styles.record(
-            paint_range.start.cursor_styles_index..paint_range.end.cursor_styles_index,
-            children.iter().copied(),
-            |recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.cursor_styles),
-            |range, target, start| {
-                capture_metadata(&self.next_frame.cursor_styles[range], target, start)
-            },
-        );
-        #[cfg(any(test, feature = "test-support"))]
-        recording.debug_bounds.record(
-            paint_range.start.debug_bounds_index..paint_range.end.debug_bounds_index,
-            children.iter().copied(),
-            |recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.debug_bounds),
-            |range, target, start| {
-                capture_metadata(&self.next_frame.debug_bounds_history[range], target, start)
-            },
-        );
         self.next_frame.dispatch_tree.record_subtree(
             prepaint_range.start.dispatch_tree_index..prepaint_range.end.dispatch_tree_index,
             &mut recording.dispatch_nodes,
@@ -3897,7 +3737,6 @@ impl Window {
         &mut self,
         recording: &mut ViewNodeRecording,
     ) -> Range<PrepaintStateIndex> {
-        use crate::view_node::MetadataPhase;
         let start = self.prepaint_index();
         let engine = &self.node_engine;
         recording.prepaint_states.replay(
@@ -3911,18 +3750,6 @@ impl Window {
         );
         self.text_system
             .replay_layouts(&recording.prepaint_text, engine);
-        recording.hitboxes.replay(
-            engine,
-            &|recording, phase| (phase == MetadataPhase::Prepaint).then_some(&recording.hitboxes),
-            &mut |items| self.next_frame.hitboxes.extend_from_slice(items),
-        );
-        recording.tooltip_requests.replay(
-            engine,
-            &|recording, phase| {
-                (phase == MetadataPhase::Prepaint).then_some(&recording.tooltip_requests)
-            },
-            &mut |items| self.next_frame.tooltip_requests.extend_from_slice(items),
-        );
         if self
             .next_frame
             .dispatch_tree
@@ -3936,8 +3763,6 @@ impl Window {
         recording
             .prepaint_text
             .set_frame_range(start.line_layout_index.clone()..end.line_layout_index.clone());
-        recording.hitboxes.frame_range = start.hitboxes_index..end.hitboxes_index;
-        recording.tooltip_requests.frame_range = start.tooltips_index..end.tooltips_index;
         recording.dispatch_nodes.frame_range = start.dispatch_tree_index..end.dispatch_tree_index;
         start..end
     }
@@ -3966,42 +3791,6 @@ impl Window {
             &|recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.tab_stops),
             &mut |items| self.next_frame.tab_stops.replay(items),
         );
-        recording.window_controls.replay(
-            engine,
-            &|recording, phase| {
-                (phase == MetadataPhase::Paint).then_some(&recording.window_controls)
-            },
-            &mut |items| {
-                self.next_frame
-                    .window_control_hitboxes
-                    .extend_from_slice(items)
-            },
-        );
-        recording.mouse_listeners.replay(
-            engine,
-            &|recording, phase| {
-                (phase == MetadataPhase::Paint).then_some(&recording.mouse_listeners)
-            },
-            &mut |items| self.next_frame.mouse_listeners.extend_from_slice(items),
-        );
-        recording.input_handlers.replay(
-            engine,
-            &|recording, phase| {
-                (phase == MetadataPhase::Paint).then_some(&recording.input_handlers)
-            },
-            &mut |items| self.next_frame.input_handlers.extend_from_slice(items),
-        );
-        recording.cursor_styles.replay(
-            engine,
-            &|recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.cursor_styles),
-            &mut |items| self.next_frame.cursor_styles.extend_from_slice(items),
-        );
-        #[cfg(any(test, feature = "test-support"))]
-        recording.debug_bounds.replay(
-            engine,
-            &|recording, phase| (phase == MetadataPhase::Paint).then_some(&recording.debug_bounds),
-            &mut |items| self.next_frame.replay_debug_bounds(items),
-        );
         let parent = self.next_frame.scene.suspend_node_scene();
         recording.scene.replay(&mut self.next_frame.scene, engine);
         self.next_frame.scene.restore_node_scene(parent, node_id);
@@ -4012,22 +3801,10 @@ impl Window {
             .paint_text
             .set_frame_range(start.line_layout_index.clone()..end.line_layout_index.clone());
         recording.tab_stops.frame_range = start.tab_handle_index..end.tab_handle_index;
-        recording.window_controls.frame_range =
-            start.window_controls_index..end.window_controls_index;
-        recording.mouse_listeners.frame_range =
-            start.mouse_listeners_index..end.mouse_listeners_index;
-        recording.input_handlers.frame_range = start.input_handlers_index..end.input_handlers_index;
-        recording.cursor_styles.frame_range = start.cursor_styles_index..end.cursor_styles_index;
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            recording.debug_bounds.frame_range = start.debug_bounds_index..end.debug_bounds_index;
-        }
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
         PrepaintStateIndex {
-            hitboxes_index: self.next_frame.hitboxes.len(),
-            tooltips_index: self.next_frame.tooltip_requests.len(),
             deferred_draws_index: self.next_frame.deferred_draws.len(),
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
@@ -4037,15 +3814,9 @@ impl Window {
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
-            window_controls_index: self.next_frame.window_control_hitboxes.len(),
-            mouse_listeners_index: self.next_frame.mouse_listeners.len(),
-            input_handlers_index: self.next_frame.input_handlers.len(),
-            cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
-            #[cfg(any(test, feature = "test-support"))]
-            debug_bounds_index: self.next_frame.debug_bounds_history.len(),
         }
     }
 
@@ -4071,10 +3842,11 @@ impl Window {
     /// during the paint phase of element drawing.
     pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.invalidator.debug_assert_paint();
-        self.next_frame.cursor_styles.push(CursorStyleRequest {
-            hitbox_id: Some(hitbox.id),
-            style,
-        });
+        self.node_engine
+            .push(OutputItem::CursorStyle(CursorStyleRequest {
+                hitbox_id: Some(hitbox.id),
+                style,
+            }));
     }
 
     /// Updates the cursor style for the entire window at the platform level. A cursor
@@ -4083,10 +3855,11 @@ impl Window {
     /// phase of element drawing.
     pub fn set_window_cursor_style(&mut self, style: CursorStyle) {
         self.invalidator.debug_assert_paint();
-        self.next_frame.cursor_styles.push(CursorStyleRequest {
-            hitbox_id: None,
-            style,
-        })
+        self.node_engine
+            .push(OutputItem::CursorStyle(CursorStyleRequest {
+                hitbox_id: None,
+                style,
+            }));
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame. This method should only be called
@@ -4094,9 +3867,8 @@ impl Window {
     pub fn set_tooltip(&mut self, tooltip: AnyTooltip) -> TooltipId {
         self.invalidator.debug_assert_prepaint();
         let id = TooltipId(post_inc(&mut self.next_tooltip_id.0));
-        self.next_frame
-            .tooltip_requests
-            .push(Some(TooltipRequest { id, tooltip }));
+        self.node_engine
+            .push(OutputItem::Tooltip(TooltipRequest { id, tooltip }));
         id
     }
 
@@ -4180,12 +3952,10 @@ impl Window {
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
+        let checkpoint = self.node_engine.checkpoint();
         let result = f(self);
         if result.is_err() {
-            self.next_frame.hitboxes.truncate(index.hitboxes_index);
-            self.next_frame
-                .tooltip_requests
-                .truncate(index.tooltips_index);
+            self.node_engine.rollback(checkpoint);
             self.next_frame
                 .deferred_draws
                 .truncate(index.deferred_draws_index);
@@ -5343,7 +5113,7 @@ impl Window {
             content_mask,
             behavior,
         };
-        self.next_frame.hitboxes.push(hitbox.clone());
+        self.node_engine.push(OutputItem::Hitbox(hitbox.clone()));
         hitbox
     }
 
@@ -5352,7 +5122,8 @@ impl Window {
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn insert_window_control_hitbox(&mut self, area: WindowControlArea, hitbox: Hitbox) {
         self.invalidator.debug_assert_paint();
-        self.next_frame.window_control_hitboxes.push((area, hitbox));
+        self.node_engine
+            .push(OutputItem::WindowControl(area, hitbox));
     }
 
     /// Sets the key context for the current element. This context will be used to translate
@@ -5436,16 +5207,9 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         if focus_handle.is_focused(self) {
-            let callback = self
-                .node_engine
-                .register_input_handler(Box::new(input_handler));
-            self.next_frame.input_handlers.push(callback);
+            self.node_engine
+                .push(OutputItem::InputHandler(Some(Box::new(input_handler))));
         }
-    }
-
-    /// The input handler the platform talks to: the last one registered in the drawn frame.
-    pub(crate) fn focused_input_handler(&self) -> Option<NodeCallback> {
-        self.rendered_frame.input_handlers.last().copied()
     }
 
     /// Forwards the focused input handler's [`TextInputConfiguration`] to the
@@ -5479,14 +5243,14 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let callback = self.node_engine.register_mouse_listener(Box::new(
-            move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
-                if let Some(event) = event.downcast_ref() {
-                    listener(event, phase, window, cx)
-                }
-            },
-        ));
-        self.next_frame.mouse_listeners.push(callback);
+        self.node_engine
+            .push(OutputItem::MouseListener(Some(Box::new(
+                move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
+                    if let Some(event) = event.downcast_ref() {
+                        listener(event, phase, window, cx)
+                    }
+                },
+            ))));
     }
 
     /// Register a key event listener on this node for the next frame. The type of event
@@ -5583,12 +5347,156 @@ impl Window {
     fn reset_cursor_style(&self, cx: &mut App) {
         // Set the cursor only if we're the active window.
         if self.is_window_hovered() {
-            let style = self
-                .rendered_frame
-                .cursor_style(self)
-                .unwrap_or(CursorStyle::Arrow);
+            let style = self.cursor_style().unwrap_or(CursorStyle::Arrow);
             cx.platform.set_cursor_style(style);
         }
+    }
+
+    /// The cursor style requested by the topmost hovered element, or by the whole window.
+    fn cursor_style(&self) -> Option<CursorStyle> {
+        let mut style = None;
+        self.node_engine.walk_rev(FrameOutput::Rendered, |_, item| {
+            let OutputItem::CursorStyle(request) = item else {
+                return ControlFlow::Continue(());
+            };
+            match request.hitbox_id {
+                None => {
+                    style = Some(request.style);
+                    ControlFlow::Break(())
+                }
+                Some(hitbox_id) => {
+                    if style.is_none() && hitbox_id.is_hovered_ignoring_last_input(self) {
+                        style = Some(request.style);
+                    }
+                    ControlFlow::Continue(())
+                }
+            }
+        });
+        style
+    }
+
+    /// The hitboxes under `position`, topmost first, in the most recently drawn tree.
+    pub(crate) fn hit_test(&self, root: FrameOutput, position: Point<Pixels>) -> HitTest {
+        let mut set_hover_hitbox_count = false;
+        let mut hit_test = HitTest::default();
+        self.node_engine.walk_rev(root, |_, item| {
+            let OutputItem::Hitbox(hitbox) = item else {
+                return ControlFlow::Continue(());
+            };
+            let bounds = hitbox.bounds.intersect(&hitbox.content_mask.bounds);
+            if bounds.contains(&position) {
+                hit_test.ids.push(hitbox.id);
+                if !set_hover_hitbox_count
+                    && hitbox.behavior == HitboxBehavior::BlockMouseExceptScroll
+                {
+                    hit_test.hover_hitbox_count = hit_test.ids.len();
+                    set_hover_hitbox_count = true;
+                }
+                if hitbox.behavior == HitboxBehavior::BlockMouse {
+                    return ControlFlow::Break(());
+                }
+            }
+            ControlFlow::Continue(())
+        });
+        if !set_hover_hitbox_count {
+            hit_test.hover_hitbox_count = hit_test.ids.len();
+        }
+        hit_test
+    }
+
+    /// The bounds of the hitbox with `id` in the drawn tree.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn hitbox_bounds(&self, id: HitboxId) -> Option<Bounds<Pixels>> {
+        let mut bounds = None;
+        self.node_engine.walk(FrameOutput::Next, |_, item| {
+            if let OutputItem::Hitbox(hitbox) = item
+                && hitbox.id == id
+            {
+                bounds = Some(hitbox.bounds);
+                return ControlFlow::Break(());
+            }
+            ControlFlow::Continue(())
+        });
+        bounds
+    }
+
+    /// The hitbox drawn last in the most recent frame.
+    #[cfg(test)]
+    pub(crate) fn last_hitbox_for_test(&self) -> Option<Hitbox> {
+        let mut last = None;
+        self.node_engine.walk_rev(FrameOutput::Rendered, |_, item| {
+            if let OutputItem::Hitbox(hitbox) = item {
+                last = Some(hitbox.clone());
+                return ControlFlow::Break(());
+            }
+            ControlFlow::Continue(())
+        });
+        last
+    }
+
+    /// The window control area under the current mouse hit test, if any.
+    fn hit_window_control(&self) -> Option<WindowControlArea> {
+        let mut hit = None;
+        self.node_engine.walk(FrameOutput::Rendered, |_, item| {
+            if let OutputItem::WindowControl(area, hitbox) = item
+                && self.mouse_hit_test.ids.contains(&hitbox.id)
+            {
+                hit = Some(*area);
+                return ControlFlow::Break(());
+            }
+            ControlFlow::Continue(())
+        });
+        hit
+    }
+
+    /// The input handler the platform talks to: the last one registered in the drawn frame.
+    pub(crate) fn focused_input_handler(&self) -> Option<OutputSlot> {
+        let mut handler = None;
+        self.node_engine
+            .walk_rev(FrameOutput::Rendered, |slot, item| {
+                if matches!(item, OutputItem::InputHandler(_)) {
+                    handler = Some(slot);
+                    return ControlFlow::Break(());
+                }
+                ControlFlow::Continue(())
+            });
+        handler
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn record_debug_bounds(&mut self, selector: &str, bounds: Bounds<Pixels>) {
+        self.node_engine
+            .push(OutputItem::DebugBounds(selector.to_owned(), bounds));
+    }
+
+    /// Bounds recorded with `record_debug_bounds` in the most recently drawn tree; the
+    /// last writer of a selector wins.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn debug_bounds(&self, selector: &str) -> Option<Bounds<Pixels>> {
+        let mut found = None;
+        self.node_engine.walk_rev(FrameOutput::Rendered, |_, item| {
+            if let OutputItem::DebugBounds(recorded, bounds) = item
+                && recorded == selector
+            {
+                found = Some(*bounds);
+                return ControlFlow::Break(());
+            }
+            ControlFlow::Continue(())
+        });
+        found
+    }
+
+    /// Every recorded debug bound, keyed by selector.
+    #[cfg(test)]
+    pub(crate) fn all_debug_bounds(&self) -> FxHashMap<String, Bounds<Pixels>> {
+        let mut all = FxHashMap::default();
+        self.node_engine.walk(FrameOutput::Rendered, |_, item| {
+            if let OutputItem::DebugBounds(selector, bounds) = item {
+                all.insert(selector.clone(), *bounds);
+            }
+            ControlFlow::Continue(())
+        });
+        all
     }
 
     /// Dispatch a given keystroke as though the user had typed it.
@@ -5974,22 +5882,41 @@ impl Window {
 
     fn call_mouse_listener(
         &mut self,
-        callback: NodeCallback,
+        slot: OutputSlot,
         event: &dyn Any,
         phase: DispatchPhase,
         cx: &mut App,
     ) {
-        // Absent when the owner repainted since the frame was drawn, or the listener is
+        // Absent when the owner redrew since the frame was drawn, or the listener is
         // already running further up the stack.
-        let Some(mut listener) = self.node_engine.lease_mouse_listener(callback) else {
+        let Some(mut listener) = self.node_engine.lease(slot, |item| match item {
+            OutputItem::MouseListener(listener) => listener.take(),
+            _ => None,
+        }) else {
             return;
         };
         listener(event, phase, self, cx);
-        self.node_engine.restore_mouse_listener(callback, listener);
+        self.node_engine.restore(slot, listener, |item, listener| {
+            if let OutputItem::MouseListener(slot) = item {
+                *slot = Some(listener);
+            }
+        });
+    }
+
+    /// The positions of every mouse listener in the drawn frame, in paint order.
+    fn mouse_listeners(&self) -> Vec<OutputSlot> {
+        let mut listeners = Vec::new();
+        self.node_engine.walk(FrameOutput::Rendered, |slot, item| {
+            if matches!(item, OutputItem::MouseListener(_)) {
+                listeners.push(slot);
+            }
+            ControlFlow::Continue(())
+        });
+        listeners
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
-        let hit_test = self.rendered_frame.hit_test(self.mouse_position());
+        let hit_test = self.hit_test(FrameOutput::Rendered, self.mouse_position());
         if hit_test != self.mouse_hit_test {
             self.mouse_hit_test = hit_test;
             self.reset_cursor_style(cx);
@@ -6002,29 +5929,33 @@ impl Window {
             return;
         }
 
-        // Taken so that a listener dispatching another event sees no listeners.
-        let mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
+        // A listener that dispatches another mouse event re-enters here; the nested
+        // dispatch runs no listeners, as it did when the listener list was taken out of
+        // the frame for the duration of the loop.
+        if !self.dispatching_mouse_event {
+            self.dispatching_mouse_event = true;
+            let mouse_listeners = self.mouse_listeners();
 
-        // Capture phase, events bubble from back to front. Handlers for this phase are used for
-        // special purposes, such as detecting events outside of a given Bounds.
-        for listener in &mouse_listeners {
-            self.call_mouse_listener(*listener, event, DispatchPhase::Capture, cx);
-            if !cx.propagate_event {
-                break;
-            }
-        }
-
-        // Bubble phase, where most normal handlers do their work.
-        if cx.propagate_event {
-            for listener in mouse_listeners.iter().rev() {
-                self.call_mouse_listener(*listener, event, DispatchPhase::Bubble, cx);
+            // Capture phase, events bubble from back to front. Handlers for this phase are used
+            // for special purposes, such as detecting events outside of a given Bounds.
+            for listener in &mouse_listeners {
+                self.call_mouse_listener(*listener, event, DispatchPhase::Capture, cx);
                 if !cx.propagate_event {
                     break;
                 }
             }
-        }
 
-        self.rendered_frame.mouse_listeners = mouse_listeners;
+            // Bubble phase, where most normal handlers do their work.
+            if cx.propagate_event {
+                for listener in mouse_listeners.iter().rev() {
+                    self.call_mouse_listener(*listener, event, DispatchPhase::Bubble, cx);
+                    if !cx.propagate_event {
+                        break;
+                    }
+                }
+            }
+            self.dispatching_mouse_event = false;
+        }
 
         if cx.has_active_drag() {
             if event.is::<MouseMoveEvent>() {
@@ -7211,13 +7142,9 @@ impl Window {
         if let Some(inspector) = self.inspector.as_ref() {
             let inspector = inspector.read(cx);
             if let Some((hitbox_id, _)) = self.hovered_inspector_hitbox(inspector, &self.next_frame)
-                && let Some(hitbox) = self
-                    .next_frame
-                    .hitboxes
-                    .iter()
-                    .find(|hitbox| hitbox.id == hitbox_id)
+                && let Some(bounds) = self.hitbox_bounds(hitbox_id)
             {
-                self.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
+                self.paint_quad(crate::fill(bounds, crate::rgba(0x61afef4d)));
             }
         }
     }
@@ -7914,12 +7841,7 @@ mod tests {
             cx.run_until_parked();
             handle
                 .update(cx, |_, window, _| {
-                    assert!(
-                        window
-                            .rendered_frame
-                            .debug_bounds
-                            .contains_key("inspected-leaf")
-                    );
+                    assert!(window.debug_bounds("inspected-leaf").is_some());
                 })
                 .expect("window open");
             handle
@@ -7928,12 +7850,7 @@ mod tests {
             cx.run_until_parked();
             handle
                 .update(cx, |_, window, _| {
-                    assert!(
-                        window
-                            .rendered_frame
-                            .debug_bounds
-                            .contains_key("inspected-leaf")
-                    );
+                    assert!(window.debug_bounds("inspected-leaf").is_some());
                 })
                 .expect("window open");
         }

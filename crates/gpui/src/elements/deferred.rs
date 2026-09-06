@@ -154,13 +154,7 @@ mod tests {
         cx.run_until_parked();
 
         let menu_bounds = window
-            .update(cx, |_, window, _| {
-                window
-                    .rendered_frame
-                    .debug_bounds
-                    .get("NESTED_MENU")
-                    .copied()
-            })
+            .update(cx, |_, window, _| window.debug_bounds("NESTED_MENU"))
             .unwrap()
             .expect("NESTED_MENU debug bounds not found");
         assert_eq!(menu_bounds.size, size(px(50.), px(50.)));
@@ -187,12 +181,7 @@ mod tests {
         window
             .update(cx, |_, window, _| {
                 assert_eq!(window.rendered_frame.deferred_draws.len(), 2);
-                assert!(
-                    window
-                        .rendered_frame
-                        .debug_bounds
-                        .contains_key("NESTED_MENU")
-                );
+                assert!(window.debug_bounds("NESTED_MENU").is_some());
             })
             .unwrap();
     }

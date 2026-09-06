@@ -1475,12 +1475,20 @@ impl PlatformInputHandler {
         cx: &mut App,
         f: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
     ) -> Option<R> {
+        use crate::view_node::OutputItem;
         // Leased out of its node for the call; absent while already leased further up the
         // stack.
-        let callback = window.focused_input_handler()?;
-        let mut handler = window.node_engine.lease_input_handler(callback)?;
+        let slot = window.focused_input_handler()?;
+        let mut handler = window.node_engine.lease(slot, |item| match item {
+            OutputItem::InputHandler(handler) => handler.take(),
+            _ => None,
+        })?;
         let result = f(handler.as_mut(), window, cx);
-        window.node_engine.restore_input_handler(callback, handler);
+        window.node_engine.restore(slot, handler, |item, handler| {
+            if let OutputItem::InputHandler(slot) = item {
+                *slot = Some(handler);
+            }
+        });
         Some(result)
     }
 

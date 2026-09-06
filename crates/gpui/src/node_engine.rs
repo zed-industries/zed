@@ -1,10 +1,19 @@
 use crate::{
     Bounds, EntityId, GlobalElementId, LayoutId, Pixels, ViewNode, ViewNodeCacheKey,
     ViewNodeRecording,
-    view_node::{CallbackOwnerId, CallbackSlots, NodeCallback},
+    view_node::{MetadataPhase, NodeOutput, OutputItem, OutputSlot},
 };
 use collections::{FxHashMap, FxHashSet};
 use slotmap::SlotMap;
+use std::ops::ControlFlow;
+
+/// Which frame's root a query walks: the one drawn last, which events are dispatched
+/// against, or the one being drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FrameOutput {
+    Rendered,
+    Next,
+}
 
 slotmap::new_key_type! {
     /// Identifies one mounted view occurrence. Nodes are engine storage: they are not
@@ -48,13 +57,16 @@ pub(crate) struct NodeEngine {
     occurrences: FxHashMap<ViewOccurrence, ViewNodeId>,
     dirty_nodes: FxHashSet<ViewNodeId>,
     frame_bound_nodes: FxHashSet<ViewNodeId>,
-    traversal_stack: Vec<ViewNodeId>,
-    /// Painted callbacks, kept out of the frame so a replayed recording can refer to them
-    /// by position. Every node owns one entry; `frame_callbacks` owns the rest.
-    callbacks: SlotMap<CallbackOwnerId, CallbackSlots>,
-    /// Owns callbacks painted outside every node, such as by deferred draws. Reset each
-    /// frame, since only nodes are ever replayed.
-    frame_callbacks: CallbackOwnerId,
+    /// The nodes being drawn, innermost last, each with the phase it is in.
+    traversal_stack: Vec<(ViewNodeId, MetadataPhase)>,
+    /// Output drawn outside every node, and the splices to the root nodes: the root of a
+    /// frame, which walking in order reproduces. Unlike nodes, the root is rebuilt from
+    /// scratch every frame, so the frame being drawn and the frame events are dispatched
+    /// against each have their own, swapped when the window swaps its frames.
+    next_output: NodeOutput,
+    rendered_output: NodeOutput,
+    /// The phase output drawn outside every node belongs to.
+    frame_phase: MetadataPhase,
     roots: Vec<ViewNodeId>,
     next_roots: Vec<ViewNodeId>,
     full_refresh: bool,
@@ -73,8 +85,6 @@ impl NodeEngine {
     }
 
     pub(crate) fn new() -> Self {
-        let mut callbacks = SlotMap::with_key();
-        let frame_callbacks = callbacks.insert(CallbackSlots::default());
         Self {
             frame_stats: NodeStats::default(),
             last_frame_stats: NodeStats::default(),
@@ -85,8 +95,9 @@ impl NodeEngine {
             dirty_nodes: FxHashSet::default(),
             frame_bound_nodes: FxHashSet::default(),
             traversal_stack: Vec::new(),
-            callbacks,
-            frame_callbacks,
+            next_output: NodeOutput::default(),
+            rendered_output: NodeOutput::default(),
+            frame_phase: MetadataPhase::Prepaint,
             roots: Vec::new(),
             next_roots: Vec::new(),
             full_refresh: true,
@@ -129,105 +140,205 @@ impl NodeEngine {
     }
 
     pub(crate) fn current_node(&self) -> Option<ViewNodeId> {
-        self.traversal_stack.last().copied()
+        self.traversal_stack.last().map(|(node_id, _)| *node_id)
     }
 
-    /// The owner of callbacks registered right now: the node being drawn, or the frame when
-    /// painting outside every node (deferred draws, roots that are not views).
-    fn callback_owner(&self) -> CallbackOwnerId {
-        self.current_node()
-            .and_then(|node_id| self.nodes.get(node_id))
-            .map_or(self.frame_callbacks, |node| node.callbacks)
+    /// Sets the phase for output drawn outside every node.
+    pub(crate) fn set_frame_phase(&mut self, phase: MetadataPhase) {
+        self.frame_phase = phase;
     }
 
-    pub(crate) fn register_mouse_listener(
-        &mut self,
-        listener: crate::window::AnyMouseListener,
-    ) -> NodeCallback {
-        self.register_callback(listener, |slots| &mut slots.mouse_listeners)
+    /// Makes the frame just drawn the one queries run against, and starts a new one.
+    pub(crate) fn swap_frame_outputs(&mut self) {
+        std::mem::swap(&mut self.next_output, &mut self.rendered_output);
+        self.next_output.reset();
     }
 
-    pub(crate) fn register_input_handler(
-        &mut self,
-        handler: Box<dyn crate::InputHandler>,
-    ) -> NodeCallback {
-        self.register_callback(handler, |slots| &mut slots.input_handlers)
+    fn output(&self, root: FrameOutput, owner: Option<ViewNodeId>) -> Option<&NodeOutput> {
+        match owner {
+            Some(node_id) => self.nodes.get(node_id).map(|node| &node.output),
+            None => Some(match root {
+                FrameOutput::Rendered => &self.rendered_output,
+                FrameOutput::Next => &self.next_output,
+            }),
+        }
     }
 
-    /// Takes the listener out of its slot for a call. Returns `None` while it is already
-    /// leased or once its owner has repainted; return it with `restore_mouse_listener`.
-    pub(crate) fn lease_mouse_listener(
-        &mut self,
-        callback: NodeCallback,
-    ) -> Option<crate::window::AnyMouseListener> {
-        self.lease_callback(callback, |slots| &mut slots.mouse_listeners)
+    /// Output slots are only leased against the rendered frame.
+    fn output_mut(&mut self, owner: Option<ViewNodeId>) -> Option<&mut NodeOutput> {
+        match owner {
+            Some(node_id) => self.nodes.get_mut(node_id).map(|node| &mut node.output),
+            None => Some(&mut self.rendered_output),
+        }
     }
 
-    pub(crate) fn restore_mouse_listener(
-        &mut self,
-        callback: NodeCallback,
-        listener: crate::window::AnyMouseListener,
-    ) {
-        self.restore_callback(callback, listener, |slots| &mut slots.mouse_listeners)
+    /// The output being drawn into right now: the innermost node's, in its phase, or the
+    /// frame's when drawing outside every node (deferred draws, roots that are not views).
+    fn current_output(&mut self) -> (Option<ViewNodeId>, MetadataPhase, &mut NodeOutput) {
+        match self.traversal_stack.last().copied() {
+            Some((node_id, phase)) => (Some(node_id), phase, &mut self.nodes[node_id].output),
+            None => (None, self.frame_phase, &mut self.next_output),
+        }
     }
 
-    pub(crate) fn lease_input_handler(
-        &mut self,
-        callback: NodeCallback,
-    ) -> Option<Box<dyn crate::InputHandler>> {
-        self.lease_callback(callback, |slots| &mut slots.input_handlers)
-    }
-
-    pub(crate) fn restore_input_handler(
-        &mut self,
-        callback: NodeCallback,
-        handler: Box<dyn crate::InputHandler>,
-    ) {
-        self.restore_callback(callback, handler, |slots| &mut slots.input_handlers)
-    }
-
-    fn register_callback<T>(
-        &mut self,
-        callback: T,
-        list: impl FnOnce(&mut CallbackSlots) -> &mut Vec<Option<T>>,
-    ) -> NodeCallback {
-        let owner = self.callback_owner();
-        let slots = &mut self.callbacks[owner];
-        let generation = slots.generation;
-        let list = list(slots);
-        list.push(Some(callback));
-        NodeCallback {
+    /// Appends `item` to the output being drawn and returns its position.
+    pub(crate) fn push(&mut self, item: OutputItem) -> OutputSlot {
+        let (owner, phase, output) = self.current_output();
+        let generation = output.generation;
+        let items = output.phase_mut(phase);
+        items.push(item);
+        OutputSlot {
             owner,
-            index: list.len() - 1,
+            phase,
+            index: items.len() - 1,
             generation,
         }
     }
 
-    fn lease_callback<T>(
-        &mut self,
-        callback: NodeCallback,
-        list: impl FnOnce(&mut CallbackSlots) -> &mut Vec<Option<T>>,
-    ) -> Option<T> {
-        let slots = self.callbacks.get_mut(callback.owner)?;
-        if slots.generation != callback.generation {
-            return None;
-        }
-        list(slots).get_mut(callback.index)?.take()
+    /// A point in the output being drawn that `rollback` can return to, discarding
+    /// everything drawn after it.
+    pub(crate) fn checkpoint(&mut self) -> usize {
+        let (_, phase, output) = self.current_output();
+        output.phase(phase).len()
     }
 
-    fn restore_callback<T>(
-        &mut self,
-        callback: NodeCallback,
-        value: T,
-        list: impl FnOnce(&mut CallbackSlots) -> &mut Vec<Option<T>>,
+    pub(crate) fn rollback(&mut self, checkpoint: usize) {
+        let (_, phase, output) = self.current_output();
+        output.phase_mut(phase).truncate(checkpoint);
+    }
+
+    /// Visits every item in a frame in the order it was drawn, descending into child
+    /// nodes where they were entered. Stops when `visit` breaks.
+    pub(crate) fn walk<'a>(
+        &'a self,
+        root: FrameOutput,
+        mut visit: impl FnMut(OutputSlot, &'a OutputItem) -> ControlFlow<()>,
     ) {
-        // The owner may have repainted during the call, in which case the value is stale.
-        if let Some(slots) = self.callbacks.get_mut(callback.owner)
-            && slots.generation == callback.generation
-            && let Some(slot) = list(slots).get_mut(callback.index)
-        {
-            *slot = Some(value);
+        for phase in [
+            MetadataPhase::Layout,
+            MetadataPhase::Prepaint,
+            MetadataPhase::Paint,
+        ] {
+            if self.walk_output(root, None, phase, &mut visit).is_break() {
+                return;
+            }
         }
+    }
+
+    /// [`Self::walk`] in reverse drawing order.
+    pub(crate) fn walk_rev<'a>(
+        &'a self,
+        root: FrameOutput,
+        mut visit: impl FnMut(OutputSlot, &'a OutputItem) -> ControlFlow<()>,
+    ) {
+        for phase in [
+            MetadataPhase::Paint,
+            MetadataPhase::Prepaint,
+            MetadataPhase::Layout,
+        ] {
+            if self
+                .walk_output_rev(root, None, phase, &mut visit)
+                .is_break()
+            {
+                return;
+            }
+        }
+    }
+
+    fn walk_output<'a>(
+        &'a self,
+        root: FrameOutput,
+        owner: Option<ViewNodeId>,
+        phase: MetadataPhase,
+        visit: &mut impl FnMut(OutputSlot, &'a OutputItem) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        // A child that was removed since its parent last drew is skipped.
+        let Some(output) = self.output(root, owner) else {
+            return ControlFlow::Continue(());
+        };
+        for (index, item) in output.phase(phase).iter().enumerate() {
+            match item {
+                OutputItem::Child(child, child_phase) => {
+                    self.walk_output(root, Some(*child), *child_phase, visit)?
+                }
+                item => visit(
+                    OutputSlot {
+                        owner,
+                        phase,
+                        index,
+                        generation: output.generation,
+                    },
+                    item,
+                )?,
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn walk_output_rev<'a>(
+        &'a self,
+        root: FrameOutput,
+        owner: Option<ViewNodeId>,
+        phase: MetadataPhase,
+        visit: &mut impl FnMut(OutputSlot, &'a OutputItem) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        let Some(output) = self.output(root, owner) else {
+            return ControlFlow::Continue(());
+        };
+        for (index, item) in output.phase(phase).iter().enumerate().rev() {
+            match item {
+                OutputItem::Child(child, child_phase) => {
+                    self.walk_output_rev(root, Some(*child), *child_phase, visit)?
+                }
+                item => visit(
+                    OutputSlot {
+                        owner,
+                        phase,
+                        index,
+                        generation: output.generation,
+                    },
+                    item,
+                )?,
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    /// Takes the callback at `slot` out of its output for a call, via `take` on the matching
+    /// variant. Returns `None` while it is already leased or once its owner has redrawn;
+    /// return it with `restore`.
+    pub(crate) fn lease<T>(
+        &mut self,
+        slot: OutputSlot,
+        take: impl FnOnce(&mut OutputItem) -> Option<T>,
+    ) -> Option<T> {
+        let output = self.output_mut(slot.owner)?;
+        if output.generation != slot.generation {
+            return None;
+        }
+        take(output.phase_mut(slot.phase).get_mut(slot.index)?)
+    }
+
+    pub(crate) fn restore<T>(
+        &mut self,
+        slot: OutputSlot,
+        value: T,
+        put: impl FnOnce(&mut OutputItem, T),
+    ) {
+        // The owner may have redrawn during the call, in which case the value is stale.
+        if let Some(output) = self.output_mut(slot.owner)
+            && output.generation == slot.generation
+            && let Some(item) = output.phase_mut(slot.phase).get_mut(slot.index)
+        {
+            put(item, value);
+        }
+    }
+
+    /// Records that `child` is entering `phase` inside the output being drawn, so the
+    /// child's output of that phase is walked at this point.
+    fn splice(&mut self, child: ViewNodeId, phase: MetadataPhase) {
+        self.push(OutputItem::Child(child, phase));
+        self.traversal_stack.push((child, phase));
     }
 
     /// Takes an empty set to accumulate the entities a rebuilding node reads. Returned to
@@ -270,7 +381,6 @@ impl NodeEngine {
         };
         self.changed_bounds = None;
         self.next_roots.clear();
-        self.callbacks[self.frame_callbacks].reset();
         if self.full_refresh {
             self.dirty_nodes.extend(self.nodes.keys());
         }
@@ -342,7 +452,7 @@ impl NodeEngine {
     }
 
     fn next_occurrence(&self, element: GlobalElementId) -> ViewOccurrence {
-        let parent = self.traversal_stack.last().copied();
+        let parent = self.current_node();
         let siblings = parent
             .and_then(|parent| self.nodes.get(parent))
             .map(|parent| &parent.next_children)
@@ -378,7 +488,7 @@ impl NodeEngine {
             node_id
         } else {
             let node_id = self.nodes.insert(ViewNode {
-                callbacks: self.callbacks.insert(CallbackSlots::default()),
+                output: NodeOutput::default(),
                 local_state: FxHashMap::default(),
                 accessed_local_state: FxHashSet::default(),
                 layout: None,
@@ -404,7 +514,7 @@ impl NodeEngine {
         } else {
             self.next_roots.push(node_id);
         }
-        self.traversal_stack.push(node_id);
+        self.splice(node_id, MetadataPhase::Layout);
         node_id
     }
 
@@ -437,7 +547,7 @@ impl NodeEngine {
         if let Some(node) = self.nodes.get_mut(node_id) {
             node.next_children.clear();
             node.accessed_local_state.clear();
-            self.callbacks[node.callbacks].reset();
+            node.output.reset();
         }
     }
 
@@ -459,11 +569,15 @@ impl NodeEngine {
     /// capture frame-arena elements, or a deferred draw whose element lives in the arena.
     pub(crate) fn mark_frame_bound(&mut self) {
         self.frame_bound_nodes
-            .extend(self.traversal_stack.iter().copied());
+            .extend(self.traversal_stack.iter().map(|(node_id, _)| *node_id));
     }
 
     pub(crate) fn enter_prepaint(&mut self, node_id: ViewNodeId) {
-        self.traversal_stack.push(node_id);
+        self.splice(node_id, MetadataPhase::Prepaint);
+    }
+
+    pub(crate) fn enter_paint(&mut self, node_id: ViewNodeId) {
+        self.splice(node_id, MetadataPhase::Paint);
     }
 
     pub(crate) fn finish_prepaint(&mut self, node_id: ViewNodeId, rendered: bool) {
@@ -538,8 +652,8 @@ impl NodeEngine {
         self.dirty_nodes.clear();
         self.frame_bound_nodes.clear();
         self.traversal_stack.clear();
-        self.callbacks
-            .retain(|owner, _| owner == self.frame_callbacks);
+        self.next_output.reset();
+        self.rendered_output.reset();
         self.roots.clear();
         self.next_roots.clear();
         self.full_refresh = true;
@@ -556,7 +670,7 @@ impl NodeEngine {
 
     fn pop_traversal(&mut self, node_id: ViewNodeId) {
         let popped = self.traversal_stack.pop();
-        debug_assert_eq!(popped, Some(node_id));
+        debug_assert_eq!(popped.map(|(node_id, _)| node_id), Some(node_id));
     }
 
     fn reconcile_children(&mut self, node_id: ViewNodeId) {
@@ -590,7 +704,6 @@ impl NodeEngine {
         }
         self.recycle_dependency_set(node.accessed_entities);
         self.include_changed_bounds(node.previous_bounds);
-        self.callbacks.remove(node.callbacks);
         for child_id in node.children {
             self.remove_subtree(child_id);
         }
