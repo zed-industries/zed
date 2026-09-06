@@ -281,7 +281,6 @@ pub(crate) struct ViewNode {
     pub(crate) cache_key: ViewNodeCacheKey,
     pub(crate) previous_bounds: Bounds<Pixels>,
     pub(crate) accessed_entities: FxHashSet<EntityId>,
-    pub(crate) dependency_revisions: Vec<(EntityId, u64)>,
     pub(crate) recording: Option<ViewNodeRecording>,
 }
 

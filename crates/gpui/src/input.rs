@@ -131,20 +131,6 @@ pub struct ElementInputHandler<V> {
 }
 
 impl<V: 'static> ElementInputHandler<V> {
-    fn query<R>(&self, cx: &mut App, query: impl FnOnce(&mut V, &mut Context<V>) -> R) -> R {
-        cx.update(|cx| {
-            let mut view = cx.entities.lease(&self.view);
-            let result = query(
-                &mut view,
-                &mut Context::new_context(cx, self.view.downgrade()),
-            );
-            // Input configuration getters may populate caches. Only explicit notifications
-            // should invalidate their view, otherwise post-draw queries prevent any reuse.
-            cx.entities.end_query(view);
-            result
-        })
-    }
-
     /// Used in [`Element::paint`][element_paint] with the element's bounds, a `Window`, and a `App` context.
     ///
     /// [element_paint]: crate::Element::paint
@@ -269,11 +255,13 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
     }
 
     fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
-        self.query(cx, |view, cx| view.accepts_text_input(window, cx))
+        self.view
+            .update(cx, |view, cx| view.accepts_text_input(window, cx))
     }
 
     fn prefers_ime_for_printable_keys(&mut self, window: &mut Window, cx: &mut App) -> bool {
-        self.query(cx, |view, cx| view.accepts_text_input(window, cx))
+        self.view
+            .update(cx, |view, cx| view.accepts_text_input(window, cx))
     }
 
     fn text_input_configuration(
@@ -281,7 +269,8 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
         window: &mut Window,
         cx: &mut App,
     ) -> TextInputConfiguration {
-        self.query(cx, |view, cx| view.text_input_configuration(window, cx))
+        self.view
+            .update(cx, |view, cx| view.text_input_configuration(window, cx))
     }
 
     fn text_input_editable_range(

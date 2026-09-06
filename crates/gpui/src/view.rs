@@ -366,7 +366,7 @@ impl<V: View> Element for ViewElement<V> {
                 &cache_key,
             );
             if let Some((mut recording, layout)) =
-                window.node_engine.reuse_layout(node_id, &cache_key, cx)
+                window.node_engine.reuse_layout(node_id, &cache_key)
             {
                 cx.entities
                     .extend_accessed(&window.node_engine.node(node_id).accessed_entities);
@@ -526,7 +526,7 @@ impl<V: View> Element for ViewElement<V> {
             );
             window.set_view_id(entity_id);
             return window.with_rendered_view(entity_id, |window| {
-                if let Some(mut recording) = window.node_engine.reuse(node_id, &cache_key, cx) {
+                if let Some(mut recording) = window.node_engine.reuse(node_id, &cache_key) {
                     cx.entities
                         .extend_accessed(&window.node_engine.node(node_id).accessed_entities);
                     window.graft_view_node_prepaint(&mut recording);
@@ -643,7 +643,6 @@ impl<V: View> Element for ViewElement<V> {
                             cache_key,
                             recording,
                             accessed_entities,
-                            cx,
                         );
                     }
                 });
@@ -1355,10 +1354,15 @@ mod tests {
                             cx.notify();
                         }
                         8 => {
+                            // A parent notify alone does not rebuild a child: the leaf must
+                            // notify for its own change.
                             root.leaves
                                 .first()
                                 .expect("first leaf")
-                                .update(cx, |leaf, _| leaf.color = 0x9900ff);
+                                .update(cx, |leaf, cx| {
+                                    leaf.color = 0x9900ff;
+                                    cx.notify();
+                                });
                             cx.notify();
                         }
                         _ => root

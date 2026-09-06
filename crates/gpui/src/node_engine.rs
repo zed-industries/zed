@@ -1,5 +1,5 @@
 use crate::{
-    AnyView, App, Bounds, EntityId, GlobalElementId, LayoutId, Pixels, ViewNode, ViewNodeCacheKey,
+    AnyView, Bounds, EntityId, GlobalElementId, LayoutId, Pixels, ViewNode, ViewNodeCacheKey,
     ViewNodeRecording,
 };
 use collections::{FxHashMap, FxHashSet};
@@ -281,7 +281,6 @@ impl NodeEngine {
                 cache_key: cache_key.clone(),
                 previous_bounds: cache_key.bounds,
                 accessed_entities: FxHashSet::default(),
-                dependency_revisions: Vec::new(),
                 recording: None,
             });
             self.occurrences.insert(occurrence, node_id);
@@ -306,9 +305,8 @@ impl NodeEngine {
         &mut self,
         node_id: ViewNodeId,
         cache_key: &ViewNodeCacheKey,
-        cx: &App,
     ) -> Option<ViewNodeRecording> {
-        if self.can_reuse(node_id, cache_key, false, cx) {
+        if self.can_reuse(node_id, cache_key, false) {
             self.nodes[node_id].recording.take()
         } else {
             self.restart_render(node_id);
@@ -322,9 +320,8 @@ impl NodeEngine {
         &mut self,
         node_id: ViewNodeId,
         cache_key: &ViewNodeCacheKey,
-        cx: &App,
     ) -> Option<(ViewNodeRecording, LayoutId)> {
-        if self.can_reuse(node_id, cache_key, true, cx)
+        if self.can_reuse(node_id, cache_key, true)
             && let Some(layout) = self.nodes[node_id].layout
             && let Some(recording) = self.nodes[node_id].recording.take()
         {
@@ -340,7 +337,6 @@ impl NodeEngine {
         node_id: ViewNodeId,
         cache_key: &ViewNodeCacheKey,
         ignore_bounds: bool,
-        cx: &App,
     ) -> bool {
         let node = &self.nodes[node_id];
         !self.full_refresh
@@ -348,10 +344,6 @@ impl NodeEngine {
             && !self.frame_bound_nodes.contains(&node_id)
             && node.recording.is_some()
             && node.cache_key.matches(cache_key, ignore_bounds)
-            && node
-                .dependency_revisions
-                .iter()
-                .all(|(source, revision)| cx.entities.revision(*source) == Some(*revision))
     }
 
     pub(crate) fn restart_render(&mut self, node_id: ViewNodeId) {
@@ -397,7 +389,6 @@ impl NodeEngine {
         cache_key: ViewNodeCacheKey,
         recording: ViewNodeRecording,
         mut accessed_entities: FxHashSet<EntityId>,
-        cx: &App,
     ) {
         let Some(node) = self.nodes.get_mut(node_id) else {
             return;
@@ -407,13 +398,6 @@ impl NodeEngine {
         accessed_entities.insert(node.view_id);
         node.cache_key = cache_key;
         node.previous_bounds = new_bounds;
-        node.dependency_revisions.clear();
-        node.dependency_revisions
-            .extend(accessed_entities.iter().filter_map(|source| {
-                cx.entities
-                    .revision(*source)
-                    .map(|revision| (*source, revision))
-            }));
         node.recording = Some(recording);
         node.local_state
             .retain(|key, _| node.accessed_local_state.contains(key));

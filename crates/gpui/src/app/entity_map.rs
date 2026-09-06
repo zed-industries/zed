@@ -55,7 +55,6 @@ impl Display for EntityId {
 
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Box<dyn Any>>,
-    revisions: SecondaryMap<EntityId, u64>,
     pub accessed_entities: RefCell<FxHashSet<EntityId>>,
     accessed_entity_scopes: RefCell<Vec<FxHashSet<EntityId>>>,
     recycled_access_scopes: Vec<FxHashSet<EntityId>>,
@@ -74,7 +73,6 @@ impl EntityMap {
     pub fn new() -> Self {
         Self {
             entities: SecondaryMap::new(),
-            revisions: SecondaryMap::new(),
             accessed_entities: RefCell::new(FxHashSet::default()),
             accessed_entity_scopes: RefCell::new(Vec::new()),
             recycled_access_scopes: Vec::new(),
@@ -131,7 +129,6 @@ impl EntityMap {
 
         let handle = slot.0;
         self.entities.insert(handle.entity_id, Box::new(entity));
-        self.revisions.insert(handle.entity_id, 0);
         handle
     }
 
@@ -156,18 +153,6 @@ impl EntityMap {
     /// Returns an entity after moving it to the stack.
     pub fn end_lease<T>(&mut self, mut lease: Lease<T>) {
         self.entities.insert(lease.id, lease.entity.take().unwrap());
-        if let Some(revision) = self.revisions.get_mut(lease.id) {
-            *revision += 1;
-        }
-    }
-
-    pub(crate) fn end_query<T>(&mut self, mut lease: Lease<T>) {
-        self.entities
-            .insert(lease.id, lease.entity.take().expect("leased entity"));
-    }
-
-    pub(crate) fn revision(&self, entity_id: EntityId) -> Option<u64> {
-        self.revisions.get(entity_id).copied()
     }
 
     pub fn read<T: 'static>(&self, entity: &Entity<T>) -> &T {
@@ -265,7 +250,6 @@ impl EntityMap {
                     "dropped an entity that was referenced"
                 );
                 accessed_entities.remove(&entity_id);
-                self.revisions.remove(entity_id);
                 // If the EntityId was allocated with `Context::reserve`,
                 // the entity may not have been inserted.
                 Some((entity_id, self.entities.remove(entity_id)?))

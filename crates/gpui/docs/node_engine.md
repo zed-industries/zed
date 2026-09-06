@@ -117,10 +117,12 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   `PlatformInputHandler` becomes a locator that resolves through its
   `AsyncWindowContext`. Removes both `Rc<RefCell<…>>` wrappers, the re-entrancy
   panic, and strong entity captures outliving the frame.
-- [ ] **Critical path.** Notify is the contract: remove entity revisions,
+- [x] **Critical path.** Notify is the contract: removed entity revisions,
   `dependency_revisions`, `EntityMap::end_query`, `ElementInputHandler::query`.
-  Run the oracle across `editor` and `workspace`; fix each missing `cx.notify()` it
-  surfaces in the application.
+  The oracle (gpui, editor at 200 stress steps, workspace, project/outline panel,
+  terminal, title bar) surfaced no missing `cx.notify()` in those suites. Interactive
+  use of Zed is the remaining discovery surface; a view that goes stale under the node
+  engine is a mutation without notify at that site.
 - [ ] Collapse the access API to one `cx.track_reads(|cx| …) -> (R, ReadSet)`.
   Remove `begin/end_access_scope`, `take/recycle_access_scope`,
   `suspend/restore_access_tracking`. `EntityMap::insert` must not record an access
