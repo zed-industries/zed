@@ -2,13 +2,9 @@ use anyhow::{Context as _, bail};
 use collections::HashMap;
 use dap::{
     StartDebuggingRequestArguments,
-    adapters::{
-        DebugTaskDefinition, DownloadedFileType, TcpArguments, download_adapter_from_github,
-        latest_github_release,
-    },
+    adapters::{DebugTaskDefinition, TcpArguments},
 };
 use fs::Fs;
-use futures::StreamExt;
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
 use log::warn;
@@ -21,111 +17,16 @@ use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::OnceLock,
 };
 
 use crate::*;
 
 #[derive(Default, Debug)]
-pub(crate) struct GoDebugAdapter {
-    shim_path: OnceLock<PathBuf>,
-}
+pub(crate) struct GoDebugAdapter;
 
 impl GoDebugAdapter {
     const ADAPTER_NAME: &'static str = "Delve";
-    async fn fetch_latest_adapter_version(
-        delegate: &Arc<dyn DapDelegate>,
-    ) -> Result<AdapterVersion> {
-        let release = latest_github_release(
-            "zed-industries/delve-shim-dap",
-            true,
-            false,
-            delegate.http_client(),
-        )
-        .await?;
-
-        let os = match consts::OS {
-            "macos" => "apple-darwin",
-            "linux" => "unknown-linux-gnu",
-            "windows" => "pc-windows-msvc",
-            other => bail!("Running on unsupported os: {other}"),
-        };
-        let suffix = if consts::OS == "windows" {
-            ".zip"
-        } else {
-            ".tar.gz"
-        };
-        let asset_name = format!("delve-shim-dap-{}-{os}{suffix}", consts::ARCH);
-        let asset = release
-            .assets
-            .iter()
-            .find(|asset| asset.name == asset_name)
-            .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
-
-        Ok(AdapterVersion {
-            tag_name: release.tag_name,
-            url: asset.browser_download_url.clone(),
-        })
-    }
-    async fn install_shim(&self, delegate: &Arc<dyn DapDelegate>) -> anyhow::Result<PathBuf> {
-        if let Some(path) = self.shim_path.get().cloned() {
-            return Ok(path);
-        }
-
-        let adapter_dir = paths::debug_adapters_dir().join("delve-shim-dap");
-
-        match Self::fetch_latest_adapter_version(delegate).await {
-            Ok(asset) => {
-                let ty = if consts::OS == "windows" {
-                    DownloadedFileType::Zip
-                } else {
-                    DownloadedFileType::GzipTar
-                };
-                download_adapter_from_github(
-                    "delve-shim-dap".into(),
-                    asset.clone(),
-                    ty,
-                    delegate.as_ref(),
-                )
-                .await?;
-
-                let path = adapter_dir
-                    .join(format!("delve-shim-dap_{}", asset.tag_name))
-                    .join(format!("delve-shim-dap{}", consts::EXE_SUFFIX));
-                self.shim_path.set(path.clone()).ok();
-
-                Ok(path)
-            }
-            Err(error) => {
-                let binary_name = format!("delve-shim-dap{}", consts::EXE_SUFFIX);
-                let mut cached = None;
-                if let Ok(mut entries) = delegate.fs().read_dir(&adapter_dir).await {
-                    while let Some(entry) = entries.next().await {
-                        if let Ok(version_dir) = entry {
-                            let candidate = version_dir.join(&binary_name);
-                            if delegate
-                                .fs()
-                                .metadata(&candidate)
-                                .await
-                                .is_ok_and(|m| m.is_some())
-                            {
-                                cached = Some(candidate);
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if let Some(path) = cached {
-                    warn!("Failed to fetch latest delve-shim-dap, using cached version: {error:#}");
-                    self.shim_path.set(path.clone()).ok();
-                    Ok(path)
-                } else {
-                    Err(error)
-                }
-            }
-        }
-    }
+    const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 }
 
 #[async_trait(?Send)]
@@ -525,17 +426,14 @@ impl DebugAdapter for GoDebugAdapter {
                 timeout,
             });
         } else {
-            let minidelve_path = self.install_shim(delegate).await?;
-            let (host, port, _) =
-                crate::configure_tcp_connection(TcpArgumentsTemplate::default()).await?;
-            command = Some(minidelve_path.to_string_lossy().into_owned());
-            connection = None;
-            arguments = if let Some(mut args) = user_args {
-                args.insert(0, delve_path);
+            let mut tcp_connection = TcpArgumentsTemplate::default();
+            tcp_connection.timeout = Some(Self::DEFAULT_TIMEOUT_MS);
+            let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
+            command = Some(delve_path);
+            arguments = if let Some(args) = user_args {
                 args
             } else if cfg!(windows) {
                 vec![
-                    delve_path,
                     "dap".into(),
                     "--listen".into(),
                     format!("{}:{}", host, port),
@@ -543,12 +441,16 @@ impl DebugAdapter for GoDebugAdapter {
                 ]
             } else {
                 vec![
-                    delve_path,
                     "dap".into(),
                     "--listen".into(),
                     format!("{}:{}", host, port),
                 ]
             };
+            connection = Some(TcpArguments {
+                host,
+                port,
+                timeout,
+            });
         }
         Ok(DebugAdapterBinary {
             command,
