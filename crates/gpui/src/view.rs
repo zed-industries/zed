@@ -462,7 +462,8 @@ impl<V: View> Element for ViewElement<V> {
                 {
                     window.graft_view_node_prepaint(&mut recording, cx);
                     cx.entities.extend_accessed(&node_layout.accessed_entities);
-                    cx.entities.recycle_access_scope(node_layout.accessed_entities);
+                    cx.entities
+                        .recycle_access_scope(node_layout.accessed_entities);
                     window.finish_view_node_prepaint(node_id, false, cx);
                     return ViewElementPrepaintState {
                         element: None,
@@ -1015,11 +1016,7 @@ mod tests {
                         .update(cx, |_, window, _| {
                             if memoized && step == 0 {
                                 assert!(
-                                    window
-                                        .node_stats()
-                                        .expect("node stats")
-                                        .reused_subtrees
-                                        > 0
+                                    window.node_stats().expect("node stats").reused_subtrees > 0
                                 );
                             }
                             window.rendered_frame.debug_bounds.clone()
@@ -2618,10 +2615,7 @@ mod tests {
         cx.run_until_parked();
         let baseline = memoized
             .update(cx, |_, window, _| {
-                window
-                    .node_stats()
-                    .expect("node engine")
-                    .layout_nodes
+                window.node_stats().expect("node engine").layout_nodes
             })
             .expect("window open");
         for step in 0..30 {
