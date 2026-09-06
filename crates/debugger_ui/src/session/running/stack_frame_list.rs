@@ -377,6 +377,7 @@ impl StackFrameList {
     pub fn go_to_stack_frame(
         &mut self,
         stack_frame_id: StackFrameId,
+        focus_item: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -393,7 +394,7 @@ impl StackFrameList {
         else {
             return Task::ready(Err(anyhow!("No stack frame for ID")));
         };
-        self.go_to_stack_frame_inner(stack_frame, true, window, cx)
+        self.go_to_stack_frame_inner(stack_frame, focus_item, window, cx)
     }
 
     fn go_to_stack_frame_inner(

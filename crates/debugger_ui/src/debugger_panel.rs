@@ -392,7 +392,7 @@ impl DebugPanel {
 
         let workspace = this.update_in(cx, |this, window, cx| {
             if focus {
-                this.activate_session(debug_session.clone(), window, cx);
+                this.activate_session(debug_session.clone(), true, window, cx);
             }
 
             this.workspace.clone()
@@ -1105,6 +1105,7 @@ impl DebugPanel {
     pub(crate) fn activate_session_by_id(
         &mut self,
         session_id: SessionId,
+        focus_item: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1113,21 +1114,24 @@ impl DebugPanel {
             .keys()
             .find(|session| session.read(cx).session_id(cx) == session_id)
         {
-            self.activate_session(session.clone(), window, cx);
+            self.activate_session(session.clone(), focus_item, window, cx);
         }
     }
 
     pub(crate) fn activate_session(
         &mut self,
         session_item: Entity<DebugSession>,
+        focus_item: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         debug_assert!(self.sessions_with_children.contains_key(&session_item));
-        session_item.focus_handle(cx).focus(window, cx);
+        if focus_item {
+            session_item.focus_handle(cx).focus(window, cx);
+        }
         session_item.update(cx, |this, cx| {
             this.running_state().update(cx, |this, cx| {
-                this.go_to_selected_stack_frame(window, cx);
+                this.go_to_selected_stack_frame(focus_item, window, cx);
             });
         });
         self.active_session = Some(session_item);

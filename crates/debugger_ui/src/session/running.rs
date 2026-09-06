@@ -905,7 +905,7 @@ impl RunningState {
                             let id = this.session_id;
                             window.defer(cx, move |window, cx| {
                                 panel.update(cx, |this, cx| {
-                                    this.activate_session_by_id(id, window, cx);
+                                    this.activate_session_by_id(id, false, window, cx);
                                 })
                             })
                         }
@@ -1619,14 +1619,19 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn go_to_selected_stack_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn go_to_selected_stack_frame(
+        &self,
+        focus_item: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.thread_id.is_some() {
             self.stack_frame_list
                 .update(cx, |list, cx| {
                     let Some(stack_frame_id) = list.opened_stack_frame_id() else {
                         return Task::ready(Ok(()));
                     };
-                    list.go_to_stack_frame(stack_frame_id, window, cx)
+                    list.go_to_stack_frame(stack_frame_id, focus_item, window, cx)
                 })
                 .detach();
         }
