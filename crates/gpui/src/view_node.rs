@@ -164,8 +164,8 @@ pub(crate) struct ViewNodeRecording {
     pub(crate) paint_text: crate::text_system::LineLayoutRecording,
     pub(crate) tab_stops: RecordedMetadata<crate::TabStopOperation>,
     pub(crate) window_controls: RecordedMetadata<(crate::WindowControlArea, Hitbox)>,
-    pub(crate) mouse_listeners: RecordedMetadata<Option<crate::window::AnyMouseListener>>,
-    pub(crate) input_handlers: RecordedMetadata<Option<crate::PlatformInputHandler>>,
+    pub(crate) mouse_listeners: RecordedMetadata<NodeCallback>,
+    pub(crate) input_handlers: RecordedMetadata<NodeCallback>,
     pub(crate) dispatch_nodes: RecordedMetadata<crate::key_dispatch::DispatchNode>,
     pub(crate) dispatch_start: usize,
     pub(crate) has_layout: bool,
@@ -263,12 +263,46 @@ impl ViewNodeScene {
     }
 }
 
+slotmap::new_key_type! {
+    /// A scope that owns painted callbacks: a view node, or the frame itself for output
+    /// painted outside every node.
+    pub(crate) struct CallbackOwnerId;
+}
+
+/// Callbacks registered while an owner's output was painted. Slots are `None` while leased
+/// out for a call.
+#[derive(Default)]
+pub(crate) struct CallbackSlots {
+    pub(crate) mouse_listeners: Vec<Option<crate::window::AnyMouseListener>>,
+    pub(crate) input_handlers: Vec<Option<Box<dyn crate::InputHandler>>>,
+    /// Bumped whenever the lists are rebuilt, so positions issued earlier stop resolving.
+    pub(crate) generation: u64,
+}
+
+impl CallbackSlots {
+    pub(crate) fn reset(&mut self) {
+        self.mouse_listeners.clear();
+        self.input_handlers.clear();
+        self.generation += 1;
+    }
+}
+
+/// The position of a callback in the [`CallbackSlots`] that own it. Frames and recordings
+/// hold these instead of the closures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NodeCallback {
+    pub(crate) owner: CallbackOwnerId,
+    pub(crate) index: usize,
+    pub(crate) generation: u64,
+}
+
 pub(crate) struct NodeLocalState {
     pub(crate) entity: crate::AnyEntity,
     pub(crate) _subscription: crate::Subscription,
 }
 
 pub(crate) struct ViewNode {
+    pub(crate) callbacks: CallbackOwnerId,
     pub(crate) local_state: FxHashMap<(GlobalElementId, TypeId), NodeLocalState>,
     pub(crate) accessed_local_state: FxHashSet<(GlobalElementId, TypeId)>,
     pub(crate) layout: Option<LayoutId>,

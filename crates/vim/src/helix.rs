@@ -1881,8 +1881,8 @@ mod test {
 
     use editor::{HighlightKey, MultiBufferOffset};
     use gpui::{
-        Bounds, DispatchEventResult, ElementInputHandler, KeyBinding, KeyDownEvent, Keystroke,
-        PlatformInput, PlatformInputHandler, UpdateGlobal, VisualTestContext,
+        DispatchEventResult, KeyBinding, KeyDownEvent, Keystroke, PlatformInput, UpdateGlobal,
+        VisualTestContext,
     };
     use indoc::indoc;
     use language::{CursorShape, Point};
@@ -1973,13 +1973,10 @@ mod test {
     }
 
     fn assert_helix_jump_bypasses_text_input(cx: &mut VimTestContext) {
-        let editor = cx.update_editor(|_, _, cx| cx.entity());
-        let mut input_handler = cx.update(|window, cx| {
-            PlatformInputHandler::new(
-                window.to_async(cx),
-                Box::new(ElementInputHandler::new(Bounds::default(), editor)),
-            )
-        });
+        let window = cx.update(|window, _| window.window_handle());
+        let mut input_handler = cx
+            .input_handler(window)
+            .expect("the focused editor registers the platform input handler");
         assert!(!input_handler.query_accepts_text_input());
         assert!(!input_handler.query_prefers_ime_for_printable_keys());
     }

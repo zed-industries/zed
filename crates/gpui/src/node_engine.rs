@@ -1,6 +1,7 @@
 use crate::{
     Bounds, EntityId, GlobalElementId, LayoutId, Pixels, ViewNode, ViewNodeCacheKey,
     ViewNodeRecording,
+    view_node::{CallbackOwnerId, CallbackSlots, NodeCallback},
 };
 use collections::{FxHashMap, FxHashSet};
 use slotmap::SlotMap;
@@ -48,6 +49,12 @@ pub(crate) struct NodeEngine {
     dirty_nodes: FxHashSet<ViewNodeId>,
     frame_bound_nodes: FxHashSet<ViewNodeId>,
     traversal_stack: Vec<ViewNodeId>,
+    /// Painted callbacks, kept out of the frame so a replayed recording can refer to them
+    /// by position. Every node owns one entry; `frame_callbacks` owns the rest.
+    callbacks: SlotMap<CallbackOwnerId, CallbackSlots>,
+    /// Owns callbacks painted outside every node, such as by deferred draws. Reset each
+    /// frame, since only nodes are ever replayed.
+    frame_callbacks: CallbackOwnerId,
     roots: Vec<ViewNodeId>,
     next_roots: Vec<ViewNodeId>,
     full_refresh: bool,
@@ -66,6 +73,8 @@ impl NodeEngine {
     }
 
     pub(crate) fn new() -> Self {
+        let mut callbacks = SlotMap::with_key();
+        let frame_callbacks = callbacks.insert(CallbackSlots::default());
         Self {
             frame_stats: NodeStats::default(),
             last_frame_stats: NodeStats::default(),
@@ -76,6 +85,8 @@ impl NodeEngine {
             dirty_nodes: FxHashSet::default(),
             frame_bound_nodes: FxHashSet::default(),
             traversal_stack: Vec::new(),
+            callbacks,
+            frame_callbacks,
             roots: Vec::new(),
             next_roots: Vec::new(),
             full_refresh: true,
@@ -121,6 +132,104 @@ impl NodeEngine {
         self.traversal_stack.last().copied()
     }
 
+    /// The owner of callbacks registered right now: the node being drawn, or the frame when
+    /// painting outside every node (deferred draws, roots that are not views).
+    fn callback_owner(&self) -> CallbackOwnerId {
+        self.current_node()
+            .and_then(|node_id| self.nodes.get(node_id))
+            .map_or(self.frame_callbacks, |node| node.callbacks)
+    }
+
+    pub(crate) fn register_mouse_listener(
+        &mut self,
+        listener: crate::window::AnyMouseListener,
+    ) -> NodeCallback {
+        self.register_callback(listener, |slots| &mut slots.mouse_listeners)
+    }
+
+    pub(crate) fn register_input_handler(
+        &mut self,
+        handler: Box<dyn crate::InputHandler>,
+    ) -> NodeCallback {
+        self.register_callback(handler, |slots| &mut slots.input_handlers)
+    }
+
+    /// Takes the listener out of its slot for a call. Returns `None` while it is already
+    /// leased or once its owner has repainted; return it with `restore_mouse_listener`.
+    pub(crate) fn lease_mouse_listener(
+        &mut self,
+        callback: NodeCallback,
+    ) -> Option<crate::window::AnyMouseListener> {
+        self.lease_callback(callback, |slots| &mut slots.mouse_listeners)
+    }
+
+    pub(crate) fn restore_mouse_listener(
+        &mut self,
+        callback: NodeCallback,
+        listener: crate::window::AnyMouseListener,
+    ) {
+        self.restore_callback(callback, listener, |slots| &mut slots.mouse_listeners)
+    }
+
+    pub(crate) fn lease_input_handler(
+        &mut self,
+        callback: NodeCallback,
+    ) -> Option<Box<dyn crate::InputHandler>> {
+        self.lease_callback(callback, |slots| &mut slots.input_handlers)
+    }
+
+    pub(crate) fn restore_input_handler(
+        &mut self,
+        callback: NodeCallback,
+        handler: Box<dyn crate::InputHandler>,
+    ) {
+        self.restore_callback(callback, handler, |slots| &mut slots.input_handlers)
+    }
+
+    fn register_callback<T>(
+        &mut self,
+        callback: T,
+        list: impl FnOnce(&mut CallbackSlots) -> &mut Vec<Option<T>>,
+    ) -> NodeCallback {
+        let owner = self.callback_owner();
+        let slots = &mut self.callbacks[owner];
+        let generation = slots.generation;
+        let list = list(slots);
+        list.push(Some(callback));
+        NodeCallback {
+            owner,
+            index: list.len() - 1,
+            generation,
+        }
+    }
+
+    fn lease_callback<T>(
+        &mut self,
+        callback: NodeCallback,
+        list: impl FnOnce(&mut CallbackSlots) -> &mut Vec<Option<T>>,
+    ) -> Option<T> {
+        let slots = self.callbacks.get_mut(callback.owner)?;
+        if slots.generation != callback.generation {
+            return None;
+        }
+        list(slots).get_mut(callback.index)?.take()
+    }
+
+    fn restore_callback<T>(
+        &mut self,
+        callback: NodeCallback,
+        value: T,
+        list: impl FnOnce(&mut CallbackSlots) -> &mut Vec<Option<T>>,
+    ) {
+        // The owner may have repainted during the call, in which case the value is stale.
+        if let Some(slots) = self.callbacks.get_mut(callback.owner)
+            && slots.generation == callback.generation
+            && let Some(slot) = list(slots).get_mut(callback.index)
+        {
+            *slot = Some(value);
+        }
+    }
+
     /// Takes an empty set to accumulate the entities a rebuilding node reads. Returned to
     /// the engine by `store_render`, which swaps it with the node's previous set.
     pub(crate) fn take_dependency_set(&mut self) -> FxHashSet<EntityId> {
@@ -161,6 +270,7 @@ impl NodeEngine {
         };
         self.changed_bounds = None;
         self.next_roots.clear();
+        self.callbacks[self.frame_callbacks].reset();
         if self.full_refresh {
             self.dirty_nodes.extend(self.nodes.keys());
         }
@@ -268,6 +378,7 @@ impl NodeEngine {
             node_id
         } else {
             let node_id = self.nodes.insert(ViewNode {
+                callbacks: self.callbacks.insert(CallbackSlots::default()),
                 local_state: FxHashMap::default(),
                 accessed_local_state: FxHashSet::default(),
                 layout: None,
@@ -326,6 +437,7 @@ impl NodeEngine {
         if let Some(node) = self.nodes.get_mut(node_id) {
             node.next_children.clear();
             node.accessed_local_state.clear();
+            self.callbacks[node.callbacks].reset();
         }
     }
 
@@ -426,6 +538,8 @@ impl NodeEngine {
         self.dirty_nodes.clear();
         self.frame_bound_nodes.clear();
         self.traversal_stack.clear();
+        self.callbacks
+            .retain(|owner, _| owner == self.frame_callbacks);
         self.roots.clear();
         self.next_roots.clear();
         self.full_refresh = true;
@@ -476,6 +590,7 @@ impl NodeEngine {
         }
         self.recycle_dependency_set(node.accessed_entities);
         self.include_changed_bounds(node.previous_bounds);
+        self.callbacks.remove(node.callbacks);
         for child_id in node.children {
             self.remove_subtree(child_id);
         }

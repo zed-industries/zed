@@ -135,17 +135,29 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   (CoreText at 12.5% of samples vs 0.9% on `main`). Keeping three previous frames in
   `LineLayoutCache` made the same fixture 9% faster than `main`. Engine bookkeeping
   (capture, scene push, dependency sets) measures at ~1.5% on `editor_render`.
-- [ ] Write frame effects into node recordings directly instead of the post-paint
-  capture pass in `capture_view_node_recording`. Measured at well under 1% on the
-  current fixtures; do this for the ownership direction (below), not for speed.
+- [x] Painted callbacks live in the engine, not the frame. Mouse listeners and input
+  handlers are stored once in per-owner `CallbackSlots` (one per node, plus one
+  frame-scoped owner for output painted outside every node); `Frame` and recordings hold
+  only positions, and a call leases the closure out of its slot. This removed both
+  `Rc<RefCell<…>>` wrappers and made `PlatformInputHandler` a window handle that
+  resolves to the drawn frame's focused handler.
+- [ ] Nodes are the frame. `Frame` is the tree flattened into per-kind vectors
+  (hitboxes, listeners, tooltips, cursor styles, tab stops, dispatch nodes, deferred
+  draws), and `RecordedMetadata` exists only to re-derive the tree from slices of them.
+  Move each kind into the node that painted it, so a frame is the traversal (root order
+  plus deferred roots), replay is a tree walk, and `record`/`replay`/`frame_range`,
+  `PaintIndex`/`PrepaintStateIndex`, `capture_view_node_recording`, and
+  `assert_metadata_unique` go away. Dispatch reads the tree in paint order. Callbacks
+  (above) are the first kind moved; do the rest one kind at a time, keeping the oracle
+  green after each.
 - [ ] Any per-frame-"use" cache in GPUI (line layouts today; check atlas tiles and
   element states) is a proxy for "still on screen" that reused views do not refresh.
   Audit them for the same eviction pattern.
-- [ ] **Critical path.** Cut the legacy engine. `Option<NodeEngine>` becomes
+- [x] **Critical path.** Cut the legacy engine. `Option<NodeEngine>` becomes
   `NodeEngine`; delete the non-node branches of `ViewElement`, the duplicate
   `use_keyed_state`, and the `Window` forwarding layer. Tests wanting a reference
-  frame force a refresh.
-- [ ] `.cached(style)` becomes the ordinary node path with `style` refining the root
+  frame force a refresh (`NodeEngine::new_eager` remains as the test reference).
+- [x] `.cached(style)` becomes the ordinary node path with `style` refining the root
   layout; deprecate afterwards.
 - [x] Deferred draws mark the current scope frame-bound instead of forcing a
   whole-window refresh. Prompts, accessibility, and the inspector still refresh.

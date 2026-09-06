@@ -1436,11 +1436,12 @@ impl From<TileId> for etagere::AllocId {
     }
 }
 
-#[expect(missing_docs)]
+/// The platform's handle to the window's text input. Every call resolves to the
+/// [`InputHandler`] the focused element registered in the most recently drawn frame, so a
+/// handle never goes stale; it is installed only while such a handler exists.
 #[derive(Clone)]
 pub struct PlatformInputHandler {
     cx: AsyncWindowContext,
-    handler: Rc<std::cell::RefCell<Box<dyn InputHandler>>>,
 }
 
 #[expect(missing_docs)]
@@ -1452,29 +1453,47 @@ pub struct PlatformInputHandler {
     allow(dead_code)
 )]
 impl PlatformInputHandler {
-    pub fn new(cx: AsyncWindowContext, handler: Box<dyn InputHandler>) -> Self {
-        Self {
-            cx,
-            handler: Rc::new(std::cell::RefCell::new(handler)),
-        }
+    pub(crate) fn new(cx: AsyncWindowContext) -> Self {
+        Self { cx }
     }
 
-    pub fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
+    /// Runs `f` against the focused handler inside the window. `None` when the window is
+    /// gone or the drawn frame has no input handler.
+    fn update<R>(
+        &mut self,
+        f: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
+    ) -> Option<R> {
         self.cx
-            .update(|window, cx| {
-                self.handler
-                    .borrow_mut()
-                    .selected_text_range(ignore_disabled_input, window, cx)
-            })
+            .update(|window, cx| Self::with_handler(window, cx, f))
             .ok()
             .flatten()
     }
 
+    /// Like `update`, for callers already inside the window.
+    pub(crate) fn with_handler<R>(
+        window: &mut Window,
+        cx: &mut App,
+        f: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        // Leased out of its node for the call; absent while already leased further up the
+        // stack.
+        let callback = window.focused_input_handler()?;
+        let mut handler = window.node_engine.lease_input_handler(callback)?;
+        let result = f(handler.as_mut(), window, cx);
+        window.node_engine.restore_input_handler(callback, handler);
+        Some(result)
+    }
+
+    pub fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
+        self.update(|handler, window, cx| {
+            handler.selected_text_range(ignore_disabled_input, window, cx)
+        })
+        .flatten()
+    }
+
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn marked_text_range(&mut self) -> Option<Range<usize>> {
-        self.cx
-            .update(|window, cx| self.handler.borrow_mut().marked_text_range(window, cx))
-            .ok()
+        self.update(|handler, window, cx| handler.marked_text_range(window, cx))
             .flatten()
     }
 
@@ -1487,27 +1506,14 @@ impl PlatformInputHandler {
         range_utf16: Range<usize>,
         adjusted: &mut Option<Range<usize>>,
     ) -> Option<String> {
-        self.cx
-            .update(|window, cx| {
-                self.handler
-                    .borrow_mut()
-                    .text_for_range(range_utf16, adjusted, window, cx)
-            })
-            .ok()
+        self.update(|handler, window, cx| handler.text_for_range(range_utf16, adjusted, window, cx))
             .flatten()
     }
 
     pub fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
-        self.cx
-            .update(|window, cx| {
-                self.handler.borrow_mut().replace_text_in_range(
-                    replacement_range,
-                    text,
-                    window,
-                    cx,
-                );
-            })
-            .ok();
+        self.update(|handler, window, cx| {
+            handler.replace_text_in_range(replacement_range, text, window, cx)
+        });
     }
 
     pub fn replace_and_mark_text_in_range(
@@ -1516,52 +1522,41 @@ impl PlatformInputHandler {
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
     ) {
-        self.cx
-            .update(|window, cx| {
-                self.handler.borrow_mut().replace_and_mark_text_in_range(
-                    range_utf16,
-                    new_text,
-                    new_selected_range,
-                    window,
-                    cx,
-                )
-            })
-            .ok();
+        self.update(|handler, window, cx| {
+            handler.replace_and_mark_text_in_range(
+                range_utf16,
+                new_text,
+                new_selected_range,
+                window,
+                cx,
+            )
+        });
     }
 
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn unmark_text(&mut self) {
-        self.cx
-            .update(|window, cx| self.handler.borrow_mut().unmark_text(window, cx))
-            .ok();
+        self.update(|handler, window, cx| handler.unmark_text(window, cx));
     }
 
     pub fn paste(&mut self, item: ClipboardItem) {
-        self.cx
-            .update(|window, cx| self.handler.borrow_mut().paste(item, window, cx))
-            .ok();
+        self.update(|handler, window, cx| handler.paste(item, window, cx));
     }
 
     pub fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
-        self.cx
-            .update(|window, cx| {
-                self.handler
-                    .borrow_mut()
-                    .bounds_for_range(range_utf16, window, cx)
-            })
-            .ok()
+        self.update(|handler, window, cx| handler.bounds_for_range(range_utf16, window, cx))
             .flatten()
     }
 
     #[allow(dead_code)]
     pub fn apple_press_and_hold_enabled(&mut self) -> bool {
-        self.handler.borrow_mut().apple_press_and_hold_enabled()
+        self.update(|handler, _, _| handler.apple_press_and_hold_enabled())
+            .unwrap_or(true)
     }
 
     pub fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
-        self.handler
-            .borrow_mut()
-            .replace_text_in_range(None, input, window, cx);
+        Self::with_handler(window, cx, |handler, window, cx| {
+            handler.replace_text_in_range(None, input, window, cx)
+        });
     }
 
     pub fn compute_ime_candidate_bounds(
@@ -1600,16 +1595,14 @@ impl PlatformInputHandler {
     }
 
     pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
-        let marked_range = self.handler.borrow_mut().marked_text_range(window, cx);
-        let selection = self
-            .handler
-            .borrow_mut()
-            .selected_text_range(true, window, cx)?;
-        Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
-            self.handler
-                .borrow_mut()
-                .bounds_for_range(range, window, cx)
+        Self::with_handler(window, cx, |handler, window, cx| {
+            let marked_range = handler.marked_text_range(window, cx);
+            let selection = handler.selected_text_range(true, window, cx)?;
+            Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
+                handler.bounds_for_range(range, window, cx)
+            })
         })
+        .flatten()
     }
 
     pub fn ime_candidate_bounds(&mut self) -> Option<Bounds<Pixels>> {
@@ -1622,52 +1615,38 @@ impl PlatformInputHandler {
 
     #[allow(unused)]
     pub fn character_index_for_point(&mut self, point: Point<Pixels>) -> Option<usize> {
-        self.cx
-            .update(|window, cx| {
-                self.handler
-                    .borrow_mut()
-                    .character_index_for_point(point, window, cx)
-            })
-            .ok()
+        self.update(|handler, window, cx| handler.character_index_for_point(point, window, cx))
             .flatten()
     }
 
     /// See [`InputHandler::set_selected_text_range`].
     pub fn set_selected_text_range(&mut self, range_utf16: Range<usize>) {
-        self.cx
-            .update(|window, cx| {
-                self.handler
-                    .borrow_mut()
-                    .set_selected_text_range(range_utf16, window, cx)
-            })
-            .ok();
+        self.update(|handler, window, cx| handler.set_selected_text_range(range_utf16, window, cx));
     }
 
     /// See [`InputHandler::element_bounds`].
     pub fn element_bounds(&mut self) -> Option<Bounds<Pixels>> {
-        self.cx
-            .update(|window, cx| self.handler.borrow_mut().element_bounds(window, cx))
-            .ok()
+        self.update(|handler, window, cx| handler.element_bounds(window, cx))
             .flatten()
     }
 
     /// See [`InputHandler::text_length_utf16`].
     pub fn text_length_utf16(&mut self) -> Option<usize> {
-        self.cx
-            .update(|window, cx| self.handler.borrow_mut().text_length_utf16(window, cx))
-            .ok()
+        self.update(|handler, window, cx| handler.text_length_utf16(window, cx))
             .flatten()
     }
 
     #[allow(dead_code)]
     pub fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
-        self.handler.borrow_mut().accepts_text_input(window, cx)
+        Self::with_handler(window, cx, |handler, window, cx| {
+            handler.accepts_text_input(window, cx)
+        })
+        .unwrap_or(false)
     }
 
     #[allow(dead_code)]
     pub fn query_accepts_text_input(&mut self) -> bool {
-        self.cx
-            .update(|window, cx| self.handler.borrow_mut().accepts_text_input(window, cx))
+        self.update(|handler, window, cx| handler.accepts_text_input(window, cx))
             .unwrap_or(true)
     }
 
@@ -1677,16 +1656,11 @@ impl PlatformInputHandler {
     /// returns `false` regardless of the handler's preference, because the next printable key may
     /// complete a binding whose prefix already bypassed the IME.
     pub fn query_prefers_ime_for_printable_keys(&mut self) -> bool {
-        self.cx
-            .update(|window, cx| {
-                // The next printable key may complete a chord whose prefix bypassed the IME.
-                !window.has_pending_keystrokes()
-                    && self
-                        .handler
-                        .borrow_mut()
-                        .prefers_ime_for_printable_keys(window, cx)
-            })
-            .unwrap_or(false)
+        self.update(|handler, window, cx| {
+            // The next printable key may complete a chord whose prefix bypassed the IME.
+            !window.has_pending_keystrokes() && handler.prefers_ime_for_printable_keys(window, cx)
+        })
+        .unwrap_or(false)
     }
 
     /// See [`InputHandler::text_input_configuration`].
@@ -1695,20 +1669,15 @@ impl PlatformInputHandler {
         window: &mut Window,
         cx: &mut App,
     ) -> TextInputConfiguration {
-        self.handler
-            .borrow_mut()
-            .text_input_configuration(window, cx)
+        Self::with_handler(window, cx, |handler, window, cx| {
+            handler.text_input_configuration(window, cx)
+        })
+        .unwrap_or_default()
     }
 
     /// See [`InputHandler::text_input_editable_range`].
     pub fn text_input_editable_range(&mut self) -> Option<Range<usize>> {
-        self.cx
-            .update(|window, cx| {
-                self.handler
-                    .borrow_mut()
-                    .text_input_editable_range(window, cx)
-            })
-            .ok()
+        self.update(|handler, window, cx| handler.text_input_editable_range(window, cx))
             .flatten()
     }
 }

@@ -527,7 +527,9 @@ impl TestAppContext {
         .unwrap();
     }
 
-    /// Returns the currently installed platform input handler for input-method tests.
+    /// Returns a handle to the platform input handler installed by the last draw, for
+    /// input-method tests. Like the platform's own handle, it stops resolving once the
+    /// window draws again, so fetch a fresh one after each frame.
     pub fn input_handler(&self, window: AnyWindowHandle) -> Option<crate::PlatformInputHandler> {
         use crate::PlatformWindow as _;
         let mut window = self.test_window(window);

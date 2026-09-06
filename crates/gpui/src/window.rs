@@ -23,7 +23,7 @@ use crate::{
     TransformationMatrix, Underline, UnderlineStyle, ViewNodeCacheKey, ViewNodeId,
     ViewNodeRecording, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
     WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems,
-    size, transparent_black,
+    size, transparent_black, view_node::NodeCallback,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -727,7 +727,7 @@ pub struct DismissEvent;
 type FrameCallback = Box<dyn FnOnce(&mut Window, &mut App)>;
 
 pub(crate) type AnyMouseListener =
-    Rc<RefCell<Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>>>;
+    Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
@@ -984,13 +984,14 @@ pub(crate) struct Frame {
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     accessed_element_states: Vec<(GlobalElementId, TypeId)>,
-    pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
+    /// Painted in order; the closures live in the owning nodes.
+    pub(crate) mouse_listeners: Vec<NodeCallback>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
-    pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
+    pub(crate) input_handlers: Vec<NodeCallback>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
@@ -3103,20 +3104,8 @@ impl Window {
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
 
-        // Preserve handler positions referenced by node recordings.
-        if let Some(input_handler) = self.platform_window.take_input_handler() {
-            if let Some(slot) = self
-                .rendered_frame
-                .input_handlers
-                .iter_mut()
-                .rev()
-                .find(|h| h.is_none())
-            {
-                *slot = Some(input_handler);
-            } else {
-                self.rendered_frame.input_handlers.push(Some(input_handler));
-            }
-        }
+        // The platform's handle addresses the frame being replaced.
+        self.platform_window.take_input_handler();
         if !cx.mode.skip_drawing() {
             self.a11y.sync_active_flag();
             self.begin_node_engine_frame();
@@ -3136,14 +3125,24 @@ impl Window {
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
-        // Taking the last handler preserves indices while the platform owns it.
-        let focused_text_input_active = if let Some(mut input_handler) = self
-            .next_frame
-            .input_handlers
-            .iter_mut()
-            .rev()
-            .find_map(|h| h.take())
-        {
+        let engine = &self.node_engine;
+        let roots = engine.retained_layouts();
+        self.layout_engine.as_mut().unwrap().retain(roots);
+        self.text_system().finish_frame();
+        self.next_frame.finish(&mut self.rendered_frame);
+
+        self.invalidator.set_phase(DrawPhase::Focus);
+        let previous_focus_path = self.rendered_frame.focus_path();
+        let previous_window_active = self.rendered_frame.window_active;
+        mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        self.next_frame.clear();
+        let current_focus_path = self.rendered_frame.focus_path();
+        let current_window_active = self.rendered_frame.window_active;
+
+        // The platform handle resolves through `rendered_frame`, so it is installed once the
+        // new frame is in place.
+        let focused_text_input_active = if self.focused_input_handler().is_some() {
+            let mut input_handler = PlatformInputHandler::new(self.to_async(cx));
             let accepts_text_input = input_handler.accepts_text_input(self, cx);
             self.platform_window.set_input_handler(input_handler);
             accepts_text_input
@@ -3160,20 +3159,6 @@ impl Window {
                     TextInputStateChange::FocusLost
                 });
         }
-
-        let engine = &self.node_engine;
-        let roots = engine.retained_layouts();
-        self.layout_engine.as_mut().unwrap().retain(roots);
-        self.text_system().finish_frame();
-        self.next_frame.finish(&mut self.rendered_frame);
-
-        self.invalidator.set_phase(DrawPhase::Focus);
-        let previous_focus_path = self.rendered_frame.focus_path();
-        let previous_window_active = self.rendered_frame.window_active;
-        mem::swap(&mut self.rendered_frame, &mut self.next_frame);
-        self.next_frame.clear();
-        let current_focus_path = self.rendered_frame.focus_path();
-        let current_window_active = self.rendered_frame.window_active;
 
         let mut focus_before_listeners = self.focus;
 
@@ -5446,16 +5431,21 @@ impl Window {
         &mut self,
         focus_handle: &FocusHandle,
         input_handler: impl InputHandler,
-        cx: &App,
+        _cx: &App,
     ) {
         self.invalidator.debug_assert_paint();
 
         if focus_handle.is_focused(self) {
-            let cx = self.to_async(cx);
-            self.next_frame
-                .input_handlers
-                .push(Some(PlatformInputHandler::new(cx, Box::new(input_handler))));
+            let callback = self
+                .node_engine
+                .register_input_handler(Box::new(input_handler));
+            self.next_frame.input_handlers.push(callback);
         }
+    }
+
+    /// The input handler the platform talks to: the last one registered in the drawn frame.
+    pub(crate) fn focused_input_handler(&self) -> Option<NodeCallback> {
+        self.rendered_frame.input_handlers.last().copied()
     }
 
     /// Forwards the focused input handler's [`TextInputConfiguration`] to the
@@ -5489,15 +5479,14 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        self.next_frame
-            .mouse_listeners
-            .push(Some(Rc::new(RefCell::new(Box::new(
-                move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
-                    if let Some(event) = event.downcast_ref() {
-                        listener(event, phase, window, cx)
-                    }
-                },
-            )))));
+        let callback = self.node_engine.register_mouse_listener(Box::new(
+            move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
+                if let Some(event) = event.downcast_ref() {
+                    listener(event, phase, window, cx)
+                }
+            },
+        ));
+        self.next_frame.mouse_listeners.push(callback);
     }
 
     /// Register a key event listener on this node for the next frame. The type of event
@@ -5983,6 +5972,22 @@ impl Window {
         });
     }
 
+    fn call_mouse_listener(
+        &mut self,
+        callback: NodeCallback,
+        event: &dyn Any,
+        phase: DispatchPhase,
+        cx: &mut App,
+    ) {
+        // Absent when the owner repainted since the frame was drawn, or the listener is
+        // already running further up the stack.
+        let Some(mut listener) = self.node_engine.lease_mouse_listener(callback) else {
+            return;
+        };
+        listener(event, phase, self, cx);
+        self.node_engine.restore_mouse_listener(callback, listener);
+    }
+
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
         let hit_test = self.rendered_frame.hit_test(self.mouse_position());
         if hit_test != self.mouse_hit_test {
@@ -5997,13 +6002,13 @@ impl Window {
             return;
         }
 
-        let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
+        // Taken so that a listener dispatching another event sees no listeners.
+        let mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
 
         // Capture phase, events bubble from back to front. Handlers for this phase are used for
         // special purposes, such as detecting events outside of a given Bounds.
-        for listener in &mut mouse_listeners {
-            let listener = listener.as_mut().unwrap();
-            listener.borrow_mut()(event, DispatchPhase::Capture, self, cx);
+        for listener in &mouse_listeners {
+            self.call_mouse_listener(*listener, event, DispatchPhase::Capture, cx);
             if !cx.propagate_event {
                 break;
             }
@@ -6011,9 +6016,8 @@ impl Window {
 
         // Bubble phase, where most normal handlers do their work.
         if cx.propagate_event {
-            for listener in mouse_listeners.iter_mut().rev() {
-                let listener = listener.as_mut().unwrap();
-                listener.borrow_mut()(event, DispatchPhase::Bubble, self, cx);
+            for listener in mouse_listeners.iter().rev() {
+                self.call_mouse_listener(*listener, event, DispatchPhase::Bubble, cx);
                 if !cx.propagate_event {
                     break;
                 }

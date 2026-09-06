@@ -1701,24 +1701,16 @@ mod tests {
         cx.update(|window, _| assert!(window.has_pending_keystrokes()));
         assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(false));
 
-        let prefers_ime_after_blur = {
-            let mut platform_window = cx.test_window(cx.window_handle());
-            let mut input_handler = platform_window.take_input_handler();
-            cx.update(|window, cx| {
-                window.blur(cx);
-                assert!(!window.has_pending_keystrokes());
-                assert!(window.pending_input_is_none());
-            });
-            let prefers_ime = input_handler
-                .as_mut()
-                .map(|input_handler| input_handler.query_prefers_ime_for_printable_keys());
-            if let Some(input_handler) = input_handler {
-                platform_window.set_input_handler(input_handler);
-            }
-            prefers_ime
-        };
-        assert_eq!(prefers_ime_after_blur, Some(true));
+        cx.update(|window, cx| {
+            window.blur(cx);
+            assert!(!window.has_pending_keystrokes());
+            assert!(window.pending_input_is_none());
+        });
+        // Nothing is focused, so the platform has no text input to ask.
+        assert_eq!(query_prefers_ime_for_printable_keys(cx), None);
         cx.update(|window, cx| window.focus(&focus_handle, cx));
+        // Blurring cleared the pending keystrokes, so the IME is preferred again.
+        assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(true));
 
         cx.simulate_keystrokes("ctrl-x");
         assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(false));
