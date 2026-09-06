@@ -3,8 +3,9 @@ use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
+use futures::channel::oneshot;
 use futures_lite::future::yield_now;
-use gpui::{App, AppContext as _, BorrowAppContext, Entity};
+use gpui::{App, AppContext as _, BorrowAppContext, Entity, Task};
 use gpui::{HighlightStyle, TestAppContext};
 use indoc::indoc;
 use pretty_assertions::assert_eq;
@@ -28,7 +29,7 @@ use theme::ActiveTheme;
 use unindent::Unindent as _;
 use util::rel_path::rel_path;
 use util::test::marked_text_offsets;
-use util::{RandomCharIter, assert_set_eq, post_inc, test::marked_text_ranges};
+use util::{RandomCharIter, assert_set_eq, paths::PathStyle, post_inc, test::marked_text_ranges};
 
 pub static TRAILING_WHITESPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
     RegexBuilder::new(r"[ \t]+$")
@@ -560,6 +561,124 @@ fn file(path: &str) -> Arc<dyn File> {
         root_name: "zed".into(),
         local_root: None,
     })
+}
+
+struct DelayedLocalFile {
+    path: Arc<RelPath>,
+    contents: Vec<u8>,
+    load_started_tx: parking_lot::Mutex<Option<oneshot::Sender<()>>>,
+    resume_load_rx: parking_lot::Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+impl File for DelayedLocalFile {
+    fn as_local(&self) -> Option<&dyn LocalFile> {
+        Some(self)
+    }
+
+    fn disk_state(&self) -> DiskState {
+        DiskState::New
+    }
+
+    fn path(&self) -> &Arc<RelPath> {
+        &self.path
+    }
+
+    fn full_path(&self, _cx: &App) -> PathBuf {
+        self.path.as_std_path().to_path_buf()
+    }
+
+    fn path_style(&self, _cx: &App) -> PathStyle {
+        PathStyle::local()
+    }
+
+    fn file_name<'a>(&'a self, _cx: &'a App) -> &'a str {
+        self.path.file_name().unwrap_or_default()
+    }
+
+    fn worktree_id(&self, _cx: &App) -> WorktreeId {
+        WorktreeId::from_usize(0)
+    }
+
+    fn to_proto(&self, _cx: &App) -> rpc::proto::File {
+        unimplemented!()
+    }
+
+    fn is_private(&self) -> bool {
+        false
+    }
+}
+
+impl LocalFile for DelayedLocalFile {
+    fn abs_path(&self, _cx: &App) -> PathBuf {
+        self.path.as_std_path().to_path_buf()
+    }
+
+    fn load(&self, _cx: &App) -> Task<Result<String>> {
+        unimplemented!()
+    }
+
+    fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>> {
+        let contents = self.contents.clone();
+        let load_started_tx = self.load_started_tx.lock().take();
+        let resume_load_rx = self.resume_load_rx.lock().take();
+        cx.background_spawn(async move {
+            load_started_tx
+                .context("load should only start once")?
+                .send(())
+                .map_err(|_| anyhow::anyhow!("load-start receiver was dropped"))?;
+            resume_load_rx
+                .context("load should only start once")?
+                .await
+                .map_err(|_| anyhow::anyhow!("load-resume sender was dropped"))?;
+            Ok(contents)
+        })
+    }
+}
+
+#[gpui::test]
+async fn test_reload_preserves_edit_made_while_loading(cx: &mut TestAppContext) {
+    let (load_started_tx, load_started_rx) = oneshot::channel();
+    let (resume_load_tx, resume_load_rx) = oneshot::channel();
+    let file = Arc::new(DelayedLocalFile {
+        path: rel_path("file.txt").into(),
+        contents: b"contents from disk".to_vec(),
+        load_started_tx: parking_lot::Mutex::new(Some(load_started_tx)),
+        resume_load_rx: parking_lot::Mutex::new(Some(resume_load_rx)),
+    });
+    let buffer = cx.new(|cx| {
+        Buffer::build(
+            TextBuffer::new(
+                ReplicaId::LOCAL,
+                cx.entity_id().as_non_zero_u64().into(),
+                "old contents".to_string(),
+            ),
+            Some(file),
+            Capability::ReadWrite,
+        )
+    });
+
+    let reload = buffer.update(cx, |buffer, cx| buffer.reload(cx));
+    load_started_rx
+        .await
+        .expect("reload should begin loading the file");
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_text("unsaved edit", cx);
+    });
+    resume_load_tx
+        .send(())
+        .expect("reload should still be waiting for the file");
+
+    assert!(
+        reload
+            .await
+            .expect("reload should complete after a conflict")
+            .is_none()
+    );
+    buffer.read_with(cx, |buffer, _cx| {
+        assert_eq!(buffer.text(), "unsaved edit");
+        assert!(buffer.is_dirty());
+        assert!(buffer.has_conflict());
+    });
 }
 
 #[gpui::test]

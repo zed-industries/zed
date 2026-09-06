@@ -7,6 +7,7 @@ use anyhow::{Context as _, Result, anyhow};
 use client::Client;
 use collections::{HashMap, HashSet, hash_map};
 use futures::{Future, FutureExt as _, StreamExt as _, channel::oneshot, future::Shared};
+use git::{COMMIT_MESSAGE, DOT_GIT};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, TaskExt,
     WeakEntity,
@@ -911,6 +912,46 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         if let Some(buffer) = self.get_by_path(&project_path) {
+            if should_reload_git_commit_message_on_open(buffer.read(cx)) {
+                let task = match self.loading_buffers.entry(project_path.clone()) {
+                    hash_map::Entry::Occupied(entry) => entry.get().clone(),
+                    hash_map::Entry::Vacant(entry) => {
+                        let task = cx
+                            .spawn(async move |this, cx| {
+                                let should_reload = buffer.read_with(cx, |buffer, _cx| {
+                                    should_reload_git_commit_message_on_open(buffer)
+                                });
+                                let reload_result = if should_reload {
+                                    buffer
+                                        .update(cx, |buffer, cx| buffer.reload(cx))
+                                        .await
+                                        .map(|_| ())
+                                        .map_err(anyhow::Error::from)
+                                } else {
+                                    Ok(())
+                                };
+
+                                this.update(cx, |this, _cx| {
+                                    this.loading_buffers.remove(&project_path);
+                                })?;
+                                reload_result.map_err(Arc::new)?;
+                                Ok(buffer)
+                            })
+                            .shared();
+                        entry.insert(task).clone()
+                    }
+                };
+
+                return cx.background_spawn(async move {
+                    task.await.map_err(|error| {
+                        if error.error_code() != ErrorCode::Internal {
+                            anyhow!(error.error_code())
+                        } else {
+                            anyhow!("{error}")
+                        }
+                    })
+                });
+            }
             return Task::ready(Ok(buffer));
         }
 
@@ -1873,6 +1914,18 @@ fn is_not_found_error(error: &anyhow::Error) -> bool {
         .root_cause()
         .downcast_ref::<io::Error>()
         .is_some_and(|err| err.kind() == io::ErrorKind::NotFound)
+}
+
+fn should_reload_git_commit_message_on_open(buffer: &Buffer) -> bool {
+    if buffer.is_dirty() {
+        return false;
+    }
+    File::from_dyn(buffer.file()).is_some_and(|file| {
+        file.is_local
+            && matches!(file.disk_state, DiskState::Present { .. })
+            && file.path.file_name() == Some(COMMIT_MESSAGE)
+            && file.path.components().any(|component| component == DOT_GIT)
+    })
 }
 
 fn apply_initial_line_ending(buffer: &mut Buffer, cx: &mut Context<Buffer>) {

@@ -1657,6 +1657,7 @@ impl Buffer {
     ) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
         let prev_version = self.text.version();
+        let prev_text = self.as_rope().clone();
 
         self.reload_task = Some(cx.spawn(async move |this, cx| {
             let Some((new_mtime, load_bytes_task, current_encoding)) =
@@ -1703,7 +1704,11 @@ impl Buffer {
                 (cow.into_owned(), actual_has_bom, used_enc)
             };
 
-            let diff = this.update(cx, |this, cx| this.diff(new_text, cx))?.await;
+            let base_version = prev_version.clone();
+            let diff = cx
+                .background_executor()
+                .spawn(async move { Self::compute_diff(prev_text, base_version, new_text) })
+                .await;
             this.update(cx, |this, cx| {
                 if this.version() == diff.base_version {
                     this.finalize_last_transaction();
@@ -1732,6 +1737,7 @@ impl Buffer {
                         this.has_conflict = true;
                     }
 
+                    tx.send(None).ok();
                     this.did_reload(prev_version, this.line_ending(), this.saved_mtime, cx);
                 }
 
@@ -2341,18 +2347,23 @@ impl Buffer {
     {
         let old_text = self.as_rope().clone();
         let base_version = self.version();
-        cx.background_spawn(async move {
-            let old_text = old_text.to_string();
-            let mut new_text = new_text.as_ref().to_owned();
-            let line_ending = LineEnding::detect(&new_text);
-            LineEnding::normalize(&mut new_text);
-            let edits = text_diff(&old_text, &new_text);
-            Diff {
-                base_version,
-                line_ending,
-                edits,
-            }
-        })
+        cx.background_spawn(async move { Self::compute_diff(old_text, base_version, new_text) })
+    }
+
+    fn compute_diff<T>(old_text: Rope, base_version: clock::Global, new_text: T) -> Diff
+    where
+        T: AsRef<str>,
+    {
+        let old_text = old_text.to_string();
+        let mut new_text = new_text.as_ref().to_owned();
+        let line_ending = LineEnding::detect(&new_text);
+        LineEnding::normalize(&mut new_text);
+        let edits = text_diff(&old_text, &new_text);
+        Diff {
+            base_version,
+            line_ending,
+            edits,
+        }
     }
 
     /// Spawns a background task that returns a `Diff` removing trailing whitespace from line ends.
