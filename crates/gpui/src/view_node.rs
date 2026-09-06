@@ -178,8 +178,8 @@ impl NodeOutput {
         &mut self.phases[phase as usize]
     }
 
-    pub(crate) fn phases(&self) -> impl Iterator<Item = &PhaseOutput> {
-        self.phases.iter()
+    pub(crate) fn phases_mut(&mut self) -> impl Iterator<Item = &mut PhaseOutput> {
+        self.phases.iter_mut()
     }
 
     /// The heap this output holds on to between frames, from its containers' capacities.

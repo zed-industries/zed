@@ -485,20 +485,27 @@ impl<V: View> Element for ViewElement<V> {
         cx: &mut App,
     ) -> ViewElementPrepaintState {
         if let Some(node_layout) = self.node_layout.take() {
+            let NodeViewLayout {
+                layout,
+                node_id,
+                grafted,
+                accessed_entities,
+            } = node_layout;
+            // Ambient inputs such as content masks and image caches are pushed during
+            // prepaint, so the key is built here rather than carried over from layout.
             let cache_key = window.view_node_key(bounds);
-            let node_id = node_layout.node_id;
             let entity_id = self.entity_id.expect("node views have an entity");
             window.set_view_id(entity_id);
             window.enter_node_prepaint(node_id);
             return window.with_rendered_view(entity_id, |window| {
-                let mut accessed_entities = node_layout.accessed_entities;
-                if node_layout.grafted {
+                let mut accessed_entities = accessed_entities;
+                if grafted {
                     if window
                         .node_engine
                         .node(node_id)
                         .cache_key
                         .matches(&cache_key, false)
-                        && window.retained_layout_unchanged(node_layout.layout)
+                        && window.retained_layout_unchanged(layout)
                     {
                         window.graft_view_node_prepaint(node_id);
                         window.node_engine.recycle_dependency_set(accessed_entities);
@@ -521,9 +528,9 @@ impl<V: View> Element for ViewElement<V> {
                         // Layout was grafted, so the view has not rendered this frame.
                         let view = self.view.take().expect("view is rendered once per frame");
                         let mut element = view.render(window, cx).into_any_element();
-                        let layout = element.request_layout(window, cx);
-                        window.replace_retained_layout(node_layout.layout, layout, cx);
-                        window.node_engine.store_layout(node_id, layout);
+                        let new_layout = element.request_layout(window, cx);
+                        window.replace_retained_layout(layout, new_layout, cx);
+                        window.node_engine.store_layout(node_id, new_layout);
                         element.prepaint(window, cx);
                         element
                     }

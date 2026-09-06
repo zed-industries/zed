@@ -746,6 +746,18 @@ impl NodeEngine {
         }
     }
 
+    /// Takes the text each phase of the node looked up, ahead of a redraw that records anew.
+    pub(crate) fn take_text(
+        &mut self,
+        node_id: ViewNodeId,
+    ) -> impl Iterator<Item = crate::text_system::TextUse> + '_ {
+        self.nodes
+            .get_mut(node_id)
+            .into_iter()
+            .flat_map(|node| node.output.phases_mut())
+            .map(|phase| std::mem::take(&mut phase.text))
+    }
+
     pub(crate) fn restart_render(&mut self, node_id: ViewNodeId) {
         self.frame_bound_nodes.remove(&node_id);
         if let Some(node) = self.nodes.get_mut(node_id) {
@@ -919,11 +931,17 @@ impl NodeEngine {
                 child.parent = Some(node_id);
             }
         }
-        for child_id in stale_children.drain(..) {
-            if !current_children.contains(&child_id) {
-                self.remove_subtree(child_id);
+        // Children usually come back in the same order; a wide node with reordered children
+        // would otherwise pay a quadratic scan here.
+        if stale_children != current_children {
+            let current: FxHashSet<ViewNodeId> = current_children.iter().copied().collect();
+            for child_id in stale_children.drain(..) {
+                if !current.contains(&child_id) {
+                    self.remove_subtree(child_id);
+                }
             }
         }
+        stale_children.clear();
         if let Some(node) = self.nodes.get_mut(node_id) {
             node.children = current_children;
             node.next_children = stale_children;

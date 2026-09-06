@@ -3644,8 +3644,8 @@ impl Window {
     /// Prepares the node to render again. The text it used last time is seeded into the
     /// frame cache first, so the render finds it without reshaping.
     pub(crate) fn restart_node_render(&mut self, node_id: ViewNodeId) {
-        for phase in self.node_engine.node(node_id).output.phases() {
-            self.text_system.seed_text_use(&phase.text);
+        for text in self.node_engine.take_text(node_id) {
+            self.text_system.reseed_text_use(text);
         }
         self.node_engine.restart_render(node_id);
     }

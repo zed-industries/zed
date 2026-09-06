@@ -473,6 +473,8 @@ struct FrameCache {
     /// The scopes being drawn, innermost last; every layout looked up is recorded in the
     /// innermost. The outermost belongs to the frame itself.
     uses: Vec<TextUse>,
+    /// Emptied uses handed back by redrawing nodes, so a new scope starts with capacity.
+    spare_uses: Vec<TextUse>,
 }
 
 impl FrameCache {
@@ -505,6 +507,13 @@ pub(crate) struct TextUse {
 }
 
 impl TextUse {
+    fn clear(&mut self) {
+        self.lines.clear();
+        self.wrapped_lines.clear();
+        self.lines_by_hash.clear();
+        self.wrapped_lines_by_hash.clear();
+    }
+
     /// The handles held; the layouts themselves are shared with the frame cache.
     pub(crate) fn retained_bytes(&self) -> usize {
         self.lines.capacity() * size_of::<(Arc<CacheKey>, Arc<LineLayout>)>()
@@ -559,7 +568,19 @@ impl LineLayoutCache {
 
     /// Starts recording the layouts a scope looks up; ended by `end_use`.
     pub(crate) fn begin_use(&self) {
-        self.current_frame.write().uses.push(TextUse::default());
+        let mut frame = self.current_frame.write();
+        let text_use = frame.spare_uses.pop().unwrap_or_default();
+        frame.uses.push(text_use);
+    }
+
+    /// Takes back a use a redrawing node no longer needs, keeping its buffers for the next
+    /// scope. Bounded, since a burst of unmounts could otherwise hand back thousands.
+    pub(crate) fn recycle(&self, mut text_use: TextUse) {
+        let mut frame = self.current_frame.write();
+        if frame.spare_uses.len() < 256 {
+            text_use.clear();
+            frame.spare_uses.push(text_use);
+        }
     }
 
     pub(crate) fn end_use(&self) -> TextUse {

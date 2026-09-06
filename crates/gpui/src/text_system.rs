@@ -401,9 +401,11 @@ impl WindowTextSystem {
         self.line_layout_cache.end_use()
     }
 
-    /// Makes previously used layouts available to this frame without reshaping.
-    pub(crate) fn seed_text_use(&self, text_use: &TextUse) {
-        self.line_layout_cache.seed(text_use)
+    /// Makes previously used layouts available to this frame without reshaping, and keeps
+    /// the use's buffers for the scope that records the redraw.
+    pub(crate) fn reseed_text_use(&self, text_use: TextUse) {
+        self.line_layout_cache.seed(&text_use);
+        self.line_layout_cache.recycle(text_use);
     }
 
     pub(crate) fn text_use_checkpoint(&self) -> TextUseCheckpoint {
