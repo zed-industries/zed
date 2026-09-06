@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(test_window.text_input_configurations().len(), 2);
         assert_eq!(test_window.text_input_state_changes().len(), 1);
         cx.update_window(window, |_, window, _| {
-            assert!(window.node_stats().expect("node engine").reused_subtrees > 0);
+            assert!(window.node_stats().reused_subtrees > 0);
         })
         .expect("window open");
 

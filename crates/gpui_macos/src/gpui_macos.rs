@@ -229,9 +229,7 @@ mod node_engine_pixel_tests {
             cx.run_until_parked();
             cx.update_window(window.into(), |_, window, cx| {
                 window.draw(cx).clear(cx);
-                if let Some(stats) = window.node_stats() {
-                    reused += stats.reused_subtrees;
-                }
+                reused += window.node_stats().reused_subtrees;
             })
             .expect("draw incremental scene");
             let incremental = cx
@@ -253,11 +251,6 @@ mod node_engine_pixel_tests {
                 .expect("reference Metal readback");
             assert!(incremental == reference, "GPU pixels differ at step {step}");
         }
-        cx.update_window(window.into(), |_, window, _| {
-            if window.node_stats().is_some() {
-                assert!(reused > 0, "pixel oracle must exercise node reuse");
-            }
-        })
-        .expect("verify reuse");
+        assert!(reused > 0, "pixel oracle must exercise node reuse");
     }
 }

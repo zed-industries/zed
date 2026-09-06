@@ -274,34 +274,22 @@ async fn test_workspace_rendering_stress(cx: &mut TestAppContext) {
             );
         }
         cx.run_until_parked();
-        let incremental = cx.update(|window, _| {
-            if let Some(stats) = window.node_stats() {
-                if step < 4 {
-                    eprintln!("workspace rendering step {step}: {stats:?}");
-                }
-                reused_subtrees += stats.reused_subtrees;
-                maximum_layout_nodes = maximum_layout_nodes.max(stats.layout_nodes);
-            }
-            window.scene_snapshot_for_test()
-        });
+        let scene_size = cx.update(|window, _| window.scene_snapshot_for_test().len());
         assert!(
-            incremental.len() > 1000,
+            scene_size > 1000,
             "workspace must produce a nontrivial scene"
         );
-        cx.update(|window, _| window.refresh());
-        cx.run_until_parked();
-        let rebuilt = cx.update(|window, _| window.scene_snapshot_for_test());
-        assert!(
-            incremental == rebuilt,
-            "incremental scene differs from full refresh at step {step}"
-        );
+        let stats = cx.assert_incremental_matches_full_refresh(format_args!("step {step}"));
+        if step < 4 {
+            eprintln!("workspace rendering step {step}: {stats:?}");
+        }
+        reused_subtrees += stats.reused_subtrees;
+        maximum_layout_nodes = maximum_layout_nodes.max(stats.layout_nodes);
     }
-    if cx.update(|window, _| window.node_stats().is_some()) {
-        assert!(
-            reused_subtrees > 0,
-            "stress workload must exercise node reuse"
-        );
-    }
+    assert!(
+        reused_subtrees > 0,
+        "stress workload must exercise node reuse"
+    );
     eprintln!(
         "workspace rendering stress: 6 Rust files, 3 panes, {steps} updates; reused subtrees={reused_subtrees}, maximum layout nodes={maximum_layout_nodes}"
     );
@@ -672,12 +660,11 @@ fn test_ime_platform_handler_across_memoized_frames(cx: &mut TestAppContext) {
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update(|window, _| {
-            if let Some(stats) = window.node_stats() {
-                assert!(
-                    stats.reused_subtrees > 0,
-                    "IME test must replay a cached handler: {stats:?}"
-                );
-            }
+            let stats = window.node_stats();
+            assert!(
+                stats.reused_subtrees > 0,
+                "IME test must replay a cached handler: {stats:?}"
+            );
         });
         let mut handler = cx.input_handler(handle).expect("replayed input handler");
         assert_eq!(

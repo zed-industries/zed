@@ -30,9 +30,14 @@ struct NodeContext {
 }
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
+    /// Every live node, children before parents. Taffy does not expose node iteration,
+    /// and `retain` needs the nodes that are *not* reachable from the kept roots.
     allocated_nodes: Vec<LayoutId>,
-    stale_layouts: Vec<LayoutId>,
+    /// The layouts under the roots kept by the last `retain`, so `layout_unchanged` can
+    /// compare a reused subtree against them. Its key set is also the set of kept nodes.
     previous_layouts: slotmap::SecondaryMap<slotmap::DefaultKey, taffy::Layout>,
+    /// The available space each live root was computed with, so `replace_layout` can
+    /// recompute the root a replaced subtree hangs from.
     layout_inputs: FxHashMap<LayoutId, Size<AvailableSpace>>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     /// Unrounded absolute border-box top-left per-node coordinate in device pixels.
@@ -50,7 +55,6 @@ impl TaffyLayoutEngine {
         TaffyLayoutEngine {
             taffy,
             allocated_nodes: Vec::new(),
-            stale_layouts: Vec::new(),
             previous_layouts: slotmap::SecondaryMap::new(),
             layout_inputs: FxHashMap::default(),
             absolute_layout_bounds: FxHashMap::default(),
@@ -61,18 +65,6 @@ impl TaffyLayoutEngine {
     }
 
     pub fn clear(&mut self) {
-        self.taffy.clear();
-        self.allocated_nodes.clear();
-        self.stale_layouts.clear();
-        self.layout_bounds_scratch_space.clear();
-        self.previous_layouts.clear();
-        self.layout_inputs.clear();
-        self.absolute_layout_bounds.clear();
-        self.absolute_outer_origins.clear();
-        self.computed_layouts.clear();
-    }
-
-    pub(crate) fn clear_retained(&mut self) {
         // Taffy's clear leaves measurement contexts behind. Release them before
         // frame-arena storage is reused, including slots the next tree won't fill.
         for layout in &self.allocated_nodes {
@@ -82,7 +74,14 @@ impl TaffyLayoutEngine {
                     .expect(EXPECT_MESSAGE);
             }
         }
-        self.clear();
+        self.taffy.clear();
+        self.allocated_nodes.clear();
+        self.layout_bounds_scratch_space.clear();
+        self.previous_layouts.clear();
+        self.layout_inputs.clear();
+        self.absolute_layout_bounds.clear();
+        self.absolute_outer_origins.clear();
+        self.computed_layouts.clear();
     }
 
     pub(crate) fn layout_unchanged(&mut self, root: LayoutId) -> bool {
@@ -118,17 +117,12 @@ impl TaffyLayoutEngine {
                 pending.extend(self.taffy.child_ids(layout.0).map(LayoutId));
             }
         }
-        self.stale_layouts.clear();
-        self.allocated_nodes.retain(|layout| {
-            let retained = self.previous_layouts.contains_key(layout.0.into());
-            if !retained {
-                self.stale_layouts.push(*layout);
+        // Layouts are allocated children first. Removing parents first lets Taffy detach
+        // whole child lists instead of searching each list per child.
+        for layout in self.allocated_nodes.iter().rev() {
+            if self.previous_layouts.contains_key(layout.0.into()) {
+                continue;
             }
-            retained
-        });
-        // Layouts are normally allocated children first. Removing parents first
-        // lets Taffy detach whole child lists instead of searching each list per child.
-        for layout in self.stale_layouts.drain(..).rev() {
             // Taffy's remove leaves measurement contexts in its secondary map.
             if self.taffy.get_node_context(layout.0).is_some() {
                 self.taffy
@@ -136,8 +130,10 @@ impl TaffyLayoutEngine {
                     .expect(EXPECT_MESSAGE);
             }
             self.taffy.remove(layout.0).expect(EXPECT_MESSAGE);
-            self.layout_inputs.remove(&layout);
+            self.layout_inputs.remove(layout);
         }
+        self.allocated_nodes
+            .retain(|layout| self.previous_layouts.contains_key(layout.0.into()));
         self.absolute_layout_bounds.clear();
         self.absolute_outer_origins.clear();
         self.computed_layouts.clear();

@@ -3143,7 +3143,7 @@ impl Window {
         // No scope can graft an old layout when every mounted node is dirty.
         // Keep the newly built tree for subsequent partial updates.
         if node_engine.discard_dirty_layouts() {
-            self.layout_engine.as_mut().unwrap().clear_retained();
+            self.layout_engine.as_mut().unwrap().clear();
         }
     }
 
@@ -3520,14 +3520,13 @@ impl Window {
     }
 
     /// Returns work counters for the node engine's last completed frame.
-    pub fn node_stats(&self) -> Option<crate::NodeStats> {
-        let engine = &self.node_engine;
-        let mut stats = engine.last_frame_stats;
+    pub fn node_stats(&self) -> crate::NodeStats {
+        let mut stats = self.node_engine.last_frame_stats;
         stats.layout_nodes = self
             .layout_engine
             .as_ref()
             .map_or(0, TaffyLayoutEngine::retained_node_count);
-        Some(stats)
+        stats
     }
 
     /// Returns the last completed scene for differential rendering tests.
@@ -7619,10 +7618,7 @@ mod tests {
                 .update(cx, |_, window, _| {
                     assert_eq!(window.is_a11y_active(), enabled);
                     assert_eq!(
-                        window
-                            .node_stats()
-                            .expect("node engine")
-                            .full_refresh_reason,
+                        window.node_stats().full_refresh_reason,
                         enabled.then_some("accessibility")
                     );
                 })

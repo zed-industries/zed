@@ -3,7 +3,7 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
     Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, Result, SharedString, Size, SystemNotification,
+    NodeStats, Pixels, Platform, Point, Render, Result, SharedString, Size, SystemNotification,
     SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
     TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
     app::GpuiMode, window::ElementArenaScope,
@@ -775,6 +775,33 @@ impl VisualTestContext {
     /// Wait until there are no more pending tasks.
     pub fn run_until_parked(&self) {
         self.cx.background_executor.run_until_parked();
+    }
+
+    /// The node engine's oracle: the frame the window drew incrementally, reusing nodes,
+    /// must equal the frame a full refresh draws from the same state. Asserts that for the
+    /// window's rendered frame and returns the incremental frame's node statistics, which
+    /// callers use to check the workload exercised reuse at all.
+    ///
+    /// Call after `run_until_parked`, so the incremental frame is the one on screen. On
+    /// return the window has been fully refreshed.
+    pub fn assert_incremental_matches_full_refresh(
+        &mut self,
+        step: impl std::fmt::Display,
+    ) -> NodeStats {
+        let (incremental, stats) =
+            self.update(|window, _| (window.scene_snapshot_for_test(), window.node_stats()));
+        assert!(
+            !incremental.is_empty(),
+            "the window must have drawn a frame before {step}"
+        );
+        self.update(|window, _| window.refresh());
+        self.run_until_parked();
+        let rebuilt = self.update(|window, _| window.scene_snapshot_for_test());
+        assert!(
+            incremental == rebuilt,
+            "incremental scene differs from full refresh at {step}"
+        );
+        stats
     }
 
     /// Dispatch the action to the currently focused node.

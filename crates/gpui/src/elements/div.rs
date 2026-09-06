@@ -5031,13 +5031,7 @@ mod tests {
         test_app
             .update_window(any_window, |_, window, cx| {
                 window.draw(cx).clear(cx);
-                assert_eq!(
-                    window
-                        .node_stats()
-                        .expect("node engine")
-                        .full_refresh_reason,
-                    Some("prompt")
-                );
+                assert_eq!(window.node_stats().full_refresh_reason, Some("prompt"));
                 let position = window
                     .last_hitbox_for_test()
                     .expect("prompt button")

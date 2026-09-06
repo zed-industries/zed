@@ -220,10 +220,12 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 - [ ] `uniform_list` and `list` use `request_retained_measured_layout` (their
   captures are plain values).
 - [ ] `next_occurrence` uses a per-location counter instead of `siblings.contains`.
-- [ ] Trim `TaffyLayoutEngine` bookkeeping: upstream node iteration to Taffy so
-  `allocated_nodes` can go; `stale_layouts` becomes a local; `previous_layouts` is
-  only the layout snapshot, not also the reachability marker in `retain()`;
-  `layout_inputs` lives with the node whose root it describes.
+- [x] Trim `TaffyLayoutEngine` bookkeeping. `stale_layouts` is gone (stale nodes are
+  removed in one reverse pass over `allocated_nodes`) and `clear_retained` folded into
+  `clear`. What remains is intrinsic: Taffy has no node iteration, so `allocated_nodes`
+  stays; `previous_layouts` is the snapshot of the kept subtrees, whose key set *is* the
+  kept set, so using it as the marker in `retain` is one structure rather than two;
+  `layout_inputs` holds one entry per live root.
 
 ### Correctness
 
@@ -234,8 +236,17 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   before prepaint") are engine invariants, kept as panics so a violated invariant is
   found rather than papered over by a fallback render.
 - [ ] Track remaining ambient inputs as dependencies instead of `refresh()`: focus,
-  window active state, viewport size, mouse position. Focus is the largest source of
-  full rebuilds. Globals are already tracked.
+  window active state, viewport size, mouse position, input modality, hover. Focus is
+  the largest source of full rebuilds. Globals are already tracked. Cut from the first
+  PR: a full refresh costs what every frame cost before the node engine, so these are
+  a missed win rather than a regression. Sketch: an `AmbientInput` read set per node
+  (`Focus`, `WindowActive`, `ViewportSize`, `MousePosition`, `Hover(HitboxId)`),
+  recorded through a `Cell` since the readers take `&Window`; the same
+  dirty-then-ancestors expansion as entities, keyed by input. Mouse moves diff the
+  hovered hitbox set (hitbox ids are stable across reuse) and dirty readers of hitboxes
+  that entered or left it, which retires the `refresh()` in `div`'s hover listeners; a
+  modality flip dirties every hover reader. After a layout change moves elements under
+  a still mouse, the post-prepaint hit test must run the same diff and schedule a frame.
 
 ### Identity on the node tree
 
@@ -273,7 +284,8 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 
 ### Testing and housekeeping
 
-- [ ] Oracle helper on `VisualTestContext` (`assert_incremental_matches_full_refresh`)
-  and a gpui-only fixture (nested views, `uniform_list`, wrapped text, focus, hover,
-  scroll, deferred popover, resize) driven by a seeded step sequence. Keep
-  `test_workspace_rendering_stress` as a consumer; tune its step count for CI.
+- [x] Oracle helper `VisualTestContext::assert_incremental_matches_full_refresh`;
+  `test_workspace_rendering_stress` in `editor` is its consumer (48 steps by default,
+  `GPUI_STRESS_STEPS` to raise it).
+- [ ] A gpui-only oracle fixture (nested views, `uniform_list`, wrapped text, focus,
+  hover, scroll, deferred popover, resize) driven by a seeded step sequence.

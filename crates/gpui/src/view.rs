@@ -1008,9 +1008,7 @@ mod tests {
                     let actual = window
                         .update(cx, |_, window, _| {
                             if memoized && step == 0 {
-                                assert!(
-                                    window.node_stats().expect("node stats").reused_subtrees > 0
-                                );
+                                assert!(window.node_stats().reused_subtrees > 0);
                             }
                             window.all_debug_bounds()
                         })
@@ -1686,10 +1684,7 @@ mod tests {
             let mut snapshot = |handle: crate::WindowHandle<Repeated>, cx: &mut TestAppContext| {
                 handle
                     .update(cx, |_, window, _| {
-                        reused += window
-                            .node_stats()
-                            .expect("node statistics")
-                            .reused_subtrees;
+                        reused += window.node_stats().reused_subtrees;
                         (
                             window.rendered_frame.scene.snapshot_for_test(),
                             window
@@ -2406,7 +2401,7 @@ mod tests {
             assert_eq!(snapshot(eager, cx), snapshot(memoized, cx));
             memoized
                 .update(cx, |_, window, _| {
-                    let stats = window.node_stats().expect("node engine");
+                    let stats = window.node_stats();
                     assert_eq!(stats.rebuilt_scopes, if dirty_all { 4 } else { 2 });
                     assert_eq!(stats.reused_subtrees, if dirty_all { 0 } else { 2 });
                 })
@@ -2680,9 +2675,7 @@ mod tests {
         let memoized = cx.open_window(size(px(400.), px(200.)), build(crate::NodeEngine::new()));
         cx.run_until_parked();
         let baseline = memoized
-            .update(cx, |_, window, _| {
-                window.node_stats().expect("node engine").layout_nodes
-            })
+            .update(cx, |_, window, _| window.node_stats().layout_nodes)
             .expect("window open");
         for step in 0..30 {
             for window in [eager, memoized] {
@@ -2724,7 +2717,7 @@ mod tests {
             );
             memoized
                 .update(cx, |_, window, _| {
-                    let stats = window.node_stats().expect("node engine");
+                    let stats = window.node_stats();
                     assert_eq!(
                         stats.layout_nodes, baseline,
                         "obsolete layout trees must be collected"
@@ -2825,7 +2818,7 @@ mod tests {
         );
         let incremental = window
             .update(cx, |_, window, _| {
-                let stats = window.node_stats().expect("node engine");
+                let stats = window.node_stats();
                 assert_eq!(stats.full_refresh_reason, None);
                 assert!(
                     stats.reused_subtrees > 0,
