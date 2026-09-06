@@ -772,7 +772,7 @@ mod tests {
         }
         let left = Rc::new(Cell::new(0));
         let right = Rc::new(Cell::new(0));
-        let _window = cx.open_window(size(px(100.), px(100.)), |_, cx| {
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| {
             Host(vec![
                 cx.new(|_| Leaf {
                     left: true,
@@ -786,22 +786,34 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!((left.get(), right.get()), (1, 1));
+        let draw = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |_, _, cx| cx.notify())
+                .expect("window open");
+            cx.run_until_parked();
+        };
         cx.update(|cx| cx.set_global(LeftColor(0xff0000)));
         cx.run_until_parked();
+        assert_eq!(
+            (left.get(), right.get()),
+            (1, 1),
+            "global writes preserve frame demand"
+        );
+        draw(cx);
         assert_eq!((left.get(), right.get()), (2, 1));
         cx.update(|cx| cx.global_mut::<LeftColor>().0 = 0x00ff00);
-        cx.run_until_parked();
+        draw(cx);
         assert_eq!((left.get(), right.get()), (3, 1));
         cx.update(|cx| {
             cx.remove_global::<LeftColor>();
         });
-        cx.run_until_parked();
+        draw(cx);
         assert_eq!((left.get(), right.get()), (4, 1));
         cx.update(|cx| cx.set_global(RightColor(0x0000ff)));
-        cx.run_until_parked();
+        draw(cx);
         assert_eq!((left.get(), right.get()), (4, 2));
         cx.update(|cx| cx.set_global(UnusedGlobal));
-        cx.run_until_parked();
+        draw(cx);
         assert_eq!((left.get(), right.get()), (4, 2));
     }
 

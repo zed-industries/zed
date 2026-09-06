@@ -165,6 +165,10 @@ impl WindowInvalidator {
         }
     }
 
+    pub(crate) fn invalidate_on_next_frame(&self, entity: EntityId) {
+        self.inner.borrow_mut().dirty_views.insert(entity);
+    }
+
     pub fn invalidate_view(&self, entity: EntityId, cx: &mut App) -> bool {
         let mut inner = self.inner.borrow_mut();
         inner.update_count += 1;

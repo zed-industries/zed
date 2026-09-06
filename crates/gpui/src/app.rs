@@ -1670,7 +1670,25 @@ impl App {
                     .get(global_type)
                     .map(|dependency| dependency.entity_id());
                 if let Some(dependency) = dependency {
-                    self.notify(dependency);
+                    // Global observers retain control of frame demand. Mutating globals
+                    // during rendering or cleanup must not create a redraw feedback loop.
+                    for notifications in &mut self.render_notifications {
+                        notifications.insert(dependency);
+                    }
+                    for (window_id, invalidator) in self
+                        .window_invalidators_by_entity
+                        .get(&dependency)
+                        .into_iter()
+                        .flatten()
+                    {
+                        if self
+                            .tracked_entities
+                            .get(window_id)
+                            .is_some_and(|entities| entities.contains(&dependency))
+                        {
+                            invalidator.invalidate_on_next_frame(dependency);
+                        }
+                    }
                 }
                 if !self.pending_global_notifications.insert(*global_type) {
                     return;
