@@ -414,12 +414,15 @@ impl LanguageModel for XAiLanguageModel {
         >,
     > {
         let reasoning_effort = reasoning_effort_for_request(&request, &self.model);
+        let max_output_tokens = request
+            .max_output_tokens
+            .or_else(|| self.max_output_tokens());
         let request = match crate::provider::open_ai::into_open_ai(
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
             self.model.supports_prompt_cache_key(),
-            self.max_output_tokens(),
+            max_output_tokens,
             crate::provider::open_ai::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             reasoning_effort,
             false,

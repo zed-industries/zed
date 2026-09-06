@@ -473,6 +473,11 @@ pub struct LanguageModelRequest {
     pub speed: Option<Speed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_at_tokens: Option<u64>,
+    /// Overrides the provider's default output-token budget for this request.
+    /// Used by compaction, which replays a near-full conversation and therefore
+    /// can't afford to reserve the model's full `max_output_tokens` on top of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
 }
 
 impl LanguageModelRequest {

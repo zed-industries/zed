@@ -416,6 +416,9 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         if !self.supports_fast_mode() {
             request.speed = None;
         }
+        let max_output_tokens = request
+            .max_output_tokens
+            .or_else(|| self.max_output_tokens());
 
         if self.model.capabilities.chat_completions {
             let reasoning_effort = chat_completion_reasoning_effort(&request, &self.model);
@@ -424,7 +427,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 &self.model.name,
                 self.model.capabilities.parallel_tool_calls,
                 self.model.capabilities.prompt_cache_key,
-                self.max_output_tokens(),
+                max_output_tokens,
                 chat_completion_max_tokens_parameter(&self.model),
                 reasoning_effort,
                 self.model.capabilities.interleaved_reasoning,
@@ -449,7 +452,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 &self.model.name,
                 self.model.capabilities.parallel_tool_calls,
                 self.model.capabilities.prompt_cache_key,
-                self.max_output_tokens(),
+                max_output_tokens,
                 default_thinking_reasoning_effort(&self.model),
                 supports_none_reasoning_effort(&self.model),
                 &self.provider_id,

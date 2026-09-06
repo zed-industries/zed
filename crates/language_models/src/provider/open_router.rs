@@ -434,11 +434,13 @@ impl LanguageModel for OpenRouterLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let openrouter_request =
-            match into_open_router(request, &self.model, self.max_output_tokens()) {
-                Ok(request) => request,
-                Err(error) => return async move { Err(error.into()) }.boxed(),
-            };
+        let max_output_tokens = request
+            .max_output_tokens
+            .or_else(|| self.max_output_tokens());
+        let openrouter_request = match into_open_router(request, &self.model, max_output_tokens) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let request = self.stream_completion(openrouter_request, cx);
         let executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
@@ -867,6 +869,7 @@ mod tests {
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();
@@ -1009,6 +1012,7 @@ mod tests {
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();
@@ -1075,6 +1079,7 @@ mod tests {
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();

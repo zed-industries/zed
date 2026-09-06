@@ -447,12 +447,15 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let max_output_tokens = request
+            .max_output_tokens
+            .or_else(|| self.max_output_tokens());
         let request = match crate::provider::open_ai::into_open_ai(
             request,
             &self.model.name,
             self.model.capabilities.parallel_tool_calls,
             self.model.capabilities.prompt_cache_key,
-            self.max_output_tokens(),
+            max_output_tokens,
             crate::provider::open_ai::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             None,
             false,

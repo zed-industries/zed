@@ -439,11 +439,14 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
     > {
         let has_tools = !request.tools.is_empty();
         let request_id = self.model.request_id(has_tools).to_string();
+        let max_output_tokens = request
+            .max_output_tokens
+            .unwrap_or(self.model.max_output_tokens);
         let mut request = match into_anthropic(
             request,
             request_id,
             self.model.default_temperature,
-            self.model.max_output_tokens,
+            max_output_tokens,
             self.model.mode.clone(),
             self.cache_mode,
             &self.provider_id,

@@ -343,7 +343,10 @@ impl LanguageModel for DeepSeekLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = match into_deepseek(request, &self.model, self.max_output_tokens()) {
+        let max_output_tokens = request
+            .max_output_tokens
+            .or_else(|| self.max_output_tokens());
+        let request = match into_deepseek(request, &self.model, max_output_tokens) {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };

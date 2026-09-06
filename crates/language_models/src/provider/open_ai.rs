@@ -561,12 +561,15 @@ impl LanguageModel for OpenAiLanguageModel {
         }
 
         normalize_open_ai_response_thinking_effort(&mut request, &self.model);
+        let max_output_tokens = request
+            .max_output_tokens
+            .or_else(|| self.max_output_tokens());
         let request = match into_open_ai_response(
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
             self.model.supports_prompt_cache_key(),
-            self.max_output_tokens(),
+            max_output_tokens,
             default_thinking_reasoning_effort(&self.model),
             self.model
                 .supported_reasoning_efforts()
@@ -626,6 +629,9 @@ impl LanguageModel for OpenAiLanguageModel {
         if !self.model.supports_priority() {
             request.speed = None;
         }
+        let max_output_tokens = request
+            .max_output_tokens
+            .or_else(|| self.max_output_tokens());
         if self.model.uses_responses_api() {
             normalize_open_ai_response_thinking_effort(&mut request, &self.model);
             let request = match into_open_ai_response(
@@ -633,7 +639,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model.id(),
                 self.model.supports_parallel_tool_calls(),
                 self.model.supports_prompt_cache_key(),
-                self.max_output_tokens(),
+                max_output_tokens,
                 default_thinking_reasoning_effort(&self.model),
                 self.model
                     .supported_reasoning_efforts()
@@ -659,7 +665,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model.id(),
                 self.model.supports_parallel_tool_calls(),
                 self.model.supports_prompt_cache_key(),
-                self.max_output_tokens(),
+                max_output_tokens,
                 ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                 None,
                 false,

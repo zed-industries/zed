@@ -4128,6 +4128,7 @@ impl Thread {
             thinking_effort: self.thinking_effort.clone(),
             speed: self.speed(),
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         log::debug!("Completion request built successfully");
@@ -4494,6 +4495,8 @@ impl Thread {
             ..Default::default()
         };
 
+        request.max_output_tokens = self.compaction_max_output_tokens(model);
+
         request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![COMPACTION_PROMPT.into()],
@@ -4502,6 +4505,30 @@ impl Thread {
         });
 
         request
+    }
+
+    /// The output-token budget for a compaction request.
+    ///
+    /// Compaction replays the whole conversation as its prompt, so the prompt
+    /// can already be at (or past) the model's reserved input budget by the time
+    /// it runs. Reserving the model's full `max_output_tokens` on top of that
+    /// overflows the context window (`input + max_output > max_token_count`) and
+    /// the server rejects the request with `context_length_exceeded`, so the
+    /// auto-compaction loop repeats the same overflow four times and gives up.
+    /// Budget the summary against the measured input and leave at least half of
+    /// the remaining window free as headroom for prompt growth, capped at the
+    /// model's default output budget.
+    fn compaction_max_output_tokens(&self, model: &Arc<dyn LanguageModel>) -> Option<u64> {
+        let max_token_count = model.max_token_count();
+        let default_output = model.max_output_tokens();
+        let Some(input_tokens) = self.latest_request_token_usage().map(total_input_tokens) else {
+            return default_output;
+        };
+        let budget = max_token_count.saturating_sub(input_tokens) / 2;
+        Some(match default_output {
+            Some(default) => budget.min(default),
+            None => budget,
+        })
     }
 
     pub fn to_markdown(&self) -> String {
@@ -4523,13 +4550,28 @@ impl Thread {
         use LanguageModelCompletionError::*;
 
         match error {
+            // A `PromptTooLarge` rejection can never succeed on its own:
+            // the same oversized prompt would be rejected again. But a
+            // zero-delay retry is the hook that lets the agentic loop reach
+            // `perform_compaction_if_needed` at the top of the next iteration
+            // so auto-compaction can shrink the context before the request is
+            // re-sent. Some providers (e.g. vLLM) return a plain HTTP 400 with
+            // no `Retry-After`, so this must be keyed on the category rather
+            // than on transience.
+            ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { .. },
+                ..
+            } => Some(RetryStrategy::FixedDelay {
+                delay: Duration::ZERO,
+                max_attempts: MAX_RETRY_ATTEMPTS,
+            }),
             // A rejection with no status (e.g. a content-policy rejection
             // like `cyber_policy`) is permanent: retrying sends the same
             // request and gets the same answer. A rejection with a
-            // non-retryable status (auth, payload too large, ...) is
-            // permanent for the same reason. Otherwise, honor the
-            // provider's requested delay when it gave one, and fall back to
-            // exponential backoff when it didn't.
+            // non-retryable status (auth, ...) is permanent for the same
+            // reason. Otherwise, honor the provider's requested delay when
+            // it gave one, and fall back to exponential backoff when it
+            // didn't.
             ProviderRejection { retry_after, .. } => {
                 if !error.is_transient() {
                     return None;
@@ -7129,6 +7171,75 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_compaction_max_output_tokens_clamps_to_context_window(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let fake_model = Arc::new(FakeLanguageModel::default());
+        // A small default caps the budget, but the clamp must never let
+        // input + budget exceed the model's context window.
+        fake_model.set_max_output_tokens(Some(32_000));
+        let model: Arc<dyn LanguageModel> = fake_model;
+        let user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.messages.push(user_text_message(
+                    user_message_id.clone(),
+                    "near input limit",
+                ));
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 800_000,
+                        ..Default::default()
+                    },
+                );
+
+                // With input at 80% of the window, the default cap applies but
+                // input + budget must still fit.
+                let budget = thread
+                    .compaction_max_output_tokens(&model)
+                    .expect("model reports a max output budget");
+                let input = thread
+                    .latest_request_token_usage()
+                    .map(total_input_tokens)
+                    .unwrap();
+                assert!(budget <= 32_000);
+                assert!(input + budget <= model.max_token_count());
+
+                // Near the very limit the budget shrinks so that input + output
+                // never exceeds the window (this is where the previous bug
+                // overflowed and the server rejected the compaction request).
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 999_000,
+                        ..Default::default()
+                    },
+                );
+                let budget = thread
+                    .compaction_max_output_tokens(&model)
+                    .expect("model reports a max output budget");
+                let input = thread
+                    .latest_request_token_usage()
+                    .map(total_input_tokens)
+                    .unwrap();
+                assert!(input + budget <= model.max_token_count());
+
+                // Even without a model-provided default, the budget stays within
+                // the window.
+                let fake_model_without_default = Arc::new(FakeLanguageModel::default());
+                let model_without_default: Arc<dyn LanguageModel> = fake_model_without_default;
+                thread.set_model(model_without_default.clone(), cx);
+                let budget = thread
+                    .compaction_max_output_tokens(&model_without_default)
+                    .expect("clamped budget is still returned");
+                assert!(input + budget <= model_without_default.max_token_count());
+            });
+        });
+    }
+
+    #[gpui::test]
     async fn test_compaction_threshold_respects_enabled_setting(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
@@ -8522,6 +8633,38 @@ mod tests {
             strategy.delay_after(&error, MAX_RETRY_ATTEMPTS),
             Some(retry_after)
         );
+        assert_eq!(strategy.delay_after(&error, MAX_RETRY_ATTEMPTS + 1), None);
+    }
+
+    #[test]
+    fn test_retry_strategy_retries_prompt_too_large_with_zero_delay() {
+        // vLLM-style providers (like the Albert proxy) return a plain HTTP
+        // 400 `context_length_exceeded` with no `Retry-After`. The retry
+        // gives the agentic loop a chance to auto-compact before re-sending.
+        let error = LanguageModelCompletionError::from_provider_response(
+            language_model::LanguageModelProviderName::new("DeepSeek"),
+            Some(http_client::StatusCode::BAD_REQUEST),
+            Some("context_length_exceeded".to_string()),
+            "This model's maximum context length is 131072 tokens. \
+            However, you requested 24576 output tokens and your prompt \
+            contains at least 106497 input tokens, for a total of at least \
+            131073 tokens. Please reduce the length of the input prompt or \
+            the number of requested output tokens. (parameter=input_tokens, \
+            value=106497)"
+                .to_string(),
+            None,
+            language_model::ProviderErrorCategory::PromptTooLarge { tokens: None },
+        );
+        let strategy = Thread::retry_strategy_for(&error)
+            .expect("a prompt-too-large rejection should be retried");
+        assert_eq!(
+            strategy,
+            RetryStrategy::FixedDelay {
+                delay: Duration::ZERO,
+                max_attempts: MAX_RETRY_ATTEMPTS,
+            }
+        );
+        assert_eq!(strategy.delay_after(&error, 1), Some(Duration::ZERO));
         assert_eq!(strategy.delay_after(&error, MAX_RETRY_ATTEMPTS + 1), None);
     }
 

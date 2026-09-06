@@ -342,11 +342,14 @@ impl LanguageModel for MistralLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let (request, affinity) =
-            match into_mistral(request, self.model.clone(), self.max_output_tokens()) {
-                Ok(request) => request,
-                Err(error) => return async move { Err(error.into()) }.boxed(),
-            };
+        let max_output_tokens = request
+            .max_output_tokens
+            .or_else(|| self.max_output_tokens());
+        let (request, affinity) = match into_mistral(request, self.model.clone(), max_output_tokens)
+        {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let stream = self.stream_completion(request, affinity, cx);
         let executor = cx.background_executor().clone();
 
@@ -883,6 +886,7 @@ mod tests {
             thinking_effort: None,
             speed: Default::default(),
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let (mistral_request, affinity) =
@@ -915,6 +919,7 @@ mod tests {
             thinking_effort: None,
             speed: Default::default(),
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let (mistral_request, _) =
@@ -958,6 +963,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let (mistral_request, _) =
