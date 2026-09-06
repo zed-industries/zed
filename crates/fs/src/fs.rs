@@ -34,6 +34,8 @@ use std::mem::MaybeUninit;
 use async_tar::Archive;
 use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
 use git::repository::{GitRepository, RealGitRepository};
+#[cfg(windows)]
+use is_executable::IsExecutable;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
@@ -1090,7 +1092,12 @@ impl Fs for RealFs {
         let is_executable = metadata.is_file() && metadata.permissions().mode() & 0o111 != 0;
 
         #[cfg(windows)]
-        let is_executable = metadata.is_file();
+        let path_buf = path.to_path_buf();
+        #[cfg(windows)]
+        let is_executable = self
+            .executor
+            .spawn(async move { path_buf.is_executable() })
+            .await;
 
         Ok(Some(Metadata {
             inode,

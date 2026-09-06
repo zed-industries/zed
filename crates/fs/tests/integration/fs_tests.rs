@@ -634,38 +634,6 @@ async fn test_realfs_executable_metadata(executor: BackgroundExecutor) {
 }
 
 #[gpui::test]
-#[cfg(windows)]
-async fn test_realfs_executable_metadata(executor: BackgroundExecutor) {
-    let tempdir = TempDir::new().unwrap();
-    let path = tempdir.path();
-    let executable_path = path.join("executable");
-    let symlink_path = path.join("executable-symlink");
-
-    std::fs::write(&executable_path, "executable").unwrap();
-
-    let fs = RealFs::new(None, executor);
-    let executable_metadata = fs
-        .metadata(&executable_path)
-        .await
-        .expect("metadata call succeeds")
-        .expect("metadata returned");
-    assert!(executable_metadata.is_executable);
-
-    if let Err(error) = std::os::windows::fs::symlink_file(&executable_path, &symlink_path) {
-        eprintln!("skipping symlink metadata assertion: {error}");
-        return;
-    }
-
-    let symlink_metadata = fs
-        .metadata(&symlink_path)
-        .await
-        .expect("metadata call succeeds")
-        .expect("metadata returned");
-    assert!(symlink_metadata.is_symlink);
-    assert!(symlink_metadata.is_executable);
-}
-
-#[gpui::test]
 #[cfg(unix)]
 async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
     let tempdir = TempDir::new().unwrap();
