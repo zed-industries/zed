@@ -570,36 +570,45 @@ impl<V: View> Element for ViewElement<V> {
 
 /// A component whose inputs are kept and rendered again after local state changes.
 /// Parent renders supply fresh inputs through [`component`].
-pub trait Component: 'static {
+///
+/// Crate-private until it is unified with `RenderOnce`; the name is taken by the
+/// `component` crate's trait in the rest of the workspace.
+#[cfg(test)]
+pub(crate) trait Component: 'static {
     /// Builds the component's elements from its current inputs and local state.
     fn render(&self, window: &mut Window, cx: &mut App) -> impl IntoElement;
 }
 
 /// Mounts a repeatable component under a key that is unique in its containing element scope.
 /// Reusing the key preserves local state; supplying a new value replaces its inputs.
-pub fn component<C: Component>(key: impl Into<ElementId>, value: C) -> impl IntoElement {
+#[cfg(test)]
+pub(crate) fn component<C: Component>(key: impl Into<ElementId>, value: C) -> impl IntoElement {
     ComponentView {
         key: key.into(),
         value,
     }
 }
 
+#[cfg(test)]
 #[derive(IntoElement)]
 struct ComponentView<C: Component> {
     key: ElementId,
     value: C,
 }
 
+#[cfg(test)]
 struct ComponentInstance<C: Component> {
     value: C,
 }
 
+#[cfg(test)]
 impl<C: Component> Render for ComponentInstance<C> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.value.render(window, cx)
     }
 }
 
+#[cfg(test)]
 impl<C: Component> RenderOnce for ComponentView<C> {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let mut value = Some(self.value);

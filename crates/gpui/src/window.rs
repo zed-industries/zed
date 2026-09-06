@@ -3562,6 +3562,7 @@ impl Window {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn invalidate_component(&mut self, source: EntityId) {
         self.mark_view_dirty(source);
         let engine = &mut self.node_engine;
