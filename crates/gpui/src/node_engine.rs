@@ -747,6 +747,7 @@ impl NodeEngine {
 
     /// Enters the layout phase of a root mounted with `mount_root`, so the nodes its element
     /// mounts are its children. Views enter layout through `begin_occurrence`.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn enter_layout(&mut self, node_id: ViewNodeId) {
         self.splice(node_id, MetadataPhase::Layout);
     }

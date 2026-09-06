@@ -3616,6 +3616,7 @@ impl Window {
         node_id
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn enter_node_layout(&mut self, node_id: ViewNodeId) {
         self.node_engine.enter_layout(node_id);
         self.text_system.begin_text_use();
