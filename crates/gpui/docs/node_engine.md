@@ -109,8 +109,49 @@ on entity reads would promote everything, since every render reads the theme.
 
 The reference implementation is the node engine under full refresh. A frame produced
 incrementally must equal the frame produced by `window.refresh()` from the same
-state. `test_workspace_rendering_stress` in `editor` asserts this over a 3-pane
-workspace; the helper and a gpui-only seeded fixture belong in gpui.
+state. `VisualTestContext::assert_incremental_matches_full_refresh` asserts it;
+`node_engine::oracle_tests` drives it over a seeded gpui-only fixture, and
+`test_workspace_rendering_stress` in `editor` over a 3-pane workspace.
+
+## Measuring
+
+### Micro-benchmarks
+
+`cargo bench -p benchmarks --bench editor_render` (and `--bench markdown_renderer`).
+Compare against `main` with Criterion baselines: check out `main` in a second worktree
+with this branch's `benches/editor_render.rs` copied over (the `Workbench` fixture is
+new here), run there with `--save-baseline main`, then run here with `--baseline main`.
+Use the same `CARGO_TARGET_DIR` so the dependency build is shared. Check the load
+average first: another build or test run on the machine widens the intervals past the
+effects being measured. `Workbench/update/{row,editor,mixed}` are the fixtures where
+reuse fires; `full` dirties every node each update and should match `main`.
+
+### Real use
+
+Zed already logs every drawn frame when `ZED_MEASUREMENTS=1` is set (`frame duration:
+…` on stderr, from `Window::draw` through `present`), and `dev: toggle fps overlay`
+shows a live readout (current, p90, p99, max over the last 1000 frames; `dev: reset
+frame overlay stats` restarts it). To compare two builds:
+
+1. Build both: `cargo build --release -p zed` on `main` and on this branch; keep the
+   two binaries apart.
+2. Run each with the same project and the log redirected:
+   `ZED_MEASUREMENTS=1 <zed> --foreground <project> 2> frames-<build>.log`.
+3. Drive the same session in each, roughly three minutes, keyboard-led so it repeats:
+   open a large file from the file finder; hold `down` for ten seconds; hold
+   `shift-down` for five; search for a symbol and step through matches; type a line and
+   delete it; type `self.` and wait for completions, then escape; open the project
+   panel and arrow through twenty entries; split the pane and open a second file in
+   it; open the terminal, run `ls`, close it; hover along the tab bar and the gutter
+   for five seconds; scroll-wheel through the file for ten seconds; open the theme
+   selector, move through a few themes, escape; resize the window twice; quit.
+4. `script/frame-times frames-main.log frames-branch.log` prints frame count, p50 /
+   p90 / p95 / p99 / max, frames over the 120 Hz and 60 Hz budgets, and the change.
+
+Mouse-led steps are not identical between runs, so judge the distribution, not single
+frames, and run the session two or three times per build. The p50 is the number that
+reflects reuse; the tail reflects full refreshes (focus, hover, resize), which cost
+what a `main` frame costs.
 
 ## Plan
 

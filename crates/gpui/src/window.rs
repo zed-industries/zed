@@ -33,7 +33,9 @@ use crate::{
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
 use crate::interactive::TouchEvent;
 use anyhow::{Context as _, Result, anyhow};
-use collections::{FxHashMap, FxHashSet};
+#[cfg(any(test, feature = "inspector", debug_assertions))]
+use collections::FxHashMap;
+use collections::FxHashSet;
 #[cfg(target_os = "macos")]
 use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
