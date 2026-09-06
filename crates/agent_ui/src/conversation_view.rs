@@ -424,6 +424,15 @@ impl Conversation {
             .unwrap_or(0)
     }
 
+    /// Returns true if `session_id` has an outstanding elicitation request
+    /// (a question the agent asked the user, distinct from a tool
+    /// authorization request).
+    pub fn has_pending_elicitation(&self, session_id: &acp::SessionId) -> bool {
+        self.elicitation_requests
+            .get(session_id)
+            .is_some_and(|ids| !ids.is_empty())
+    }
+
     pub fn respond_to_elicitation(
         &mut self,
         session_id: acp::SessionId,
@@ -659,17 +668,23 @@ impl ConversationView {
             .pending_tool_call(&session_id, cx)
     }
 
-    pub fn root_thread_has_pending_tool_call(&self, cx: &App) -> bool {
+    /// Returns true if the root thread is blocked on the user: either a
+    /// pending tool authorization request, or a pending elicitation (a
+    /// question the agent asked, e.g. via `AskUserQuestion`). Both cases
+    /// should surface the same "awaiting confirmation" status regardless
+    /// of which agent (Claude, Codex, Gemini, or any other ACP agent) is
+    /// driving the thread, since both go through the same `AcpThread`.
+    pub fn root_thread_is_awaiting_user(&self, cx: &App) -> bool {
         let Some(root_thread) = self.root_thread_view() else {
             return false;
         };
         let root_session_id = root_thread.read(cx).thread.read(cx).session_id().clone();
         self.as_connected().is_some_and(|connected| {
-            connected
-                .conversation
-                .read(cx)
+            let conversation = connected.conversation.read(cx);
+            conversation
                 .pending_tool_call(&root_session_id, cx)
                 .is_some()
+                || conversation.has_pending_elicitation(&root_session_id)
         })
     }
 
@@ -4948,6 +4963,76 @@ pub(crate) mod tests {
             cx.windows()
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_root_thread_is_awaiting_user_for_elicitation(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        message_editor(&conversation_view, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        assert!(
+            !conversation_view.read_with(cx, |view, cx| view.root_thread_is_awaiting_user(cx)),
+            "a freshly started thread should not be reported as awaiting user input"
+        );
+
+        let session_id = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, cx| view.thread.read(cx).session_id().clone());
+        let thread = conversation_view
+            .read_with(cx, |view, cx| view.root_thread(cx))
+            .expect("root thread should exist once a session is active");
+
+        let elicitation_id = thread.update(cx, |thread, cx| {
+            let (id, task) = thread
+                .request_elicitation_with_id(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationSessionScope::new(session_id),
+                            acp::ElicitationSchema::new().string("choice", true),
+                        ),
+                        "Which option do you want?",
+                    ),
+                    cx,
+                )
+                .expect("elicitation request should be accepted");
+            task.detach();
+            id
+        });
+        cx.run_until_parked();
+
+        // This is the AskUserQuestion / "agent is waiting for an answer" case
+        // reported by users, as opposed to a tool authorization request —
+        // both must surface the same "awaiting confirmation" thread status,
+        // regardless of which ACP agent (Claude, Codex, Gemini, ...) sent it.
+        assert!(
+            conversation_view.read_with(cx, |view, cx| view.root_thread_is_awaiting_user(cx)),
+            "thread should be reported as awaiting user input while an elicitation \
+             (a question the agent asked) is still pending"
+        );
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert!(
+            !conversation_view.read_with(cx, |view, cx| view.root_thread_is_awaiting_user(cx)),
+            "thread should stop being reported as awaiting user input once the \
+             elicitation has been answered"
         );
     }
 
