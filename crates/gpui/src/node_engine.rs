@@ -5,7 +5,7 @@ use crate::{
 };
 use collections::{FxHashMap, FxHashSet};
 use slotmap::SlotMap;
-use std::ops::ControlFlow;
+use std::{any::TypeId, ops::ControlFlow};
 
 /// Which frame's root a query walks: the one drawn last, which events are dispatched
 /// against, or the one being drawn.
@@ -111,10 +111,6 @@ impl NodeEngine {
         &self.nodes[node_id]
     }
 
-    pub(crate) fn node_mut(&mut self, node_id: ViewNodeId) -> &mut ViewNode {
-        &mut self.nodes[node_id]
-    }
-
     pub(crate) fn take_recording(&mut self, node_id: ViewNodeId) -> Option<ViewNodeRecording> {
         self.nodes.get_mut(node_id)?.recording.take()
     }
@@ -152,6 +148,40 @@ impl NodeEngine {
     pub(crate) fn swap_frame_outputs(&mut self) {
         std::mem::swap(&mut self.next_output, &mut self.rendered_output);
         self.next_output.reset();
+        // Root element states not accessed by the frame just drawn were not carried over.
+        self.next_output.element_states.clear();
+    }
+
+    /// Takes the state kept for `key` in the scope being drawn, recording the access so the
+    /// state survives the redraw. Outside every node, the state may still be in the
+    /// rendered frame's root.
+    pub(crate) fn take_element_state(
+        &mut self,
+        key: &(GlobalElementId, TypeId),
+    ) -> Option<crate::window::ElementStateBox> {
+        match self.current_node() {
+            Some(node_id) => {
+                let output = &mut self.nodes[node_id].output;
+                output.accessed_element_states.insert(key.clone());
+                output.element_states.remove(key)
+            }
+            None => {
+                self.next_output.accessed_element_states.insert(key.clone());
+                self.next_output
+                    .element_states
+                    .remove(key)
+                    .or_else(|| self.rendered_output.element_states.remove(key))
+            }
+        }
+    }
+
+    pub(crate) fn put_element_state(
+        &mut self,
+        key: (GlobalElementId, TypeId),
+        state: crate::window::ElementStateBox,
+    ) {
+        let (_, _, output) = self.current_output();
+        output.element_states.insert(key, state);
     }
 
     fn output(&self, root: FrameOutput, owner: Option<ViewNodeId>) -> Option<&NodeOutput> {
@@ -489,8 +519,6 @@ impl NodeEngine {
         } else {
             let node_id = self.nodes.insert(ViewNode {
                 output: NodeOutput::default(),
-                local_state: FxHashMap::default(),
-                accessed_local_state: FxHashSet::default(),
                 layout: None,
                 occurrence: occurrence.clone(),
                 parent,
@@ -546,7 +574,6 @@ impl NodeEngine {
         self.frame_bound_nodes.remove(&node_id);
         if let Some(node) = self.nodes.get_mut(node_id) {
             node.next_children.clear();
-            node.accessed_local_state.clear();
             node.output.reset();
         }
     }
@@ -603,8 +630,7 @@ impl NodeEngine {
         node.cache_key = cache_key;
         node.previous_bounds = new_bounds;
         node.recording = Some(recording);
-        node.local_state
-            .retain(|key, _| node.accessed_local_state.contains(key));
+        node.output.retain_accessed_element_states();
         let previous_accesses = std::mem::replace(&mut node.accessed_entities, accessed_entities);
         Self::replace_dependencies(
             &mut self.consumers,

@@ -154,9 +154,6 @@ pub(crate) fn capture_metadata<T: Clone>(source: &[T], target: &mut Vec<T>, star
 
 #[derive(Default)]
 pub(crate) struct ViewNodeRecording {
-    pub(crate) layout_states: RecordedMetadata<(GlobalElementId, TypeId)>,
-    pub(crate) prepaint_states: RecordedMetadata<(GlobalElementId, TypeId)>,
-    pub(crate) paint_states: RecordedMetadata<(GlobalElementId, TypeId)>,
     pub(crate) layout_text: crate::text_system::LineLayoutRecording,
     pub(crate) prepaint_text: crate::text_system::LineLayoutRecording,
     pub(crate) paint_text: crate::text_system::LineLayoutRecording,
@@ -173,17 +170,6 @@ impl ViewNodeRecording {
             MetadataPhase::Layout => &self.layout_text,
             MetadataPhase::Prepaint => &self.prepaint_text,
             MetadataPhase::Paint => &self.paint_text,
-        }
-    }
-
-    pub(crate) fn states(
-        &self,
-        phase: MetadataPhase,
-    ) -> &RecordedMetadata<(GlobalElementId, TypeId)> {
-        match phase {
-            MetadataPhase::Layout => &self.layout_states,
-            MetadataPhase::Prepaint => &self.prepaint_states,
-            MetadataPhase::Paint => &self.paint_states,
         }
     }
 }
@@ -277,9 +263,19 @@ pub(crate) struct NodeOutput {
     phases: [Vec<OutputItem>; 3],
     /// Bumped whenever the output is rebuilt, so slots issued earlier stop resolving.
     pub(crate) generation: u64,
+    /// State kept for elements drawn in this scope, by element id and state type. It
+    /// survives redraws; entries not accessed by a redraw are dropped when it finishes.
+    pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), crate::window::ElementStateBox>,
+    pub(crate) accessed_element_states: FxHashSet<(GlobalElementId, TypeId)>,
 }
 
 impl NodeOutput {
+    /// Drops the element states a redraw did not access.
+    pub(crate) fn retain_accessed_element_states(&mut self) {
+        self.element_states
+            .retain(|key, _| self.accessed_element_states.contains(key));
+    }
+
     pub(crate) fn phase(&self, phase: MetadataPhase) -> &Vec<OutputItem> {
         &self.phases[phase as usize]
     }
@@ -288,10 +284,13 @@ impl NodeOutput {
         &mut self.phases[phase as usize]
     }
 
+    /// Clears the drawn items ahead of a redraw. Element states are kept so the redraw can
+    /// find them.
     pub(crate) fn reset(&mut self) {
         for phase in &mut self.phases {
             phase.clear();
         }
+        self.accessed_element_states.clear();
         self.generation += 1;
     }
 }
@@ -307,15 +306,8 @@ pub(crate) struct OutputSlot {
     pub(crate) generation: u64,
 }
 
-pub(crate) struct NodeLocalState {
-    pub(crate) entity: crate::AnyEntity,
-    pub(crate) _subscription: crate::Subscription,
-}
-
 pub(crate) struct ViewNode {
     pub(crate) output: NodeOutput,
-    pub(crate) local_state: FxHashMap<(GlobalElementId, TypeId), NodeLocalState>,
-    pub(crate) accessed_local_state: FxHashSet<(GlobalElementId, TypeId)>,
     pub(crate) layout: Option<LayoutId>,
     pub(crate) occurrence: crate::node_engine::ViewOccurrence,
     pub(crate) parent: Option<super::node_engine::ViewNodeId>,

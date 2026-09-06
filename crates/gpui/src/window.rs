@@ -984,8 +984,6 @@ pub(crate) struct DeferredDraw {
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
-    pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
-    accessed_element_states: Vec<(GlobalElementId, TypeId)>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
@@ -1000,13 +998,11 @@ pub(crate) struct Frame {
 pub(crate) struct PrepaintStateIndex {
     deferred_draws_index: usize,
     dispatch_tree_index: usize,
-    accessed_element_states_index: usize,
     line_layout_index: LineLayoutIndex,
 }
 
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
-    accessed_element_states_index: usize,
     tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
 }
@@ -1016,8 +1012,6 @@ impl Frame {
         Frame {
             focus: None,
             window_active: false,
-            element_states: FxHashMap::default(),
-            accessed_element_states: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
             deferred_draws: Vec::new(),
@@ -1032,8 +1026,6 @@ impl Frame {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.element_states.clear();
-        self.accessed_element_states.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
         self.deferred_draws.clear();
@@ -1053,15 +1045,7 @@ impl Frame {
             .unwrap_or_default()
     }
 
-    pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
-        for element_state_key in &self.accessed_element_states {
-            if let Some((element_state_key, element_state)) =
-                prev_frame.element_states.remove_entry(element_state_key)
-            {
-                self.element_states.insert(element_state_key, element_state);
-            }
-        }
-
+    pub(crate) fn finish(&mut self) {
         self.scene.finish();
     }
 }
@@ -3030,7 +3014,7 @@ impl Window {
         let roots = engine.retained_layouts();
         self.layout_engine.as_mut().unwrap().retain(roots);
         self.text_system().finish_frame();
-        self.next_frame.finish(&mut self.rendered_frame);
+        self.next_frame.finish();
 
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
@@ -3560,15 +3544,6 @@ impl Window {
             };
         }
         check!(dispatch_nodes, self.rendered_frame.dispatch_tree.len());
-        assert!(
-            engine
-                .recordings()
-                .map(|recording| recording.layout_states.local.len()
-                    + recording.prepaint_states.local.len()
-                    + recording.paint_states.local.len())
-                .sum::<usize>()
-                <= self.rendered_frame.accessed_element_states.len()
-        );
     }
 
     #[cfg(test)]
@@ -3609,20 +3584,9 @@ impl Window {
         recording.has_layout.then(|| {
             let start = self.prepaint_index();
             let engine = &self.node_engine;
-            recording.layout_states.replay(
-                engine,
-                &|recording, phase| Some(recording.states(phase)),
-                &mut |states| {
-                    self.next_frame
-                        .accessed_element_states
-                        .extend_from_slice(states)
-                },
-            );
             self.text_system
                 .replay_layouts(&recording.layout_text, engine);
             let end = self.prepaint_index();
-            recording.layout_states.frame_range =
-                start.accessed_element_states_index..end.accessed_element_states_index;
             recording
                 .layout_text
                 .set_frame_range(start.line_layout_index.clone()..end.line_layout_index.clone());
@@ -3657,55 +3621,16 @@ impl Window {
             .collect();
         recording.has_layout = layout_range.is_some();
         let layout_range = layout_range.unwrap_or_default();
-        recording.layout_states.record(
-            layout_range.start.accessed_element_states_index
-                ..layout_range.end.accessed_element_states_index,
-            children.iter().copied(),
-            |recording, phase| Some(recording.states(phase)),
-            |range, target, start| {
-                capture_metadata(
-                    &self.next_frame.accessed_element_states[range],
-                    target,
-                    start,
-                )
-            },
-        );
         self.text_system.record_layouts(
             layout_range.start.line_layout_index..layout_range.end.line_layout_index,
             &mut recording.layout_text,
             &children,
-        );
-        recording.prepaint_states.record(
-            prepaint_range.start.accessed_element_states_index
-                ..prepaint_range.end.accessed_element_states_index,
-            children.iter().copied(),
-            |recording, phase| Some(recording.states(phase)),
-            |range, target, start| {
-                capture_metadata(
-                    &self.next_frame.accessed_element_states[range],
-                    target,
-                    start,
-                )
-            },
         );
         self.text_system.record_layouts(
             prepaint_range.start.line_layout_index.clone()
                 ..prepaint_range.end.line_layout_index.clone(),
             &mut recording.prepaint_text,
             &children,
-        );
-        recording.paint_states.record(
-            paint_range.start.accessed_element_states_index
-                ..paint_range.end.accessed_element_states_index,
-            children.iter().copied(),
-            |recording, phase| Some(recording.states(phase)),
-            |range, target, start| {
-                capture_metadata(
-                    &self.next_frame.accessed_element_states[range],
-                    target,
-                    start,
-                )
-            },
         );
         self.text_system.record_layouts(
             paint_range.start.line_layout_index.clone()..paint_range.end.line_layout_index.clone(),
@@ -3739,15 +3664,6 @@ impl Window {
     ) -> Range<PrepaintStateIndex> {
         let start = self.prepaint_index();
         let engine = &self.node_engine;
-        recording.prepaint_states.replay(
-            engine,
-            &|recording, phase| Some(recording.states(phase)),
-            &mut |states| {
-                self.next_frame
-                    .accessed_element_states
-                    .extend_from_slice(states)
-            },
-        );
         self.text_system
             .replay_layouts(&recording.prepaint_text, engine);
         if self
@@ -3758,8 +3674,6 @@ impl Window {
             self.next_frame.focus = self.focus;
         }
         let end = self.prepaint_index();
-        recording.prepaint_states.frame_range =
-            start.accessed_element_states_index..end.accessed_element_states_index;
         recording
             .prepaint_text
             .set_frame_range(start.line_layout_index.clone()..end.line_layout_index.clone());
@@ -3775,15 +3689,6 @@ impl Window {
         use crate::view_node::MetadataPhase;
         let start = self.paint_index();
         let engine = &self.node_engine;
-        recording.paint_states.replay(
-            engine,
-            &|recording, phase| Some(recording.states(phase)),
-            &mut |states| {
-                self.next_frame
-                    .accessed_element_states
-                    .extend_from_slice(states)
-            },
-        );
         self.text_system
             .replay_layouts(&recording.paint_text, engine);
         recording.tab_stops.replay(
@@ -3795,8 +3700,6 @@ impl Window {
         recording.scene.replay(&mut self.next_frame.scene, engine);
         self.next_frame.scene.restore_node_scene(parent, node_id);
         let end = self.paint_index();
-        recording.paint_states.frame_range =
-            start.accessed_element_states_index..end.accessed_element_states_index;
         recording
             .paint_text
             .set_frame_range(start.line_layout_index.clone()..end.line_layout_index.clone());
@@ -3807,14 +3710,12 @@ impl Window {
         PrepaintStateIndex {
             deferred_draws_index: self.next_frame.deferred_draws.len(),
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
-            accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
-            accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
         }
@@ -3962,9 +3863,6 @@ impl Window {
             self.next_frame
                 .dispatch_tree
                 .truncate(index.dispatch_tree_index);
-            self.next_frame
-                .accessed_element_states
-                .truncate(index.accessed_element_states_index);
             self.text_system.truncate_layouts(index.line_layout_index);
         }
         result
@@ -4060,44 +3958,21 @@ impl Window {
         init: impl FnOnce(&mut Self, &mut Context<S>) -> S,
     ) -> Entity<S> {
         let current_view = self.current_view();
-        if let Some(node_id) = self.node_engine.current_node() {
-            return self.with_global_id(key.into(), |global_id, window| {
-                let key = (global_id.clone(), TypeId::of::<S>());
-                let node = window.node_engine.node_mut(node_id);
-                node.accessed_local_state.insert(key.clone());
-                if let Some(existing) = node.local_state.get(&key) {
-                    return existing
-                        .entity
-                        .clone()
-                        .downcast::<S>()
-                        .expect("local state is keyed by its type");
-                }
-                let state = cx.new(|cx| init(window, cx));
-                let subscription = cx.observe(&state, move |_, cx| cx.notify(current_view));
-                window.node_engine.node_mut(node_id).local_state.insert(
-                    key,
-                    crate::NodeLocalState {
-                        entity: state.clone().into_any(),
-                        _subscription: subscription,
-                    },
-                );
-                state
-            });
-        }
-
         self.with_global_id(key.into(), |global_id, window| {
-            window.with_element_state(global_id, |state: Option<Entity<S>>, window| {
-                if let Some(state) = state {
-                    (state.clone(), state)
-                } else {
-                    let new_state = cx.new(|cx| init(window, cx));
-                    cx.observe(&new_state, move |_, cx| {
-                        cx.notify(current_view);
-                    })
-                    .detach();
-                    (new_state.clone(), new_state)
-                }
-            })
+            // The subscription lives with the state, so it ends when the element stops
+            // being drawn.
+            window.with_element_state(
+                global_id,
+                |state: Option<(Entity<S>, Subscription)>, window| {
+                    if let Some((state, subscription)) = state {
+                        (state.clone(), (state, subscription))
+                    } else {
+                        let state = cx.new(|cx| init(window, cx));
+                        let subscription = cx.observe(&state, move |_, cx| cx.notify(current_view));
+                        (state.clone(), (state, subscription))
+                    }
+                },
+            )
         })
     }
 
@@ -4134,14 +4009,7 @@ impl Window {
         self.invalidator.debug_assert_paint_or_prepaint();
 
         let key = (global_id.clone(), TypeId::of::<S>());
-        self.next_frame.accessed_element_states.push(key.clone());
-
-        if let Some(any) = self
-            .next_frame
-            .element_states
-            .remove(&key)
-            .or_else(|| self.rendered_frame.element_states.remove(&key))
-        {
+        if let Some(any) = self.node_engine.take_element_state(&key) {
             let ElementStateBox {
                 inner,
                 #[cfg(debug_assertions)]
@@ -4175,7 +4043,7 @@ impl Window {
             );
             let (result, state) = f(Some(state), self);
             state_box.replace(state);
-            self.next_frame.element_states.insert(
+            self.node_engine.put_element_state(
                 key,
                 ElementStateBox {
                     inner: state_box,
@@ -4186,7 +4054,7 @@ impl Window {
             result
         } else {
             let (result, state) = f(None, self);
-            self.next_frame.element_states.insert(
+            self.node_engine.put_element_state(
                 key,
                 ElementStateBox {
                     inner: Box::new(Some(state)),
