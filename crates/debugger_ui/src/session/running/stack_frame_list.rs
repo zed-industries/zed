@@ -513,7 +513,7 @@ impl StackFrameList {
                             debug_pane,
                             focus_item,
                             true,
-                            focus_item,
+                            true,
                             window,
                             cx,
                         ))
