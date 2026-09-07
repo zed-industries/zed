@@ -6,10 +6,13 @@ use std::{
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{Editor, MultiBufferOffset, ToPoint as _};
-use gpui::{App, AppContext as _, Context, Entity, Task, TaskExt, Window};
-use project::{Location, TaskContexts, TaskSourceKind, Worktree};
+use gpui::{
+    App, AppContext as _, AsyncWindowContext, Context, Entity, Task, TaskExt, WeakEntity, Window,
+};
+use project::{Location, TaskContexts, TaskSourceKind, Worktree, WorktreeId};
 use task::{RevealTarget, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName};
 use tree_sitter::{Query, StreamingIterator as _};
+use util::rel_path::RelPath;
 use workspace::Workspace;
 
 mod modal;
@@ -198,24 +201,17 @@ fn spawn_task_or_modal(
             task_name,
             reveal_target,
         } => {
-            let overrides = reveal_target.map(|reveal_target| TaskOverrides {
-                reveal_target: Some(reveal_target),
-            });
-            let name = task_name.clone();
-            spawn_tasks_filtered(move |(_, task)| task.label.eq(&name), overrides, window, cx)
-                .detach_and_log_err(cx)
+            spawn_task_by_name(task_name.clone(), *reveal_target, window, cx)
+                .detach_and_log_err(cx);
         }
         Spawn::ByTag {
             task_tag,
             reveal_target,
         } => {
-            let overrides = reveal_target.map(|reveal_target| TaskOverrides {
-                reveal_target: Some(reveal_target),
-            });
             let tag = task_tag.clone();
             spawn_tasks_filtered(
                 move |(_, task)| task.tags.contains(&tag),
-                overrides,
+                *reveal_target,
                 window,
                 cx,
             )
@@ -225,6 +221,144 @@ fn spawn_task_or_modal(
             toggle_modal(workspace, *reveal_target, window, cx).detach()
         }
     }
+}
+
+/// Spawns the nearest applicable task with the given `name`, opening the task
+/// picker if no matching task is available.
+pub fn spawn_task_by_name(
+    name: String,
+    reveal_target: Option<RevealTarget>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<anyhow::Result<()>> {
+    cx.spawn_in(window, async move |workspace, cx| {
+        let (task_contexts, tasks) = load_task_candidates(&workspace, cx).await?;
+        let active_path =
+            cx.update(|_window, cx| task_contexts.file(cx).map(|file| file.path().clone()))?;
+        let tasks = select_task_by_name(
+            &name,
+            task_contexts.worktree(),
+            active_path.as_deref(),
+            tasks,
+        )
+        .into_iter()
+        .collect();
+
+        if !schedule_tasks(&workspace, tasks, &task_contexts, reveal_target, cx)? {
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    spawn_task_or_modal(workspace, &Spawn::ViaModal { reveal_target }, window, cx);
+                })
+                .ok();
+        }
+
+        Ok(())
+    })
+}
+
+/// Selects the nearest applicable task with the given name.
+///
+/// Worktree tasks must belong to the active worktree and have a configuration
+/// scope containing the active file. When multiple worktree tasks apply, the
+/// task from the deepest scope is selected. Without an active file, only a
+/// root-scoped worktree task applies.
+///
+/// If no worktree task applies, the first matching non-worktree candidate is
+/// returned, preserving the order provided by `Inventory::list_tasks`.
+fn select_task_by_name(
+    name: &str,
+    worktree_id: Option<WorktreeId>,
+    active_path: Option<&RelPath>,
+    tasks: Vec<(TaskSourceKind, TaskTemplate)>,
+) -> Option<(TaskSourceKind, TaskTemplate)> {
+    let mut nearest_worktree_task = None;
+    let mut fallback_task = None;
+
+    for (source, template) in tasks {
+        if template.label != name {
+            continue;
+        }
+
+        let TaskSourceKind::Worktree {
+            id,
+            directory_in_worktree,
+            ..
+        } = &source
+        else {
+            if fallback_task.is_none() {
+                fallback_task = Some((source, template));
+            }
+            continue;
+        };
+
+        if Some(*id) != worktree_id {
+            continue;
+        }
+
+        let Some(scope) = directory_in_worktree.parent() else {
+            continue;
+        };
+        let is_applicable = active_path
+            .map(|active_path| active_path.starts_with(scope))
+            .unwrap_or_else(|| scope.is_empty());
+        if !is_applicable {
+            continue;
+        }
+
+        let scope_depth = scope.len();
+        if nearest_worktree_task
+            .as_ref()
+            .is_none_or(|(nearest_depth, _, _)| scope_depth > *nearest_depth)
+        {
+            nearest_worktree_task = Some((scope_depth, source, template));
+        }
+    }
+
+    nearest_worktree_task
+        .map(|(_, source, template)| (source, template))
+        .or(fallback_task)
+}
+
+async fn load_task_candidates(
+    workspace: &WeakEntity<Workspace>,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<(TaskContexts, Vec<(TaskSourceKind, TaskTemplate)>)> {
+    let task_contexts = workspace
+        .update_in(cx, |workspace, window, cx| {
+            task_contexts(workspace, window, cx)
+        })?
+        .await;
+
+    let tasks = workspace
+        .update(cx, |workspace, cx| {
+            let Some(task_inventory) = workspace
+                .project()
+                .read(cx)
+                .task_store()
+                .read(cx)
+                .task_inventory()
+            else {
+                return Task::ready(vec![]);
+            };
+
+            let (language, buffer) = task_contexts
+                .location()
+                .cloned()
+                .map(|location| {
+                    (
+                        location.buffer.read(cx).language_at(location.range.start),
+                        Some(location.buffer),
+                    )
+                })
+                .unwrap_or_default();
+
+            task_inventory
+                .read(cx)
+                .list_tasks(buffer, language, task_contexts.worktree(), cx)
+        })?
+        .await;
+
+    Ok((task_contexts, tasks))
 }
 
 pub fn toggle_modal(
@@ -265,9 +399,11 @@ pub fn toggle_modal(
     }
 }
 
+/// Spawns every applicable task matching the `predicate`, opening the task
+/// picker if no tasks match.
 pub fn spawn_tasks_filtered<F>(
     mut predicate: F,
-    overrides: Option<TaskOverrides>,
+    reveal_target: Option<RevealTarget>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<anyhow::Result<()>>
@@ -275,78 +411,13 @@ where
     F: FnMut((&TaskSourceKind, &TaskTemplate)) -> bool + 'static,
 {
     cx.spawn_in(window, async move |workspace, cx| {
-        let task_contexts = workspace.update_in(cx, |workspace, window, cx| {
-            task_contexts(workspace, window, cx)
-        })?;
-        let task_contexts = task_contexts.await;
-        let mut tasks = workspace
-            .update(cx, |workspace, cx| {
-                let Some(task_inventory) = workspace
-                    .project()
-                    .read(cx)
-                    .task_store()
-                    .read(cx)
-                    .task_inventory()
-                    .cloned()
-                else {
-                    return Task::ready(Vec::new());
-                };
-                let (language, buffer) = task_contexts
-                    .location()
-                    .map(|location| {
-                        let buffer = location.buffer.clone();
-                        (
-                            buffer.read(cx).language_at(location.range.start),
-                            Some(buffer),
-                        )
-                    })
-                    .unwrap_or_default();
-                task_inventory
-                    .read(cx)
-                    .list_tasks(buffer, language, task_contexts.worktree(), cx)
-            })?
-            .await;
+        let (task_contexts, mut tasks) = load_task_candidates(&workspace, cx).await?;
+        tasks.retain(|(task_source_kind, target_task)| predicate((task_source_kind, target_task)));
 
-        let did_spawn = workspace
-            .update_in(cx, |workspace, window, cx| {
-                let default_context = TaskContext::default();
-                let active_context = task_contexts.active_context().unwrap_or(&default_context);
-
-                tasks.retain_mut(|(task_source_kind, target_task)| {
-                    if predicate((task_source_kind, target_task)) {
-                        if let Some(overrides) = &overrides
-                            && let Some(target_override) = overrides.reveal_target
-                        {
-                            target_task.reveal_target = target_override;
-                        }
-                        workspace.schedule_task(
-                            task_source_kind.clone(),
-                            target_task,
-                            active_context,
-                            false,
-                            window,
-                            cx,
-                        );
-                        true
-                    } else {
-                        false
-                    }
-                });
-
-                if tasks.is_empty() { None } else { Some(()) }
-            })?
-            .is_some();
-        if !did_spawn {
+        if !schedule_tasks(&workspace, tasks, &task_contexts, reveal_target, cx)? {
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    spawn_task_or_modal(
-                        workspace,
-                        &Spawn::ViaModal {
-                            reveal_target: overrides.and_then(|overrides| overrides.reveal_target),
-                        },
-                        window,
-                        cx,
-                    );
+                    spawn_task_or_modal(workspace, &Spawn::ViaModal { reveal_target }, window, cx);
                 })
                 .ok();
         }
@@ -457,6 +528,34 @@ pub fn task_contexts(
     })
 }
 
+/// Schedules the provided tasks and returns whether any task was scheduled.
+fn schedule_tasks(
+    workspace: &WeakEntity<Workspace>,
+    tasks: Vec<(TaskSourceKind, TaskTemplate)>,
+    task_contexts: &TaskContexts,
+    reveal_target: Option<RevealTarget>,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<bool> {
+    if tasks.is_empty() {
+        return Ok(false);
+    }
+
+    let default_context = TaskContext::default();
+    let active_context = task_contexts.active_context().unwrap_or(&default_context);
+
+    workspace.update_in(cx, move |workspace, window, cx| {
+        for (task_source_kind, mut task) in tasks {
+            if let Some(reveal_target) = reveal_target {
+                task.reveal_target = reveal_target;
+            }
+
+            workspace.schedule_task(task_source_kind, &task, active_context, false, window, cx)
+        }
+    })?;
+
+    Ok(true)
+}
+
 fn is_visible_directory(worktree: &Entity<Worktree>, cx: &App) -> bool {
     let worktree = worktree.read(cx);
     worktree.is_visible() && worktree.root_entry().is_some_and(|entry| entry.is_dir())
@@ -477,19 +576,43 @@ fn worktree_context(worktree_abs_path: &Path) -> TaskContext {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc};
+    use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
     use editor::{Editor, MultiBufferOffset, SelectionEffects};
-    use gpui::TestAppContext;
+    use gpui::{Entity, TestAppContext, VisualTestContext};
     use language::{Language, LanguageConfig};
-    use project::{BasicContextProvider, FakeFs, Project, task_store::TaskStore};
+    use paths::tasks_file;
+    use project::{
+        BasicContextProvider, FakeFs, Project, WorktreeId,
+        task_inventory::Inventory,
+        task_store::{TaskSettingsLocation, TaskStore},
+    };
     use serde_json::json;
-    use task::{TaskContext, TaskVariables, VariableName};
+    use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables, VariableName};
     use ui::VisualContext;
-    use util::{path, rel_path::rel_path};
+    use util::{
+        path,
+        rel_path::{RelPath, rel_path},
+    };
     use workspace::{AppState, MultiWorkspace};
 
-    use crate::task_contexts;
+    use crate::{Spawn, TaskSourceKind, select_task_by_name, task_contexts};
+
+    fn take_scheduled_tasks(
+        task_inventory: Entity<Inventory>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<(TaskSourceKind, ResolvedTask)> {
+        task_inventory.update(cx, |task_inventory, _cx| {
+            let mut scheduled_tasks = Vec::new();
+
+            while let Some((source, task)) = task_inventory.last_scheduled_task(None) {
+                task_inventory.delete_previously_used(&task.id);
+                scheduled_tasks.push((source, task));
+            }
+
+            scheduled_tasks
+        })
+    }
 
     #[gpui::test]
     async fn test_default_language_context(cx: &mut TestAppContext) {
@@ -697,6 +820,295 @@ mod tests {
                 ]),
                 project_env: HashMap::default(),
             }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_spawn_by_name_prefers_worktree_task_over_global_task(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/repo"),
+            json!({
+                ".zed": {
+                    "tasks.json": r#"[
+                        {
+                            "label": "run_file",
+                            "command": "echo",
+                            "args": ["worktree"]
+                        }
+                    ]"#
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/repo").as_ref()], cx).await;
+        let task_inventory = project.read_with(cx, |project, cx| {
+            project
+                .task_store()
+                .read(cx)
+                .task_inventory()
+                .cloned()
+                .expect("task inventory should be initialized")
+        });
+
+        task_inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    TaskSettingsLocation::Global(tasks_file()),
+                    Some(
+                        &json!([{
+                            "label": "run_file",
+                            "command": "echo",
+                            "args": ["global"]
+                        }])
+                        .to_string(),
+                    ),
+                )
+                .expect("global task should be valid");
+        });
+
+        let (_multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.dispatch_action(Spawn::ByName {
+            task_name: "run_file".to_string(),
+            reveal_target: None,
+        });
+        cx.run_until_parked();
+
+        let scheduled_tasks = take_scheduled_tasks(task_inventory, cx);
+        assert_eq!(scheduled_tasks.len(), 1);
+        assert_eq!(scheduled_tasks[0].1.resolved.args, ["worktree"]);
+        assert!(matches!(
+            scheduled_tasks[0].0,
+            TaskSourceKind::Worktree { .. }
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_spawn_by_name_prefers_task_nearest_to_active_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/repo"),
+            json!({
+                ".zed": {
+                    "tasks.json": r#"[{ "label": "run_file", "command": "echo", "args": ["root"] }]"#
+                },
+                "project-a": {
+                    ".zed": {
+                        "tasks.json": r#"[{ "label": "run_file", "command": "echo", "args": ["project-a"] }]"#
+                    },
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                },
+                "project-b": {
+                    ".zed": {
+                        "tasks.json": r#"[{ "label": "run_file", "command": "echo", "args": ["project-b"] }]"#
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/repo").as_ref()], cx).await;
+        let task_inventory = project.read_with(cx, |project, cx| {
+            project
+                .task_store()
+                .read(cx)
+                .task_inventory()
+                .cloned()
+                .expect("task inventory should be initialized")
+        });
+        let worktree_id = project.update(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("project should have a worktree")
+                .read(cx)
+                .id()
+        });
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("project-a/src/main.rs")), cx)
+            })
+            .await
+            .expect("active file should open");
+        let editor = cx
+            .new_window_entity(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_center(Box::new(editor), window, cx);
+        });
+
+        cx.dispatch_action(Spawn::ByName {
+            task_name: "run_file".to_string(),
+            reveal_target: None,
+        });
+        cx.run_until_parked();
+
+        let scheduled_tasks = take_scheduled_tasks(task_inventory, cx);
+        let scheduled_task = scheduled_tasks
+            .get(0)
+            .expect("should have at least one task");
+
+        assert_eq!(scheduled_tasks.len(), 1);
+        assert_eq!(scheduled_task.1.resolved.args, ["project-a"]);
+        assert!(matches!(
+            &scheduled_task.0,
+            TaskSourceKind::Worktree {
+                directory_in_worktree,
+                ..
+            } if directory_in_worktree.as_ref() == rel_path("project-a/.zed")
+        ));
+    }
+
+    #[test]
+    fn test_select_task_by_name_prefers_task_nearest_to_active_file() {
+        let name = String::from("echo");
+        let worktree_id = WorktreeId::from_usize(1);
+        let active_path = RelPath::new_test("project-a/src/main.rs");
+        let mut template = TaskTemplate::default();
+        template.label = name.clone();
+
+        let tasks = vec![
+            (
+                TaskSourceKind::Worktree {
+                    id: worktree_id,
+                    directory_in_worktree: RelPath::new_test(".zed").into_arc(),
+                    id_base: Cow::Owned(String::from("id_base")),
+                },
+                template.clone(),
+            ),
+            (
+                TaskSourceKind::Worktree {
+                    id: worktree_id,
+                    directory_in_worktree: RelPath::new_test("project-b/.zed").into_arc(),
+                    id_base: Cow::Owned(String::from("id_base")),
+                },
+                template.clone(),
+            ),
+            (
+                TaskSourceKind::Worktree {
+                    id: worktree_id,
+                    directory_in_worktree: RelPath::new_test("project-a/.zed").into_arc(),
+                    id_base: Cow::Owned(String::from("id_base")),
+                },
+                template,
+            ),
+        ];
+
+        let task = select_task_by_name(&name, Some(worktree_id), Some(&active_path), tasks)
+            .expect("should return a task");
+        match task.0 {
+            TaskSourceKind::Worktree {
+                directory_in_worktree,
+                ..
+            } => assert_eq!(
+                directory_in_worktree,
+                RelPath::new_test("project-a/.zed").into_arc()
+            ),
+            _ => panic!("expected worktree task"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_spawn_by_tag_schedules_all_matching_tasks(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/repo"),
+            json!({
+                ".zed": {
+                    "tasks.json": r#"[
+                        {
+                            "label": "echo_worktree_all",
+                            "command": "echo",
+                            "args": ["worktree"],
+                            "tags": ["all"]
+                        },
+                        {
+                            "label": "echo_worktree",
+                            "command": "echo",
+                            "args": ["worktree"],
+                        }
+                    ]"#
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/repo").as_ref()], cx).await;
+        let task_inventory = project.read_with(cx, |project, cx| {
+            project
+                .task_store()
+                .read(cx)
+                .task_inventory()
+                .cloned()
+                .expect("task inventory should be initialized")
+        });
+
+        task_inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    TaskSettingsLocation::Global(tasks_file()),
+                    Some(
+                        &json!([{
+                            "label": "echo_global_all",
+                            "command": "echo",
+                            "args": ["global"],
+                            "tags": ["all"]
+                        },
+                        {
+                            "label": "echo_global",
+                            "command": "echo",
+                            "args": ["global"],
+                            "tags": ["not_all"]
+                        }
+                        ])
+                        .to_string(),
+                    ),
+                )
+                .expect("global task should be valid");
+        });
+
+        let (_multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.dispatch_action(Spawn::ByTag {
+            task_tag: String::from("all"),
+            reveal_target: None,
+        });
+        cx.run_until_parked();
+
+        let scheduled_tasks = take_scheduled_tasks(task_inventory, cx);
+        let mut schedule_tasks_labels = scheduled_tasks
+            .iter()
+            .map(|(_, task)| task.resolved_label.as_str())
+            .collect::<Vec<_>>();
+        schedule_tasks_labels.sort_unstable();
+
+        assert_eq!(scheduled_tasks.len(), 2);
+        assert_eq!(
+            schedule_tasks_labels,
+            ["echo_global_all", "echo_worktree_all"]
+        );
+        assert!(
+            scheduled_tasks
+                .iter()
+                .any(|(source, _)| matches!(source, TaskSourceKind::Worktree { .. }))
+        );
+        assert!(
+            scheduled_tasks
+                .iter()
+                .any(|(source, _)| matches!(source, TaskSourceKind::AbsPath { .. }))
         );
     }
 

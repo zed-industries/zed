@@ -206,6 +206,36 @@ You can define your own keybindings for your tasks via an additional argument to
 }
 ```
 
+Spawning by `task_name` runs a single task. When multiple worktree tasks have the same name, Zed runs the task from the configuration nearest to the active file, falling back to broader task sources when no worktree task applies.
+
+To intentionally run multiple tasks from one keybinding, give them the same tag and spawn them with `task_tag`:
+
+```json [tasks]
+[
+  {
+    "label": "build frontend",
+    "command": "npm run build",
+    "tags": ["build-all"]
+  },
+  {
+    "label": "build backend",
+    "command": "cargo build",
+    "tags": ["build-all"]
+  }
+]
+```
+
+```json [keymap]
+{
+  "context": "Workspace",
+  "bindings": {
+    "alt-b": ["task::Spawn", { "task_tag": "build-all" }]
+  }
+}
+```
+
+Spawning by `task_tag` runs all applicable tasks containing that tag.
+
 Note that these tasks can also have a 'target' specified to control where the spawned task should show up.
 This could be useful for launching a terminal application that you want to use in the center area:
 
