@@ -417,13 +417,9 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
 /// by [`validate_name`].
 pub const MAX_SKILL_NAME_LEN: usize = 64;
 
-/// Maximum recommended length (in bytes) for a skill description. The
+/// Maximum recommended length (in Unicode scalar values) for a skill description. The
 /// create-skill UI enforces this as a hard limit, while the loader emits a
 /// warning and still loads longer descriptions.
-///
-/// Byte-based rather than char-based because that's what `.len()` returns
-/// and what every caller currently measures; the UI also surfaces this
-/// limit as a byte count so the editor's counter matches the validator.
 pub const MAX_SKILL_DESCRIPTION_LEN: usize = 1024;
 
 /// Convert an arbitrary human-readable string into a valid skill name, or
