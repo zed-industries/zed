@@ -21,6 +21,10 @@ world extension {
 
     /// The type of a downloaded file.
     enum downloaded-file-type {
+        /// A bzip2 file (`.bz2`).
+        bzip2,
+        /// A bzip2 tar archive (`.tar.bz2`).
+        bzip2-tar,
         /// A gzipped file (`.gz`).
         gzip,
         /// A gzipped tar archive (`.tar.gz`).
