@@ -408,6 +408,11 @@ impl WindowTextSystem {
         self.line_layout_cache.recycle(text_use);
     }
 
+    /// Keeps a use's buffers for the scope that records the redraw.
+    pub(crate) fn recycle_text_use(&self, text_use: TextUse) {
+        self.line_layout_cache.recycle(text_use);
+    }
+
     pub(crate) fn text_use_checkpoint(&self) -> TextUseCheckpoint {
         self.line_layout_cache.use_checkpoint()
     }

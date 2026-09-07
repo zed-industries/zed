@@ -78,6 +78,9 @@ pub(crate) struct NodeEngine {
     roots: Vec<ViewNodeId>,
     next_roots: Vec<ViewNodeId>,
     full_refresh: bool,
+    /// Counts from one, so a phase that has never drawn (`text_frame` zero) is not
+    /// mistaken for one drawn in the frame before the first.
+    frame: u64,
     #[cfg(test)]
     eager: bool,
     changed_bounds: Option<Bounds<Pixels>>,
@@ -108,6 +111,7 @@ impl NodeEngine {
             roots: Vec::new(),
             next_roots: Vec::new(),
             full_refresh: true,
+            frame: 1,
             #[cfg(test)]
             eager: false,
             changed_bounds: None,
@@ -492,6 +496,7 @@ impl NodeEngine {
             full_refresh_reason
         };
         self.full_refresh = full_refresh_reason.is_some();
+        self.frame += 1;
         self.frame_stats = NodeStats {
             full_refresh_reason,
             ..NodeStats::default()
@@ -746,16 +751,24 @@ impl NodeEngine {
         }
     }
 
-    /// Takes the text each phase of the node looked up, ahead of a redraw that records anew.
+    /// Takes the text each phase of the node looked up, ahead of a redraw that records anew,
+    /// with whether it was looked up this frame or the one before. The line cache keeps two
+    /// frames of layouts, so such text is still in it and needs no seeding.
     pub(crate) fn take_text(
         &mut self,
         node_id: ViewNodeId,
-    ) -> impl Iterator<Item = crate::text_system::TextUse> + '_ {
+    ) -> impl Iterator<Item = (crate::text_system::TextUse, bool)> + '_ {
+        let frame = self.frame;
         self.nodes
             .get_mut(node_id)
             .into_iter()
             .flat_map(|node| node.output.phases_mut())
-            .map(|phase| std::mem::take(&mut phase.text))
+            .map(move |phase| {
+                (
+                    std::mem::take(&mut phase.text),
+                    phase.text_frame + 1 >= frame,
+                )
+            })
     }
 
     pub(crate) fn restart_render(&mut self, node_id: ViewNodeId) {
@@ -828,10 +841,9 @@ impl NodeEngine {
     /// measuring its layout.
     pub(crate) fn append_text(&mut self, node_id: ViewNodeId, text: crate::text_system::TextUse) {
         if let Some(node) = self.nodes.get_mut(node_id) {
-            node.output
-                .phase_mut(MetadataPhase::Layout)
-                .text
-                .append(text);
+            let phase = node.output.phase_mut(MetadataPhase::Layout);
+            phase.text.append(text);
+            phase.text_frame = self.frame;
         }
     }
 
@@ -849,7 +861,9 @@ impl NodeEngine {
                 self.reconcile_children(node_id);
             }
             if let Some(node) = self.nodes.get_mut(node_id) {
-                node.output.phase_mut(phase).text = text;
+                let output = node.output.phase_mut(phase);
+                output.text = text;
+                output.text_frame = self.frame;
             }
         }
         self.pop_traversal(node_id);

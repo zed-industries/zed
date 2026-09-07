@@ -137,6 +137,8 @@ pub(crate) struct PhaseOutput {
     pub(crate) items: Vec<OutputItem>,
     /// The line layouts looked up, held so they stay shaped while the scope is reused.
     pub(crate) text: crate::text_system::TextUse,
+    /// The engine frame `text` was looked up in. Zero until the phase first draws.
+    pub(crate) text_frame: u64,
     /// The primitives painted, with the children spliced where they were painted. Only
     /// the paint phase records one.
     pub(crate) scene: ViewNodeScene,

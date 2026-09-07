@@ -3623,10 +3623,15 @@ impl Window {
     }
 
     /// Prepares the node to render again. The text it used last time is seeded into the
-    /// frame cache first, so the render finds it without reshaping.
+    /// frame cache first, so the render finds it without reshaping, unless the cache still
+    /// holds it from a recent draw.
     pub(crate) fn restart_node_render(&mut self, node_id: ViewNodeId) {
-        for text in self.node_engine.take_text(node_id) {
-            self.text_system.reseed_text_use(text);
+        for (text, still_cached) in self.node_engine.take_text(node_id) {
+            if still_cached {
+                self.text_system.recycle_text_use(text);
+            } else {
+                self.text_system.reseed_text_use(text);
+            }
         }
         self.node_engine.restart_render(node_id);
     }
