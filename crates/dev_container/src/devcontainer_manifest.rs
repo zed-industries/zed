@@ -1506,6 +1506,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                         service.ports.push(DockerComposeServicePort {
                             target: port.clone(),
                             published: port.clone(),
+                            host_ip: Some("127.0.0.1".to_string()),
                             ..Default::default()
                         });
                     } else {
@@ -1515,6 +1516,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                                 ports: vec![DockerComposeServicePort {
                                     target: port.clone(),
                                     published: port.clone(),
+                                    host_ip: Some("127.0.0.1".to_string()),
                                     ..Default::default()
                                 }],
                                 ..Default::default()
@@ -1525,6 +1527,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     main_service.ports.push(DockerComposeServicePort {
                         target: port.clone(),
                         published: port.clone(),
+                        host_ip: Some("127.0.0.1".to_string()),
                         ..Default::default()
                     });
                 }
@@ -1552,6 +1555,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     service.ports.push(DockerComposeServicePort {
                         target: port.to_string(),
                         published: port.to_string(),
+                        host_ip: Some("127.0.0.1".to_string()),
                         ..Default::default()
                     });
                 } else {
@@ -1561,6 +1565,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                             ports: vec![DockerComposeServicePort {
                                 target: port.to_string(),
                                 published: port.to_string(),
+                                host_ip: Some("127.0.0.1".to_string()),
                                 ..Default::default()
                             }],
                             ..Default::default()
@@ -2266,7 +2271,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             for port in forward_ports {
                 if let ForwardPort::Number(port_number) = port {
                     command.arg("-p");
-                    command.arg(format!("{port_number}:{port_number}"));
+                    command.arg(format!("127.0.0.1:{port_number}:{port_number}"));
                 }
             }
         }
@@ -3638,6 +3643,225 @@ mod test {
         .await?;
 
         Ok((test_dependencies, manifest))
+    }
+
+    fn forward_ports_test_resources() -> DockerBuildResources {
+        DockerBuildResources {
+            image: DockerInspect {
+                id: "image_id".to_string(),
+                config: DockerInspectConfig {
+                    labels: DockerConfigLabels { metadata: None },
+                    image_user: None,
+                    env: Vec::new(),
+                },
+                mounts: None,
+                state: None,
+            },
+            image_tag: "image".to_string(),
+            additional_mounts: Vec::new(),
+            container_env: HashMap::new(),
+            privileged: false,
+            init: false,
+            cap_add: Vec::new(),
+            security_opt: Vec::new(),
+            entrypoint_script: None,
+        }
+    }
+
+    fn assert_loopback_forward_ports(
+        config: &DockerComposeConfig,
+        service_name: &str,
+        expected_ports: &[&str],
+    ) {
+        let service = config.services.get(service_name).expect("service exists");
+        let actual_ports = service
+            .ports
+            .iter()
+            .map(|port| {
+                (
+                    port.target.as_str(),
+                    port.published.as_str(),
+                    port.host_ip.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let expected_ports = expected_ports
+            .iter()
+            .map(|port| (*port, *port, Some("127.0.0.1")))
+            .collect::<Vec<_>>();
+        assert_eq!(actual_ports, expected_ports, "service {service_name}");
+
+        let serialized = serde_json_lenient::to_value(service).expect("service serializes");
+        for port in serialized["ports"]
+            .as_array()
+            .expect("ports serialize as an array")
+        {
+            assert_eq!(port["host_ip"], "127.0.0.1");
+        }
+    }
+
+    #[gpui::test]
+    async fn forward_ports_docker_and_podman_bind_to_loopback(cx: &mut TestAppContext) {
+        for use_podman in [false, true] {
+            let mut docker = FakeDocker::new();
+            docker.set_podman(use_podman);
+            let fs = FakeFs::new(cx.executor());
+            let (_, mut manifest) = init_devcontainer_manifest(
+                cx,
+                fs,
+                fake_http_client(),
+                Arc::new(docker),
+                Arc::new(TestCommandRunner::new()),
+                HashMap::new(),
+                r#"{"image": "image", "forwardPorts": [6000, 6001, 65535]}"#,
+            )
+            .await
+            .expect("manifest initializes");
+            manifest.parse_nonremote_vars().expect("variables parse");
+            let command = manifest
+                .create_docker_run_command(forward_ports_test_resources())
+                .expect("docker run command is generated");
+            assert_eq!(
+                command.get_program(),
+                OsStr::new(if use_podman { "podman" } else { "docker" })
+            );
+            let arguments = command.get_args().collect::<Vec<_>>();
+            let publications = arguments
+                .windows(2)
+                .filter(|pair| pair[0] == OsStr::new("-p"))
+                .map(|pair| pair[1])
+                .collect::<Vec<_>>();
+            assert_eq!(
+                publications,
+                vec![
+                    OsStr::new("127.0.0.1:6000:6000"),
+                    OsStr::new("127.0.0.1:6001:6001"),
+                    OsStr::new("127.0.0.1:65535:65535"),
+                ]
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn forward_ports_preserve_explicit_docker_publications(cx: &mut TestAppContext) {
+        let (_, mut manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{
+                "image": "image",
+                "forwardPorts": [6000],
+                "appPort": [8084, "8085:8086"],
+                "runArgs": ["-p", "0.0.0.0:9090:90", "--publish=0.0.0.0:9091:91"]
+            }"#,
+        )
+        .await
+        .expect("manifest initializes");
+        manifest.parse_nonremote_vars().expect("variables parse");
+        let command = manifest
+            .create_docker_run_command(forward_ports_test_resources())
+            .expect("docker run command is generated");
+        let arguments = command.get_args().collect::<Vec<_>>();
+        let publications = arguments
+            .windows(2)
+            .filter(|pair| pair[0] == OsStr::new("-p"))
+            .map(|pair| pair[1])
+            .collect::<Vec<_>>();
+        assert_eq!(
+            publications,
+            vec![
+                OsStr::new("0.0.0.0:9090:90"),
+                OsStr::new("127.0.0.1:6000:6000"),
+                OsStr::new("8084"),
+                OsStr::new("8085:8086"),
+            ]
+        );
+        assert!(arguments.contains(&OsStr::new("--publish=0.0.0.0:9091:91")));
+    }
+
+    #[gpui::test]
+    async fn forward_ports_compose_bind_to_loopback(cx: &mut TestAppContext) {
+        let (_, mut manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{
+                "dockerComposeFile": "compose.yml",
+                "service": "app",
+                "workspaceFolder": "/workspaces/project",
+                "forwardPorts": [6000, 6001, "6002", "app:6003", "db:5432", "db:5433"]
+            }"#,
+        )
+        .await
+        .expect("manifest initializes");
+        manifest.parse_nonremote_vars().expect("variables parse");
+        let config = manifest
+            .build_runtime_override("app", None, forward_ports_test_resources())
+            .expect("runtime override is generated");
+        assert_eq!(config.services.len(), 2);
+        assert_loopback_forward_ports(&config, "app", &["6000", "6001", "6002", "6003"]);
+        assert_loopback_forward_ports(&config, "db", &["5432", "5433"]);
+    }
+
+    #[gpui::test]
+    async fn forward_ports_compose_shared_network_bind_to_loopback(cx: &mut TestAppContext) {
+        let (_, mut manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{
+                "dockerComposeFile": "compose.yml",
+                "service": "app",
+                "workspaceFolder": "/workspaces/project",
+                "forwardPorts": [6000, 6001, "app:6002", "db:5432", "db:5433", "cache:6379", "cache:6380"]
+            }"#,
+        )
+        .await
+        .expect("manifest initializes");
+        manifest.parse_nonremote_vars().expect("variables parse");
+        let config = manifest
+            .build_runtime_override("app", Some("db"), forward_ports_test_resources())
+            .expect("runtime override is generated");
+        assert_eq!(config.services.len(), 3);
+        assert!(
+            config
+                .services
+                .get("app")
+                .expect("app exists")
+                .ports
+                .is_empty()
+        );
+        assert_loopback_forward_ports(&config, "db", &["6000", "6001", "6002", "5432", "5433"]);
+        assert_loopback_forward_ports(&config, "cache", &["6379", "6380"]);
+    }
+
+    #[gpui::test]
+    async fn forward_ports_empty_or_absent_do_not_publish_ports(cx: &mut TestAppContext) {
+        for contents in [
+            r#"{"image": "image"}"#,
+            r#"{"image": "image", "forwardPorts": []}"#,
+        ] {
+            let (_, mut manifest) = init_default_devcontainer_manifest(cx, contents)
+                .await
+                .expect("manifest initializes");
+            manifest.parse_nonremote_vars().expect("variables parse");
+            let command = manifest
+                .create_docker_run_command(forward_ports_test_resources())
+                .expect("docker run command is generated");
+            assert!(
+                !command
+                    .get_args()
+                    .any(|argument| argument == OsStr::new("-p"))
+            );
+            for network_service in [None, Some("db")] {
+                let config = manifest
+                    .build_runtime_override("app", network_service, forward_ports_test_resources())
+                    .expect("runtime override is generated");
+                assert_eq!(config.services.len(), 1);
+                assert!(
+                    config
+                        .services
+                        .get("app")
+                        .expect("app exists")
+                        .ports
+                        .is_empty()
+                );
+            }
+        }
     }
 
     #[gpui::test]
