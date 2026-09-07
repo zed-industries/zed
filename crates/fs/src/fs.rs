@@ -1706,12 +1706,16 @@ impl FakeFsState {
             return;
         };
         for event in events {
-            if !self
-                .watches
-                .registered_paths
-                .iter()
-                .any(|registered_path| event.path.starts_with(registered_path))
-            {
+            let is_registered = self.watches.registered_paths.iter().any(|registered_path| {
+                if self.case_sensitive {
+                    event.path.starts_with(registered_path)
+                } else {
+                    let event_path = event.path.to_string_lossy().to_lowercase();
+                    let registered_path = registered_path.to_string_lossy().to_lowercase();
+                    Path::new(&event_path).starts_with(Path::new(&registered_path))
+                }
+            });
+            if !is_registered {
                 continue;
             }
             let notify_event = match event.kind {
