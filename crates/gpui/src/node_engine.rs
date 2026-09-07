@@ -1,6 +1,6 @@
 use crate::{
     Bounds, EntityId, GlobalElementId, LayoutId, Pixels, ViewNode, ViewNodeCacheKey,
-    view_node::{MetadataPhase, NodeOutput, OutputItem, OutputSlot, ViewNodeScene},
+    view_node::{DispatchOp, MetadataPhase, NodeOutput, OutputItem, OutputSlot, ViewNodeScene},
 };
 use collections::{FxHashMap, FxHashSet};
 use slotmap::SlotMap;
@@ -10,7 +10,7 @@ use std::{any::TypeId, ops::ControlFlow};
 /// A point in a scope's output that `NodeEngine::rollback` returns to. `None` when taken
 /// outside every node, where nothing is recorded.
 #[derive(Clone, Copy)]
-pub(crate) struct OutputCheckpoint(Option<(ViewNodeId, MetadataPhase, usize, u32)>);
+pub(crate) struct OutputCheckpoint(Option<(ViewNodeId, MetadataPhase, usize, usize, u32)>);
 
 /// Which frame's roots a query walks: the frame drawn last, which events are dispatched
 /// against, or the one being drawn.
@@ -311,21 +311,33 @@ impl NodeEngine {
     pub(crate) fn push(&mut self, item: OutputItem) {
         match self.current_output() {
             Some((_, phase, output)) => output.phase_mut(phase).items.push(item),
-            None => debug_assert!(
-                matches!(item, OutputItem::DispatchPush(..) | OutputItem::DispatchPop),
-                "output outside every node is lost"
-            ),
+            None => debug_assert!(false, "output outside every node is lost"),
         }
     }
 
-    /// Records a dispatch node pushed for the element being drawn; see
-    /// [`OutputItem::DispatchPush`].
+    /// Records a root the scope being drawn attached with `defer_draw`.
+    pub(crate) fn push_root(&mut self, node: ViewNodeId, priority: usize) {
+        if let Some((_, phase, output)) = self.current_output() {
+            output
+                .phase_mut(phase)
+                .dispatch
+                .push(DispatchOp::Root(node, priority));
+        }
+    }
+
+    /// Records a dispatch node pushed for the element being drawn; see [`DispatchOp`].
+    /// Outside every node nothing replays it, so nothing is recorded.
     pub(crate) fn push_dispatch_node(&mut self, live: crate::DispatchNodeId) {
         if let Some((_, phase, output)) = self.current_output() {
             let output = output.phase_mut(phase);
-            let index = output.dispatch_pushes;
             output.dispatch_pushes += 1;
-            output.items.push(OutputItem::DispatchPush(live, index));
+            output.dispatch.push(DispatchOp::PushLive(live));
+        }
+    }
+
+    pub(crate) fn pop_dispatch_node(&mut self) {
+        if let Some((_, phase, output)) = self.current_output() {
+            output.phase_mut(phase).dispatch.push(DispatchOp::Pop);
         }
     }
 
@@ -334,16 +346,23 @@ impl NodeEngine {
     pub(crate) fn checkpoint(&mut self) -> OutputCheckpoint {
         OutputCheckpoint(self.current_output().map(|(node_id, phase, output)| {
             let output = output.phase(phase);
-            (node_id, phase, output.items.len(), output.dispatch_pushes)
+            (
+                node_id,
+                phase,
+                output.items.len(),
+                output.dispatch.len(),
+                output.dispatch_pushes,
+            )
         }))
     }
 
     pub(crate) fn rollback(&mut self, checkpoint: OutputCheckpoint) {
-        if let Some((node_id, phase, items, dispatch_pushes)) = checkpoint.0
+        if let Some((node_id, phase, items, dispatch, dispatch_pushes)) = checkpoint.0
             && let Some(node) = self.nodes.get_mut(node_id)
         {
             let output = node.output.phase_mut(phase);
             output.items.truncate(items);
+            output.dispatch.truncate(dispatch);
             output.dispatch_pushes = dispatch_pushes;
         }
     }
@@ -452,16 +471,25 @@ impl NodeEngine {
         ControlFlow::Continue(())
     }
 
-    /// Visits the items of one node's phase in drawing order, descending into the children
-    /// it entered. Used to replay a reused node's prepaint into the frame's dispatch tree.
-    pub(crate) fn walk_node<'a>(
-        &'a self,
+    /// Replays the dispatch tree a reused node and its descendants built while prepainting:
+    /// `visit` receives each op with the recorded dispatch nodes of the scope that produced
+    /// it, in drawing order, descending into children where they were drawn.
+    pub(crate) fn walk_dispatch(
+        &self,
         node_id: ViewNodeId,
-        phase: MetadataPhase,
-        mut visit: impl FnMut(OutputSlot, &'a OutputItem) -> ControlFlow<()>,
+        visit: &mut impl FnMut(&DispatchOp, &[crate::key_dispatch::DispatchNode]),
     ) {
-        // Visiting every item; the walk only breaks when `visit` does.
-        let _ = self.walk_output(node_id, phase, &mut visit);
+        // A child that was removed since its parent last drew is skipped.
+        let Some(output) = self.output(node_id) else {
+            return;
+        };
+        let output = output.phase(MetadataPhase::Prepaint);
+        for op in &output.dispatch {
+            match op {
+                DispatchOp::Child(child) => self.walk_dispatch(*child, visit),
+                op => visit(op, &output.dispatch_nodes),
+            }
+        }
     }
 
     /// Copies the dispatch nodes a node pushed while prepainting out of the frame's dispatch
@@ -478,15 +506,15 @@ impl NodeEngine {
             return;
         };
         let output = node.output.phase_mut(MetadataPhase::Prepaint);
-        let items = &mut output.items;
+        let ops = &mut output.dispatch;
         let elided = &mut self.elided_dispatch_pushes;
         elided.clear();
         let mut kept_pushes = 0u32;
         let mut write = 0;
-        for read in 0..items.len() {
-            let keep = match &mut items[read] {
-                OutputItem::DispatchPush(live, index) => {
-                    let recorded = dispatch_tree.node(*live);
+        for read in 0..ops.len() {
+            let keep = match ops[read] {
+                DispatchOp::PushLive(live) => {
+                    let recorded = dispatch_tree.node(live);
                     let keep = !recorded.is_empty();
                     elided.push(!keep);
                     if keep {
@@ -494,34 +522,26 @@ impl NodeEngine {
                             Some(slot) => slot.clone_from(recorded),
                             None => output.dispatch_nodes.push(recorded.clone()),
                         }
-                        *index = kept_pushes;
+                        ops[read] = DispatchOp::Push(kept_pushes);
                         kept_pushes += 1;
                     }
                     keep
                 }
-                OutputItem::DispatchPop => !elided.pop().unwrap_or(false),
-                _ => true,
+                DispatchOp::Push(_) => {
+                    debug_assert!(false, "a scope's dispatch nodes are snapshotted once");
+                    true
+                }
+                DispatchOp::Pop => !elided.pop().unwrap_or(false),
+                DispatchOp::Child(_) | DispatchOp::Root(..) => true,
             };
             if keep {
-                items.swap(write, read);
+                ops[write] = ops[read];
                 write += 1;
             }
         }
-        items.truncate(write);
+        ops.truncate(write);
         output.dispatch_pushes = kept_pushes;
         output.dispatch_nodes.truncate(kept_pushes as usize);
-    }
-
-    /// The recorded copy of a dispatch node a reused view pushed.
-    pub(crate) fn recorded_dispatch_node(
-        &self,
-        slot: OutputSlot,
-        index: u32,
-    ) -> Option<&crate::key_dispatch::DispatchNode> {
-        self.output(slot.owner)?
-            .phase(slot.phase)
-            .dispatch_nodes
-            .get(index as usize)
     }
 
     /// Takes the callback at `slot` out of its output for a call, via `take` on the matching
@@ -564,6 +584,14 @@ impl NodeEngine {
             }
         } else {
             self.push(OutputItem::Child(node, phase));
+            if phase == MetadataPhase::Prepaint
+                && let Some((_, parent_phase, output)) = self.current_output()
+            {
+                output
+                    .phase_mut(parent_phase)
+                    .dispatch
+                    .push(DispatchOp::Child(node));
+            }
         }
         self.traversal_stack.push((node, phase));
     }
@@ -783,7 +811,7 @@ impl NodeEngine {
     /// Its `parent` is the owner, so whatever dirties the root dirties the owner, which
     /// attaches it again; it is not one of the owner's children, since it is drawn from the
     /// frame's root list and lives as long as some drawn output attaches it. The caller
-    /// records the attachment with [`OutputItem::Root`] where that applies.
+    /// records the attachment with [`DispatchOp::Root`] where that applies.
     pub(crate) fn mount_root(
         &mut self,
         element: GlobalElementId,
@@ -863,9 +891,14 @@ impl NodeEngine {
     /// node, after its phase has been finished.
     pub(crate) fn abandon_occurrence(&mut self, node_id: ViewNodeId) {
         if let Some((_, phase, output)) = self.current_output() {
-            let items = &mut output.phase_mut(phase).items;
-            if matches!(items.last(), Some(OutputItem::Child(child, _)) if *child == node_id) {
-                items.pop();
+            let output = output.phase_mut(phase);
+            if matches!(output.items.last(), Some(OutputItem::Child(child, _)) if *child == node_id)
+            {
+                output.items.pop();
+            }
+            if matches!(output.dispatch.last(), Some(DispatchOp::Child(child)) if *child == node_id)
+            {
+                output.dispatch.pop();
             }
         }
         if let Some(parent) = self.nodes.get(node_id).and_then(|node| node.parent)

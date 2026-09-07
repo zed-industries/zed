@@ -107,23 +107,12 @@ impl ViewNodeScene {
 /// frame live here; a `Child` marks where a child node's output of one phase belongs.
 pub(crate) enum OutputItem {
     Child(crate::node_engine::ViewNodeId, MetadataPhase),
-    /// A root this scope attached to the frame with `defer_draw`, drawn after the tree at
-    /// the given priority. Rendering the scope emits it; replaying the scope re-attaches
-    /// the same root, so a deferred draw survives exactly as long as some drawn output
-    /// says it is there. Not descended into by walks: roots are walked from the frame's
-    /// root list.
-    Root(crate::node_engine::ViewNodeId, usize),
     Hitbox(Hitbox),
     /// Boxed: at 80 bytes the request would otherwise set the size of every item.
     Tooltip(Box<TooltipRequest>),
     CursorStyle(CursorStyleRequest),
     WindowControl(crate::WindowControlArea, Hitbox),
     TabStop(crate::TabStopOperation),
-    /// A dispatch node pushed while prepainting. Its recorded copy lives in
-    /// [`PhaseOutput::dispatch_nodes`] at the given index, refreshed once the node has
-    /// painted; a reused view pushes it back into the frame's dispatch tree.
-    DispatchPush(crate::DispatchNodeId, u32),
-    DispatchPop,
     /// `None` while leased out for a call.
     MouseListener(Option<crate::window::AnyMouseListener>),
     InputHandler(Option<Box<dyn crate::InputHandler>>),
@@ -135,11 +124,34 @@ pub(crate) enum OutputItem {
 // the widest common variant; anything wider is boxed.
 const _: () = assert!(size_of::<OutputItem>() <= 56);
 
+/// One step of rebuilding the frame's dispatch tree from a reused scope. Every element
+/// pushes a dispatch node, so these are kept apart from `items`, which the frame's other
+/// walks (hit testing, mouse listeners, cursor styles) would otherwise step over; only
+/// where children and roots fall between the pushes matters, so those are repeated here.
+#[derive(Clone, Copy)]
+pub(crate) enum DispatchOp {
+    /// A node pushed by the element being drawn, by its id in the frame's tree. Replaced
+    /// by `Push` once the scope has painted and the node has been copied out.
+    PushLive(crate::DispatchNodeId),
+    /// A recorded node, by its index in [`PhaseOutput::dispatch_nodes`].
+    Push(u32),
+    Pop,
+    Child(crate::node_engine::ViewNodeId),
+    /// A root this scope attached to the frame with `defer_draw`, drawn after the tree at
+    /// the given priority under the dispatch node active here. Rendering the scope emits
+    /// it; replaying the scope re-attaches the same root, so a deferred draw survives
+    /// exactly as long as some drawn output says it is there. Not descended into: roots
+    /// are walked from the frame's root list.
+    Root(crate::node_engine::ViewNodeId, usize),
+}
+
 /// What one scope produced in one phase.
 #[derive(Default)]
 pub(crate) struct PhaseOutput {
     /// In production order.
     pub(crate) items: Vec<OutputItem>,
+    /// The dispatch tree the scope built while prepainting, in production order.
+    pub(crate) dispatch: Vec<DispatchOp>,
     /// The line layouts looked up, held so they stay shaped while the scope is reused.
     pub(crate) text: crate::text_system::TextUse,
     /// The engine frame `text` was looked up in. Zero until the phase first draws.
@@ -147,9 +159,8 @@ pub(crate) struct PhaseOutput {
     /// The primitives painted, with the children spliced where they were painted. Only
     /// the paint phase records one.
     pub(crate) scene: ViewNodeScene,
-    /// Recorded copies of the dispatch nodes pushed in this phase, in push order. Kept out
-    /// of `items` because they are wide and pushed for every element. Entries beyond
-    /// `dispatch_pushes` are stale slots kept for their buffers.
+    /// Recorded copies of the dispatch nodes `dispatch` pushes, in push order. Entries
+    /// beyond `dispatch_pushes` are stale slots kept for their buffers.
     pub(crate) dispatch_nodes: Vec<crate::key_dispatch::DispatchNode>,
     pub(crate) dispatch_pushes: u32,
 }
@@ -197,6 +208,7 @@ impl NodeOutput {
             .iter()
             .map(|phase| {
                 phase.items.capacity() * size_of::<OutputItem>()
+                    + phase.dispatch.capacity() * size_of::<DispatchOp>()
                     + phase.dispatch_nodes.capacity()
                         * size_of::<crate::key_dispatch::DispatchNode>()
                     + phase
@@ -221,6 +233,7 @@ impl NodeOutput {
     pub(crate) fn reset(&mut self) {
         for phase in &mut self.phases {
             phase.items.clear();
+            phase.dispatch.clear();
             phase.dispatch_pushes = 0;
         }
         self.accessed_element_states.clear();

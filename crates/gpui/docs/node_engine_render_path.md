@@ -204,14 +204,16 @@ when it last drew (`TaffyLayoutEngine::root_layouts`). A subtree's layout is a f
 its root's box and its own retained styles, so the root is all that needs comparing.
 
 Everything an element does in prepaint becomes an `OutputItem` in the node's prepaint
-output: `insert_hitbox` → `Hitbox`, `Drawable::prepaint` → `DispatchPush`/`DispatchPop`
-(the live dispatch node id plus an index into the node's `dispatch_nodes` lane),
-`defer_draw` → `Root(node, priority)` (and a `DeferredDraw` queued for the deferred pass),
-tooltips, tab stops. Items are 88 bytes; a `div` with an id pushes two dispatch items and
-one hitbox.
+output: `insert_hitbox` → `Hitbox`, tooltips, tab stops, mouse listeners at paint. Items
+are 56 bytes. The dispatch tree the scope builds is a lane of its own, `dispatch`, of
+24-byte `DispatchOp`s: `Drawable::prepaint` → `PushLive(live id)`/`Pop`, a child entering
+prepaint → `Child(node)`, `defer_draw` → `Root(node, priority)` (and a `DeferredDraw`
+queued for the deferred pass). Only where children and roots fall between the pushes
+matters to the tree, which is why those two are repeated in the lane; the item walks
+(hit test, mouse listeners, cursor style) never see a dispatch op.
 
-Replaying a grafted node's prepaint (`graft_view_node_prepaint`) walks its prepaint items
-and, for each `DispatchPush`, pushes the *recorded copy* of the dispatch node
+Replaying a grafted node's prepaint (`graft_view_node_prepaint`) walks its dispatch lane
+(`walk_dispatch`) and, for each `Push`, pushes the *recorded copy* of the dispatch node
 (`push_recorded`) into this frame's dispatch tree; for each `Root`, re-queues the
 deferred root under the dispatch node that is active at that point.
 

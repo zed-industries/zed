@@ -28,7 +28,7 @@ use crate::{
     point,
     prelude::*,
     px, rems, size, transparent_black,
-    view_node::{MetadataPhase, OutputItem, OutputSlot},
+    view_node::{DispatchOp, OutputItem, OutputSlot},
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -3710,28 +3710,28 @@ impl Window {
         } = &mut self.next_frame;
         let engine = &self.node_engine;
         let mut contains_focus = false;
-        engine.walk_node(node_id, MetadataPhase::Prepaint, |slot, item| {
-            match item {
-                OutputItem::DispatchPush(_, index) => {
-                    if let Some(recorded) = engine.recorded_dispatch_node(slot, *index) {
-                        contains_focus |= dispatch_tree.push_recorded(recorded) == self.focus
-                            && self.focus.is_some();
-                    }
+        engine.walk_dispatch(node_id, &mut |op, recorded_nodes| match op {
+            DispatchOp::Push(index) => {
+                if let Some(recorded) = recorded_nodes.get(*index as usize) {
+                    contains_focus |=
+                        dispatch_tree.push_recorded(recorded) == self.focus && self.focus.is_some();
                 }
-                OutputItem::DispatchPop => dispatch_tree.pop_node(),
-                OutputItem::Root(node, priority) => {
-                    if let Some(parent_node) = dispatch_tree.active_node_id() {
-                        deferred_draws.push(DeferredDraw {
-                            node: *node,
-                            priority: *priority,
-                            parent_node,
-                            fresh: None,
-                        });
-                    }
-                }
-                _ => {}
             }
-            ControlFlow::Continue(())
+            DispatchOp::PushLive(_) => {
+                debug_assert!(false, "a reused scope's dispatch nodes were snapshotted");
+            }
+            DispatchOp::Pop => dispatch_tree.pop_node(),
+            DispatchOp::Root(node, priority) => {
+                if let Some(parent_node) = dispatch_tree.active_node_id() {
+                    deferred_draws.push(DeferredDraw {
+                        node: *node,
+                        priority: *priority,
+                        parent_node,
+                        fresh: None,
+                    });
+                }
+            }
+            DispatchOp::Child(_) => {}
         });
         if contains_focus {
             self.next_frame.focus = self.focus;
@@ -3746,7 +3746,7 @@ impl Window {
 
     pub(crate) fn pop_dispatch_node(&mut self) {
         self.next_frame.dispatch_tree.pop_node();
-        self.node_engine.push(OutputItem::DispatchPop);
+        self.node_engine.pop_dispatch_node();
     }
 
     /// Replays a reused node's scene into the frame, splicing it into the parent's.
@@ -4179,7 +4179,7 @@ impl Window {
             self.element_path_hash(),
             &cache_key,
         );
-        self.node_engine.push(OutputItem::Root(node, priority));
+        self.node_engine.push_root(node, priority);
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
         self.next_frame.deferred_draws.push(DeferredDraw {
             node,
