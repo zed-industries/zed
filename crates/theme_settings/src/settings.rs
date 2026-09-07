@@ -702,8 +702,9 @@ fn font_fallbacks_from_settings(
 }
 
 impl settings::Settings for ThemeSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
-        let content = &content.theme;
+    fn from_settings(settings_content: &settings::SettingsContent) -> Self {
+        let content = &settings_content.theme;
+        let markdown_preview = settings_content.markdown_preview.as_ref();
         let theme_selection: ThemeSelection = content.theme.clone().unwrap().into();
         let icon_theme_selection: IconThemeSelection = content.icon_theme.clone().unwrap().into();
         Self {
@@ -743,18 +744,17 @@ impl settings::Settings for ThemeSettings {
                 .map(|font| font.0.clone().into()),
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
             git_commit_buffer_font_size: content.git_commit_buffer_font_size.map(|s| s.into_gpui()),
-            markdown_preview_font_family: content
-                .markdown_preview_font_family
-                .as_ref()
+            markdown_preview_font_family: markdown_preview
+                .and_then(|preview| preview.font_family.as_ref())
                 .map(|f| f.0.clone().into()),
-            markdown_preview_code_font_family: content
-                .markdown_preview_code_font_family
-                .as_ref()
+            markdown_preview_code_font_family: markdown_preview
+                .and_then(|preview| preview.code_font_family.as_ref())
                 .map(|f| f.0.clone().into()),
-            markdown_preview_font_size: content.markdown_preview_font_size.map(|s| s.into_gpui()),
-            markdown_preview_theme: content
-                .markdown_preview_theme
-                .clone()
+            markdown_preview_font_size: markdown_preview
+                .and_then(|preview| preview.font_size)
+                .map(|size| size.into_gpui()),
+            markdown_preview_theme: markdown_preview
+                .and_then(|preview| preview.theme.clone())
                 .map(ThemeSelection::from),
             theme: theme_selection,
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),

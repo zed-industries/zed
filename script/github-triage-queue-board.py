@@ -15,18 +15,12 @@ Usage (called by the workflow, not directly):
 """
 
 import os
-import time
 import urllib.parse
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import requests
+from github_helpers import add_github_project_item, github_graphql, github_rest_api
 
-RETRYABLE_STATUS_CODES = {502, 503, 504}
-MAX_RETRIES = 3
-RETRY_DELAY_SECONDS = 5
-
-GITHUB_API_URL = "https://api.github.com"
 REPO_OWNER = "zed-industries"
 REPO_NAME = "zed"
 # The eligibility window's boundaries are calendar days in this timezone. GitHub
@@ -34,44 +28,6 @@ REPO_NAME = "zed"
 # stay aligned with a consistent business day regardless of where the job runs.
 # ZoneInfo (not a fixed offset) so daylight saving is handled automatically.
 BUSINESS_DAY_TZ = ZoneInfo("America/Los_Angeles")
-
-
-def github_graphql(query, variables):
-    for attempt in range(MAX_RETRIES + 1):
-        response = requests.post(
-            f"{GITHUB_API_URL}/graphql",
-            headers=GITHUB_HEADERS,
-            json={"query": query, "variables": variables},
-            timeout=30,
-        )
-        if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-            print(
-                f"GitHub API returned {response.status_code}, retrying in {RETRY_DELAY_SECONDS}s (attempt {attempt + 1}/{MAX_RETRIES})..."
-            )
-            time.sleep(RETRY_DELAY_SECONDS)
-            continue
-        response.raise_for_status()
-        result = response.json()
-        if "errors" in result:
-            raise RuntimeError(f"GraphQL error: {result['errors']}")
-        return result["data"]
-    raise RuntimeError("github_graphql: retry loop exited without return")
-
-
-def github_rest_get(path):
-    for attempt in range(MAX_RETRIES + 1):
-        response = requests.get(
-            f"{GITHUB_API_URL}/{path}", headers=GITHUB_HEADERS, timeout=30
-        )
-        if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-            print(
-                f"GitHub API returned {response.status_code}, retrying in {RETRY_DELAY_SECONDS}s (attempt {attempt + 1}/{MAX_RETRIES})..."
-            )
-            time.sleep(RETRY_DELAY_SECONDS)
-            continue
-        response.raise_for_status()
-        return response.json()
-    raise RuntimeError("github_rest_get: retry loop exited without return")
 
 
 def day_start(day):
@@ -108,8 +64,8 @@ def eligible_issues(window_start, window_end):
     issues = {}
     page = 1
     while True:
-        data = github_rest_get(
-            f"search/issues?q={urllib.parse.quote(query)}&per_page=100&page={page}"
+        data = github_rest_api(
+            "GET", f"search/issues?q={urllib.parse.quote(query)}&per_page=100&page={page}"
         )
         for item in data["items"]:
             issues[item["node_id"]] = item["number"]
@@ -165,13 +121,6 @@ def project_items(project_id):
         cursor = items["pageInfo"]["endCursor"]
 
 
-def add_to_project(project_id, content_id):
-    github_graphql(
-        "mutation($p: ID!, $c: ID!) { addProjectV2ItemById(input: {projectId: $p, contentId: $c}) { item { id } } }",
-        {"p": project_id, "c": content_id},
-    )
-
-
 def remove_from_project(project_id, item_id):
     github_graphql(
         "mutation($p: ID!, $i: ID!) { deleteProjectV2Item(input: {projectId: $p, itemId: $i}) { deletedItemId } }",
@@ -192,7 +141,7 @@ def sync_project(project_id, dry_run=False):
         if content_id not in on_board:
             print(f"+ #{number}")
             if not dry_run:
-                add_to_project(project_id, content_id)
+                add_github_project_item(project_id, content_id)
 
     for item_id, content_id, number in current:
         if content_id not in eligible:
@@ -202,11 +151,6 @@ def sync_project(project_id, dry_run=False):
 
 
 if __name__ == "__main__":
-    GITHUB_HEADERS = {
-        "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
     project_number = int(os.environ["PROJECT_NUMBER"])
     project_id = fetch_project_id(project_number)
     sync_project(project_id, os.environ.get("DRY_RUN") == "true")
