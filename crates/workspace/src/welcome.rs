@@ -585,7 +585,6 @@ impl crate::SerializableItem for WelcomePage {
         workspace: &mut Workspace,
         item_id: crate::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;

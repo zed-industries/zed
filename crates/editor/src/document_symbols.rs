@@ -6,7 +6,7 @@ use futures::future::join_all;
 use gpui::{App, Context, HighlightStyle, Task};
 use itertools::Itertools as _;
 use language::language_settings::LanguageSettings;
-use language::{Buffer, OutlineItem};
+use language::{Buffer, OutlineItem, highlight_ranges_from_text};
 use multi_buffer::{
     Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
     ToOffset as _,
@@ -219,12 +219,20 @@ impl Editor {
                         let display_snapshot =
                             editor.display_map.update(cx, |map, cx| map.snapshot(cx));
                         let mut highlighted_results = results;
-                        for items in highlighted_results.values_mut() {
+                        for (buffer_id, items) in highlighted_results.iter_mut() {
+                            let language = editor
+                                .buffer
+                                .read(cx)
+                                .buffer(*buffer_id)
+                                .and_then(|buffer| buffer.read(cx).language().cloned());
                             for item in items {
                                 if let Some(highlights) =
                                     highlights_from_buffer(&display_snapshot, &item, &syntax)
                                 {
                                     item.highlight_ranges = highlights;
+                                } else if let Some(language) = &language {
+                                    item.highlight_ranges =
+                                        highlight_ranges_from_text(&item.text, language, &syntax);
                                 }
                             }
                         }
@@ -334,6 +342,7 @@ mod tests {
 
     use futures::StreamExt as _;
     use gpui::{App, TestAppContext};
+    use language::highlight_ranges_from_text;
     use multi_buffer::ToPoint;
     use settings::{DocumentSymbols, SettingsStore};
     use text::Point;
@@ -810,6 +819,82 @@ mod tests {
                     symbol.text
                 );
             }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_lsp_document_symbols_fall_back_to_reparsed_text_highlights(
+        cx: &mut TestAppContext,
+    ) {
+        use ui::ActiveTheme as _;
+
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::On);
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        let mut symbol_request = cx
+            .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
+                        nested_symbol(
+                            "impl ZzzMissing",
+                            lsp::SymbolKind::OBJECT,
+                            lsp_range(0, 0, 0, 12),
+                            lsp_range(0, 3, 0, 7),
+                            Vec::new(),
+                        ),
+                    ])))
+                },
+            );
+
+        cx.set_state("fn teˇst() {}\n");
+        assert!(symbol_request.next().await.is_some());
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let (_, symbols) = editor
+                .outline_symbols_at_cursor
+                .as_ref()
+                .expect("Should have outline symbols");
+            assert_eq!(symbols.len(), 1);
+            let symbol = &symbols[0];
+            assert_eq!(symbol.text, "impl ZzzMissing");
+
+            let language = editor
+                .buffer
+                .read(cx)
+                .as_singleton()
+                .expect("singleton buffer")
+                .read(cx)
+                .language()
+                .cloned()
+                .expect("buffer language");
+            let expected = highlight_ranges_from_text(&symbol.text, &language, cx.theme().syntax());
+            assert_eq!(
+                expected.first().map(|(range, _)| range.clone()),
+                Some(0..4),
+                "reparsing the symbol text should highlight the `impl` keyword"
+            );
+            assert_eq!(symbol.highlight_ranges, expected);
         });
     }
 

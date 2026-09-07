@@ -591,6 +591,82 @@ async fn test_realfs_rename_ignore_if_exists_leaves_source_and_target_unchanged(
 }
 
 #[gpui::test]
+async fn test_fake_fs_rename_ignore_if_exists_leaves_source_and_target_unchanged(
+    executor: BackgroundExecutor,
+) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "source.txt": "from source",
+            "target.txt": "from target",
+        }),
+    )
+    .await;
+
+    let handle = fs
+        .open_handle(Path::new(path!("/root/source.txt")))
+        .await
+        .unwrap();
+
+    let result = fs
+        .rename(
+            Path::new(path!("/root/source.txt")),
+            Path::new(path!("/root/target.txt")),
+            RenameOptions {
+                ignore_if_exists: true,
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(result.is_ok());
+
+    assert_eq!(
+        fs.load(Path::new(path!("/root/source.txt"))).await.unwrap(),
+        "from source"
+    );
+    assert_eq!(
+        fs.load(Path::new(path!("/root/target.txt"))).await.unwrap(),
+        "from target"
+    );
+
+    // An ignored rename must not be recorded as a move either, or a handle held
+    // across it reports a path its file never went to.
+    assert!(
+        handle.current_path(&(fs.clone() as Arc<dyn Fs>)).is_err(),
+        "an ignored rename should not record a move"
+    );
+}
+
+#[gpui::test]
+async fn test_fake_fs_rename_onto_itself_keeps_the_file(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a.txt": "content",
+        }),
+    )
+    .await;
+
+    let path = Path::new(path!("/root/a.txt"));
+    let result = fs
+        .rename(
+            path,
+            path,
+            RenameOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(result.is_ok());
+    assert_eq!(fs.load(path).await.unwrap(), "content");
+}
+
+#[gpui::test]
 #[cfg(unix)]
 async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
     let tempdir = TempDir::new().unwrap();

@@ -20,19 +20,19 @@ use extension::{
     ExtensionLanguageServerProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
-use futures::future::join_all;
+use futures::future::{Shared, join_all};
 use futures::{
     AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
     channel::{
-        mpsc::{UnboundedSender, unbounded},
+        mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
         oneshot,
     },
     io::BufReader,
     select_biased,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, TaskExt,
-    UpdateGlobal as _, WeakEntity, actions,
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Subscription,
+    Task, TaskExt, UpdateGlobal as _, WeakEntity, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
@@ -40,15 +40,16 @@ use language::{
     QueryFileContents, QueryFiles, Rope,
 };
 use node_runtime::NodeRuntime;
-use project::ContextProviderWithTasks;
+use project::{ContextProviderWithTasks, Project};
 use release_channel::ReleaseChannel;
-use remote::RemoteClient;
+use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{SemanticTokenRules, Settings, SettingsStore};
 use std::ops::RangeInclusive;
 use std::str::FromStr;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::{
     borrow::Cow,
     cmp::Ordering,
@@ -58,7 +59,10 @@ use std::{
 };
 use task::TaskTemplates;
 use url::Url;
-use util::{PathExt, ResultExt, paths::RemotePathBuf};
+use util::{
+    PathExt, ResultExt,
+    paths::{PathStyle, RemotePathBuf},
+};
 use wasm_host::{
     WasmExtension, WasmHost,
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
@@ -69,8 +73,34 @@ pub use extension::{
 };
 pub use extension_settings::ExtensionSettings;
 
+use crate::headless_host::hash_directory_contents;
+
 pub const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+pub(crate) const REMOTE_SYNC_RETRY_DELAY: Duration = Duration::from_secs(1);
+pub(crate) const MAX_REMOTE_SYNC_RETRY_DELAY: Duration = Duration::from_secs(60);
+pub(crate) const MAX_REMOTE_SYNC_ATTEMPTS: usize = 10;
+pub(crate) const REMOTE_SYNC_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
+pub(crate) fn remote_sync_retry_delay(attempts: usize) -> Duration {
+    let exponential = REMOTE_SYNC_RETRY_DELAY * 2u32.saturating_pow(attempts.min(30) as u32);
+    exponential.min(MAX_REMOTE_SYNC_RETRY_DELAY)
+}
+
+async fn with_remote_sync_timeout<T>(
+    cx: &AsyncApp,
+    timeout: Duration,
+    description: &str,
+    future: impl Future<Output = Result<T>>,
+) -> Result<T> {
+    let timer = cx.background_executor().timer(timeout).fuse();
+    let future = future.fuse();
+    futures::pin_mut!(timer, future);
+    select_biased! {
+        result = future => result,
+        _ = timer => anyhow::bail!("timed out after {timeout:?} while {description}"),
+    }
+}
 
 /// The current extension [`SchemaVersion`] supported by Zed.
 const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
@@ -144,8 +174,20 @@ pub struct ExtensionStore {
     pub wasm_host: Arc<WasmHost>,
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
     pub tasks: Vec<Task<()>>,
-    pub remote_clients: Vec<WeakEntity<RemoteClient>>,
-    pub ssh_registered_tx: UnboundedSender<()>,
+    pub(crate) remote_clients: HashMap<EntityId, RemoteClientState>,
+    pub(crate) initial_index_load: Shared<Task<()>>,
+}
+
+pub(crate) struct RemoteClientState {
+    dirty_tx: UnboundedSender<RemoteSyncSignal>,
+    _task: Task<()>,
+    _subscriptions: Subscription,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RemoteSyncSignal {
+    IndexChanged,
+    Reconnected,
 }
 
 #[derive(Clone, Copy)]
@@ -226,6 +268,10 @@ impl RemoteSyncExtensions {
     fn into_entries(self) -> impl Iterator<Item = (Arc<str>, ExtensionIndexEntry)> {
         self.0.into_iter()
     }
+
+    fn contains(&self, id: &str) -> bool {
+        self.0.contains_key(id)
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -292,6 +338,16 @@ pub fn init(
     });
 
     cx.set_global(GlobalExtensionStore(store));
+
+    cx.observe_new::<Project>(|project, _window, cx| {
+        let Some(client) = project.remote_client() else {
+            return;
+        };
+        if let Some(store) = ExtensionStore::try_global(cx) {
+            store.update(cx, |store, cx| store.register_remote_client(client, cx));
+        }
+    })
+    .detach();
 }
 
 impl ExtensionStore {
@@ -322,7 +378,6 @@ impl ExtensionStore {
         let index_path = extensions_dir.join("index.json");
 
         let (reload_tx, mut reload_rx) = unbounded();
-        let (connection_registered_tx, mut connection_registered_rx) = unbounded();
         let mut this = Self {
             proxy: extension_host_proxy.clone(),
             extension_index: Default::default(),
@@ -348,8 +403,8 @@ impl ExtensionStore {
             reload_tx,
             tasks: Vec::new(),
 
-            remote_clients: Default::default(),
-            ssh_registered_tx: connection_registered_tx,
+            remote_clients: HashMap::default(),
+            initial_index_load: Task::ready(()).shared(),
         };
 
         // The extensions store maintains an index file, which contains a complete
@@ -391,10 +446,17 @@ impl ExtensionStore {
             reload_future = Some(this.reload(None, cx));
         }
 
+        let initial_index_load = cx
+            .spawn(async move |_, _| {
+                if let Some(future) = reload_future {
+                    future.await;
+                }
+            })
+            .shared();
+        this.initial_index_load = initial_index_load.clone();
+
         cx.spawn(async move |this, cx| {
-            if let Some(future) = reload_future {
-                future.await;
-            }
+            initial_index_load.await;
             this.update(cx, |this, cx| this.auto_install_extensions(cx))
                 .ok();
             this.update(cx, |this, cx| this.check_for_updates(cx)).ok();
@@ -422,11 +484,6 @@ impl ExtensionStore {
                                     .await;
                                 index_changed = false;
                             }
-
-                            Self::update_remote_clients(&this, cx).await?;
-                        }
-                        _ = connection_registered_rx.next() => {
-                            debounce_timer = cx.background_executor().timer(RELOAD_DEBOUNCE_DURATION).fuse()
                         }
                         extension_id = reload_rx.next() => {
                             let Some(extension_id) = extension_id else { break; };
@@ -1254,6 +1311,15 @@ impl ExtensionStore {
             extensions_to_unload.len() - reload_count
         );
 
+        let old_remote_sync_extensions = old_index.extensions_to_sync_to_remote();
+        let new_remote_sync_extensions = new_index.extensions_to_sync_to_remote();
+        let remote_sync_changed = extensions_to_unload
+            .iter()
+            .any(|id| old_remote_sync_extensions.contains(id.as_ref()))
+            || extensions_to_load
+                .iter()
+                .any(|id| new_remote_sync_extensions.contains(id.as_ref()));
+
         let extension_ids = extensions_to_load
             .iter()
             .filter_map(|id| {
@@ -1288,17 +1354,19 @@ impl ExtensionStore {
                 }
             })
             .collect::<Vec<_>>();
-        let languages_to_remove = old_index
-            .languages
-            .iter()
-            .filter_map(|(name, entry)| {
-                if extensions_to_unload.contains(&entry.extension) {
-                    Some(name.clone())
-                } else {
-                    None
+        let mut languages_to_remove = Vec::new();
+        let mut languages_to_readd = Vec::new();
+        for (name, entry) in &old_index.languages {
+            if !extensions_to_unload.contains(&entry.extension) {
+                continue;
+            }
+            match new_index.languages.get(name) {
+                Some(new_entry) if !extensions_to_load.contains(&new_entry.extension) => {
+                    languages_to_readd.push((name.clone(), new_entry.clone()));
                 }
-            })
-            .collect::<Vec<_>>();
+                _ => languages_to_remove.push(name.clone()),
+            }
+        }
         let mut grammars_to_remove = Vec::new();
         let mut server_removal_tasks = Vec::with_capacity(extensions_to_unload.len());
         for extension_id in &extensions_to_unload {
@@ -1335,9 +1403,14 @@ impl ExtensionStore {
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
         // Remove semantic token rules for languages being unloaded.
-        if !languages_to_remove.is_empty() {
+        let semantic_token_rules_to_remove = languages_to_remove
+            .iter()
+            .filter(|language| !self.proxy.is_language_registered(language))
+            .chain(languages_to_readd.iter().map(|(name, _)| name))
+            .collect::<Vec<_>>();
+        if !semantic_token_rules_to_remove.is_empty() {
             SettingsStore::update_global(cx, |store, cx| {
-                for language in &languages_to_remove {
+                for language in semantic_token_rules_to_remove {
                     store.remove_language_semantic_token_rules(language.as_ref(), cx);
                 }
             });
@@ -1387,29 +1460,54 @@ impl ExtensionStore {
             }));
         }
 
+        for (name, entry) in &languages_to_readd {
+            let Some(grammar_name) = entry.grammar.clone() else {
+                continue;
+            };
+            if !grammars_to_remove.contains(&grammar_name) {
+                continue;
+            }
+            let owner = std::iter::once(&entry.extension)
+                .chain(new_index.extensions.keys())
+                .find(|id| {
+                    new_index
+                        .extensions
+                        .get(id.as_ref())
+                        .is_some_and(|extension| {
+                            extension.manifest.grammars.contains_key(&grammar_name)
+                        })
+                });
+            let Some(owner) = owner else {
+                log::warn!(
+                    "not re-registering grammar {grammar_name} for language {name}: no installed extension provides it"
+                );
+                continue;
+            };
+            let mut grammar_path = self.installed_dir.clone();
+            grammar_path.extend([owner.as_ref(), "grammars"]);
+            grammar_path.push(grammar_name.as_ref());
+            grammar_path.set_extension("wasm");
+            grammars_to_add.push((grammar_name, grammar_path));
+        }
+
         self.proxy.register_grammars(grammars_to_add);
         let languages_to_add = new_index
             .languages
             .iter()
             .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
+            .map(|(name, entry)| (name.clone(), entry.clone()))
+            .chain(languages_to_readd)
             .collect::<Vec<_>>();
-        let mut semantic_token_rules_to_add: Vec<(LanguageName, SemanticTokenRules)> = Vec::new();
+        let mut semantic_token_rules_paths: Vec<(LanguageName, PathBuf)> = Vec::new();
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
             language_path.extend([
                 Path::new(language.extension.as_ref()),
                 language.path.as_path(),
             ]);
-
-            // Load semantic token rules if present in the language directory.
             let rules_path = language_path.join(SemanticTokenRules::FILE_NAME);
-            if std::fs::exists(&rules_path).is_ok_and(|exists| exists)
-                && let Some(rules) = SemanticTokenRules::load(&rules_path).log_err()
-            {
-                semantic_token_rules_to_add.push((language_name.clone(), rules));
-            }
 
-            self.proxy.register_language(
+            let registered = self.proxy.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
                 language.matcher.clone(),
@@ -1425,15 +1523,11 @@ impl ExtensionStore {
                     }
                 }),
             );
-        }
+            if !registered {
+                continue;
+            }
 
-        // Register semantic token rules for newly loaded extension languages.
-        if !semantic_token_rules_to_add.is_empty() {
-            SettingsStore::update_global(cx, |store, cx| {
-                for (language_name, rules) in semantic_token_rules_to_add {
-                    store.set_language_semantic_token_rules(language_name.0.clone(), rules, cx);
-                }
-            });
+            semantic_token_rules_paths.push((language_name, rules_path));
         }
 
         let fs = self.fs.clone();
@@ -1447,43 +1541,79 @@ impl ExtensionStore {
         self.extension_index = new_index;
         cx.notify();
         cx.emit(Event::ExtensionsUpdated);
+        if remote_sync_changed {
+            self.sync_remote_clients();
+        }
 
         cx.spawn(async move |this, cx| {
-            cx.background_spawn({
-                let fs = fs.clone();
-                async move {
-                    let _ = join_all(server_removal_tasks).await;
-                    for theme_path in themes_to_add {
-                        proxy
-                            .load_user_theme(theme_path, fs.clone())
-                            .await
-                            .log_err();
-                    }
-
-                    for (icon_theme_path, icons_root_path) in icon_themes_to_add {
-                        proxy
-                            .load_icon_theme(icon_theme_path, icons_root_path, fs.clone())
-                            .await
-                            .log_err();
-                    }
-
-                    for snippets_path in &snippets_to_add {
-                        match fs
-                            .load(snippets_path)
-                            .await
-                            .with_context(|| format!("Loading snippets from {snippets_path:?}"))
-                        {
-                            Ok(snippets_contents) => {
-                                proxy
-                                    .register_snippet(snippets_path, &snippets_contents)
-                                    .log_err();
-                            }
-                            Err(e) => log::error!("Cannot load snippets: {e:#}"),
+            let semantic_token_rules_to_add = cx
+                .background_spawn({
+                    let fs = fs.clone();
+                    async move {
+                        let _ = join_all(server_removal_tasks).await;
+                        for theme_path in themes_to_add {
+                            proxy
+                                .load_user_theme(theme_path, fs.clone())
+                                .await
+                                .log_err();
                         }
+
+                        for (icon_theme_path, icons_root_path) in icon_themes_to_add {
+                            proxy
+                                .load_icon_theme(icon_theme_path, icons_root_path, fs.clone())
+                                .await
+                                .log_err();
+                        }
+
+                        for snippets_path in &snippets_to_add {
+                            match fs
+                                .load(snippets_path)
+                                .await
+                                .with_context(|| format!("Loading snippets from {snippets_path:?}"))
+                            {
+                                Ok(snippets_contents) => {
+                                    proxy
+                                        .register_snippet(snippets_path, &snippets_contents)
+                                        .log_err();
+                                }
+                                Err(e) => log::error!("Cannot load snippets: {e:#}"),
+                            }
+                        }
+
+                        // Load semantic token rules if present in the language directory.
+                        let mut semantic_token_rules_to_add = Vec::new();
+                        for (language_name, rules_path) in semantic_token_rules_paths {
+                            if !fs.is_file(&rules_path).await {
+                                continue;
+                            }
+                            let rules = fs
+                                .load(&rules_path)
+                                .await
+                                .and_then(|content| SemanticTokenRules::parse(&content));
+                            if let Some(rules) = rules.log_err() {
+                                semantic_token_rules_to_add.push((language_name, rules));
+                            }
+                        }
+                        semantic_token_rules_to_add
                     }
-                }
-            })
-            .await;
+                })
+                .await;
+
+            // Register semantic token rules for newly loaded extension languages.
+            if !semantic_token_rules_to_add.is_empty() {
+                this.update(cx, |_, cx| {
+                    SettingsStore::update_global(cx, |store, cx| {
+                        for (language_name, rules) in semantic_token_rules_to_add {
+                            store.set_language_semantic_token_rules(
+                                language_name.0.clone(),
+                                rules,
+                                cx,
+                            );
+                        }
+                    })
+                })
+                .ok();
+            }
 
             let mut wasm_extensions = Vec::new();
             for extension in extension_entries {
@@ -1858,114 +1988,340 @@ impl ExtensionStore {
         })
     }
 
-    async fn sync_extensions_to_remotes(
+    fn sync_remote_clients(&mut self) {
+        for state in self.remote_clients.values() {
+            state
+                .dirty_tx
+                .unbounded_send(RemoteSyncSignal::IndexChanged)
+                .ok();
+        }
+    }
+
+    async fn reconcile_remote_client(
+        this: WeakEntity<Self>,
+        client: WeakEntity<RemoteClient>,
+        mut dirty_rx: UnboundedReceiver<RemoteSyncSignal>,
+        cx: &mut AsyncApp,
+    ) {
+        let mut failed_attempts = 0_usize;
+        loop {
+            while let Ok(signal) = dirty_rx.try_recv() {
+                if signal == RemoteSyncSignal::Reconnected {
+                    failed_attempts = 0;
+                }
+            }
+
+            let Ok(connection_state) =
+                client.read_with(cx, |client, _cx| client.connection_state())
+            else {
+                return;
+            };
+            if connection_state == ConnectionState::Disconnected
+                || connection_state == ConnectionState::Reconnecting
+            {
+                failed_attempts = 0;
+                if dirty_rx.next().await.is_none() {
+                    return;
+                }
+                continue;
+            }
+
+            match Self::sync_extensions_to_remote(&this, client.clone(), cx).await {
+                Ok(()) => {
+                    failed_attempts = 0;
+                    if dirty_rx.next().await.is_none() {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    failed_attempts += 1;
+                    if failed_attempts >= MAX_REMOTE_SYNC_ATTEMPTS {
+                        log::error!(
+                            "Failed to sync extensions to a remote client {failed_attempts} times, waiting for an extension or connection change before retrying: {error:#}"
+                        );
+                        match dirty_rx.next().await {
+                            None => return,
+                            Some(RemoteSyncSignal::Reconnected) => failed_attempts = 0,
+                            Some(RemoteSyncSignal::IndexChanged) => {}
+                        }
+                        continue;
+                    }
+                    let delay = remote_sync_retry_delay(failed_attempts - 1);
+                    log::error!(
+                        "Failed to sync extensions to a remote client (attempt {failed_attempts}), will retry in {delay:?}: {error:#}"
+                    );
+                    let timer = cx.background_executor().timer(delay).fuse();
+                    futures::pin_mut!(timer);
+                    loop {
+                        select_biased! {
+                            signal = dirty_rx.next() => {
+                                match signal {
+                                    None => return,
+                                    Some(RemoteSyncSignal::Reconnected) => {
+                                        failed_attempts = 0;
+                                        break;
+                                    }
+                                    Some(RemoteSyncSignal::IndexChanged) => {}
+                                }
+                            }
+                            _ = timer => break,
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn sync_extensions_to_remote(
         this: &WeakEntity<Self>,
         client: WeakEntity<RemoteClient>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let extensions = this.update(cx, |this, _cx| {
+        let entries = this.update(cx, |this, _cx| {
             this.extension_index
                 .extensions_to_sync_to_remote()
                 .into_entries()
-                .map(|(id, entry)| proto::Extension {
-                    id: id.to_string(),
-                    version: entry.manifest.version.to_string(),
-                    dev: entry.dev,
-                })
-                .collect()
+                .collect::<Vec<_>>()
         })?;
+        let mut prepared_dev_payloads = HashMap::default();
+        let mut extensions = Vec::new();
+        for (id, entry) in entries {
+            let mut content_fingerprint = None;
+            if entry.dev {
+                match Self::prepare_dev_extension_payload(this, &id, cx).await {
+                    Ok((payload_dir, fingerprint)) => {
+                        content_fingerprint = Some(fingerprint);
+                        prepared_dev_payloads.insert(id.to_string(), payload_dir);
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "failed to prepare dev extension {id} for a remote sync: {error:#}"
+                        );
+                    }
+                }
+            }
+            extensions.push(proto::Extension {
+                id: id.to_string(),
+                version: entry.manifest.version.to_string(),
+                dev: entry.dev,
+                content_fingerprint,
+            });
+        }
 
-        let response = client
-            .update(cx, |client, _cx| {
-                client
-                    .proto_client()
-                    .request(proto::SyncExtensions { extensions })
-            })?
-            .await?;
+        let request = client.update(cx, |client, _cx| {
+            client
+                .proto_client()
+                .request(proto::SyncExtensions { extensions })
+        })?;
+        let response = with_remote_sync_timeout(
+            cx,
+            REMOTE_SYNC_TIMEOUT,
+            "requesting the remote extension list",
+            request,
+        )
+        .await?;
         let path_style = client.read_with(cx, |client, _| client.path_style())?;
 
+        let mut failed_installs = Vec::new();
         for missing_extension in response.missing_extensions.into_iter() {
-            let tmp_dir = tempfile::tempdir()?;
+            let prepared_payload = prepared_dev_payloads.remove(&missing_extension.id);
+            if let Err(error) = Self::install_extension_on_remote(
+                this,
+                &client,
+                &missing_extension,
+                &response.tmp_dir,
+                path_style,
+                prepared_payload,
+                cx,
+            )
+            .await
+            {
+                log::error!(
+                    "Failed to install extension {} on the remote: {error:#}",
+                    missing_extension.id
+                );
+                failed_installs.push(missing_extension.id);
+            }
+        }
+        if !prepared_dev_payloads.is_empty() {
+            cx.background_executor()
+                .spawn(async move { drop(prepared_dev_payloads) })
+                .detach();
+        }
+
+        anyhow::ensure!(
+            failed_installs.is_empty(),
+            "failed to install extensions on the remote: {failed_installs:?}"
+        );
+        anyhow::Ok(())
+    }
+
+    async fn prepare_dev_extension_payload(
+        this: &WeakEntity<Self>,
+        id: &Arc<str>,
+        cx: &mut AsyncApp,
+    ) -> Result<(tempfile::TempDir, u64)> {
+        let payload_dir = cx
+            .background_executor()
+            .spawn(async move { tempfile::tempdir() })
+            .await?;
+        this.update(cx, |this, cx| {
+            this.prepare_remote_extension(id.clone(), true, payload_dir.path().to_owned(), cx)
+        })?
+        .await?;
+        let fs = this.read_with(cx, |this, _cx| this.fs.clone())?;
+        let fingerprint = cx
+            .background_executor()
+            .spawn({
+                let path = payload_dir.path().to_owned();
+                async move { hash_directory_contents(&fs, &path).await }
+            })
+            .await?;
+        Ok((payload_dir, fingerprint))
+    }
+
+    async fn install_extension_on_remote(
+        this: &WeakEntity<Self>,
+        client: &WeakEntity<RemoteClient>,
+        missing_extension: &proto::Extension,
+        remote_tmp_dir: &str,
+        path_style: PathStyle,
+        prepared_payload: Option<tempfile::TempDir>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let already_prepared = prepared_payload.is_some();
+        let tmp_dir = match prepared_payload {
+            Some(payload_dir) => payload_dir,
+            None => {
+                cx.background_executor()
+                    .spawn(async move { tempfile::tempdir() })
+                    .await?
+            }
+        };
+        let result = Self::upload_extension_to_remote(
+            this,
+            client,
+            missing_extension,
+            remote_tmp_dir,
+            path_style,
+            tmp_dir.path().to_owned(),
+            already_prepared,
+            cx,
+        )
+        .await;
+        cx.background_executor()
+            .spawn(async move { drop(tmp_dir) })
+            .detach();
+        result
+    }
+
+    async fn upload_extension_to_remote(
+        this: &WeakEntity<Self>,
+        client: &WeakEntity<RemoteClient>,
+        missing_extension: &proto::Extension,
+        remote_tmp_dir: &str,
+        path_style: PathStyle,
+        local_dir: PathBuf,
+        already_prepared: bool,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        static UPLOAD_NONCE: AtomicU64 = AtomicU64::new(0);
+
+        if !already_prepared {
             this.update(cx, |this, cx| {
                 this.prepare_remote_extension(
                     missing_extension.id.clone().into(),
                     missing_extension.dev,
-                    tmp_dir.path().to_owned(),
+                    local_dir.clone(),
                     cx,
                 )
             })?
             .await?;
-            let dest_dir = RemotePathBuf::new(
-                path_style
-                    .join(&response.tmp_dir, &missing_extension.id)
-                    .with_context(|| {
-                        format!(
-                            "failed to construct destination path: {:?}, {:?}",
-                            response.tmp_dir, missing_extension.id,
-                        )
-                    })?,
-                path_style,
-            );
-            log::info!(
-                "Uploading extension {} to {:?}",
-                missing_extension.clone().id,
-                dest_dir
-            );
-
-            client
-                .update(cx, |client, cx| {
-                    client.upload_directory(tmp_dir.path().to_owned(), dest_dir.clone(), cx)
-                })?
-                .await?;
-
-            log::info!(
-                "Finished uploading extension {}",
-                missing_extension.clone().id
-            );
-
-            let result = client
-                .update(cx, |client, _cx| {
-                    client.proto_client().request(proto::InstallExtension {
-                        tmp_dir: dest_dir.to_proto(),
-                        extension: Some(missing_extension.clone()),
-                    })
-                })?
-                .await;
-
-            if let Err(e) = result {
-                log::error!(
-                    "Failed to install extension {}: {}",
-                    missing_extension.id,
-                    e
-                );
-            }
         }
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let upload_name = format!(
+            "{}-{}-{}-{}",
+            missing_extension.id,
+            std::process::id(),
+            UPLOAD_NONCE.fetch_add(1, AtomicOrdering::Relaxed),
+            timestamp,
+        );
+        let dest_dir = RemotePathBuf::new(
+            path_style
+                .join(remote_tmp_dir, &upload_name)
+                .with_context(|| {
+                    format!(
+                        "failed to construct destination path: {remote_tmp_dir:?}, {upload_name:?}"
+                    )
+                })?,
+            path_style,
+        );
+        log::info!(
+            "Uploading extension {} to {:?}",
+            missing_extension.id,
+            dest_dir
+        );
 
-        anyhow::Ok(())
-    }
-
-    pub async fn update_remote_clients(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
-        let clients = this.update(cx, |this, _cx| {
-            this.remote_clients.retain(|v| v.upgrade().is_some());
-            this.remote_clients.clone()
+        let upload = client.update(cx, |client, cx| {
+            client.upload_directory(local_dir, dest_dir.clone(), cx)
         })?;
+        with_remote_sync_timeout(cx, REMOTE_SYNC_TIMEOUT, "uploading an extension", upload).await?;
 
-        for client in clients {
-            Self::sync_extensions_to_remotes(this, client, cx)
-                .await
-                .log_err();
-        }
+        log::info!("Finished uploading extension {}", missing_extension.id);
 
-        anyhow::Ok(())
+        let install = client.update(cx, |client, _cx| {
+            client.proto_client().request(proto::InstallExtension {
+                tmp_dir: dest_dir.to_proto(),
+                extension: Some(missing_extension.clone()),
+            })
+        })?;
+        with_remote_sync_timeout(cx, REMOTE_SYNC_TIMEOUT, "installing an extension", install)
+            .await?;
+        Ok(())
     }
 
-    pub fn register_remote_client(
-        &mut self,
-        client: Entity<RemoteClient>,
-        _cx: &mut Context<Self>,
-    ) {
-        self.remote_clients.push(client.downgrade());
-        self.ssh_registered_tx.unbounded_send(()).ok();
+    pub fn register_remote_client(&mut self, client: Entity<RemoteClient>, cx: &mut Context<Self>) {
+        let entity_id = client.entity_id();
+        if self.remote_clients.contains_key(&entity_id) {
+            return;
+        }
+
+        let (dirty_tx, dirty_rx) = unbounded();
+
+        let event_subscription = cx.subscribe(&client, |store, client, event, _cx| match event {
+            RemoteClientEvent::Reconnected => {
+                if let Some(state) = store.remote_clients.get(&client.entity_id()) {
+                    state
+                        .dirty_tx
+                        .unbounded_send(RemoteSyncSignal::Reconnected)
+                        .ok();
+                }
+            }
+            RemoteClientEvent::Disconnected { .. } => {}
+        });
+        let release_subscription = cx.observe_release(&client, move |store, _client, _cx| {
+            store.remote_clients.remove(&entity_id);
+        });
+
+        let task = cx.spawn({
+            let client = client.downgrade();
+            let initial_index_load = self.initial_index_load.clone();
+            async move |this, cx| {
+                initial_index_load.await;
+                Self::reconcile_remote_client(this, client, dirty_rx, cx).await;
+            }
+        });
+
+        self.remote_clients.insert(
+            entity_id,
+            RemoteClientState {
+                dirty_tx,
+                _task: task,
+                _subscriptions: Subscription::join(event_subscription, release_subscription),
+            },
+        );
     }
 }
 

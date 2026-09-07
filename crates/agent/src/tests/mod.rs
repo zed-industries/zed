@@ -28,8 +28,8 @@ use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelImageExt, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestToolInput, LanguageModelToolResult, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, ProviderErrorCategory, Role, StopReason, TokenUsage,
+    LanguageModelRequestToolInput, LanguageModelToolResult, LanguageModelToolUse, MessageContent,
+    ProviderErrorCategory, Role, StopReason, TokenUsage,
     fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
 };
 use pretty_assertions::assert_eq;
@@ -62,6 +62,11 @@ pub(crate) fn init_test(cx: &mut TestAppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
     });
+}
+
+pub(crate) fn release_dropped_entities(cx: &mut TestAppContext) {
+    cx.update(|_| ());
+    cx.run_until_parked();
 }
 
 pub(crate) struct FakeTerminalHandle {
@@ -2732,10 +2737,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
             name: "echo".into(),
             title: None,
             description: None,
-            input_schema: serde_json::to_value(EchoTool::input_schema(
-                LanguageModelToolSchemaFormat::JsonSchema,
-            ))
-            .unwrap(),
+            input_schema: EchoTool::input_schema().to_value(),
             output_schema: None,
             annotations: None,
         }],
@@ -3326,10 +3328,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 name: "echo".into(), // Conflicts with native EchoTool
                 title: None,
                 description: None,
-                input_schema: serde_json::to_value(EchoTool::input_schema(
-                    LanguageModelToolSchemaFormat::JsonSchema,
-                ))
-                .unwrap(),
+                input_schema: EchoTool::input_schema().to_value(),
                 output_schema: None,
                 annotations: None,
             },
@@ -3353,10 +3352,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 name: "echo".into(), // Also conflicts with native EchoTool
                 title: None,
                 description: None,
-                input_schema: serde_json::to_value(EchoTool::input_schema(
-                    LanguageModelToolSchemaFormat::JsonSchema,
-                ))
-                .unwrap(),
+                input_schema: EchoTool::input_schema().to_value(),
                 output_schema: None,
                 annotations: None,
             },
@@ -3427,10 +3423,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             name: "echo".into(), // Also conflicts - will be disambiguated as azure_dev_ops_echo
             title: None,
             description: None,
-            input_schema: serde_json::to_value(EchoTool::input_schema(
-                LanguageModelToolSchemaFormat::JsonSchema,
-            ))
-            .unwrap(),
+            input_schema: EchoTool::input_schema().to_value(),
             output_schema: None,
             annotations: None,
         }],
@@ -5282,10 +5275,8 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     request.await.expect("prompt should fail gracefully");
 
     // Explicitly close the session and drop the ACP thread.
-    cx.update(|cx| Rc::new(connection.clone()).close_session(&session_id, cx))
-        .await
-        .unwrap();
     drop(acp_thread);
+    release_dropped_entities(cx);
     let result = cx
         .update(|cx| {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
@@ -6612,7 +6603,8 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
             .get(&subagent_session_id)
             .expect("subagent session should exist")
             .acp_thread
-            .clone()
+            .upgrade()
+            .expect("subagent thread should be alive")
     });
 
     model.send_last_completion_stream_text_chunk("subagent task response");
@@ -6748,7 +6740,8 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
             .get(&subagent_session_id)
             .expect("subagent session should exist")
             .acp_thread
-            .clone()
+            .upgrade()
+            .expect("subagent thread should be alive")
     });
 
     model.send_last_completion_stream_text_chunk("subagent task response 1");
@@ -6896,7 +6889,8 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
             .get(&subagent_session_id)
             .expect("subagent session should exist")
             .acp_thread
-            .clone()
+            .upgrade()
+            .expect("subagent thread should be alive")
     });
 
     // model.send_last_completion_stream_text_chunk("subagent task response");
@@ -7028,7 +7022,8 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
             .get(&subagent_session_id)
             .expect("subagent session should exist")
             .acp_thread
-            .clone()
+            .upgrade()
+            .expect("subagent thread should be alive")
     });
 
     // Subagent responds
@@ -7225,16 +7220,11 @@ async fn test_subagent_tool_resume_session_after_restart(cx: &mut TestAppContext
     model.end_last_completion_stream();
     send.await.unwrap();
 
-    // Simulate a restart: close every session so none are live, then reopen
-    // the parent thread from the database.
-    cx.update(|cx| connection.clone().close_session(&subagent_session_id, cx))
-        .await
-        .unwrap();
-    cx.update(|cx| connection.clone().close_session(&session_id, cx))
-        .await
-        .unwrap();
+    // Simulate a restart: drop every session handle so none are live, then
+    // reopen the parent thread from the database.
     drop(thread);
     drop(acp_thread);
+    release_dropped_entities(cx);
     agent.read_with(cx, |agent, _| {
         assert!(agent.sessions.is_empty(), "restart: no live sessions");
     });
@@ -7287,7 +7277,8 @@ async fn test_subagent_tool_resume_session_after_restart(cx: &mut TestAppContext
             .get(&subagent_session_id)
             .expect("subagent session should be restored")
             .acp_thread
-            .clone()
+            .upgrade()
+            .expect("subagent thread should be alive")
     });
     thread.read_with(cx, |thread, cx| {
         let running = thread.running_subagent_ids(cx);
@@ -7539,16 +7530,23 @@ async fn test_subagent_resume_after_restart_delivers_interrupted_call(cx: &mut T
         );
     });
 
-    // Simulate a restart: close every session so none are live, then reopen
-    // the parent thread from the database.
-    cx.update(|cx| connection.clone().close_session(&subagent_session_id, cx))
-        .await
-        .unwrap();
-    cx.update(|cx| connection.clone().close_session(&session_id, cx))
-        .await
-        .unwrap();
+    // Simulate a restart: release every session so none are live, then
+    // reopen the parent thread from the database. The subagent's ACP thread
+    // is still referenced by the parked spawn call's detached task, so its
+    // session can't be released by dropping handles alone — release it
+    // explicitly, the way the observe_release hook would.
+    agent.update(cx, |agent, cx| {
+        let acp_thread_id = agent
+            .sessions
+            .get(&subagent_session_id)
+            .expect("subagent session should exist")
+            .acp_thread
+            .entity_id();
+        agent.release_session(&subagent_session_id, acp_thread_id, None, cx);
+    });
     drop(thread);
     drop(acp_thread);
+    release_dropped_entities(cx);
     agent.read_with(cx, |agent, _| {
         assert!(agent.sessions.is_empty(), "restart: no live sessions");
     });
@@ -7621,6 +7619,19 @@ async fn test_subagent_resume_after_restart_delivers_interrupted_call(cx: &mut T
         "the interrupted-call notification should precede the follow-up: {subagent_resumed:#?}"
     );
 
+    // The restored session is released once the spawn call completes — its
+    // handle is the last strong reference to the ACP thread — so hold on to
+    // it now to inspect the restored history afterwards.
+    let restored_acp_thread = agent.read_with(cx, |agent, _| {
+        agent
+            .sessions
+            .get(&subagent_session_id)
+            .expect("subagent session should be restored")
+            .acp_thread
+            .upgrade()
+            .expect("subagent thread should be alive")
+    });
+
     model.send_completion_stream_text_chunk(&subagent_resumed, "follow-up task response");
     model.end_completion_stream(&subagent_resumed);
     cx.run_until_parked();
@@ -7635,15 +7646,7 @@ async fn test_subagent_resume_after_restart_delivers_interrupted_call(cx: &mut T
     // In the restored session's view, the interrupted call renders as failed
     // and the delivered result is its own user message between the replayed
     // history and the follow-up — not fused into the follow-up.
-    let subagent_acp_thread = agent.read_with(cx, |agent, _| {
-        agent
-            .sessions
-            .get(&subagent_session_id)
-            .expect("subagent session should be restored")
-            .acp_thread
-            .clone()
-    });
-    let markdown = subagent_acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
+    let markdown = restored_acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
     assert!(
         markdown.contains("**Tool Call: gated_echo**\nStatus: Failed"),
         "the interrupted call should render as failed: {markdown}"
