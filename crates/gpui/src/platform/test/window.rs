@@ -169,17 +169,12 @@ impl TestWindow {
     /// through the resize callback with the unchanged size, the same channel a
     /// real DPI change reaches the window on.
     pub fn simulate_scale_factor_change(&mut self, scale_factor: f32) {
-        let (size, callback) = {
+        let size = {
             let mut lock = self.0.lock();
-            // Always update the scale factor, even if no callback is registered
             lock.scale_factor = scale_factor;
-            (lock.bounds.size, lock.resize_callback.take())
+            lock.bounds.size
         };
-        let Some(mut callback) = callback else {
-            return;
-        };
-        callback(size, scale_factor);
-        self.0.lock().resize_callback = Some(callback);
+        self.simulate_resize(size);
     }
 
     pub(crate) fn simulate_active_status_change(&self, active: bool) {
