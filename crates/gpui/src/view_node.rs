@@ -248,7 +248,7 @@ pub(crate) struct ViewNode {
     pub(crate) owned_entity: Option<crate::AnyEntity>,
     pub(crate) cache_key: ViewNodeCacheKey,
     pub(crate) previous_bounds: Bounds<Pixels>,
-    pub(crate) accessed_entities: FxHashSet<EntityId>,
+    pub(crate) accessed_entities: crate::node_engine::DependencySet,
     /// Whether the node has painted since it was mounted, so its output is complete.
     pub(crate) painted: bool,
     /// Whether the node's recorded output is stale and must be rendered again. Set on

@@ -1,4 +1,8 @@
-use crate::{App, AppContext, GpuiBorrow, VisualContext, Window, seal::Sealed};
+use crate::{
+    App, AppContext, GpuiBorrow, VisualContext, Window,
+    node_engine::{DependencySet, record_dependency},
+    seal::Sealed,
+};
 use anyhow::{Context as _, Result};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
@@ -56,8 +60,8 @@ impl Display for EntityId {
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Box<dyn Any>>,
     pub accessed_entities: RefCell<FxHashSet<EntityId>>,
-    accessed_entity_scopes: RefCell<Vec<FxHashSet<EntityId>>>,
-    recycled_access_scopes: Vec<FxHashSet<EntityId>>,
+    accessed_entity_scopes: RefCell<Vec<DependencySet>>,
+    recycled_access_scopes: Vec<DependencySet>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
@@ -172,9 +176,7 @@ impl EntityMap {
         );
     }
 
-    pub(crate) fn suspend_access_tracking(
-        &mut self,
-    ) -> (FxHashSet<EntityId>, Vec<FxHashSet<EntityId>>) {
+    pub(crate) fn suspend_access_tracking(&mut self) -> (FxHashSet<EntityId>, Vec<DependencySet>) {
         (
             std::mem::take(self.accessed_entities.get_mut()),
             std::mem::take(self.accessed_entity_scopes.get_mut()),
@@ -183,7 +185,7 @@ impl EntityMap {
 
     pub(crate) fn restore_access_tracking(
         &mut self,
-        previous: (FxHashSet<EntityId>, Vec<FxHashSet<EntityId>>),
+        previous: (FxHashSet<EntityId>, Vec<DependencySet>),
     ) {
         debug_assert!(self.accessed_entity_scopes.get_mut().is_empty());
         *self.accessed_entities.get_mut() = previous.0;
@@ -205,7 +207,7 @@ impl EntityMap {
     }
 
     /// Closes the innermost scope, adding the entities it collected to `accessed`.
-    pub(crate) fn end_access_scope(&mut self, accessed: &mut FxHashSet<EntityId>) {
+    pub(crate) fn end_access_scope(&mut self, accessed: &mut DependencySet) {
         let scopes = self.accessed_entity_scopes.get_mut();
         let completed_scope = scopes.pop();
         debug_assert!(
@@ -213,15 +215,16 @@ impl EntityMap {
             "entity access scope stack underflow"
         );
         let mut completed_scope = completed_scope.unwrap_or_default();
-        accessed.extend(completed_scope.iter().copied());
-        completed_scope.clear();
+        for entity_id in completed_scope.drain(..) {
+            record_dependency(accessed, entity_id);
+        }
         self.recycled_access_scopes.push(completed_scope);
     }
 
     pub(crate) fn record_access(&self, entity_id: EntityId) {
         self.accessed_entities.borrow_mut().insert(entity_id);
         if let Some(scope) = self.accessed_entity_scopes.borrow_mut().last_mut() {
-            scope.insert(entity_id);
+            record_dependency(scope, entity_id);
         }
     }
 
@@ -1228,8 +1231,8 @@ impl fmt::Debug for BacktraceFormatter {
 
 #[cfg(test)]
 mod test {
+    use super::DependencySet;
     use crate::EntityMap;
-    use collections::FxHashSet;
 
     struct TestEntity {
         pub i: i32,
@@ -1332,9 +1335,9 @@ mod test {
         assert_eq!(entity_map.read(&entity).i, 1);
         entity_map.begin_access_scope();
         assert_eq!(entity_map.read(&entity).i, 1);
-        let mut inner_accesses = FxHashSet::default();
+        let mut inner_accesses = DependencySet::new();
         entity_map.end_access_scope(&mut inner_accesses);
-        let mut outer_accesses = FxHashSet::default();
+        let mut outer_accesses = DependencySet::new();
         entity_map.end_access_scope(&mut outer_accesses);
 
         assert_eq!(inner_accesses.len(), 1);

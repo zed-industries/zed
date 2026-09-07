@@ -1125,7 +1125,7 @@ impl App {
     /// entities a view's render depends on.
     pub(crate) fn track_reads<R>(
         &mut self,
-        reads: &mut FxHashSet<EntityId>,
+        reads: &mut crate::node_engine::DependencySet,
         callback: impl FnOnce(&mut App) -> R,
     ) -> R {
         self.entities.begin_access_scope();

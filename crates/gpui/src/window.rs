@@ -2,6 +2,7 @@
 use crate::DebugFrameOverlayMode;
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::Inspector;
+use crate::node_engine::DependencySet;
 #[cfg(feature = "profiler")]
 use crate::profiler;
 use crate::{
@@ -993,7 +994,7 @@ pub(crate) struct FreshDeferredDraw {
     absolute_offset: Point<Pixels>,
     cache_key: ViewNodeCacheKey,
     /// The entities read while drawing, accumulated across prepaint and paint.
-    accessed_entities: FxHashSet<EntityId>,
+    accessed_entities: DependencySet,
 }
 
 pub(crate) struct Frame {
@@ -4903,7 +4904,7 @@ impl Window {
         &mut self,
         node_id: ViewNodeId,
         cache_key: ViewNodeCacheKey,
-        accessed_entities: FxHashSet<EntityId>,
+        accessed_entities: DependencySet,
     ) {
         if let Some(layout) = self.node_engine.node(node_id).layout {
             self.layout_engine

@@ -4,6 +4,7 @@ use crate::{
 };
 use collections::{FxHashMap, FxHashSet};
 use slotmap::SlotMap;
+use smallvec::SmallVec;
 use std::{any::TypeId, ops::ControlFlow};
 
 /// A point in a scope's output that `NodeEngine::rollback` returns to. `None` when taken
@@ -53,6 +54,18 @@ pub struct NodeStats {
     pub retained_bytes: usize,
 }
 
+/// The entities one node's render read. Nodes read a handful, so a small vector with a
+/// linear scan is cheaper than a hash set; it is sorted and deduplicated when stored.
+pub(crate) type DependencySet = SmallVec<[EntityId; 8]>;
+
+/// Adds `entity_id` to a set being recorded. Reads of one entity tend to repeat back to
+/// back, so the last entry is checked before the rest.
+pub(crate) fn record_dependency(set: &mut DependencySet, entity_id: EntityId) {
+    if set.last() != Some(&entity_id) && !set.contains(&entity_id) {
+        set.push(entity_id);
+    }
+}
+
 pub(crate) struct NodeEngine {
     frame_stats: NodeStats,
     pub(crate) last_frame_stats: NodeStats,
@@ -61,7 +74,7 @@ pub(crate) struct NodeEngine {
     /// computed from a read of the keyed entity. Ancestors are reached through `parent`.
     consumers: FxHashMap<EntityId, FxHashSet<ViewNodeId>>,
     /// Cleared dependency sets awaiting reuse as the accumulator for a rebuilding node.
-    spare_dependency_sets: Vec<FxHashSet<EntityId>>,
+    spare_dependency_sets: Vec<DependencySet>,
     occurrences: FxHashMap<ViewOccurrence, ViewNodeId>,
     /// How many live nodes are `dirty`, so "is every node dirty" is a comparison.
     dirty_count: usize,
@@ -532,11 +545,11 @@ impl NodeEngine {
 
     /// Takes an empty set to accumulate the entities a rebuilding node reads. Returned to
     /// the engine by `store_render`, which swaps it with the node's previous set.
-    pub(crate) fn take_dependency_set(&mut self) -> FxHashSet<EntityId> {
+    pub(crate) fn take_dependency_set(&mut self) -> DependencySet {
         self.spare_dependency_sets.pop().unwrap_or_default()
     }
 
-    pub(crate) fn recycle_dependency_set(&mut self, mut set: FxHashSet<EntityId>) {
+    pub(crate) fn recycle_dependency_set(&mut self, mut set: DependencySet) {
         set.clear();
         self.spare_dependency_sets.push(set);
     }
@@ -616,20 +629,43 @@ impl NodeEngine {
         self.invalidation_scratch = pending;
     }
 
+    /// Both sets are sorted and deduplicated, so the difference is one merge.
     fn replace_dependencies(
         consumers: &mut FxHashMap<EntityId, FxHashSet<ViewNodeId>>,
         node_id: ViewNodeId,
-        previous: &FxHashSet<EntityId>,
-        current: &FxHashSet<EntityId>,
+        previous: &DependencySet,
+        current: &DependencySet,
     ) {
         if previous == current {
             return;
         }
-        for source in previous.difference(current) {
-            Self::remove_dependency(consumers, node_id, *source);
-        }
-        for source in current.difference(previous) {
-            consumers.entry(*source).or_default().insert(node_id);
+        let (mut old, mut new) = (previous.iter().peekable(), current.iter().peekable());
+        loop {
+            match (old.peek(), new.peek()) {
+                (Some(source), None) => {
+                    Self::remove_dependency(consumers, node_id, **source);
+                    old.next();
+                }
+                (None, Some(source)) => {
+                    consumers.entry(**source).or_default().insert(node_id);
+                    new.next();
+                }
+                (Some(removed), Some(added)) => match removed.cmp(added) {
+                    std::cmp::Ordering::Less => {
+                        Self::remove_dependency(consumers, node_id, **removed);
+                        old.next();
+                    }
+                    std::cmp::Ordering::Greater => {
+                        consumers.entry(**added).or_default().insert(node_id);
+                        new.next();
+                    }
+                    std::cmp::Ordering::Equal => {
+                        old.next();
+                        new.next();
+                    }
+                },
+                (None, None) => break,
+            }
         }
     }
 
@@ -687,7 +723,7 @@ impl NodeEngine {
                 owned_entity: None,
                 cache_key: cache_key.clone(),
                 previous_bounds: cache_key.bounds,
-                accessed_entities: FxHashSet::default(),
+                accessed_entities: DependencySet::new(),
                 painted: false,
                 dirty: true,
                 frame_bound: false,
@@ -735,7 +771,7 @@ impl NodeEngine {
                 owned_entity: None,
                 cache_key: cache_key.clone(),
                 previous_bounds: cache_key.bounds,
-                accessed_entities: FxHashSet::default(),
+                accessed_entities: DependencySet::new(),
                 painted: false,
                 dirty: true,
                 frame_bound: false,
@@ -954,7 +990,7 @@ impl NodeEngine {
         &mut self,
         node_id: ViewNodeId,
         cache_key: ViewNodeCacheKey,
-        mut accessed_entities: FxHashSet<EntityId>,
+        mut accessed_entities: DependencySet,
     ) {
         let Some(node) = self.nodes.get_mut(node_id) else {
             return;
@@ -962,6 +998,8 @@ impl NodeEngine {
         let old_bounds = node.previous_bounds;
         let new_bounds = cache_key.bounds;
         accessed_entities.extend(node.view_id);
+        accessed_entities.sort_unstable();
+        accessed_entities.dedup();
         node.cache_key = cache_key;
         node.previous_bounds = new_bounds;
         node.painted = true;

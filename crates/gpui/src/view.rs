@@ -3,9 +3,8 @@ use crate::{
     EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, Render,
     RenderOnce, Style, StyleRefinement, ViewNodeCacheKey, ViewNodeId, WeakEntity,
 };
-use crate::{AppContext as _, Empty, Window};
+use crate::{AppContext as _, Empty, Window, node_engine::DependencySet};
 use anyhow::Result;
-use collections::FxHashSet;
 use refineable::Refineable;
 use std::{any::TypeId, fmt};
 
@@ -367,7 +366,7 @@ struct NodeViewLayout {
     grafted: bool,
     /// Entities read while rendering at layout time. Empty when layout was grafted, since
     /// the node's stored dependencies already cover it.
-    accessed_entities: FxHashSet<EntityId>,
+    accessed_entities: DependencySet,
 }
 
 #[doc(hidden)]
@@ -383,7 +382,7 @@ enum ViewNodePrepaintState {
     Render {
         node_id: ViewNodeId,
         cache_key: ViewNodeCacheKey,
-        accessed_entities: FxHashSet<EntityId>,
+        accessed_entities: DependencySet,
     },
 }
 
