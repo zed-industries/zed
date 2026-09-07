@@ -4901,7 +4901,7 @@ mod internal_tests {
                 state.skill_loading_issues.iter().any(|issue| {
                     issue.kind == SkillLoadingIssueKind::DescriptionTooLong
                         && issue.path == skill_path
-                        && issue.message.to_string().contains("1024-byte limit")
+                        && issue.message.to_string().contains("1024-character limit")
                 }),
                 "expected a description-length warning issue, got {:?}",
                 state.skill_loading_issues
@@ -4922,7 +4922,7 @@ mod internal_tests {
                 available_skill
                     .warning
                     .as_ref()
-                    .is_some_and(|warning| warning.contains("1024-byte limit")),
+                    .is_some_and(|warning| warning.contains("1024-character limit")),
                 "available skill should expose warning text, got {:?}",
                 available_skill.warning
             );

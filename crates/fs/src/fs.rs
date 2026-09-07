@@ -27,7 +27,7 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::ffi::OsStrExt;
 
 #[cfg(unix)]
-use std::os::unix::fs::{FileTypeExt, MetadataExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 use std::mem::MaybeUninit;
@@ -35,6 +35,7 @@ use std::mem::MaybeUninit;
 use async_tar::Archive;
 use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
 use git::repository::{GitRepository, RealGitRepository};
+#[cfg(windows)]
 use is_executable::IsExecutable;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
@@ -1101,7 +1102,12 @@ impl Fs for RealFs {
         #[cfg(unix)]
         let is_fifo = metadata.file_type().is_fifo();
 
+        #[cfg(unix)]
+        let is_executable = metadata.is_file() && metadata.permissions().mode() & 0o111 != 0;
+
+        #[cfg(windows)]
         let path_buf = path.to_path_buf();
+        #[cfg(windows)]
         let is_executable = self
             .executor
             .spawn(async move { path_buf.is_executable() })
@@ -1438,7 +1444,6 @@ struct FakeFsState {
     metadata_call_count: usize,
     read_dir_call_count: usize,
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
-    moves: std::collections::HashMap<u64, PathBuf>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     trash: Mutex<SlotMap<TrashId, (TrashedEntry, FakeFsEntry)>>,
     file_to_create_before_watch_add: Option<(PathBuf, PathBuf)>,
@@ -1772,7 +1777,6 @@ impl FakeFs {
                 read_dir_call_count: 0,
                 metadata_call_count: 0,
                 path_write_counts: Default::default(),
-                moves: Default::default(),
                 job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
                 trash: Mutex::new(SlotMap::with_key()),
                 file_to_create_before_watch_add: None,
@@ -2869,13 +2873,23 @@ struct FakeHandle {
 impl FileHandle for FakeHandle {
     fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf> {
         let fs = fs.as_fake();
-        let mut state = fs.state.lock();
-        let Some(target) = state.moves.get(&self.inode).cloned() else {
-            anyhow::bail!("fake fd not moved")
-        };
-
-        if state.try_entry(&target, false).is_some() {
-            return Ok(target);
+        let state = fs.state.lock();
+        let mut queue = collections::VecDeque::new();
+        queue.push_back((PathBuf::from(util::path!("/")), &state.root));
+        while let Some((path, entry)) = queue.pop_front() {
+            match entry {
+                FakeFsEntry::File { inode, .. } | FakeFsEntry::Dir { inode, .. }
+                    if *inode == self.inode =>
+                {
+                    return Ok(path);
+                }
+                FakeFsEntry::Dir { entries, .. } => {
+                    for (name, entry) in entries {
+                        queue.push_back((path.join(name), entry));
+                    }
+                }
+                _ => {}
+            }
         }
         anyhow::bail!("fake fd target not found")
     }
@@ -3030,12 +3044,6 @@ impl Fs for FakeFs {
             return Ok(());
         }
 
-        let inode = match moved_entry {
-            FakeFsEntry::File { inode, .. } => inode,
-            FakeFsEntry::Dir { inode, .. } => inode,
-            _ => 0,
-        };
-
         let mut moved = true;
         state.write_path(&new_path, |e| {
             match e {
@@ -3061,8 +3069,6 @@ impl Fs for FakeFs {
         if !moved {
             return Ok(());
         }
-
-        state.moves.insert(inode, new_path.clone());
 
         state
             .write_path(&old_path, |e| {
