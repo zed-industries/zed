@@ -4872,8 +4872,8 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         for (worktree_id, entry_id) in dirs_to_load {
-            // Each directory only needs asking once: a successful scan turns
-            // it into a loaded directory, so it won't come back around.
+            // One request per directory while it's in flight; a successful
+            // scan loads the directory, so it won't come back around.
             let hash_map::Entry::Vacant(slot) = self.pending_dir_loads.entry(entry_id) else {
                 continue;
             };
@@ -4882,8 +4882,16 @@ impl ProjectPanel {
             }) else {
                 continue;
             };
-            slot.insert(cx.background_spawn(async move {
-                task.await.log_err();
+            slot.insert(cx.spawn(async move |this, cx| {
+                if task.await.log_err().is_some() {
+                    return;
+                }
+                // A remote scan can fail transiently, and keeping the marker
+                // would suppress every later attempt at this directory.
+                this.update(cx, |this, _| {
+                    this.pending_dir_loads.remove(&entry_id);
+                })
+                .ok();
             }));
         }
     }
