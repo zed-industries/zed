@@ -8910,7 +8910,7 @@ impl Editor {
         let buffer = &snapshot.buffer_snapshot();
         let start = buffer.anchor_before(MultiBufferOffset(0));
         let end = buffer.anchor_after(buffer.len());
-        self.sorted_background_highlights_in_range(start..end, &snapshot, cx.theme())
+        self.sorted_background_highlights_in_range(start..end, &snapshot, &cx.theme())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -11699,7 +11699,8 @@ impl ui_input::ErasedEditor for ErasedEditorImpl {
 
     fn render(&self, _: &mut Window, cx: &App) -> AnyElement {
         let settings = ThemeSettings::get_global(cx);
-        let theme_color = cx.theme().colors();
+        let active_theme = cx.theme();
+        let theme_color = active_theme.colors();
 
         let text_style = TextStyle {
             font_family: settings.ui_font.family.clone(),

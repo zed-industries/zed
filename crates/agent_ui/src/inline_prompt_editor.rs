@@ -251,7 +251,8 @@ impl<T: 'static> Render for PromptEditor<T> {
 
 fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let theme_settings = ThemeSettings::get_global(cx);
-    let colors = cx.theme().colors();
+    let active_theme = cx.theme();
+    let colors = active_theme.colors();
     let mut text_style = window.text_style();
 
     text_style.refine(&TextStyleRefinement {
@@ -1124,7 +1125,8 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn render_editor(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors();
+        let active_theme = cx.theme();
+        let colors = active_theme.colors();
 
         div()
             .size_full()

@@ -607,7 +607,8 @@ struct ItemColors {
 }
 
 fn get_item_color(is_sticky: bool, cx: &App) -> ItemColors {
-    let colors = cx.theme().colors();
+    let active_theme = cx.theme();
+    let colors = active_theme.colors();
 
     ItemColors {
         default: if is_sticky {

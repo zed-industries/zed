@@ -2394,7 +2394,8 @@ impl SyntaxHighlightedText {
 impl RenderOnce for SyntaxHighlightedText {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let text_style = window.text_style();
-        let syntax_theme = cx.theme().syntax();
+        let active_theme = cx.theme();
+        let syntax_theme = active_theme.syntax();
 
         let text = self.text.clone();
 
@@ -3049,7 +3050,8 @@ impl Render for KeybindingEditorModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.add_action_arguments_input(window, cx);
 
-        let theme = cx.theme().colors();
+        let active_theme = cx.theme();
+        let theme = active_theme.colors();
         let matching_bindings_count = self.get_matching_bindings_count(cx);
         let key_context = self.key_context_internal(window, cx);
         let showing_completions = key_context.contains("showing_completions");
@@ -3442,7 +3444,8 @@ impl ActionArgumentsEditor {
 impl Render for ActionArgumentsEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = theme_settings::ThemeSettings::get_global(cx);
-        let colors = cx.theme().colors();
+        let active_theme = cx.theme();
+        let colors = active_theme.colors();
 
         let border_color = if self.is_loading {
             colors.border_disabled

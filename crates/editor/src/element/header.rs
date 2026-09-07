@@ -662,7 +662,8 @@ pub(crate) fn render_buffer_header(
         (None, None)
     };
     let focus_handle = editor_read.focus_handle(cx);
-    let colors = cx.theme().colors();
+    let active_theme = cx.theme();
+    let colors = active_theme.colors();
 
     let header = div()
         .id(("buffer-header", buffer_id.to_proto()))

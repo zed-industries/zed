@@ -518,7 +518,8 @@ fn render_verification_section(
         None => (None, true),
     };
 
-    let color = cx.theme().colors();
+    let active_theme = cx.theme();
+    let color = active_theme.colors();
 
     v_flex()
         .mt_3()
@@ -804,7 +805,8 @@ fn render_invalid_patterns_section(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let section_id = format!("{}-invalid-patterns-section", tool_id);
-    let theme_colors = cx.theme().colors();
+    let active_theme = cx.theme();
+    let theme_colors = active_theme.colors();
 
     v_flex()
         .id(section_id)

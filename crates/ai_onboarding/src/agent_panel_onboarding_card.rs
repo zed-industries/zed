@@ -23,7 +23,8 @@ impl ParentElement for AgentPanelOnboardingCard {
 
 impl RenderOnce for AgentPanelOnboardingCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let color = cx.theme().colors();
+        let active_theme = cx.theme();
+        let color = active_theme.colors();
 
         div().min_w_0().p_2p5().bg(color.editor_background).child(
             div()

@@ -114,7 +114,8 @@ pub struct WindowControlStyle {
 
 impl WindowControlStyle {
     pub fn default(cx: &mut App) -> Self {
-        let colors = cx.theme().colors();
+        let active_theme = cx.theme();
+        let colors = active_theme.colors();
 
         Self {
             background: colors.ghost_element_background,

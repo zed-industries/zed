@@ -794,7 +794,8 @@ impl Render for BreakpointList {
                             .when(
                                 self.input.focus_handle(cx).contains_focused(window, cx),
                                 |this| {
-                                    let colors = cx.theme().colors();
+                                    let active_theme = cx.theme();
+                                    let colors = active_theme.colors();
 
                                     let border_color = if self.input.read(cx).read_only(cx) {
                                         colors.border_disabled
@@ -1360,7 +1361,8 @@ impl BreakpointOptionsStrip {
         move |this: Div| {
             // Avoid layout shifts in case there's no colored border
             let this = this.border_1().rounded_sm();
-            let color = cx.theme().colors();
+            let active_theme = cx.theme();
+            let color = active_theme.colors();
 
             if self.is_selected && self.strip_mode == Some(kind) {
                 if self.focus_handle.is_focused(window) {

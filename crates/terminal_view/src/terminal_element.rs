@@ -415,7 +415,7 @@ impl TerminalElement {
 
                 // Collect background regions (skip default background)
                 if !is_default_background_color(bg) {
-                    let color = convert_color(&bg, theme);
+                    let color = convert_color(&bg, &theme);
                     let col = point.column as i32;
 
                     // Try to extend the last region if it's on the same line with the same color
@@ -453,7 +453,7 @@ impl TerminalElement {
                             cell,
                             fg,
                             bg,
-                            theme,
+                            &theme,
                             text_style,
                             hyperlink,
                             minimum_contrast,

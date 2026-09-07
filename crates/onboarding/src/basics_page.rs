@@ -132,7 +132,8 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
             let theme = &themes[index];
             let is_selected = theme.name == current_theme_name;
             let name = theme.name.clone();
-            let colors = cx.theme().colors();
+            let active_theme = cx.theme();
+            let colors = active_theme.colors();
 
             v_flex()
                 .w_full()

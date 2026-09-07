@@ -149,8 +149,9 @@ pub enum MarkdownFont {
 
 impl MarkdownStyle {
     pub fn themed(font: MarkdownFont, window: &Window, cx: &App) -> Self {
-        let colors = cx.theme().colors();
-        let syntax = cx.theme().syntax().clone();
+        let theme = cx.theme();
+        let colors = theme.colors();
+        let syntax = theme.syntax().clone();
         Self::themed_with_overrides(font, colors, &syntax, window, cx)
     }
 
@@ -210,7 +211,8 @@ impl MarkdownStyle {
             rule_color: colors.border,
             block_quote_border_color: colors.border,
             block_quote_kind_colors: {
-                let status = cx.theme().status();
+                let theme = cx.theme();
+                let status = theme.status();
                 BlockQuoteKindColors {
                     note: status.info,
                     tip: status.success,
@@ -360,8 +362,7 @@ impl MarkdownStyle {
     }
 
     pub fn with_muted_text(mut self, cx: &App) -> Self {
-        let colors = cx.theme().colors();
-        self.base_text_style.color = colors.text_muted;
+        self.base_text_style.color = cx.theme().colors().text_muted;
         self
     }
 }
@@ -1637,7 +1638,8 @@ impl MarkdownElement {
     ) {
         let markdown = self.markdown.read(cx);
         let active_index = markdown.active_search_highlight;
-        let colors = cx.theme().colors();
+        let theme = cx.theme();
+        let colors = theme.colors();
 
         for (i, highlight_range) in markdown.search_highlights.iter().enumerate() {
             let color = if Some(i) == active_index {

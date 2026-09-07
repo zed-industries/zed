@@ -324,7 +324,8 @@ impl WelcomePage {
 
     fn render_agent_card(&self, tab_index: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let focus = self.focus_handle.clone();
-        let color = cx.theme().colors();
+        let active_theme = cx.theme();
+        let color = active_theme.colors();
 
         let description = "Run multiple threads at once, mix and match any ACP-compatible agent, and keep work conflict-free with worktrees.";
 

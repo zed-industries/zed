@@ -1982,7 +1982,8 @@ impl CodeActionsMenu {
                     .map(|(ix, action)| {
                         let item_ix = range.start + ix;
                         let selected = item_ix == selected_item;
-                        let colors = cx.theme().colors();
+                        let active_theme = cx.theme();
+                        let colors = active_theme.colors();
 
                         ListItem::new(item_ix)
                             .inset(true)

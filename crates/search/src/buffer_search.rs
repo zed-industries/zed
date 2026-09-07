@@ -332,7 +332,8 @@ impl Render for BufferSearchBar {
         let should_show_replace_input = self.replace_enabled && replacement;
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(window);
 
-        let theme_colors = cx.theme().colors();
+        let active_theme = cx.theme();
+        let theme_colors = active_theme.colors();
         let query_border = if self.query_error.is_some() {
             Color::Error.color(cx)
         } else {

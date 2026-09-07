@@ -1604,7 +1604,8 @@ struct EntryColors {
 }
 
 fn get_entry_color(cx: &Context<VariableList>) -> EntryColors {
-    let colors = cx.theme().colors();
+    let active_theme = cx.theme();
+    let colors = active_theme.colors();
 
     EntryColors {
         default: colors.panel_background,

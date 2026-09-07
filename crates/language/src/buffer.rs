@@ -822,7 +822,8 @@ impl EditPreview {
             background_color: Some(cx.theme().status().deleted_background),
             ..Default::default()
         };
-        let syntax_theme = cx.theme().syntax();
+        let theme = cx.theme();
+        let syntax_theme = theme.syntax();
 
         for (range, edit_text) in edits {
             let edit_new_end_in_preview_snapshot = range

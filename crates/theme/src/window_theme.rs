@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use gpui::{App, BorrowAppContext, Global, SharedString, WindowId};
 
-use crate::{GlobalTheme, Theme};
+use crate::Theme;
 
 /// A single per-window theme override: the chosen theme's name (kept for
 /// persistence and re-resolution) plus its resolved value (ready to apply during
@@ -77,15 +77,5 @@ impl WindowThemeOverrides {
                     .collect()
             })
             .unwrap_or_default()
-    }
-
-    /// Sets the active theme for the window currently being drawn: its override
-    /// if present, otherwise the app-wide configured theme. Runs every frame from
-    /// the window-draw hook, so it sets the active theme without notifying
-    /// observers (see [`GlobalTheme::set_active_theme`]).
-    pub fn apply_for_window(cx: &mut App, window_id: WindowId) {
-        let theme =
-            Self::theme(cx, window_id).unwrap_or_else(|| GlobalTheme::configured_theme(cx).clone());
-        GlobalTheme::set_active_theme(cx, theme);
     }
 }

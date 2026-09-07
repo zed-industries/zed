@@ -400,7 +400,8 @@ impl AcpTools {
         let theme_settings = ThemeSettings::get_global(cx);
         let text_style = window.text_style();
 
-        let colors = cx.theme().colors();
+        let active_theme = cx.theme();
+        let colors = active_theme.colors();
         let expanded = self.expanded.contains(&index);
 
         v_flex()

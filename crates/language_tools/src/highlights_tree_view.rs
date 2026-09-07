@@ -584,7 +584,8 @@ impl HighlightsTreeView {
     }
 
     fn render_entry(&self, entry: &HighlightEntry, selected: bool, cx: &App) -> Div {
-        let colors = cx.theme().colors();
+        let active_theme = cx.theme();
+        let colors = active_theme.colors();
         let style_preview = render_style_preview(entry.style, selected, cx);
 
         h_flex()
@@ -606,7 +607,8 @@ impl HighlightsTreeView {
     }
 
     fn render_separator(&self, label: &SharedString, cx: &App) -> Div {
-        let colors = cx.theme().colors();
+        let active_theme = cx.theme();
+        let colors = active_theme.colors();
         h_flex()
             .gap_1()
             .px(rems(0.5))
@@ -1279,7 +1281,8 @@ fn format_anchor_range(
 }
 
 fn render_style_preview(style: HighlightStyle, selected: bool, cx: &App) -> Div {
-    let colors = cx.theme().colors();
+    let active_theme = cx.theme();
+    let colors = active_theme.colors();
 
     let display_color = style.color.or(style.background_color);
 

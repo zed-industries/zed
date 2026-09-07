@@ -1286,7 +1286,8 @@ impl Editor {
                                     })
                                     .id("edit_prediction_cursor_popover_keybind")
                                     .when(keybind_display.missing_accept_keystroke, |el| {
-                                        let status_colors = cx.theme().status();
+                                        let active_theme = cx.theme();
+                                        let status_colors = active_theme.status();
 
                                         el.bg(status_colors.error_background)
                                             .border_color(status_colors.error.opacity(0.6))
@@ -2030,7 +2031,8 @@ impl Editor {
                     .rounded_r_lg()
                     .id("edit_prediction_diff_popover_keybind")
                     .when(!has_keybind, |el| {
-                        let status_colors = cx.theme().status();
+                        let active_theme = cx.theme();
+                        let status_colors = active_theme.status();
 
                         el.bg(status_colors.error_background)
                             .border_color(status_colors.error.opacity(0.6))
@@ -2248,7 +2250,8 @@ impl Editor {
             .border_color(Self::edit_prediction_callout_popover_border_color(cx))
             .shadow_xs()
             .when(!has_keybind, |el| {
-                let status_colors = cx.theme().status();
+                let active_theme = cx.theme();
+                let status_colors = active_theme.status();
 
                 el.bg(status_colors.error_background)
                     .border_color(status_colors.error.opacity(0.6))
@@ -2311,7 +2314,8 @@ impl Editor {
             .border_color(Self::edit_prediction_callout_popover_border_color(cx))
             .shadow_xs()
             .when(!has_keybind, |el| {
-                let status_colors = cx.theme().status();
+                let active_theme = cx.theme();
+                let status_colors = active_theme.status();
 
                 el.bg(status_colors.error_background)
                     .border_color(status_colors.error.opacity(0.6))

@@ -21,12 +21,14 @@ mod theme_settings_provider;
 mod ui_density;
 mod window_theme;
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use gpui::BorrowAppContext;
 use gpui::Global;
 use gpui::{
-    App, AssetSource, Hsla, Pixels, SharedString, WindowAppearance, WindowBackgroundAppearance, px,
+    App, AssetSource, Hsla, Pixels, SharedString, WindowAppearance, WindowBackgroundAppearance,
+    WindowId, px,
 };
 use serde::Deserialize;
 
@@ -116,16 +118,11 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
     let icon_theme = themes.default_icon_theme().unwrap();
     cx.set_global(GlobalTheme::new(theme, icon_theme));
 
-    // Per-window theming: a registry of user-chosen, per-window theme overrides
-    // and a draw hook that swaps the active theme into place at the start of each
-    // window's render pass. Windows without an override render the configured
-    // theme.
+    // Per-window theming: a registry of user-chosen, per-window theme overrides.
+    // `Workspace::render` applies a window's override (or the configured theme)
+    // via `GlobalTheme::set_active_theme_for_window` before anything else in that
+    // window reads `cx.theme()`.
     cx.set_global(WindowThemeOverrides::default());
-    cx.observe_window_draw(|window, cx| {
-        let window_id = window.window_handle().window_id();
-        WindowThemeOverrides::apply_for_window(cx, window_id);
-    })
-    .detach();
     // Drop a closed window's override so the in-memory map doesn't grow for the
     // lifetime of the session. The persisted override (keyed by workspace) is
     // untouched and still restores on reopen.
@@ -138,11 +135,11 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
 /// Implementing this trait allows accessing the active theme.
 pub trait ActiveTheme {
     /// Returns the active theme.
-    fn theme(&self) -> &Arc<Theme>;
+    fn theme(&self) -> Arc<Theme>;
 }
 
 impl ActiveTheme for App {
-    fn theme(&self) -> &Arc<Theme> {
+    fn theme(&self) -> Arc<Theme> {
         GlobalTheme::theme(self)
     }
 }
@@ -311,11 +308,18 @@ pub fn deserialize_icon_theme(bytes: &[u8]) -> anyhow::Result<IconThemeFamilyCon
 
 /// The active theme.
 pub struct GlobalTheme {
-    /// The theme used for the render pass currently in progress. The per-window
-    /// theming hook swaps this at the start of each window's draw via
-    /// [`GlobalTheme::set_active_theme`]; for windows without an override it
-    /// equals `configured_theme`.
-    theme: Arc<Theme>,
+    /// The theme for whichever window is rendering right now. `Workspace::render`
+    /// sets this via [`GlobalTheme::set_active_theme_for_window`] before anything
+    /// else in that window reads [`GlobalTheme::theme`]; for windows without an
+    /// override it equals `configured_theme`.
+    ///
+    /// This is `RefCell`, not a plain field, so setting it (every window render)
+    /// goes through `cx.global()` — an immutable borrow — rather than
+    /// `cx.update_global()`/`global_mut()`, which schedule a `GlobalTheme`
+    /// observer notification on every call. Since this is set on every render,
+    /// that notification would re-invalidate the window that was just rendered
+    /// and cause an unbounded redraw loop.
+    active_theme: RefCell<Arc<Theme>>,
     /// The app-wide theme configured via settings. Used as the fallback for
     /// windows that have no per-window override, and never swapped per frame.
     configured_theme: Arc<Theme>,
@@ -328,8 +332,8 @@ impl GlobalTheme {
     /// given theme becomes both the active and the configured theme.
     pub fn new(theme: Arc<Theme>, icon_theme: Arc<IconTheme>) -> Self {
         Self {
-            configured_theme: theme.clone(),
-            theme,
+            active_theme: RefCell::new(theme.clone()),
+            configured_theme: theme,
             icon_theme,
         }
     }
@@ -339,16 +343,19 @@ impl GlobalTheme {
     pub fn update_theme(cx: &mut App, theme: Arc<Theme>) {
         cx.update_global::<Self, _>(|this, _| {
             this.configured_theme = theme.clone();
-            this.theme = theme;
+            *this.active_theme.borrow_mut() = theme;
         });
     }
 
-    /// Sets the theme for the render pass currently in progress *without*
-    /// notifying observers. Used by the per-window theming draw hook every frame;
-    /// notifying here would re-invalidate the window and cause an unbounded
-    /// redraw loop. See [`gpui::App::update_global_quietly`].
-    pub fn set_active_theme(cx: &mut App, theme: Arc<Theme>) {
-        cx.update_global_quietly::<Self, _>(|this, _| this.theme = theme);
+    /// Sets the active theme for the window currently rendering: its override if
+    /// one is set in `WindowThemeOverrides`, otherwise the configured theme.
+    /// Called once, from `Workspace::render`, before anything in the window reads
+    /// [`GlobalTheme::theme`]. See the `active_theme` field doc for why this
+    /// doesn't go through `update_global`.
+    pub fn set_active_theme_for_window(cx: &App, window_id: WindowId) {
+        let theme = WindowThemeOverrides::theme(cx, window_id)
+            .unwrap_or_else(|| Self::configured_theme(cx).clone());
+        *cx.global::<Self>().active_theme.borrow_mut() = theme;
     }
 
     /// Updates the active icon theme.
@@ -356,9 +363,9 @@ impl GlobalTheme {
         cx.update_global::<Self, _>(|this, _| this.icon_theme = icon_theme);
     }
 
-    /// Returns the active theme (the theme for the window currently drawing).
-    pub fn theme(cx: &App) -> &Arc<Theme> {
-        &cx.global::<Self>().theme
+    /// Returns the active theme (the theme for the window currently rendering).
+    pub fn theme(cx: &App) -> Arc<Theme> {
+        cx.global::<Self>().active_theme.borrow().clone()
     }
 
     /// Returns the app-wide configured theme — the fallback used for windows

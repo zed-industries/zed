@@ -342,7 +342,8 @@ impl<'a> Iterator for InlayChunks<'a> {
                         renderer = Some(ChunkRenderer {
                             id: ChunkRendererId::Inlay(inlay.id),
                             render: Arc::new(move |cx| {
-                                let colors = cx.theme().colors();
+                                let active_theme = cx.theme();
+                                let colors = active_theme.colors();
                                 div()
                                     .flex()
                                     .flex_row()

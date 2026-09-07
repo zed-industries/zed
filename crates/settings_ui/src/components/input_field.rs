@@ -214,7 +214,8 @@ impl RenderOnce for SettingsInputField {
         let clear_on_confirm = self.clear_on_confirm;
         let clear_on_confirm_for_button = self.clear_on_confirm;
 
-        let theme_colors = cx.theme().colors();
+        let active_theme = cx.theme();
+        let theme_colors = active_theme.colors();
 
         let display_confirm_button = self.display_confirm_button;
         let display_clear_button = self.display_clear_button;

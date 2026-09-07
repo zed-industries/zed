@@ -139,7 +139,8 @@ impl Render for InputField {
             self.editor.set_masked(masked, window, cx);
         }
 
-        let theme_color = cx.theme().colors();
+        let theme = cx.theme();
+        let theme_color = theme.colors();
 
         let style = InputFieldStyle {
             text_color: theme_color.text,

@@ -168,11 +168,12 @@ fn mermaid_font_family(font_family: &str) -> String {
 }
 
 fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
-    let colors = cx.theme().colors();
+    let theme = cx.theme();
+    let colors = theme.colors();
     let theme_settings = ThemeSettings::get_global(cx);
-    let is_dark = !cx.theme().appearance.is_light();
+    let is_dark = !theme.appearance.is_light();
 
-    let players = cx.theme().players();
+    let players = theme.players();
     let git_branch_colors = std::array::from_fn(|i| players.0[i % players.0.len()].cursor);
     let git_branch_label_colors = git_branch_colors.map(mermaid_render::text_color_for_background);
 
@@ -200,8 +201,8 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
         git_branch_label_colors,
         er_attr_bg_odd: colors.surface_background,
         er_attr_bg_even: colors.element_background,
-        error_color: cx.theme().status().error,
-        warning_color: cx.theme().status().warning,
+        error_color: theme.status().error,
+        warning_color: theme.status().warning,
         accent_colors: players
             .0
             .iter()

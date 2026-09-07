@@ -382,7 +382,8 @@ fn show_hover(
                 })??;
 
                 let (background_color, border_color) = cx.update(|_, cx| {
-                    let status_colors = cx.theme().status();
+                    let active_theme = cx.theme();
+                    let status_colors = active_theme.status();
                     match local_diagnostic.diagnostic.severity {
                         DiagnosticSeverity::ERROR => {
                             (status_colors.error_background, status_colors.error_border)

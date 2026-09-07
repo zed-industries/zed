@@ -249,7 +249,8 @@ impl ThreadItem {
 
 impl RenderOnce for ThreadItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let color = cx.theme().colors();
+        let theme = cx.theme();
+        let color = theme.colors();
         let sidebar_base_bg = color
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));
@@ -633,7 +634,8 @@ impl Component for ThreadItem {
     }
 
     fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
-        let color = cx.theme().colors();
+        let theme = cx.theme();
+        let color = theme.colors();
         let bg = color
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));

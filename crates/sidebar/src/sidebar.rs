@@ -2298,7 +2298,8 @@ impl Sidebar {
                 .into_any_element()
         };
 
-        let color = cx.theme().colors();
+        let active_theme = cx.theme();
+        let color = active_theme.colors();
         let sidebar_base_bg = color
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));
@@ -3060,7 +3061,8 @@ impl Sidebar {
             })
             .unwrap_or(px(0.));
 
-        let color = cx.theme().colors();
+        let active_theme = cx.theme();
+        let color = active_theme.colors();
         let background = color
             .title_bar_background
             .blend(color.panel_background.opacity(0.2));
@@ -6102,7 +6104,8 @@ impl Sidebar {
 
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
-        let color = cx.theme().colors();
+        let active_theme = cx.theme();
+        let color = active_theme.colors();
         let sidebar_bg = color
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));
@@ -6444,7 +6447,8 @@ impl Sidebar {
         let id = ElementId::from(format!("terminal-{}", terminal.metadata.terminal_id));
         let timestamp = format_history_entry_timestamp(terminal.metadata.created_at);
         let is_hovered = self.hovered_thread_index == Some(ix);
-        let color = cx.theme().colors();
+        let active_theme = cx.theme();
+        let color = active_theme.colors();
         let sidebar_bg = color
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));
@@ -7818,7 +7822,8 @@ impl Render for Sidebar {
         let ui_font = theme_settings::setup_ui_font(window, cx);
         let sticky_header = self.render_sticky_header(window, cx);
 
-        let color = cx.theme().colors();
+        let active_theme = cx.theme();
+        let color = active_theme.colors();
         let bg = color
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));

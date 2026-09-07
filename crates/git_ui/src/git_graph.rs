@@ -1447,7 +1447,8 @@ impl GitGraph {
         cx.on_focus(&focus_handle, window, |_, _, cx| cx.notify())
             .detach();
 
-        let accent_colors = cx.theme().accents();
+        let active_theme = cx.theme();
+        let accent_colors = active_theme.accents();
         let graph = GraphData::new(accent_colors_count(accent_colors));
         let log_source = log_source.unwrap_or_default();
         let log_order = LogOrder::default();
@@ -1768,7 +1769,8 @@ impl GitGraph {
                     author_name = "".into();
                 }
 
-                let accent_colors = cx.theme().accents();
+                let active_theme = cx.theme();
+                let accent_colors = active_theme.accents();
                 let accent_color = accent_colors
                     .0
                     .get(commit.color_idx)
@@ -2544,7 +2546,8 @@ impl GitGraph {
     }
 
     fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let color = cx.theme().colors();
+        let active_theme = cx.theme();
+        let color = active_theme.colors();
         let query_focus_handle = self
             .search_state
             .editor
@@ -2718,7 +2721,8 @@ impl GitGraph {
             .as_ref()
             .map(|branch| SharedString::from(branch.name().to_string()));
 
-        let accent_colors = cx.theme().accents();
+        let active_theme = cx.theme();
+        let accent_colors = active_theme.accents();
         let accent_color = accent_colors
             .0
             .get(commit_entry.color_idx)
@@ -3206,7 +3210,8 @@ impl GitGraph {
                 graph_canvas_bounds.set(Some(bounds));
 
                 window.paint_layer(bounds, |window| {
-                    let accent_colors = cx.theme().accents();
+                    let active_theme = cx.theme();
+                    let accent_colors = active_theme.accents();
 
                     let hover_bg = cx.theme().colors().element_hover.opacity(0.6);
                     let selected_bg = if is_focused {

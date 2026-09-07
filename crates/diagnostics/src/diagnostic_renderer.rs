@@ -201,7 +201,8 @@ pub(crate) struct DiagnosticBlock {
 impl DiagnosticBlock {
     pub fn render_block(&self, editor: WeakEntity<Editor>, bcx: &BlockContext) -> AnyElement {
         let cx = &bcx.app;
-        let status_colors = cx.theme().status();
+        let active_theme = cx.theme();
+        let status_colors = active_theme.status();
 
         let max_width = bcx.em_width * 120.;
 

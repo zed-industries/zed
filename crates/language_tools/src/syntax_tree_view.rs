@@ -367,7 +367,8 @@ impl SyntaxTreeView {
     }
 
     fn render_node(cursor: &TreeCursor, depth: u32, selected: bool, cx: &App) -> Div {
-        let colors = cx.theme().colors();
+        let active_theme = cx.theme();
+        let colors = active_theme.colors();
         let mut row = h_flex();
         if let Some(field_name) = cursor.field_name() {
             row = row.children([Label::new(field_name).color(Color::Info), Label::new(": ")]);

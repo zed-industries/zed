@@ -4514,7 +4514,8 @@ impl EditorElement {
         highlighted_ranges: &mut Vec<(Range<DisplayPoint>, Hsla)>,
         cx: &mut App,
     ) {
-        let colors = cx.theme().colors();
+        let active_theme = cx.theme();
+        let colors = active_theme.colors();
 
         let visible_start =
             DisplayPoint::new(start_row, 0).to_offset(&snapshot.display_snapshot, Bias::Left);
@@ -8113,7 +8114,7 @@ impl Element for EditorElement {
                                 editor.read(cx).background_highlights_in_range(
                                     start_anchor..end_anchor,
                                     &snapshot.display_snapshot,
-                                    cx.theme(),
+                                    &cx.theme(),
                                 )
                             } else {
                                 editor.update(cx, |editor, cx| {
@@ -8138,7 +8139,7 @@ impl Element for EditorElement {
                                     editor.background_highlights_in_range(
                                         start_anchor..end_anchor,
                                         &snapshot.display_snapshot,
-                                        cx.theme(),
+                                        &cx.theme(),
                                     )
                                 })
                             }
@@ -8151,7 +8152,8 @@ impl Element for EditorElement {
                         hollow_border: Hsla,
                     }
 
-                    let colors = cx.theme().colors();
+                    let active_theme = cx.theme();
+                    let colors = active_theme.colors();
                     let added_diff_hunk_colors = DiffHunkHighlightColors {
                         filled_background: colors.editor_diff_hunk_added_background,
                         hollow_background: colors.editor_diff_hunk_added_hollow_background,

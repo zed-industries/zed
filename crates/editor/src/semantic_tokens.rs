@@ -301,7 +301,8 @@ impl Editor {
                                     ) else {
                                         continue;
                                     };
-                                    let theme = cx.theme().syntax();
+                                    let active_theme = cx.theme();
+                                    let theme = active_theme.syntax();
                                     token_highlights.reserve(2 * server_tokens.len());
                                     token_highlights.extend(buffer_into_editor_highlights(
                                         &server_tokens,

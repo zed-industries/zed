@@ -161,7 +161,8 @@ impl TitleBar {
             .when_some(
                 current_user.zip(client.peer_id()).zip(room),
                 |this, ((current_user, peer_id), room)| {
-                    let player_colors = cx.theme().players();
+                    let active_theme = cx.theme();
+                    let player_colors = active_theme.players();
                     let room = room.read(cx);
                     let mut remote_participants =
                         room.remote_participants().values().collect::<Vec<_>>();

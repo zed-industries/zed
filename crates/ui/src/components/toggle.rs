@@ -305,8 +305,9 @@ impl SwitchColor {
 
         match self {
             SwitchColor::Accent => {
-                let status = cx.theme().status();
-                let colors = cx.theme().colors();
+                let theme = cx.theme();
+                let status = theme.status();
+                let colors = theme.colors();
                 (status.info.opacity(0.4), colors.text_accent.opacity(0.2))
             }
             SwitchColor::Custom(color) => (*color, color.opacity(0.6)),

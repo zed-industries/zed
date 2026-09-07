@@ -6290,7 +6290,8 @@ impl GitPanel {
         let state_opacity_step = 0.04;
 
         let info_color = cx.theme().status().info;
-        let colors = cx.theme().colors();
+        let active_theme = cx.theme();
+        let colors = active_theme.colors();
 
         let (base_bg, hover_bg, active_bg) = if selected {
             (

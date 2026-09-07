@@ -8627,6 +8627,10 @@ impl Render for DraggedDock {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Apply this window's theme override (if any) before anything below reads
+        // `cx.theme()`. See `GlobalTheme::set_active_theme_for_window`.
+        theme::GlobalTheme::set_active_theme_for_window(cx, window.window_handle().window_id());
+
         static FIRST_PAINT: AtomicBool = AtomicBool::new(true);
         if FIRST_PAINT.swap(false, std::sync::atomic::Ordering::Relaxed) {
             log::info!("Rendered first frame");

@@ -217,7 +217,7 @@ impl Console {
                         let style = HighlightStyle {
                             color: Some(terminal_view::terminal_element::convert_color(
                                 &color,
-                                cx.theme(),
+                                &cx.theme(),
                             )),
                             ..Default::default()
                         };
