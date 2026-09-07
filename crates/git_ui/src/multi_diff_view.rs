@@ -45,7 +45,7 @@ async fn load_entries(
     let mut entries = Vec::with_capacity(diff_pairs.len());
     let mut all_paths = Vec::with_capacity(diff_pairs.len());
 
-    for (ix, pair) in diff_pairs.into_iter().enumerate() {
+    for pair in diff_pairs {
         let old_path = PathBuf::from(&pair[0]);
         let new_path = PathBuf::from(&pair[1]);
 
@@ -57,10 +57,18 @@ async fn load_entries(
             .await?;
 
         let diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
-
         all_paths.push(new_path.clone());
+
+        let new_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let has_hunks = diff.read_with(cx, |diff, cx| {
+            diff.snapshot(cx).hunks(&new_snapshot).next().is_some()
+        });
+        if !has_hunks {
+            continue;
+        }
+
         entries.push(Entry {
-            index: ix,
+            index: entries.len(),
             new_path,
             new_buffer: new_buffer.clone(),
             diff,
@@ -335,5 +343,89 @@ impl Item for MultiDiffView {
 impl Render for MultiDiffView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.editor.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::Path;
+    use workspace::MultiWorkspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_multi_diff_excludes_unchanged_files(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "old": {
+                    "same-one.txt": "same",
+                    "same-two.txt": "same",
+                    "changed.txt": "old"
+                },
+                "new": {
+                    "same-one.txt": "same",
+                    "same-two.txt": "same",
+                    "changed.txt": "new"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let diff_pairs = vec![
+            [
+                "/project/old/same-one.txt".to_string(),
+                "/project/new/same-one.txt".to_string(),
+            ],
+            [
+                "/project/old/same-two.txt".to_string(),
+                "/project/new/same-two.txt".to_string(),
+            ],
+            [
+                "/project/old/changed.txt".to_string(),
+                "/project/new/changed.txt".to_string(),
+            ],
+        ];
+
+        let diff_view = workspace
+            .update_in(cx, |workspace, window, cx| {
+                MultiDiffView::open(diff_pairs, workspace, window, cx)
+            })
+            .await
+            .unwrap();
+
+        diff_view.read_with(cx, |diff_view, cx| {
+            assert_eq!(diff_view.file_count, 1);
+            assert_eq!(diff_view.title(), "Diff (1 file)");
+            assert_eq!(
+                diff_view
+                    .editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .all_buffers()
+                    .len(),
+                1
+            );
+        });
     }
 }
