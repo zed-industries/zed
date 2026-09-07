@@ -5950,6 +5950,70 @@ async fn test_single_file_worktree_deleted(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_root_ancestor_rename_is_detected_without_fs_events(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project": {
+                "src": {
+                    "main.rs": "fn main() {}",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new(path!("/code/project")),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Renaming an ancestor of the root produces no event under the watched
+    // path, so only the periodic root check can notice it.
+    fs.rename(
+        Path::new(path!("/code")),
+        Path::new(path!("/src")),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.background_executor.run_until_parked();
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.abs_path().as_ref(), Path::new(path!("/code/project")));
+    });
+
+    cx.background_executor
+        .advance_clock(worktree::ROOT_PATH_CHECK_INTERVAL);
+    cx.background_executor.run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.abs_path().as_ref(), Path::new(path!("/src/project")));
+        assert_eq!(tree.root_name(), "project");
+        assert_eq!(
+            tree.entries(false, 0)
+                .map(|entry| entry.path.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path("").into(),
+                rel_path("src").into(),
+                rel_path("src/main.rs").into(),
+            ]
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_update(
     cx: &mut TestAppContext,
 ) {
