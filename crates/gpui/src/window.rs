@@ -1033,12 +1033,14 @@ struct AttachedRootEntry {
 /// overlay exactly where its elements are and pass through where they are not.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HitRegion {
+    /// Window coordinates.
     pub bounds: Bounds<Pixels>,
     /// Whether the region hides what is under it from the mouse.
     pub behavior: HitboxBehavior,
 }
 
 impl AttachedRoot {
+    /// The root's identity, for an embedder that keys its own state by root.
     pub fn id(&self) -> AttachedRootId {
         self.id
     }
