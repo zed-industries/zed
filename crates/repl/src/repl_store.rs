@@ -90,19 +90,24 @@ impl ReplStore {
 
     pub fn kernel_specifications_for_worktree(
         &self,
-        worktree_id: WorktreeId,
+        worktree_id: Option<WorktreeId>,
     ) -> impl Iterator<Item = &KernelSpecification> {
-        let global_specs = if self.remote_worktrees.contains(&worktree_id) {
+        let is_remote = worktree_id
+            .map(|id| self.remote_worktrees.contains(&id))
+            .unwrap_or(false);
+
+        let global_specs = if is_remote {
             None
         } else {
             Some(self.kernel_specifications.iter())
         };
 
-        self.kernel_specifications_for_worktree
-            .get(&worktree_id)
+        let worktree_specs = worktree_id
+            .and_then(|id| self.kernel_specifications_for_worktree.get(&id))
             .into_iter()
-            .flat_map(|specs| specs.iter())
-            .chain(global_specs.into_iter().flatten())
+            .flat_map(|specs| specs.iter());
+
+        worktree_specs.chain(global_specs.into_iter().flatten())
     }
 
     pub fn pure_jupyter_kernel_specifications(&self) -> impl Iterator<Item = &KernelSpecification> {
@@ -323,18 +328,22 @@ impl ReplStore {
 
     pub fn active_kernelspec(
         &self,
-        worktree_id: WorktreeId,
+        worktree_id: Option<WorktreeId>,
         language_at_cursor: Option<Arc<Language>>,
         cx: &App,
     ) -> Option<KernelSpecification> {
-        if let Some(selected) = self.selected_kernel_for_worktree.get(&worktree_id).cloned() {
+        if let Some(selected) = worktree_id
+            .and_then(|id| self.selected_kernel_for_worktree.get(&id))
+            .cloned()
+        {
             return Some(selected);
         }
 
         let language_at_cursor = language_at_cursor?;
 
         // Prefer the recommended (active toolchain) kernel if it has ipykernel
-        if let Some(active_path) = self.active_python_toolchain_path(worktree_id) {
+        if let Some(active_path) = worktree_id.and_then(|id| self.active_python_toolchain_path(id))
+        {
             let recommended = self
                 .kernel_specifications_for_worktree(worktree_id)
                 .find(|spec| {
@@ -367,7 +376,7 @@ impl ReplStore {
 
     fn kernelspec_legacy_by_lang_only(
         &self,
-        worktree_id: WorktreeId,
+        worktree_id: Option<WorktreeId>,
         language_at_cursor: Arc<Language>,
         cx: &App,
     ) -> Option<KernelSpecification> {
