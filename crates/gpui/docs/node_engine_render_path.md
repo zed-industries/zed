@@ -122,12 +122,11 @@ window.node_engine.set_view_id(node_id, entity_id);
 
 if let Some(layout) = window.node_engine.reuse_layout(node_id, &cache_key)   // (d) clean, painted, key matches?
         .filter(|layout| window.layout_is_retained(*layout)) {
-    cx.entities.extend_accessed(&node.accessed_entities);   // the parent inherits our reads
     window.finish_node_phase(node_id, false);               // grafted: nothing rendered
     return (layout, None);
 }
 
-window.restart_node_render(node_id);                        // (e) reseed text, reset output
+window.restart_node_render(node_id);                        // (e) reseed text (unless cached last frame), reset output
 let mut reads = window.node_engine.take_dependency_set();
 let (layout, element) = cx.track_reads(&mut reads, |cx| {  // (f) record entity reads
     window.with_rendered_view(entity_id, |window| {
@@ -239,7 +238,9 @@ window.finish_node_phase(node_id, rendered);
   (`replay_recording`).
 - `snapshot_dispatch_nodes`: paint adds listeners and key contexts to the dispatch nodes
   prepaint pushed, so after paint the node copies (`clone_from`) each of its live dispatch
-  nodes into its `dispatch_nodes` lane. This is what replay pushes back next frame.
+  nodes into its `dispatch_nodes` lane. This is what replay pushes back next frame. Nodes
+  that stayed empty (most elements') are dropped from the recording along with their
+  push/pop items, since a walk of the dispatch tree cannot tell they were there.
 - `store_render`: adds the view entity to the read set, swaps it with the node's previous
   set, and diffs the two into `consumers` (`replace_dependencies`; a no-op when equal),
   drops element states the render did not access, clears `dirty_nodes` for the node,
@@ -284,12 +285,12 @@ real window (10–30k items) perhaps 10–30 µs per query, two or three per mou
 ## 9. Where the per-node cost goes
 
 Measured on `Siblings/all dirty/512` (512 views, ~3 µs each to render, all dirty every
-frame): ~0.65 µs per node per frame over `main`, i.e. +21.5%. By ablation of the ~330 µs
-of overhead per frame:
+frame): ~0.6 µs per node per frame over `main`, i.e. +20% (64 nodes: +18%). By ablation
+of the ~330 µs of overhead per frame, before the passes listed below:
 
 | mechanism | share | notes |
 | --- | ---: | --- |
-| text-use recording | 15% | 3 `begin/end` pairs per node + 1 per measured leaf; was behind an `RwLock`, now `RefCell` (not yet re-measured on a quiet machine) |
+| text-use recording | 15% | 3 `begin/end` pairs per node + 1 per measured leaf |
 | dependency read tracking | 7% | `FxHashSet` per render, `consumers` diff |
 | dispatch-node snapshot | 7% | `clone_from` of 2 dispatch nodes per leaf after paint |
 | cache-key `TextStyle` | 3% | built twice per node |
@@ -303,7 +304,18 @@ tail of engine functions at 0.1–0.4% each.
 Already removed: a quadratic `reconcile_children`; the per-frame Taffy reachability walk
 with a full-tree layout snapshot (now incremental retention and root-only comparison);
 an O(nodes) "is everything dirty" probe; `TextUse` reallocations; the text system's
-locks.
+locks; reseeding text the cache still holds from last frame; bubbling child reads into
+the parent's dependency set (the window's tracked entities now come from `consumers`);
+copying and replaying empty dispatch nodes; the window's unread `dirty_views` set. The
+passes since the ablation took 512 from +22% to +20% and 64 from +21% to +18%.
+
+Also fixed on the way, found by review of the retention protocol: a tree laid out with
+`layout_as_root` inside a node (list items, editor blocks, the measured row of a
+`uniform_list`) hangs off nothing the node retains, so retiring the node's root never
+reached it and it leaked one tree per item per frame between full refreshes.
+`Window::compute_layout` now marks such orphan roots as frame layout, and
+`TaffyLayoutEngine::finish_frame` removes them unless a node painted with them
+(`layout_trees_measured_inside_a_node_do_not_accumulate`).
 
 ## 10. What is left to take out, in order
 
@@ -317,14 +329,15 @@ locks.
    `TextStyle` twice per node.
 3. **Dependency sets as small sorted vectors.** Nodes read 1–3 entities; a `SmallVec`
    with linear insert beats a hash set, and `replace_dependencies` becomes a merge.
-4. **Snapshot dispatch nodes only when paint changed them** (listeners or context added),
-   and longer term a node-owned dispatch tree, which removes the snapshot altogether and
-   gives stable dispatch node ids.
+4. **A node-owned dispatch tree**, which removes the snapshot altogether and gives
+   stable dispatch node ids.
 5. **Occurrence keys without path hashing.** A per-parent counter per element id, or
    keying occurrences by `(parent, last ElementId, nth)` since the parent already fixes
    the prefix.
 6. **One dispatch push per `ViewElement`, not two.** `Drawable` pushes a dispatch node
    for the `ViewElement` and the view's root `div` pushes another.
+7. **Per-node flags instead of the `dirty_nodes`/`frame_bound_nodes`/`mounted_this_frame`
+   sets**, with counters for the stats.
 
 Each is a bounded change under the same contract; the oracle tests
 (`node_engine::oracle_tests`, `test_workspace_rendering_stress`) are the check. The

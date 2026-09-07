@@ -127,27 +127,32 @@ effects being measured. `Workbench/update/{row,editor,mixed}` are the fixtures w
 reuse fires; `full` dirties every node each update and should match `main`.
 `Siblings/all dirty/{64,512}` is the engine's worst case — many trivially cheap views,
 all dirty every frame, so nothing is reused and every node pays its fixed cost — and
-bounds the overhead: about 0.7 µs per dirty node per frame, +22% on those fixtures.
-Real views amortize it: `Workbench/update/full` (48 rows, four panels and an editor,
-all dirty) is 10% faster than `main`, and `Markdown render` (one view, re-rendered in
-full each frame) is 1% slower. A Zed window has tens of nodes, so its worst frame pays
+bounds the overhead: about 0.6 µs per dirty node per frame, +20% on the 512 fixture and
++18% on 64. Real views amortize it: `Workbench/update/full` (48 rows, four panels and an
+editor, all dirty) is 12% faster than `main`, and `Markdown render` (one view, re-rendered
+in full each frame) is 1% slower. A Zed window has tens of nodes, so its worst frame pays
 tens of microseconds.
 
-Where the 0.7 µs goes, by ablation (switching one mechanism off and re-measuring the
-512 fixture; ~350 µs of overhead per frame): text-use recording, three `begin/end` pairs
-per node through the text system's `RwLock`, 15%; dependency read tracking (the
-`FxHashSet` per render), 7%; the dispatch-node snapshot after paint, 7%; building the
-`TextStyle` for the cache key, 3%; scene recording, 1%. The other two thirds is the node
-lifecycle: occurrence lookup (hashing the element path), output reset and item pushes,
-dirty propagation through `consumers` and parents, the frame walks, and the dispatch
-node each `ViewElement` pushes. Plan, in order of expected return: record text uses on
-the window's traversal stack instead of behind the text system's lock; key nodes on the
-refinement stack rather than a materialized `TextStyle`; keep dependency sets as small
-sorted vectors (most nodes read one to three entities); snapshot dispatch nodes only
-when paint added listeners or a context; give occurrences a per-parent counter so a
-repeated element id does not probe. A focused pass should halve the per-node cost;
-removing it needs the per-node steps themselves to go (fine-grained caching changes
-which ones run).
+Where the 0.6 µs goes, by ablation (switching one mechanism off and re-measuring the
+512 fixture; ~330 µs of overhead per frame): text-use recording, three `begin/end` pairs
+per node, 15%; dependency read tracking (the `FxHashSet` per render), 7%; the
+dispatch-node snapshot after paint, 7%; building the `TextStyle` for the cache key, 3%;
+scene recording, 1%. The other two thirds is the node lifecycle: occurrence lookup
+(hashing the element path), output reset and item pushes, dirty propagation through
+`consumers` and parents, the frame walks, and the dispatch node each `ViewElement`
+pushes. Already taken: the line layout cache behind `RefCell`s rather than locks; text a
+node looked up last frame is not reseeded (the cache still holds it); reads no longer
+bubble into the parent's dependency set (a parent is dirtied through its descendants);
+empty dispatch nodes are dropped from recordings after paint. Each was worth one to
+three points; none was the villain. Remaining candidates, each estimated at a point or
+two: key nodes on the refinement stack rather than a materialized `TextStyle`; keep
+dependency sets as small sorted vectors (most nodes read one to three entities); give
+occurrences a per-parent counter so a repeated element id does not probe; replace the
+per-frame `dirty_nodes`/`frame_bound_nodes`/`mounted_this_frame` sets with flags on the
+node. Getting to the 5% target needs the per-node steps themselves to go rather than to
+get cheaper — a fused per-phase choreography, or fine-grained caching changing which
+steps run — and is follow-up work. `crates/gpui/docs/node_engine_render_path.md` walks
+the path step by step.
 
 ### Memory
 
