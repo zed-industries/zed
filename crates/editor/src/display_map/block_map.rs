@@ -3611,37 +3611,61 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn test_insert_above_blocks_matches_generic_insertion(cx: &mut gpui::TestAppContext) {
+    #[gpui::property_test]
+    fn test_insert_above_blocks_matches_generic_insertion(
+        cx: &mut gpui::TestAppContext,
+        #[strategy = proptest::collection::vec(
+            (0u32..8, 0u32..4, proptest::option::of(0u32..5), 0usize..4),
+            1..24,
+        )]
+        additions: Vec<(u32, u32, Option<u32>, usize)>,
+        #[strategy = proptest::collection::vec(
+            (0u32..8, proptest::bool::ANY, proptest::option::of(0u32..5), 0usize..4),
+            0..16,
+        )]
+        existing: Vec<(u32, bool, Option<u32>, usize)>,
+    ) {
         cx.update(init_test);
 
-        let buffer = cx.update(|cx| MultiBuffer::build_simple("aaa\nbbb\nccc\nddd", cx));
+        let text = vec!["aaa"; 16].join("\n");
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
         let (_, wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
-        let blocks = [
-            (Point::new(3, 3), 3, 1),
-            (Point::new(1, 0), 2, 2),
-            (Point::new(1, 2), 1, 0),
-            (Point::new(0, 0), 1, 1),
-        ]
-        .map(|(point, height, priority)| BlockProperties {
-            style: BlockStyle::Sticky,
-            placement: BlockPlacement::Above(buffer_snapshot.anchor_after(point)),
-            height: Some(height),
-            render: Arc::new(|_| div().into_any()),
-            priority,
-        });
-        let existing_blocks = [BlockProperties {
-            style: BlockStyle::Fixed,
-            placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(0, 0))),
-            height: Some(1),
-            render: Arc::new(|_| div().into_any()),
-            priority: 0,
-        }];
+        // Separate existing Above blocks from new ones so every generated case exercises the fast
+        // path, rather than passing only because it fell back to generic insertion.
+        let blocks = additions
+            .into_iter()
+            .map(|(row, column, height, priority)| BlockProperties {
+                style: BlockStyle::Sticky,
+                placement: BlockPlacement::Above(
+                    buffer_snapshot.anchor_after(Point::new(row * 2, column)),
+                ),
+                height,
+                render: Arc::new(|_| div().into_any()),
+                priority,
+            })
+            .collect::<Vec<_>>();
+        let existing_blocks = existing
+            .into_iter()
+            .map(|(row, above, height, priority)| {
+                let anchor = buffer_snapshot.anchor_after(Point::new(row * 2 + 1, 0));
+                BlockProperties {
+                    style: BlockStyle::Fixed,
+                    placement: if above {
+                        BlockPlacement::Above(anchor)
+                    } else {
+                        BlockPlacement::Below(anchor)
+                    },
+                    height,
+                    render: Arc::new(|_| div().into_any()),
+                    priority,
+                }
+            })
+            .collect::<Vec<_>>();
 
         let mut generic_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
         generic_map
@@ -3652,6 +3676,21 @@ mod tests {
             .insert(blocks.clone());
         let generic_snapshot = generic_map.read(wraps_snapshot.clone(), Default::default(), None);
 
+        let mut individual_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
+        individual_map
+            .write(wraps_snapshot.clone(), Default::default(), None)
+            .insert(existing_blocks.clone());
+        let mut individual_ids = Vec::new();
+        for block in &blocks {
+            individual_ids.extend(
+                individual_map
+                    .write(wraps_snapshot.clone(), Default::default(), None)
+                    .insert([block.clone()]),
+            );
+        }
+        let individual_snapshot =
+            individual_map.read(wraps_snapshot.clone(), Default::default(), None);
+
         let mut specialized_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
         specialized_map
             .write(wraps_snapshot.clone(), Default::default(), None)
@@ -3660,21 +3699,32 @@ mod tests {
             let mut writer =
                 specialized_map.write(wraps_snapshot.clone(), Default::default(), None);
             assert!(writer.can_insert_above_blocks(&blocks));
-            writer.insert_above_blocks(blocks)
+            assert!(writer.prepare_above_blocks(&blocks).is_some());
+            writer.insert_above_blocks(blocks.clone())
         };
         let specialized_snapshot =
             specialized_map.read(wraps_snapshot.clone(), Default::default(), None);
 
         assert_eq!(specialized_ids, generic_ids);
+        assert_eq!(specialized_ids, individual_ids);
         assert_block_snapshots_eq(
             &specialized_snapshot,
             &generic_snapshot,
             wraps_snapshot.max_point().row(),
         );
+        assert_block_snapshots_eq(
+            &specialized_snapshot,
+            &individual_snapshot,
+            wraps_snapshot.max_point().row(),
+        );
 
         let additional_block = BlockProperties {
             style: BlockStyle::Sticky,
-            placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
+            placement: blocks
+                .first()
+                .expect("nonempty generated batch")
+                .placement
+                .clone(),
             height: Some(1),
             render: Arc::new(|_| div().into_any()),
             priority: 1,
