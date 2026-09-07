@@ -1178,14 +1178,7 @@ fn derived_description_from_markdown(content: &str) -> Option<String> {
 }
 
 fn truncate_description(description: &str) -> String {
-    if description.chars().count() <= MAX_SKILL_DESCRIPTION_LEN {
-        return description.to_string();
-    }
-
-    description
-        .chars()
-        .take(MAX_SKILL_DESCRIPTION_LEN)
-        .collect::<String>()
+    util::truncate(description, MAX_SKILL_DESCRIPTION_LEN)
         .trim()
         .to_string()
 }
