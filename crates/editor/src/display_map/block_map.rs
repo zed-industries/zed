@@ -3628,12 +3628,48 @@ mod tests {
         cx.update(init_test);
 
         let text = vec!["aaa"; 16].join("\n");
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
-        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let buffer = cx.new(|cx| Buffer::local(&text, cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(
+                &format!("deleted\n{text}"),
+                &buffer.read(cx).text_snapshot(),
+                cx,
+            )
+        });
+        let base_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_excerpts_for_buffer(
+                buffer.clone(),
+                [Point::zero()..buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+            multibuffer.add_diff(diff.clone(), cx);
+            multibuffer
+        });
+        let companion_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_excerpts_for_buffer(
+                base_buffer.clone(),
+                [Point::zero()..base_buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+            multibuffer.add_inverted_diff(diff.clone(), buffer.clone(), cx);
+            multibuffer
+        });
+        let buffer_snapshot = cx.update(|cx| multibuffer.read(cx).snapshot(cx));
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
         let (_, wraps_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let companion_buffer_snapshot = cx.update(|cx| companion_multibuffer.read(cx).snapshot(cx));
+        let (_, inlay_snapshot) = InlayMap::new(companion_buffer_snapshot.clone());
+        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
+        let (_, companion_wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         // Separate existing Above blocks from new ones so every generated case exercises the fast
         // path, rather than passing only because it fell back to generic insertion.
@@ -3667,57 +3703,6 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let mut generic_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
-        generic_map
-            .write(wraps_snapshot.clone(), Default::default(), None)
-            .insert(existing_blocks.clone());
-        let generic_ids = generic_map
-            .write(wraps_snapshot.clone(), Default::default(), None)
-            .insert(blocks.clone());
-        let generic_snapshot = generic_map.read(wraps_snapshot.clone(), Default::default(), None);
-
-        let mut individual_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
-        individual_map
-            .write(wraps_snapshot.clone(), Default::default(), None)
-            .insert(existing_blocks.clone());
-        let mut individual_ids = Vec::new();
-        for block in &blocks {
-            individual_ids.extend(
-                individual_map
-                    .write(wraps_snapshot.clone(), Default::default(), None)
-                    .insert([block.clone()]),
-            );
-        }
-        let individual_snapshot =
-            individual_map.read(wraps_snapshot.clone(), Default::default(), None);
-
-        let mut specialized_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
-        specialized_map
-            .write(wraps_snapshot.clone(), Default::default(), None)
-            .insert(existing_blocks);
-        let specialized_ids = {
-            let mut writer =
-                specialized_map.write(wraps_snapshot.clone(), Default::default(), None);
-            assert!(writer.can_insert_above_blocks(&blocks));
-            assert!(writer.prepare_above_blocks(&blocks).is_some());
-            writer.insert_above_blocks(blocks.clone())
-        };
-        let specialized_snapshot =
-            specialized_map.read(wraps_snapshot.clone(), Default::default(), None);
-
-        assert_eq!(specialized_ids, generic_ids);
-        assert_eq!(specialized_ids, individual_ids);
-        assert_block_snapshots_eq(
-            &specialized_snapshot,
-            &generic_snapshot,
-            wraps_snapshot.max_point().row(),
-        );
-        assert_block_snapshots_eq(
-            &specialized_snapshot,
-            &individual_snapshot,
-            wraps_snapshot.max_point().row(),
-        );
-
         let additional_block = BlockProperties {
             style: BlockStyle::Sticky,
             placement: blocks
@@ -3729,23 +3714,168 @@ mod tests {
             render: Arc::new(|_| div().into_any()),
             priority: 1,
         };
-        generic_map
-            .write(wraps_snapshot.clone(), Default::default(), None)
-            .insert([additional_block.clone()]);
-        {
-            let mut writer =
-                specialized_map.write(wraps_snapshot.clone(), Default::default(), None);
-            assert!(!writer.can_insert_above_blocks(std::slice::from_ref(&additional_block)));
-            writer.insert_above_blocks([additional_block]);
+        enum Insertion {
+            Bulk,
+            Generic,
+            Individual,
         }
-        let generic_snapshot = generic_map.read(wraps_snapshot.clone(), Default::default(), None);
-        let specialized_snapshot =
-            specialized_map.read(wraps_snapshot.clone(), Default::default(), None);
-        assert_block_snapshots_eq(
-            &specialized_snapshot,
-            &generic_snapshot,
-            wraps_snapshot.max_point().row(),
-        );
+        let run = |insertion, cx: &App| {
+            let companion = Companion::new(multibuffer.entity_id());
+            let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
+            let mut companion_block_map = BlockMap::new(companion_wraps_snapshot.clone(), 1, 1);
+            let mut ids = Vec::new();
+            let mut results = Vec::new();
+            for (stage, batch) in [
+                existing_blocks.as_slice(),
+                blocks.as_slice(),
+                std::slice::from_ref(&additional_block),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let edits = if stage == 0 {
+                    Patch::new(vec![Edit {
+                        old: WrapRow(0)..wraps_snapshot.max_point().row() + WrapRow(1),
+                        new: WrapRow(0)..wraps_snapshot.max_point().row() + WrapRow(1),
+                    }])
+                } else {
+                    Patch::default()
+                };
+                let companion_edits = if stage == 0 {
+                    Patch::new(vec![Edit {
+                        old: WrapRow(0)..companion_wraps_snapshot.max_point().row() + WrapRow(1),
+                        new: WrapRow(0)..companion_wraps_snapshot.max_point().row() + WrapRow(1),
+                    }])
+                } else {
+                    Patch::default()
+                };
+                let mut writer = block_map.write(
+                    wraps_snapshot.clone(),
+                    edits,
+                    Some(CompanionViewMut::new(
+                        multibuffer.entity_id(),
+                        companion_multibuffer.entity_id(),
+                        &companion_wraps_snapshot,
+                        &companion_edits,
+                        companion_multibuffer.read(cx),
+                        &companion,
+                        &mut companion_block_map,
+                    )),
+                );
+                if stage == 0 {
+                    ids.extend(writer.insert(batch.iter().cloned()));
+                    continue;
+                }
+                match insertion {
+                    Insertion::Bulk => {
+                        if stage == 1 {
+                            assert!(writer.can_insert_above_blocks(batch));
+                            assert!(writer.prepare_above_blocks(batch).is_some());
+                            let balancing_blocks = batch
+                                .iter()
+                                .map(|block| {
+                                    balancing_block(
+                                        block,
+                                        &buffer_snapshot,
+                                        &companion_buffer_snapshot,
+                                        multibuffer.entity_id(),
+                                        &companion,
+                                    )
+                                })
+                                .collect::<Option<Vec<_>>>()
+                                .expect("every block must have a companion");
+                            let inverse = writer
+                                .companion
+                                .as_ref()
+                                .and_then(|companion| companion.inverse.as_ref())
+                                .expect("paired writer");
+                            assert!(
+                                inverse
+                                    .companion_writer
+                                    .can_insert_above_blocks(&balancing_blocks)
+                            );
+                            assert!(
+                                inverse
+                                    .companion_writer
+                                    .prepare_above_blocks(&balancing_blocks)
+                                    .is_some()
+                            );
+                        } else {
+                            assert!(!writer.can_insert_above_blocks(batch));
+                        }
+                        ids.extend(writer.insert_above_blocks(batch.iter().cloned()));
+                    }
+                    Insertion::Generic => ids.extend(writer.insert(batch.iter().cloned())),
+                    Insertion::Individual => {
+                        for block in batch {
+                            ids.extend(writer.insert([block.clone()]));
+                        }
+                    }
+                }
+                drop(writer);
+                let mapping = companion
+                    .custom_block_to_balancing_block(multibuffer.entity_id())
+                    .borrow();
+                assert_eq!(mapping.len(), ids.len());
+                let companion_ids = ids
+                    .iter()
+                    .map(|id| *mapping.get(id).expect("balancing block ID"))
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    companion_ids.iter().collect::<HashSet<_>>().len(),
+                    ids.len()
+                );
+                let snapshot = block_map
+                    .read(
+                        wraps_snapshot.clone(),
+                        Patch::default(),
+                        Some(CompanionView::new(
+                            multibuffer.entity_id(),
+                            &companion_wraps_snapshot,
+                            &Patch::default(),
+                            &companion,
+                        )),
+                    )
+                    .snapshot;
+                assert!(
+                    snapshot
+                        .blocks_in_range(BlockRow(0)..snapshot.max_point().row() + BlockRow(1))
+                        .any(|(_, block)| matches!(block, Block::Spacer { .. }))
+                );
+                let companion_snapshot = companion_block_map
+                    .read(
+                        companion_wraps_snapshot.clone(),
+                        Patch::default(),
+                        Some(CompanionView::new(
+                            companion_multibuffer.entity_id(),
+                            &wraps_snapshot,
+                            &Patch::default(),
+                            &companion,
+                        )),
+                    )
+                    .snapshot;
+                results.push([(snapshot, ids.clone()), (companion_snapshot, companion_ids)]);
+            }
+            results
+        };
+        cx.update(|cx| {
+            let bulk = run(Insertion::Bulk, cx);
+            for reference in [run(Insertion::Generic, cx), run(Insertion::Individual, cx)] {
+                assert_eq!(bulk.len(), reference.len());
+                for (actual, expected) in bulk.iter().zip(&reference) {
+                    for ((actual, actual_ids), (expected, expected_ids)) in
+                        actual.iter().zip(expected)
+                    {
+                        assert_block_snapshots_with_ids_eq(
+                            actual,
+                            actual_ids,
+                            expected,
+                            expected_ids,
+                        );
+                    }
+                }
+            }
+        });
     }
 
     #[gpui::test]
@@ -3814,6 +3944,66 @@ mod tests {
             &generic_snapshot,
             wraps_snapshot.max_point().row(),
         );
+    }
+
+    fn assert_block_snapshots_with_ids_eq(
+        actual: &BlockSnapshot,
+        actual_ids: &[CustomBlockId],
+        expected: &BlockSnapshot,
+        expected_ids: &[CustomBlockId],
+    ) {
+        assert_eq!(actual.text(), expected.text());
+        assert_eq!(actual.max_point(), expected.max_point());
+        for row in 0..=actual.wrap_snapshot.max_point().row().0 {
+            let point = WrapPoint::new(WrapRow(row), 0);
+            assert_eq!(actual.to_block_point(point), expected.to_block_point(point));
+        }
+
+        // Generic syncs can allocate new spacer IDs, shifting subsequent custom IDs. Compare
+        // custom blocks by insertion order, while checking spacer placement and height, not IDs.
+        let blocks = |snapshot: &BlockSnapshot, ids: &[CustomBlockId]| {
+            snapshot
+                .blocks_in_range(BlockRow(0)..snapshot.max_point().row() + BlockRow(1))
+                .map(|(row, block)| {
+                    let index = match block {
+                        Block::Custom(block) => Some(
+                            ids.iter()
+                                .position(|id| *id == block.id)
+                                .expect("known block"),
+                        ),
+                        _ => None,
+                    };
+                    (
+                        row,
+                        std::mem::discriminant(block),
+                        index,
+                        block.height(),
+                        block.style(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(blocks(actual, actual_ids), blocks(expected, expected_ids));
+        assert_eq!(actual_ids.len(), expected_ids.len());
+        for (actual_id, expected_id) in actual_ids.iter().zip(expected_ids) {
+            let actual_block = actual
+                .custom_blocks_by_id
+                .get(actual_id)
+                .expect("known block");
+            let expected_block = expected
+                .custom_blocks_by_id
+                .get(expected_id)
+                .expect("known block");
+            assert_eq!(
+                actual_block.placement.to_wrap_row(&actual.wrap_snapshot),
+                expected_block
+                    .placement
+                    .to_wrap_row(&expected.wrap_snapshot),
+            );
+            assert_eq!(actual_block.height, expected_block.height);
+            assert_eq!(actual_block.priority, expected_block.priority);
+            assert_eq!(actual_block.style, expected_block.style);
+        }
     }
 
     fn assert_block_snapshots_eq(
