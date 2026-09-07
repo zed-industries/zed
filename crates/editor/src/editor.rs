@@ -12169,12 +12169,10 @@ impl EditorSnapshot {
     }
 
     pub fn display_row_for_inline_code_action(&self, buffer_point: Point) -> Option<DisplayRow> {
-        // do not show code action for folded line
         if self.is_line_folded(MultiBufferRow(buffer_point.row)) {
             return None;
         }
 
-        // do not show code action for blank line with cursor
         let line_indent = self
             .display_snapshot
             .buffer_snapshot()
@@ -12187,12 +12185,10 @@ impl EditorSnapshot {
         const MAX_ALTERNATE_DISTANCE: u32 = 8;
 
         let is_valid_row = |row_candidate: u32| -> bool {
-            // move to other row if folded row
             if self.is_line_folded(MultiBufferRow(row_candidate)) {
                 return false;
             }
             if buffer_point.row == row_candidate {
-                // move to other row if cursor is in slot
                 if buffer_point.column < INLINE_SLOT_CHAR_LIMIT {
                     return false;
                 }
@@ -12201,7 +12197,6 @@ impl EditorSnapshot {
                     row: row_candidate,
                     column: 0,
                 };
-                // move to other row if different excerpt
                 let range = if candidate_point < buffer_point {
                     candidate_point..buffer_point
                 } else {
@@ -12220,11 +12215,9 @@ impl EditorSnapshot {
                 .display_snapshot
                 .buffer_snapshot()
                 .line_indent_for_row(MultiBufferRow(row_candidate));
-            // use this row if it's blank
             if line_indent.is_line_blank() {
                 true
             } else {
-                // use this row if code starts after slot
                 let indent_size = self
                     .display_snapshot
                     .buffer_snapshot()
