@@ -63,6 +63,7 @@ actions!(
 #[derive(Default)]
 pub struct SidebarRenderState {
     pub open: bool,
+    pub visible: bool,
     pub side: SidebarSide,
 }
 
@@ -334,6 +335,7 @@ impl MultiWorkspace {
     pub fn sidebar_render_state(&self, cx: &App) -> SidebarRenderState {
         SidebarRenderState {
             open: self.sidebar_open() && self.multi_workspace_enabled(cx),
+            visible: self.sidebar_visible(cx),
             side: self.sidebar_side(cx),
         }
     }
@@ -409,6 +411,12 @@ impl MultiWorkspace {
 
     pub fn sidebar_open(&self) -> bool {
         self.sidebar_open
+    }
+
+    fn sidebar_visible(&self, cx: &App) -> bool {
+        self.multi_workspace_enabled(cx)
+            && self.sidebar_open()
+            && self.workspace().read(cx).zoomed_item().is_none()
     }
 
     pub fn sidebar_has_notifications(&self, cx: &App) -> bool {
@@ -604,11 +612,17 @@ impl MultiWorkspace {
         })
         .detach();
 
-        cx.subscribe_in(workspace, window, |this, workspace, event, window, cx| {
-            if let WorkspaceEvent::Activate = event {
-                this.activate(workspace.clone(), None, window, cx);
-            }
-        })
+        cx.subscribe_in(
+            workspace,
+            window,
+            |this, workspace, event, window, cx| match event {
+                WorkspaceEvent::Activate => {
+                    this.activate(workspace.clone(), None, window, cx);
+                }
+                WorkspaceEvent::ZoomChanged => cx.notify(),
+                _ => {}
+            },
+        )
         .detach();
     }
 
@@ -1994,11 +2008,10 @@ impl MultiWorkspace {
 
 impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let multi_workspace_enabled = self.multi_workspace_enabled(cx);
         let sidebar_side = self.sidebar_side(cx);
         let sidebar_on_right = sidebar_side == SidebarSide::Right;
 
-        let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open() {
+        let sidebar: Option<AnyElement> = if self.sidebar_visible(cx) {
             self.sidebar.as_ref().map(|sidebar_handle| {
                 let weak = cx.weak_entity();
 
@@ -2148,26 +2161,20 @@ impl Render for MultiWorkspace {
                         ))
                     })
                 })
-                .when(
-                    self.sidebar_open() && self.multi_workspace_enabled(cx),
-                    |this| {
-                        this.on_drag_move(cx.listener(
-                            move |this: &mut Self,
-                                  e: &DragMoveEvent<DraggedSidebar>,
-                                  window,
-                                  cx| {
-                                if let Some(sidebar) = &this.sidebar {
-                                    let new_width = if sidebar_on_right {
-                                        window.bounds().size.width - e.event.position.x
-                                    } else {
-                                        e.event.position.x
-                                    };
-                                    sidebar.set_width(Some(new_width), cx);
-                                }
-                            },
-                        ))
-                    },
-                )
+                .when(self.sidebar_visible(cx), |this| {
+                    this.on_drag_move(cx.listener(
+                        move |this: &mut Self, e: &DragMoveEvent<DraggedSidebar>, window, cx| {
+                            if let Some(sidebar) = &this.sidebar {
+                                let new_width = if sidebar_on_right {
+                                    window.bounds().size.width - e.event.position.x
+                                } else {
+                                    e.event.position.x
+                                };
+                                sidebar.set_width(Some(new_width), cx);
+                            }
+                        },
+                    ))
+                })
                 .children(left_sidebar)
                 .child(
                     div()
