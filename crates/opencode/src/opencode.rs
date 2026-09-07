@@ -241,6 +241,8 @@ impl Model {
             // Models available in both Zen and Go
             Self::Glm5_1
             | Self::Glm5_2
+            | Self::Glm5_3
+            | Self::Glm5_3Flash
             | Self::Grok4_6
             | Self::KimiK2_6
             | Self::KimiK2_7Code
@@ -249,14 +251,13 @@ impl Model {
             | Self::MiniMaxM3
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
+            | Self::DeepSeekV4FlashVisionExp
             | Self::Gpt5_6Luna
             | Self::Qwen3_6Plus => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
 
             // Go-only models
             Self::MimoV2_5Pro
             | Self::MimoV2_5
-            | Self::Glm5_3
-            | Self::Glm5_3Flash
             | Self::LongCat2_0
             | Self::Qwen3_7Plus
             | Self::Qwen3_7Max
@@ -264,7 +265,6 @@ impl Model {
             | Self::Qwen3_8Flash
             | Self::Hy3
             | Self::Hy4Preview
-            | Self::DeepSeekV4FlashVisionExp
             | Self::MuseSpark1_2Contributor
             | Self::MuseSpark1_3Contributor
             | Self::OmenAlpha => &[OpenCodeSubscription::Go],
