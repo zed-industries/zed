@@ -677,6 +677,12 @@ enum PlatformOwnedDragState {
     RestoredInSourceWindow,
 }
 
+struct CachedAsset {
+    task: Box<dyn Any>,
+    completion: Entity<()>,
+    _notification: Task<()>,
+}
+
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other [Context] derefs to this type.
 /// You need a reference to an `App` to access the state of a [Entity].
@@ -728,14 +734,16 @@ pub struct App {
     // the tokio runtime. As any task attempting to spawn a blocking tokio task,
     // might panic.
     pub(crate) globals_by_type: TypeIdHashMap<Box<dyn Any>>,
+    global_dependencies: RefCell<TypeIdHashMap<Slot<()>>>,
 
     // assets
-    pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
+    loading_assets: FxHashMap<(TypeId, u64), CachedAsset>,
     asset_source: Arc<dyn AssetSource>,
     pub(crate) svg_renderer: SvgRenderer,
     http_client: Arc<dyn HttpClient>,
 
     // below is plain data, the drop order is insignificant here
+    render_notifications: Vec<FxHashSet<EntityId>>,
     pub(crate) pending_notifications: FxHashSet<EntityId>,
     pub(crate) pending_global_notifications: TypeIdHashSet,
     pub(crate) restart_path: Option<PathBuf>,
@@ -821,6 +829,7 @@ impl App {
                 asset_source,
                 http_client,
                 globals_by_type: Default::default(),
+                global_dependencies: RefCell::default(),
                 entities,
                 new_entity_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
@@ -832,6 +841,7 @@ impl App {
                 keyboard_mapper,
                 global_action_listeners: Default::default(),
                 pending_effects: VecDeque::new(),
+                render_notifications: Vec::new(),
                 pending_notifications: FxHashSet::default(),
                 pending_global_notifications: Default::default(),
                 observers: SubscriberSet::new(),
@@ -1110,20 +1120,18 @@ impl App {
         })
     }
 
-    pub(crate) fn detect_accessed_entities<R>(
+    /// Runs `callback`, adding every entity it reads to `reads`. Nested calls also count
+    /// their reads towards the enclosing call. This is how the node engine learns which
+    /// entities a view's render depends on.
+    pub(crate) fn track_reads<R>(
         &mut self,
+        reads: &mut crate::node_engine::DependencySet,
         callback: impl FnOnce(&mut App) -> R,
-    ) -> (R, FxHashSet<EntityId>) {
-        let accessed_entities_start = self.entities.accessed_entities.get_mut().clone();
+    ) -> R {
+        self.entities.begin_access_scope();
         let result = callback(self);
-        let entities_accessed_in_callback = self
-            .entities
-            .accessed_entities
-            .get_mut()
-            .difference(&accessed_entities_start)
-            .copied()
-            .collect::<FxHashSet<EntityId>>();
-        (result, entities_accessed_in_callback)
+        self.entities.end_access_scope(reads);
+        result
     }
 
     pub(crate) fn record_entities_accessed(
@@ -1660,6 +1668,32 @@ impl App {
                 }
             }
             Effect::NotifyGlobalObservers { global_type } => {
+                let dependency = self
+                    .global_dependencies
+                    .get_mut()
+                    .get(global_type)
+                    .map(|dependency| dependency.entity_id());
+                if let Some(dependency) = dependency {
+                    // Global observers retain control of frame demand. Mutating globals
+                    // during rendering or cleanup must not create a redraw feedback loop.
+                    for notifications in &mut self.render_notifications {
+                        notifications.insert(dependency);
+                    }
+                    for (window_id, invalidator) in self
+                        .window_invalidators_by_entity
+                        .get(&dependency)
+                        .into_iter()
+                        .flatten()
+                    {
+                        if self
+                            .tracked_entities
+                            .get(window_id)
+                            .is_some_and(|entities| entities.contains(&dependency))
+                        {
+                            invalidator.invalidate_on_next_frame(dependency);
+                        }
+                    }
+                }
                 if !self.pending_global_notifications.insert(*global_type) {
                     return;
                 }
@@ -2014,14 +2048,29 @@ impl App {
         &self.text_system
     }
 
+    fn track_global<G: Global>(&self) {
+        if !self.is_drawing() {
+            return;
+        }
+        // Reserve an entity identity even for absent globals, so insertion and removal
+        // invalidate negative reads through the same graph as entity mutations.
+        let mut dependencies = self.global_dependencies.borrow_mut();
+        let dependency = dependencies
+            .entry(TypeId::of::<G>())
+            .or_insert_with(|| self.entities.reserve::<()>());
+        self.entities.record_access(dependency.entity_id());
+    }
+
     /// Check whether a global of the given type has been assigned.
     pub fn has_global<G: Global>(&self) -> bool {
+        self.track_global::<G>();
         self.globals_by_type.contains_key(&TypeId::of::<G>())
     }
 
     /// Access the global of the given type. Panics if a global for that type has not been assigned.
     #[track_caller]
     pub fn global<G: Global>(&self) -> &G {
+        self.track_global::<G>();
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
@@ -2030,6 +2079,7 @@ impl App {
 
     /// Access the global of the given type if a value has been assigned.
     pub fn try_global<G: Global>(&self) -> Option<&G> {
+        self.track_global::<G>();
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
@@ -2038,6 +2088,7 @@ impl App {
     /// Access the global of the given type mutably. Panics if a global for that type has not been assigned.
     #[track_caller]
     pub fn global_mut<G: Global>(&mut self) -> &mut G {
+        self.track_global::<G>();
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
@@ -2049,6 +2100,7 @@ impl App {
     /// Access the global of the given type mutably. A default value is assigned if a global of this type has not
     /// yet been assigned.
     pub fn default_global<G: Global + Default>(&mut self) -> &mut G {
+        self.track_global::<G>();
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
@@ -2102,6 +2154,7 @@ impl App {
     /// Move the global of the given type to the stack.
     #[track_caller]
     pub(crate) fn lease_global<G: Global>(&mut self) -> GlobalLease<G> {
+        self.track_global::<G>();
         GlobalLease::new(
             self.globals_by_type
                 .remove(&TypeId::of::<G>())
@@ -2662,21 +2715,41 @@ impl App {
     /// time, and the results of this call will be cached
     pub fn fetch_asset<A: Asset>(&mut self, source: &A::Source) -> (Shared<Task<A::Output>>, bool) {
         let asset_id = (TypeId::of::<A>(), hash(source));
-        let mut is_first = false;
-        let task = self
-            .loading_assets
-            .remove(&asset_id)
-            .map(|boxed_task| *boxed_task.downcast::<Shared<Task<A::Output>>>().unwrap())
-            .unwrap_or_else(|| {
-                is_first = true;
-                let future = A::load(source.clone(), self);
+        if let Some(asset) = self.loading_assets.get(&asset_id) {
+            let task = asset
+                .task
+                .downcast_ref::<Shared<Task<A::Output>>>()
+                .expect("asset type matches its cache key");
+            return (task.clone(), false);
+        }
+        let future = A::load(source.clone(), self);
+        let task = self.background_executor().spawn(future).shared();
+        // Fetching alone is passive; only Window::use_asset observes completion.
+        let completion = self.new(|_| ());
+        let notification = self.spawn({
+            let task = task.clone();
+            let completion = completion.clone();
+            async move |cx| {
+                task.await;
+                cx.update(|cx| cx.notify(completion.entity_id()));
+            }
+        });
+        self.loading_assets.insert(
+            asset_id,
+            CachedAsset {
+                task: Box::new(task.clone()),
+                completion,
+                _notification: notification,
+            },
+        );
+        (task, true)
+    }
 
-                self.background_executor().spawn(future).shared()
-            });
-
-        self.loading_assets.insert(asset_id, Box::new(task.clone()));
-
-        (task, is_first)
+    pub(crate) fn track_asset<A: Asset>(&self, source: &A::Source) {
+        if let Some(asset) = self.loading_assets.get(&(TypeId::of::<A>(), hash(source))) {
+            // Every dependent node must observe completion, including those sharing a load.
+            asset.completion.read(self);
+        }
     }
 
     /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
@@ -2686,8 +2759,42 @@ impl App {
         FocusHandle::new(&self.focus_handles)
     }
 
+    /// Runs a window draw. Entity accesses inside are tracked for this frame alone, and
+    /// the entities notified during the draw that the frame also read are returned, so the
+    /// window can dirty them on its next requested frame: a notification that arrives while
+    /// its window is already drawing cannot affect the frame being built.
+    pub(crate) fn draw_frame<R>(
+        &mut self,
+        draw: impl FnOnce(&mut App) -> R,
+    ) -> (R, FxHashSet<EntityId>) {
+        let previous_access_tracking = self.entities.suspend_access_tracking();
+        self.render_notifications.push(FxHashSet::default());
+        let result = draw(self);
+        let mut notified = self.render_notifications.pop().unwrap_or_default();
+        {
+            let accessed_entities = self.entities.accessed_entities.borrow();
+            notified.retain(|source| accessed_entities.contains(source));
+        }
+        self.entities
+            .restore_access_tracking(previous_access_tracking);
+        (result, notified)
+    }
+
+    pub(crate) fn is_drawing(&self) -> bool {
+        !self.render_notifications.is_empty()
+    }
+
     /// Tell GPUI that an entity has changed and observers of it should be notified.
+    ///
+    /// Notification stops at `entity_id`: windows that read it during rendering are marked
+    /// dirty and the entity's observers run. Views and render nodes whose output was
+    /// computed from this entity are not notified; the window's draw engine works that out
+    /// from the recorded reads when it next draws.
     pub fn notify(&mut self, entity_id: EntityId) {
+        for notifications in &mut self.render_notifications {
+            notifications.insert(entity_id);
+        }
+
         let window_invalidators = mem::take(
             self.window_invalidators_by_entity
                 .entry(entity_id)

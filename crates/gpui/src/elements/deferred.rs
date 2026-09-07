@@ -145,13 +145,6 @@ mod tests {
         }
     }
 
-    /// Regression test for a crash with nested deferred draws (e.g. a popover
-    /// menu inside a popover hosted by a cached dock panel). Prepaint indices
-    /// recorded during the deferred draw rounds must index the same
-    /// `deferred_draws` vector that `reuse_prepaint` slices on the next frame;
-    /// previously they were measured against a transient per-round vector, so
-    /// reusing the panel's subtree grafted the wrong deferred draws and
-    /// panicked in the dispatch tree.
     #[gpui::test]
     fn test_nested_deferred_draws_with_reused_views(cx: &mut TestAppContext) {
         let window = cx.open_window(size(px(800.), px(600.)), |_, cx| {
@@ -161,13 +154,7 @@ mod tests {
         cx.run_until_parked();
 
         let menu_bounds = window
-            .update(cx, |_, window, _| {
-                window
-                    .rendered_frame
-                    .debug_bounds
-                    .get("NESTED_MENU")
-                    .copied()
-            })
+            .update(cx, |_, window, _| window.debug_bounds("NESTED_MENU"))
             .unwrap()
             .expect("NESTED_MENU debug bounds not found");
         assert_eq!(menu_bounds.size, size(px(50.), px(50.)));
@@ -194,12 +181,7 @@ mod tests {
         window
             .update(cx, |_, window, _| {
                 assert_eq!(window.rendered_frame.deferred_draws.len(), 2);
-                assert!(
-                    window
-                        .rendered_frame
-                        .debug_bounds
-                        .contains_key("NESTED_MENU")
-                );
+                assert!(window.debug_bounds("NESTED_MENU").is_some());
             })
             .unwrap();
     }

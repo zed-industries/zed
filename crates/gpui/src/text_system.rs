@@ -28,7 +28,7 @@ use std::{
     cmp,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
-    ops::{Deref, DerefMut, Range},
+    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
@@ -392,16 +392,33 @@ impl WindowTextSystem {
         }
     }
 
-    pub(crate) fn layout_index(&self) -> LineLayoutIndex {
-        self.line_layout_cache.layout_index()
+    /// Starts recording the line layouts a scope looks up; see [`Self::end_text_use`].
+    pub(crate) fn begin_text_use(&self) {
+        self.line_layout_cache.begin_use()
     }
 
-    pub(crate) fn reuse_layouts(&self, index: Range<LineLayoutIndex>) {
-        self.line_layout_cache.reuse_layouts(index)
+    pub(crate) fn end_text_use(&self) -> TextUse {
+        self.line_layout_cache.end_use()
     }
 
-    pub(crate) fn truncate_layouts(&self, index: LineLayoutIndex) {
-        self.line_layout_cache.truncate_layouts(index)
+    /// Makes previously used layouts available to this frame without reshaping, and keeps
+    /// the use's buffers for the scope that records the redraw.
+    pub(crate) fn reseed_text_use(&self, text_use: TextUse) {
+        self.line_layout_cache.seed(&text_use);
+        self.line_layout_cache.recycle(text_use);
+    }
+
+    /// Keeps a use's buffers for the scope that records the redraw.
+    pub(crate) fn recycle_text_use(&self, text_use: TextUse) {
+        self.line_layout_cache.recycle(text_use);
+    }
+
+    pub(crate) fn text_use_checkpoint(&self) -> TextUseCheckpoint {
+        self.line_layout_cache.use_checkpoint()
+    }
+
+    pub(crate) fn rollback_text_use(&self, checkpoint: TextUseCheckpoint) {
+        self.line_layout_cache.rollback_use(checkpoint)
     }
 
     /// Shape the given line, at the given font_size, for painting to the screen.

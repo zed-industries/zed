@@ -352,6 +352,278 @@ fn jetbrains_editorconfig() -> String {
     content
 }
 
+/// A workspace-shaped window: a 1,000-line editor between four panels of independent
+/// rows. `update` selects which entities change per frame, so the modes span the range
+/// from "one small view dirty" (`row`) to "every view dirty" (`full`, a full rebuild).
+#[gpui::bench(
+    inputs = ["row", "editor", "mixed", "full"],
+    group = "Workbench",
+    input_name = "update",
+    sample_size = 20
+)]
+fn workbench_render(mode: &&str, cx: &mut BenchAppContext) {
+    use gpui::{
+        Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
+        StatefulInteractiveElement, Styled, Window, div, px, rgb,
+    };
+
+    struct Row {
+        index: usize,
+        revision: usize,
+    }
+    impl Render for Row {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id(self.index)
+                .h(px(26.))
+                .px_2()
+                .flex()
+                .justify_between()
+                .bg(rgb(if self.revision.is_multiple_of(2) {
+                    0x202832
+                } else {
+                    0x384858
+                }))
+                .border_b_1()
+                .border_color(rgb(0x465060))
+                .child(format!("module_{}.rs", self.index))
+                .child(format!("{} issues", self.revision % 10))
+                .on_click(cx.listener(|row, _, _, cx| {
+                    row.revision += 1;
+                    cx.notify();
+                }))
+        }
+    }
+    struct Panel {
+        title: &'static str,
+        rows: Vec<Entity<Row>>,
+    }
+    impl Render for Panel {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .overflow_hidden()
+                .child(div().h(px(28.)).child(self.title))
+                .children(self.rows.iter().cloned())
+        }
+    }
+    struct Workbench {
+        editor: Entity<Editor>,
+        panels: [Entity<Panel>; 4],
+        step: usize,
+    }
+    impl Render for Workbench {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .bg(rgb(0x18202a))
+                .text_color(rgb(0xdde5ef))
+                .child(
+                    div()
+                        .h(px(32.))
+                        .flex_shrink_0()
+                        .child("src/main.rs    Cargo.toml    README.md    |    Workbench"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_1()
+                        .w_full()
+                        .min_h_0()
+                        .child(
+                            div()
+                                .w(px(250.))
+                                .flex_shrink_0()
+                                .h_full()
+                                .child(self.panels[0].clone()),
+                        )
+                        .child(div().flex_1().min_w_0().h_full().child(self.editor.clone()))
+                        .child(
+                            div()
+                                .w(px(300.))
+                                .flex_shrink_0()
+                                .h_full()
+                                .child(self.panels[1].clone()),
+                        ),
+                )
+                .child(
+                    div()
+                        .h(px(210.))
+                        .w_full()
+                        .flex_shrink_0()
+                        .flex()
+                        .child(div().flex_1().min_w_0().child(self.panels[2].clone()))
+                        .child(div().flex_1().min_w_0().child(self.panels[3].clone())),
+                )
+                .child(
+                    div()
+                        .h(px(24.))
+                        .flex_shrink_0()
+                        .child("main    Rust    UTF-8    |    48 independent result rows"),
+                )
+        }
+    }
+
+    init_context(cx);
+    let mut window = cx.add_empty_window();
+    let host = window.update(|window, cx| {
+        window.resize(gpui::size(px(1600.), px(1000.)));
+        // Test windows do not dispatch platform resize callbacks.
+        window.bounds_changed(cx);
+        let buffer = MultiBuffer::build_simple(
+            &"fn example(value: usize) -> usize { value + 1 }\n".repeat(1000),
+            cx,
+        );
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            editor.set_style(editor::EditorStyle::default(), window, cx);
+            editor
+        });
+        window.focus(&editor.focus_handle(cx), cx);
+        let panels = [
+            "Project files",
+            "Diagnostics",
+            "Search results",
+            "Background tasks",
+        ]
+        .map(|title| {
+            cx.new(|cx| Panel {
+                title,
+                rows: (0..12)
+                    .map(|index| cx.new(|_| Row { index, revision: 0 }))
+                    .collect(),
+            })
+        });
+        window.replace_root(cx, |_, _| Workbench {
+            editor,
+            panels,
+            step: 0,
+        })
+    });
+    let mode = (*mode).to_owned();
+    let update = move |host: &mut Workbench, window: &mut Window, cx: &mut Context<Workbench>| {
+        host.step += 1;
+        if mode != "row" && (mode != "mixed" || host.step.is_multiple_of(2)) {
+            host.editor.update(cx, |editor, cx| {
+                if host.step % 4 < 2 {
+                    editor.move_down(&MoveDown, window, cx);
+                } else {
+                    editor.move_up(&MoveUp, window, cx);
+                }
+            });
+        }
+        if mode != "editor" {
+            for (panel_index, panel) in host.panels.iter().enumerate() {
+                if mode == "full" || panel_index == host.step % 4 {
+                    panel.update(cx, |panel, cx| {
+                        for (index, row) in panel.rows.iter().enumerate() {
+                            if mode == "full" || index == host.step % 6 {
+                                row.update(cx, |row, cx| {
+                                    row.revision += 1;
+                                    cx.notify();
+                                });
+                            }
+                        }
+                        if mode == "mixed" && host.step.is_multiple_of(8) {
+                            panel.rows.rotate_left(1);
+                            cx.notify();
+                        }
+                    });
+                }
+            }
+        }
+        if mode == "mixed" && host.step.is_multiple_of(12) {
+            window.resize(gpui::size(
+                px(if host.step.is_multiple_of(24) {
+                    1600.
+                } else {
+                    1400.
+                }),
+                px(1000.),
+            ));
+            window.bounds_changed(cx);
+        }
+        cx.notify();
+    };
+    for _ in 0..8 {
+        cx.run_until_idle();
+        window.update(|window, cx| host.update(cx, |host, cx| update(host, window, cx)));
+    }
+    cx.bench_renderer(host, update);
+}
+
+/// The node engine's worst case: many small views, every one of them dirty on every
+/// update, so nothing is reused and each node pays its fixed bookkeeping in full.
+#[gpui::bench(
+    inputs = [64usize, 512],
+    group = "Siblings",
+    input_name = "all dirty",
+    sample_size = 20
+)]
+fn siblings_all_dirty(count: &usize, cx: &mut BenchAppContext) {
+    use gpui::{Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, px, rgb};
+
+    struct Leaf {
+        index: usize,
+        revision: usize,
+    }
+    impl Render for Leaf {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size(px(24.))
+                .m(px(2.))
+                .bg(rgb(if (self.index + self.revision).is_multiple_of(2) {
+                    0x336699
+                } else {
+                    0x996633
+                }))
+                .child(format!("{}", self.revision % 10))
+        }
+    }
+    struct Host {
+        leaves: Vec<Entity<Leaf>>,
+    }
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_wrap()
+                .bg(rgb(0x18202a))
+                .text_color(rgb(0xdde5ef))
+                .children(self.leaves.iter().cloned())
+        }
+    }
+
+    init_context(cx);
+    let count = *count;
+    let mut window = cx.add_empty_window();
+    let host = window.update(|window, cx| {
+        window.resize(gpui::size(px(1600.), px(1000.)));
+        window.bounds_changed(cx);
+        let leaves = (0..count)
+            .map(|index| cx.new(|_| Leaf { index, revision: 0 }))
+            .collect();
+        window.replace_root(cx, |_, _| Host { leaves })
+    });
+    let update = move |host: &mut Host, _: &mut Window, cx: &mut Context<Host>| {
+        for leaf in &host.leaves {
+            leaf.update(cx, |leaf, cx| {
+                leaf.revision += 1;
+                cx.notify();
+            });
+        }
+        cx.notify();
+    };
+    for _ in 0..4 {
+        cx.run_until_idle();
+        window.update(|window, cx| host.update(cx, |host, cx| update(host, window, cx)));
+    }
+    cx.bench_renderer(host, update);
+}
+
 fn init_context(cx: &mut BenchAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
@@ -375,6 +647,8 @@ gpui::bench_group!(
     editor_multi_cursor_input,
     open_editor_with_one_long_line,
     editor_render,
-    editor_render_with_editorconfig
+    editor_render_with_editorconfig,
+    workbench_render,
+    siblings_all_dirty
 );
 gpui::bench_main!(benches);

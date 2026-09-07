@@ -1,11 +1,10 @@
 use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
 use collections::FxHashMap;
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
     borrow::Borrow,
+    cell::RefCell,
     hash::{Hash, Hasher},
-    ops::Range,
     sync::Arc,
 };
 
@@ -451,9 +450,11 @@ impl WrappedLineLayout {
     }
 }
 
+/// Per window and used only on its thread: `RefCell`s rather than locks, since every
+/// element paints through here and a node's text use is opened and closed per phase.
 pub(crate) struct LineLayoutCache {
-    previous_frame: Mutex<FrameCache>,
-    current_frame: RwLock<FrameCache>,
+    previous_frame: RefCell<FrameCache>,
+    current_frame: RefCell<FrameCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
 }
 
@@ -461,8 +462,6 @@ pub(crate) struct LineLayoutCache {
 struct FrameCache {
     lines: FxHashMap<Arc<CacheKey>, Arc<LineLayout>>,
     wrapped_lines: FxHashMap<Arc<CacheKey>, Arc<WrappedLineLayout>>,
-    used_lines: Vec<Arc<CacheKey>>,
-    used_wrapped_lines: Vec<Arc<CacheKey>>,
 
     // Content-addressable caches keyed by caller-provided text hash + layout params.
     // These allow cache hits without materializing a contiguous `SharedString`.
@@ -472,103 +471,166 @@ struct FrameCache {
     // On miss, we allocate once and store under an owned `HashedCacheKey`.
     lines_by_hash: FxHashMap<Arc<HashedCacheKey>, Arc<LineLayout>>,
     wrapped_lines_by_hash: FxHashMap<Arc<HashedCacheKey>, Arc<WrappedLineLayout>>,
-    used_lines_by_hash: Vec<Arc<HashedCacheKey>>,
-    used_wrapped_lines_by_hash: Vec<Arc<HashedCacheKey>>,
+
+    /// The scopes being drawn, innermost last; every layout looked up is recorded in the
+    /// innermost. The outermost belongs to the frame itself.
+    uses: Vec<TextUse>,
+    /// Emptied uses handed back by redrawing nodes, so a new scope starts with capacity.
+    spare_uses: Vec<TextUse>,
 }
 
-#[derive(Clone, Default)]
-pub(crate) struct LineLayoutIndex {
-    lines_index: usize,
-    wrapped_lines_index: usize,
-    lines_by_hash_index: usize,
-    wrapped_lines_by_hash_index: usize,
+impl FrameCache {
+    fn clear(&mut self) {
+        self.lines.clear();
+        self.wrapped_lines.clear();
+        self.lines_by_hash.clear();
+        self.wrapped_lines_by_hash.clear();
+        self.uses.clear();
+        self.uses.push(TextUse::default());
+    }
+
+    fn current_use(&mut self) -> &mut TextUse {
+        if self.uses.is_empty() {
+            self.uses.push(TextUse::default());
+        }
+        self.uses.last_mut().expect("a use was just pushed")
+    }
+}
+
+/// The line layouts one scope looked up while drawing. A node keeps its `TextUse`s so the
+/// layouts stay shaped for as long as the node is reused, and seeds them back into the
+/// frame cache when it redraws.
+#[derive(Default)]
+pub(crate) struct TextUse {
+    lines: Vec<(Arc<CacheKey>, Arc<LineLayout>)>,
+    wrapped_lines: Vec<(Arc<CacheKey>, Arc<WrappedLineLayout>)>,
+    lines_by_hash: Vec<(Arc<HashedCacheKey>, Arc<LineLayout>)>,
+    wrapped_lines_by_hash: Vec<(Arc<HashedCacheKey>, Arc<WrappedLineLayout>)>,
+}
+
+impl TextUse {
+    fn clear(&mut self) {
+        self.lines.clear();
+        self.wrapped_lines.clear();
+        self.lines_by_hash.clear();
+        self.wrapped_lines_by_hash.clear();
+    }
+
+    /// The handles held; the layouts themselves are shared with the frame cache.
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.lines.capacity() * size_of::<(Arc<CacheKey>, Arc<LineLayout>)>()
+            + self.wrapped_lines.capacity() * size_of::<(Arc<CacheKey>, Arc<WrappedLineLayout>)>()
+            + self.lines_by_hash.capacity() * size_of::<(Arc<HashedCacheKey>, Arc<LineLayout>)>()
+            + self.wrapped_lines_by_hash.capacity()
+                * size_of::<(Arc<HashedCacheKey>, Arc<WrappedLineLayout>)>()
+    }
+
+    pub(crate) fn append(&mut self, mut other: TextUse) {
+        self.lines.append(&mut other.lines);
+        self.wrapped_lines.append(&mut other.wrapped_lines);
+        self.lines_by_hash.append(&mut other.lines_by_hash);
+        self.wrapped_lines_by_hash
+            .append(&mut other.wrapped_lines_by_hash);
+    }
+
+    fn checkpoint(&self) -> TextUseCheckpoint {
+        TextUseCheckpoint {
+            lines: self.lines.len(),
+            wrapped_lines: self.wrapped_lines.len(),
+            lines_by_hash: self.lines_by_hash.len(),
+            wrapped_lines_by_hash: self.wrapped_lines_by_hash.len(),
+        }
+    }
+
+    fn rollback(&mut self, checkpoint: TextUseCheckpoint) {
+        self.lines.truncate(checkpoint.lines);
+        self.wrapped_lines.truncate(checkpoint.wrapped_lines);
+        self.lines_by_hash.truncate(checkpoint.lines_by_hash);
+        self.wrapped_lines_by_hash
+            .truncate(checkpoint.wrapped_lines_by_hash);
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct TextUseCheckpoint {
+    lines: usize,
+    wrapped_lines: usize,
+    lines_by_hash: usize,
+    wrapped_lines_by_hash: usize,
 }
 
 impl LineLayoutCache {
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         Self {
-            previous_frame: Mutex::default(),
-            current_frame: RwLock::default(),
+            previous_frame: RefCell::default(),
+            current_frame: RefCell::default(),
             platform_text_system,
         }
     }
 
-    pub fn layout_index(&self) -> LineLayoutIndex {
-        let frame = self.current_frame.read();
-        LineLayoutIndex {
-            lines_index: frame.used_lines.len(),
-            wrapped_lines_index: frame.used_wrapped_lines.len(),
-            lines_by_hash_index: frame.used_lines_by_hash.len(),
-            wrapped_lines_by_hash_index: frame.used_wrapped_lines_by_hash.len(),
+    /// Starts recording the layouts a scope looks up; ended by `end_use`.
+    pub(crate) fn begin_use(&self) {
+        let mut frame = self.current_frame.borrow_mut();
+        let text_use = frame.spare_uses.pop().unwrap_or_default();
+        frame.uses.push(text_use);
+    }
+
+    /// Takes back a use a redrawing node no longer needs, keeping its buffers for the next
+    /// scope. Bounded, since a burst of unmounts could otherwise hand back thousands.
+    pub(crate) fn recycle(&self, mut text_use: TextUse) {
+        let mut frame = self.current_frame.borrow_mut();
+        if frame.spare_uses.len() < 256 {
+            text_use.clear();
+            frame.spare_uses.push(text_use);
         }
     }
 
-    pub fn reuse_layouts(&self, range: Range<LineLayoutIndex>) {
-        let mut previous_frame = &mut *self.previous_frame.lock();
-        let mut current_frame = &mut *self.current_frame.write();
-
-        for key in &previous_frame.used_lines[range.start.lines_index..range.end.lines_index] {
-            if let Some((key, line)) = previous_frame.lines.remove_entry(key) {
-                current_frame.lines.insert(key, line);
-            }
-            current_frame.used_lines.push(key.clone());
-        }
-
-        for key in &previous_frame.used_wrapped_lines
-            [range.start.wrapped_lines_index..range.end.wrapped_lines_index]
-        {
-            if let Some((key, line)) = previous_frame.wrapped_lines.remove_entry(key) {
-                current_frame.wrapped_lines.insert(key, line);
-            }
-            current_frame.used_wrapped_lines.push(key.clone());
-        }
-
-        for key in &previous_frame.used_lines_by_hash
-            [range.start.lines_by_hash_index..range.end.lines_by_hash_index]
-        {
-            if let Some((key, line)) = previous_frame.lines_by_hash.remove_entry(key) {
-                current_frame.lines_by_hash.insert(key, line);
-            }
-            current_frame.used_lines_by_hash.push(key.clone());
-        }
-
-        for key in &previous_frame.used_wrapped_lines_by_hash
-            [range.start.wrapped_lines_by_hash_index..range.end.wrapped_lines_by_hash_index]
-        {
-            if let Some((key, line)) = previous_frame.wrapped_lines_by_hash.remove_entry(key) {
-                current_frame.wrapped_lines_by_hash.insert(key, line);
-            }
-            current_frame.used_wrapped_lines_by_hash.push(key.clone());
+    pub(crate) fn end_use(&self) -> TextUse {
+        let mut frame = self.current_frame.borrow_mut();
+        // The frame's own use stays as the outermost scope.
+        if frame.uses.len() > 1 {
+            frame.uses.pop().unwrap_or_default()
+        } else {
+            TextUse::default()
         }
     }
 
-    pub fn truncate_layouts(&self, index: LineLayoutIndex) {
-        let mut current_frame = &mut *self.current_frame.write();
-        current_frame.used_lines.truncate(index.lines_index);
-        current_frame
-            .used_wrapped_lines
-            .truncate(index.wrapped_lines_index);
-        current_frame
-            .used_lines_by_hash
-            .truncate(index.lines_by_hash_index);
-        current_frame
-            .used_wrapped_lines_by_hash
-            .truncate(index.wrapped_lines_by_hash_index);
+    /// Makes the layouts a scope used the last time it drew available to this frame, so a
+    /// redraw finds them without reshaping.
+    pub(crate) fn seed(&self, text_use: &TextUse) {
+        let mut frame = self.current_frame.borrow_mut();
+        for (key, layout) in &text_use.lines {
+            frame.lines.insert(key.clone(), layout.clone());
+        }
+        for (key, layout) in &text_use.wrapped_lines {
+            frame.wrapped_lines.insert(key.clone(), layout.clone());
+        }
+        for (key, layout) in &text_use.lines_by_hash {
+            frame.lines_by_hash.insert(key.clone(), layout.clone());
+        }
+        for (key, layout) in &text_use.wrapped_lines_by_hash {
+            frame
+                .wrapped_lines_by_hash
+                .insert(key.clone(), layout.clone());
+        }
+    }
+
+    pub(crate) fn use_checkpoint(&self) -> TextUseCheckpoint {
+        self.current_frame.borrow_mut().current_use().checkpoint()
+    }
+
+    pub(crate) fn rollback_use(&self, checkpoint: TextUseCheckpoint) {
+        self.current_frame
+            .borrow_mut()
+            .current_use()
+            .rollback(checkpoint)
     }
 
     pub fn finish_frame(&self) {
-        let mut prev_frame = self.previous_frame.lock();
-        let mut curr_frame = self.current_frame.write();
-        std::mem::swap(&mut *prev_frame, &mut *curr_frame);
-        curr_frame.lines.clear();
-        curr_frame.wrapped_lines.clear();
-        curr_frame.used_lines.clear();
-        curr_frame.used_wrapped_lines.clear();
-
-        curr_frame.lines_by_hash.clear();
-        curr_frame.wrapped_lines_by_hash.clear();
-        curr_frame.used_lines_by_hash.clear();
-        curr_frame.used_wrapped_lines_by_hash.clear();
+        let mut previous_frame = self.previous_frame.borrow_mut();
+        let mut current_frame = self.current_frame.borrow_mut();
+        std::mem::swap(&mut *previous_frame, &mut *current_frame);
+        current_frame.clear();
     }
 
     pub fn layout_wrapped_line<Text>(
@@ -591,18 +653,31 @@ impl LineLayoutCache {
             force_width: None,
         } as &dyn AsCacheKeyRef;
 
-        let current_frame = self.current_frame.upgradable_read();
-        if let Some(layout) = current_frame.wrapped_lines.get(key) {
-            return layout.clone();
+        let current_frame = self.current_frame.borrow_mut();
+        if let Some((key, layout)) = current_frame.wrapped_lines.get_key_value(key) {
+            let (key, layout) = (key.clone(), layout.clone());
+            let mut current_frame = current_frame;
+            current_frame
+                .current_use()
+                .wrapped_lines
+                .push((key, layout.clone()));
+            return layout;
         }
 
-        let previous_frame_entry = self.previous_frame.lock().wrapped_lines.remove_entry(key);
+        let previous_frame_entry = self
+            .previous_frame
+            .borrow_mut()
+            .wrapped_lines
+            .remove_entry(key);
         if let Some((key, layout)) = previous_frame_entry {
-            let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+            let mut current_frame = current_frame;
             current_frame
                 .wrapped_lines
                 .insert(key.clone(), layout.clone());
-            current_frame.used_wrapped_lines.push(key);
+            current_frame
+                .current_use()
+                .wrapped_lines
+                .push((key, layout.clone()));
             layout
         } else {
             drop(current_frame);
@@ -626,11 +701,14 @@ impl LineLayoutCache {
                 force_width: None,
             });
 
-            let mut current_frame = self.current_frame.write();
+            let mut current_frame = self.current_frame.borrow_mut();
             current_frame
                 .wrapped_lines
                 .insert(key.clone(), layout.clone());
-            current_frame.used_wrapped_lines.push(key);
+            current_frame
+                .current_use()
+                .wrapped_lines
+                .push((key, layout.clone()));
 
             layout
         }
@@ -655,15 +733,25 @@ impl LineLayoutCache {
             force_width,
         } as &dyn AsCacheKeyRef;
 
-        let current_frame = self.current_frame.upgradable_read();
-        if let Some(layout) = current_frame.lines.get(key) {
-            return layout.clone();
+        let current_frame = self.current_frame.borrow_mut();
+        if let Some((key, layout)) = current_frame.lines.get_key_value(key) {
+            let (key, layout) = (key.clone(), layout.clone());
+            let mut current_frame = current_frame;
+            current_frame
+                .current_use()
+                .lines
+                .push((key, layout.clone()));
+            return layout;
         }
 
-        let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
-        if let Some((key, layout)) = self.previous_frame.lock().lines.remove_entry(key) {
+        let mut current_frame = current_frame;
+        let previous_frame_entry = self.previous_frame.borrow_mut().lines.remove_entry(key);
+        if let Some((key, layout)) = previous_frame_entry {
             current_frame.lines.insert(key.clone(), layout.clone());
-            current_frame.used_lines.push(key);
+            current_frame
+                .current_use()
+                .lines
+                .push((key, layout.clone()));
             layout
         } else {
             let text = SharedString::from(text);
@@ -684,7 +772,10 @@ impl LineLayoutCache {
             });
             let layout = Arc::new(layout);
             current_frame.lines.insert(key.clone(), layout.clone());
-            current_frame.used_lines.push(key);
+            current_frame
+                .current_use()
+                .lines
+                .push((key, layout.clone()));
             layout
         }
     }
@@ -714,7 +805,7 @@ impl LineLayoutCache {
             force_width,
         };
 
-        let current_frame = self.current_frame.read();
+        let current_frame = self.current_frame.borrow();
         if let Some((_, layout)) = current_frame.lines_by_hash.iter().find(|(key, _)| {
             HashedCacheKeyRef {
                 text_hash: key.text_hash,
@@ -728,21 +819,21 @@ impl LineLayoutCache {
             return Some(layout.clone());
         }
 
-        let previous_frame = self.previous_frame.lock();
-        if let Some((_, layout)) = previous_frame.lines_by_hash.iter().find(|(key, _)| {
-            HashedCacheKeyRef {
-                text_hash: key.text_hash,
-                text_len: key.text_len,
-                font_size: key.font_size,
-                runs: key.runs.as_slice(),
-                wrap_width: key.wrap_width,
-                force_width: key.force_width,
-            } == key_ref
-        }) {
-            return Some(layout.clone());
-        }
-
-        None
+        let previous_frame = self.previous_frame.borrow_mut();
+        previous_frame
+            .lines_by_hash
+            .iter()
+            .find(|(key, _)| {
+                HashedCacheKeyRef {
+                    text_hash: key.text_hash,
+                    text_len: key.text_len,
+                    font_size: key.font_size,
+                    runs: key.runs.as_slice(),
+                    wrap_width: key.wrap_width,
+                    force_width: key.force_width,
+                } == key_ref
+            })
+            .map(|(_, layout)| layout.clone())
     }
 
     /// Layout a line of text using a caller-provided content hash as the cache key.
@@ -772,8 +863,8 @@ impl LineLayoutCache {
         };
 
         // Fast path: already cached (no allocation).
-        let current_frame = self.current_frame.upgradable_read();
-        if let Some((_, layout)) = current_frame.lines_by_hash.iter().find(|(key, _)| {
+        let current_frame = self.current_frame.borrow_mut();
+        if let Some((key, layout)) = current_frame.lines_by_hash.iter().find(|(key, _)| {
             HashedCacheKeyRef {
                 text_hash: key.text_hash,
                 text_len: key.text_len,
@@ -783,17 +874,23 @@ impl LineLayoutCache {
                 force_width: key.force_width,
             } == key_ref
         }) {
-            return layout.clone();
+            let (key, layout) = (key.clone(), layout.clone());
+            let mut current_frame = current_frame;
+            current_frame
+                .current_use()
+                .lines_by_hash
+                .push((key, layout.clone()));
+            return layout;
         }
 
-        let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+        let mut current_frame = current_frame;
 
         // Try to reuse from previous frame without allocating; do a linear scan to find a matching key.
         // (We avoid `drain()` here because it would eagerly move all entries.)
-        let mut previous_frame = self.previous_frame.lock();
-        if let Some(existing_key) = previous_frame
-            .used_lines_by_hash
-            .iter()
+        let mut previous_frame = self.previous_frame.borrow_mut();
+        let existing_key = previous_frame
+            .lines_by_hash
+            .keys()
             .find(|key| {
                 HashedCacheKeyRef {
                     text_hash: key.text_hash,
@@ -804,16 +901,20 @@ impl LineLayoutCache {
                     force_width: key.force_width,
                 } == key_ref
             })
-            .cloned()
+            .cloned();
+        if let Some(existing_key) = existing_key
+            && let Some((key, layout)) = previous_frame.lines_by_hash.remove_entry(&existing_key)
         {
-            if let Some((key, layout)) = previous_frame.lines_by_hash.remove_entry(&existing_key) {
-                current_frame
-                    .lines_by_hash
-                    .insert(key.clone(), layout.clone());
-                current_frame.used_lines_by_hash.push(key);
-                return layout;
-            }
+            current_frame
+                .lines_by_hash
+                .insert(key.clone(), layout.clone());
+            current_frame
+                .current_use()
+                .lines_by_hash
+                .push((key, layout.clone()));
+            return layout;
         }
+        drop(previous_frame);
 
         let text = materialize_text();
         let mut layout = self
@@ -836,7 +937,10 @@ impl LineLayoutCache {
         current_frame
             .lines_by_hash
             .insert(key.clone(), layout.clone());
-        current_frame.used_lines_by_hash.push(key);
+        current_frame
+            .current_use()
+            .lines_by_hash
+            .push((key, layout.clone()));
         layout
     }
 }

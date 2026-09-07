@@ -2242,7 +2242,8 @@ impl Interactivity {
                 }
 
                 let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
-                let layout_id = f(style, window, cx);
+                let layout_id =
+                    window.with_element_opacity(style.opacity, |window| f(style, window, cx));
                 (layout_id, element_state)
             },
         )
@@ -2328,22 +2329,24 @@ impl Interactivity {
                     }
                 }
 
-                window.with_text_style(style.text_style().cloned(), |window| {
-                    window.with_content_mask(
-                        style.overflow_mask(bounds, window.rem_size()),
-                        |window| {
-                            let hitbox = if self.should_insert_hitbox(&style, window, cx) {
-                                Some(window.insert_hitbox(bounds, self.hitbox_behavior))
-                            } else {
-                                None
-                            };
+                window.with_element_opacity(style.opacity, |window| {
+                    window.with_text_style(style.text_style().cloned(), |window| {
+                        window.with_content_mask(
+                            style.overflow_mask(bounds, window.rem_size()),
+                            |window| {
+                                let hitbox = if self.should_insert_hitbox(&style, window, cx) {
+                                    Some(window.insert_hitbox(bounds, self.hitbox_behavior))
+                                } else {
+                                    None
+                                };
 
-                            let scroll_offset =
-                                self.clamp_scroll_position(bounds, &style, window, cx);
-                            let result = f(&style, scroll_offset, hitbox, window, cx);
-                            (result, element_state)
-                        },
-                    )
+                                let scroll_offset =
+                                    self.clamp_scroll_position(bounds, &style, window, cx);
+                                let result = f(&style, scroll_offset, hitbox, window, cx);
+                                (result, element_state)
+                            },
+                        )
+                    })
                 })
             },
         )
@@ -2469,10 +2472,7 @@ impl Interactivity {
 
                 #[cfg(any(feature = "test-support", test))]
                 if let Some(debug_selector) = &self.debug_selector {
-                    window
-                        .next_frame
-                        .debug_bounds
-                        .insert(debug_selector.clone(), bounds);
+                    window.record_debug_bounds(debug_selector, bounds);
                 }
 
                 self.paint_hover_group_handler(window, cx);
@@ -2502,7 +2502,7 @@ impl Interactivity {
                                         // every item, and `focus_next` from a container would jump
                                         // to the first item in the whole window instead of its own.
                                         if let Some(focus_handle) = &self.tracked_focus_handle {
-                                            window.next_frame.tab_stops.insert(focus_handle);
+                                            window.insert_tab_stop(focus_handle);
                                         }
                                         if let Some(hitbox) = hitbox {
                                             #[cfg(debug_assertions)]
@@ -5027,6 +5027,48 @@ mod tests {
             1,
             "mouse down over an active prompt should not fire mouse-down-out listeners"
         );
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear(cx);
+                assert_eq!(window.node_stats().full_refresh_reason, Some("prompt"));
+                let position = window
+                    .last_hitbox_for_test()
+                    .expect("prompt button")
+                    .bounds
+                    .center();
+                window.dispatch_event(
+                    MouseDownEvent {
+                        position,
+                        button: MouseButton::Left,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.dispatch_event(
+                    crate::MouseUpEvent {
+                        position,
+                        button: MouseButton::Left,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .expect("window open");
+        test_app.run_until_parked();
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                assert!(!window.has_active_prompt());
+                window.draw(cx).clear(cx);
+            })
+            .expect("window open");
+        dispatch_mouse_down_outside_target(&mut test_app, any_window);
+        assert_eq!(*mouse_down_out_count.borrow(), 2);
     }
 
     #[test]
@@ -5405,11 +5447,9 @@ mod tests {
             .unwrap();
 
         let mut bounds = |selector: &'static str| {
-            cx.update_window(window.into(), |_, window, _| {
-                window.rendered_frame.debug_bounds.get(selector).copied()
-            })
-            .unwrap()
-            .unwrap_or_else(|| panic!("{selector} was not rendered"))
+            cx.update_window(window.into(), |_, window, _| window.debug_bounds(selector))
+                .unwrap()
+                .unwrap_or_else(|| panic!("{selector} was not rendered"))
         };
 
         assert_eq!(bounds("cell-0").origin.x, px(0.));

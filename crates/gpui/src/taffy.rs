@@ -30,11 +30,35 @@ struct NodeContext {
 }
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
+    /// Every live node. Taffy indexes by key and panics on a dead one, so removal consults
+    /// this first; it also says which nodes carry a measurement context, since Taffy's
+    /// `clear` and `remove` leave contexts behind and a context may own frame-arena
+    /// captures.
+    live: slotmap::SecondaryMap<slotmap::DefaultKey, LiveNode>,
+    /// Layout nothing retains past this frame: nodes requested outside every view node, and
+    /// trees laid out as roots inside one (a list item or editor block measured with
+    /// `layout_as_root`), which the node's own retained root does not reach. They are
+    /// removed when the frame ends, except for a tree that turned out to be the root a node
+    /// painted with, which is that node's to retain. Retained roots below them are
+    /// detached rather than dropped.
+    frame_nodes: Vec<LayoutId>,
+    /// The layout each retained root had when its node last drew, so a reused node can
+    /// tell whether its box moved. A subtree's layout is a function of its root's box and
+    /// its own retained styles, so the root is all that needs comparing.
+    root_layouts: slotmap::SecondaryMap<slotmap::DefaultKey, taffy::Layout>,
+    /// The available space each computed root was given, so `replace_layout` can
+    /// recompute the root a replaced subtree hangs from.
+    layout_inputs: slotmap::SecondaryMap<slotmap::DefaultKey, Size<AvailableSpace>>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     /// Unrounded absolute border-box top-left per-node coordinate in device pixels.
     absolute_outer_origins: FxHashMap<LayoutId, Point<f32>>,
     computed_layouts: FxHashSet<LayoutId>,
     layout_bounds_scratch_space: Vec<LayoutId>,
+}
+
+#[derive(Clone, Copy)]
+struct LiveNode {
+    measured: bool,
 }
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
@@ -45,6 +69,10 @@ impl TaffyLayoutEngine {
         taffy.disable_rounding();
         TaffyLayoutEngine {
             taffy,
+            live: slotmap::SecondaryMap::new(),
+            frame_nodes: Vec::new(),
+            root_layouts: slotmap::SecondaryMap::new(),
+            layout_inputs: slotmap::SecondaryMap::new(),
             absolute_layout_bounds: FxHashMap::default(),
             absolute_outer_origins: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
@@ -53,10 +81,104 @@ impl TaffyLayoutEngine {
     }
 
     pub fn clear(&mut self) {
+        for (key, node) in &self.live {
+            if node.measured {
+                self.taffy
+                    .set_node_context(key.into(), None)
+                    .expect(EXPECT_MESSAGE);
+            }
+        }
         self.taffy.clear();
+        self.live.clear();
+        self.frame_nodes.clear();
+        self.root_layouts.clear();
+        self.layout_bounds_scratch_space.clear();
+        self.layout_inputs.clear();
         self.absolute_layout_bounds.clear();
         self.absolute_outer_origins.clear();
         self.computed_layouts.clear();
+    }
+
+    /// Whether the retained root still has the layout it had when its node last drew.
+    pub(crate) fn root_layout_unchanged(&self, root: LayoutId) -> bool {
+        self.root_layouts.get(root.0.into())
+            == Some(self.taffy.layout(root.0).expect(EXPECT_MESSAGE))
+    }
+
+    /// Remembers the layout of a root whose node just drew, for `root_layout_unchanged`.
+    pub(crate) fn record_root_layout(&mut self, root: LayoutId) {
+        self.root_layouts.insert(
+            root.0.into(),
+            *self.taffy.layout(root.0).expect(EXPECT_MESSAGE),
+        );
+    }
+
+    pub(crate) fn retained_node_count(&self) -> usize {
+        self.live.len()
+    }
+
+    pub(crate) fn contains(&self, layout: LayoutId) -> bool {
+        self.live.contains_key(layout.0.into())
+    }
+
+    /// Marks layout no node retains, to be dropped when the frame ends.
+    pub(crate) fn mark_frame_node(&mut self, layout: LayoutId) {
+        self.frame_nodes.push(layout);
+    }
+
+    pub(crate) fn parent(&self, layout: LayoutId) -> Option<LayoutId> {
+        self.taffy.parent(layout.0).map(LayoutId)
+    }
+
+    /// Drops the layout nothing retains past this frame and the per-frame bounds caches.
+    pub(crate) fn finish_frame(&mut self) {
+        while let Some(layout) = self.frame_nodes.pop() {
+            if !self.root_layouts.contains_key(layout.0.into()) {
+                self.remove_subtree(layout);
+            }
+        }
+        self.absolute_layout_bounds.clear();
+        self.absolute_outer_origins.clear();
+        self.computed_layouts.clear();
+    }
+
+    /// Removes a tree that no node refers to any more: a re-rendered node's previous tree,
+    /// an unmounted node's tree, or at the end of the frame a frame-bound node's tree or a
+    /// frame node's. Descendants that are retained roots of other nodes are left in place
+    /// (detached, since their parent is gone): a frame-bound node's children may well be
+    /// reused next frame.
+    /// Nodes already removed as part of an ancestor's tree are skipped, so removal is
+    /// idempotent.
+    pub(crate) fn remove_subtree(&mut self, root: LayoutId) {
+        let mut pending = std::mem::take(&mut self.layout_bounds_scratch_space);
+        pending.clear();
+        pending.push(root);
+        while let Some(layout) = pending.pop() {
+            let key = layout.0.into();
+            if !self.live.contains_key(key)
+                || (layout != root && self.root_layouts.contains_key(key))
+            {
+                continue;
+            }
+            pending.extend(self.taffy.child_ids(layout.0).map(LayoutId));
+            self.remove_node(layout);
+        }
+        self.layout_bounds_scratch_space = pending;
+    }
+
+    fn remove_node(&mut self, layout: LayoutId) {
+        let key = layout.0.into();
+        let Some(node) = self.live.remove(key) else {
+            return;
+        };
+        if node.measured {
+            self.taffy
+                .set_node_context(layout.0, None)
+                .expect(EXPECT_MESSAGE);
+        }
+        self.taffy.remove(layout.0).expect(EXPECT_MESSAGE);
+        self.layout_inputs.remove(key);
+        self.root_layouts.remove(key);
     }
 
     pub fn request_layout(
@@ -68,18 +190,30 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale_factor);
 
-        if children.is_empty() {
+        // Retained children may still belong to the previous frame's parent.
+        // Detach them before Taffy assigns their new parent, so collecting the
+        // obsolete parent cannot detach them from the live tree.
+        for child in children {
+            if let Some(parent) = self.taffy.parent(child.0) {
+                self.taffy
+                    .remove_child(parent, child.0)
+                    .expect(EXPECT_MESSAGE);
+            }
+        }
+        let layout: LayoutId = if children.is_empty() {
             self.taffy
                 .new_leaf(taffy_style)
                 .expect(EXPECT_MESSAGE)
                 .into()
         } else {
             self.taffy
-                // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
                 .new_with_children(taffy_style, LayoutId::to_taffy_slice(children))
                 .expect(EXPECT_MESSAGE)
                 .into()
-        }
+        };
+        self.live
+            .insert(layout.0.into(), LiveNode { measured: false });
+        layout
     }
 
     pub fn request_measured_layout(
@@ -100,10 +234,40 @@ impl TaffyLayoutEngine {
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
 
-        self.taffy
+        let layout: LayoutId = self
+            .taffy
             .new_leaf_with_context(taffy_style, NodeContext { measure })
             .expect(EXPECT_MESSAGE)
-            .into()
+            .into();
+        self.live
+            .insert(layout.0.into(), LiveNode { measured: true });
+        layout
+    }
+
+    pub(crate) fn replace_layout(
+        &mut self,
+        previous: LayoutId,
+        layout: LayoutId,
+    ) -> (LayoutId, Size<AvailableSpace>) {
+        let mut root = previous.0;
+        while let Some(parent) = self.taffy.parent(root) {
+            root = parent;
+        }
+        let available_space = *self
+            .layout_inputs
+            .get(root.into())
+            .expect("retained layout was computed before prepaint");
+        if let Some(parent) = self.taffy.parent(previous.0) {
+            let children = self.taffy.children(parent).expect(EXPECT_MESSAGE);
+            if let Some(index) = children.iter().position(|child| *child == previous.0) {
+                self.taffy
+                    .replace_child_at_index(parent, index, layout.0)
+                    .expect(EXPECT_MESSAGE);
+            }
+        } else {
+            root = layout.0;
+        }
+        (LayoutId(root), available_space)
     }
 
     /// Treats any `auto` dimension of the given node's style as filling `size`.
@@ -191,6 +355,7 @@ impl TaffyLayoutEngine {
         window: &mut Window,
         cx: &mut App,
     ) {
+        self.layout_inputs.insert(id.0.into(), available_space);
         // Leaving this here until we have a better instrumentation approach.
         // println!("Laying out {} children", self.count_all_children(id)?);
         // println!("Max layout depth: {}", self.max_depth(0, id)?);
@@ -208,13 +373,7 @@ impl TaffyLayoutEngine {
             while let Some(id) = stack.pop() {
                 self.absolute_layout_bounds.remove(&id);
                 self.absolute_outer_origins.remove(&id);
-                stack.extend(
-                    self.taffy
-                        .children(id.into())
-                        .expect(EXPECT_MESSAGE)
-                        .into_iter()
-                        .map(LayoutId::from),
-                );
+                stack.extend(self.taffy.child_ids(id.into()).map(LayoutId::from));
             }
         }
 

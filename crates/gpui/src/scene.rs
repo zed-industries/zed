@@ -39,7 +39,9 @@ impl From<bool> for PaddedBool32 {
 #[derive(Default)]
 #[expect(missing_docs)]
 pub struct Scene {
-    pub(crate) paint_operations: Vec<PaintOperation>,
+    operation_count: usize,
+    node_scene: Option<crate::view_node::ViewNodeScene>,
+    node_scene_stack: Vec<crate::view_node::ViewNodeScene>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
     pub shadows: Vec<Shadow>,
@@ -55,7 +57,8 @@ pub struct Scene {
 #[expect(missing_docs)]
 impl Scene {
     pub fn clear(&mut self) {
-        self.paint_operations.clear();
+        debug_assert!(self.node_scene.is_none() && self.node_scene_stack.is_empty());
+        self.operation_count = 0;
         self.primitive_bounds.clear();
         self.layer_stack.clear();
         self.paths.clear();
@@ -69,19 +72,18 @@ impl Scene {
     }
 
     pub fn len(&self) -> usize {
-        self.paint_operations.len()
+        self.operation_count
     }
 
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
         let order = self.primitive_bounds.insert(bounds);
         self.layer_stack.push(order);
-        self.paint_operations
-            .push(PaintOperation::StartLayer(bounds));
+        self.record_operation(PaintOperation::StartLayer(bounds));
     }
 
     pub fn pop_layer(&mut self) {
         self.layer_stack.pop();
-        self.paint_operations.push(PaintOperation::EndLayer);
+        self.record_operation(PaintOperation::EndLayer);
     }
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
@@ -134,18 +136,76 @@ impl Scene {
                 self.surfaces.push(surface.clone());
             }
         }
-        self.paint_operations
-            .push(PaintOperation::Primitive(primitive));
+        self.record_operation(PaintOperation::Primitive(primitive));
     }
 
-    pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
-        for operation in &prev_scene.paint_operations[range] {
+    pub(crate) fn begin_node_scene(&mut self, mut recording: crate::view_node::ViewNodeScene) {
+        recording.begin();
+        if let Some(parent) = self.node_scene.replace(recording) {
+            self.node_scene_stack.push(parent);
+        }
+    }
+
+    pub(crate) fn finish_node_scene(
+        &mut self,
+        node_id: crate::node_engine::ViewNodeId,
+    ) -> crate::view_node::ViewNodeScene {
+        let mut recording = self.node_scene.take().expect("balanced node painting");
+        recording.finish();
+        self.node_scene = self.node_scene_stack.pop();
+        if let Some(parent) = &mut self.node_scene {
+            parent.push_child(node_id);
+        }
+        recording
+    }
+
+    pub(crate) fn suspend_node_scene(&mut self) -> Option<crate::view_node::ViewNodeScene> {
+        self.node_scene.take()
+    }
+
+    pub(crate) fn restore_node_scene(
+        &mut self,
+        mut parent: Option<crate::view_node::ViewNodeScene>,
+        child: crate::node_engine::ViewNodeId,
+    ) {
+        if let Some(parent) = &mut parent {
+            parent.push_child(child);
+        }
+        self.node_scene = parent;
+    }
+
+    fn record_operation(&mut self, operation: PaintOperation) {
+        self.operation_count += 1;
+        if let Some(recording) = &mut self.node_scene {
+            recording.push(operation);
+        }
+    }
+
+    pub(crate) fn replay_recording(&mut self, recording: &[PaintOperation]) {
+        for operation in recording {
             match operation {
                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn snapshot_for_test(&self) -> String {
+        format!(
+            "{:?}",
+            (
+                &self.shadows,
+                &self.quads,
+                &self.paths,
+                &self.underlines,
+                &self.monochrome_sprites,
+                &self.subpixel_sprites,
+                &self.polychrome_sprites,
+                &self.surfaces,
+            )
+        )
     }
 
     pub fn finish(&mut self) {

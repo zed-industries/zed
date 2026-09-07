@@ -304,6 +304,8 @@ mod tests {
             move |_, cx| ConfigurationTestView {
                 focus_handle: cx.focus_handle(),
                 configuration: custom,
+                notify_on_query: false,
+                renders: 0,
             }
         });
         let view = window.root(cx).unwrap();
@@ -342,16 +344,22 @@ mod tests {
         draw(cx);
         assert_eq!(test_window.text_input_configurations().len(), 2);
         assert_eq!(test_window.text_input_state_changes().len(), 1);
+        cx.update_window(window, |_, window, _| {
+            assert!(window.node_stats().reused_subtrees > 0);
+        })
+        .expect("window open");
 
         // Changing the configuration forwards the new value.
         let updated = TextInputConfiguration {
             suggestions: true,
             ..custom
         };
+        let renders_before_update = view.read_with(cx, |view, _| view.renders);
         view.update(cx, {
             let updated = updated.clone();
             |view, cx| {
                 view.configuration = updated;
+                view.notify_on_query = true;
                 cx.notify();
             }
         });
@@ -362,6 +370,11 @@ mod tests {
         );
         assert_eq!(test_window.text_input_configurations().len(), 3);
         assert_eq!(test_window.text_input_state_changes().len(), 1);
+        draw(cx);
+        assert!(
+            view.read_with(cx, |view, _| view.renders) >= renders_before_update + 2,
+            "a getter's explicit notification must invalidate its view"
+        );
 
         // Losing focus reverts the platform to the default configuration.
         cx.update_window(window, |_, window, cx| window.blur(cx))
@@ -382,12 +395,15 @@ mod tests {
     }
 
     struct ConfigurationTestView {
+        renders: usize,
+        notify_on_query: bool,
         focus_handle: FocusHandle,
         configuration: TextInputConfiguration,
     }
 
     impl Render for ConfigurationTestView {
         fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders += 1;
             let view = cx.entity();
             let focus_handle = self.focus_handle.clone();
             div().size_full().track_focus(&self.focus_handle).child(
@@ -477,8 +493,11 @@ mod tests {
         fn text_input_configuration(
             &mut self,
             _window: &mut Window,
-            _cx: &mut Context<Self>,
+            cx: &mut Context<Self>,
         ) -> TextInputConfiguration {
+            if std::mem::take(&mut self.notify_on_query) {
+                cx.notify();
+            }
             self.configuration.clone()
         }
     }

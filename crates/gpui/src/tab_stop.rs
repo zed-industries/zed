@@ -6,15 +6,17 @@ use sum_tree::Bias;
 
 use crate::{FocusHandle, FocusId};
 
-/// Represents a collection of focus handles using the tab-index APIs.
+/// The tab order of a frame, built by applying the frame's [`TabStopOperation`]s in
+/// drawing order.
 #[derive(Debug)]
 pub(crate) struct TabStopMap {
     current_path: TabStopPath,
-    pub(crate) insertion_history: Vec<TabStopOperation>,
+    insertion_history: Vec<TabStopOperation>,
     by_id: FxHashMap<FocusId, TabStopNode>,
     order: SumTree<TabStopNode>,
 }
 
+/// One step in building a frame's tab order, recorded where an element painted it.
 #[derive(Debug, Clone)]
 pub enum TabStopOperation {
     Insert(FocusHandle),
@@ -75,6 +77,14 @@ impl Default for TabStopMap {
 }
 
 impl TabStopMap {
+    pub fn apply(&mut self, operation: &TabStopOperation) {
+        match operation {
+            TabStopOperation::Insert(focus_handle) => self.insert(focus_handle),
+            TabStopOperation::Group(tab_index) => self.begin_group(*tab_index),
+            TabStopOperation::GroupEnd => self.end_group(),
+        }
+    }
+
     pub fn insert(&mut self, focus_handle: &FocusHandle) {
         self.insertion_history
             .push(TabStopOperation::Insert(focus_handle.clone()));
@@ -98,14 +108,6 @@ impl TabStopMap {
     pub fn end_group(&mut self) {
         self.insertion_history.push(TabStopOperation::GroupEnd);
         self.current_path.0.pop();
-    }
-
-    pub fn clear(&mut self) {
-        *self = Self::default();
-        self.current_path.0.clear();
-        self.insertion_history.clear();
-        self.by_id.clear();
-        self.order = SumTree::new(());
     }
 
     pub fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
@@ -182,17 +184,9 @@ impl TabStopMap {
         cursor.item()
     }
 
-    pub fn replay(&mut self, nodes: &[TabStopOperation]) {
-        for node in nodes {
-            match node {
-                TabStopOperation::Insert(focus_handle) => self.insert(focus_handle),
-                TabStopOperation::Group(tab_index) => self.begin_group(*tab_index),
-                TabStopOperation::GroupEnd => self.end_group(),
-            }
-        }
-    }
-
-    pub fn paint_index(&self) -> usize {
+    /// The number of operations applied, for comparing frames in tests.
+    #[cfg(test)]
+    pub(crate) fn operation_count(&self) -> usize {
         self.insertion_history.len()
     }
 

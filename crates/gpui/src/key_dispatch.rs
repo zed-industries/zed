@@ -58,8 +58,6 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
-    mem,
-    ops::Range,
     rc::Rc,
 };
 
@@ -90,25 +88,49 @@ pub(crate) struct DispatchNode {
     parent: Option<DispatchNodeId>,
 }
 
-pub(crate) struct ReusedSubtree {
-    old_range: Range<usize>,
-    new_range: Range<usize>,
-    contains_focus: bool,
-}
-
-impl ReusedSubtree {
-    pub fn refresh_node_id(&self, node_id: DispatchNodeId) -> DispatchNodeId {
-        debug_assert!(
-            self.old_range.contains(&node_id.0),
-            "node {} was not part of the reused subtree {:?}",
-            node_id.0,
-            self.old_range
-        );
-        DispatchNodeId((node_id.0 - self.old_range.start) + self.new_range.start)
+impl DispatchNode {
+    /// Whether the node contributes nothing to dispatch: no listeners, context, focus or
+    /// view. Such a node is transparent to every walk of the tree, which only reads those
+    /// fields along parent links, so a reused recording can leave it out.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.key_listeners.is_empty()
+            && self.action_listeners.is_empty()
+            && self.modifiers_changed_listeners.is_empty()
+            && self.context.is_none()
+            && self.focus_id.is_none()
+            && self.view_id.is_none()
     }
 
-    pub fn contains_focus(&self) -> bool {
-        self.contains_focus
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.key_listeners.capacity() * size_of::<KeyListener>()
+            + self.action_listeners.capacity() * size_of::<DispatchActionListener>()
+            + self.modifiers_changed_listeners.capacity() * size_of::<ModifiersChangedListener>()
+    }
+}
+
+impl Clone for DispatchNode {
+    fn clone(&self) -> Self {
+        Self {
+            key_listeners: self.key_listeners.clone(),
+            action_listeners: self.action_listeners.clone(),
+            modifiers_changed_listeners: self.modifiers_changed_listeners.clone(),
+            context: self.context.clone(),
+            focus_id: self.focus_id,
+            view_id: self.view_id,
+            parent: self.parent,
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        // Node recordings also reuse the listener buffers inside each node.
+        self.key_listeners.clone_from(&source.key_listeners);
+        self.action_listeners.clone_from(&source.action_listeners);
+        self.modifiers_changed_listeners
+            .clone_from(&source.modifiers_changed_listeners);
+        self.context.clone_from(&source.context);
+        self.focus_id = source.focus_id;
+        self.view_id = source.view_id;
+        self.parent = source.parent;
     }
 }
 
@@ -243,68 +265,29 @@ impl DispatchTree {
         self.node_stack.pop();
     }
 
-    fn move_node(&mut self, source: &mut DispatchNode) {
-        self.push_node();
-        if let Some(context) = source.context.clone() {
-            self.set_key_context(context);
+    /// Pushes a node reproduced from one recorded while a reused view drew, under the
+    /// active node. Returns its focus id so the caller can tell whether focus is inside.
+    pub(crate) fn push_recorded(&mut self, recorded: &DispatchNode) -> Option<FocusId> {
+        let node_id = self.push_node();
+        let node = &mut self.nodes[node_id.0];
+        node.key_listeners.clone_from(&recorded.key_listeners);
+        node.action_listeners.clone_from(&recorded.action_listeners);
+        node.modifiers_changed_listeners
+            .clone_from(&recorded.modifiers_changed_listeners);
+        node.context.clone_from(&recorded.context);
+        node.focus_id = recorded.focus_id;
+        node.view_id = recorded.view_id;
+        if let Some(context) = recorded.context.clone() {
+            self.context_stack.push(context);
         }
-        if let Some(focus_id) = source.focus_id {
-            self.set_focus_id(focus_id);
+        if let Some(focus_id) = recorded.focus_id {
+            self.focusable_node_ids.insert(focus_id, node_id);
         }
-        if let Some(view_id) = source.view_id {
-            self.set_view_id(view_id);
+        if let Some(view_id) = recorded.view_id {
+            self.view_node_ids.insert(view_id, node_id);
+            self.view_stack.push(view_id);
         }
-
-        let target = self.active_node();
-        target.key_listeners = mem::take(&mut source.key_listeners);
-        target.action_listeners = mem::take(&mut source.action_listeners);
-        target.modifiers_changed_listeners = mem::take(&mut source.modifiers_changed_listeners);
-    }
-
-    pub fn reuse_subtree(
-        &mut self,
-        old_range: Range<usize>,
-        source: &mut Self,
-        focus: Option<FocusId>,
-    ) -> ReusedSubtree {
-        let new_range = self.nodes.len()..self.nodes.len() + old_range.len();
-
-        let mut contains_focus = false;
-        let mut source_stack = vec![];
-        for (source_node_id, source_node) in source
-            .nodes
-            .iter_mut()
-            .enumerate()
-            .skip(old_range.start)
-            .take(old_range.len())
-        {
-            let source_node_id = DispatchNodeId(source_node_id);
-            while let Some(source_ancestor) = source_stack.last() {
-                if source_node.parent == Some(*source_ancestor) {
-                    break;
-                } else {
-                    source_stack.pop();
-                    self.pop_node();
-                }
-            }
-
-            source_stack.push(source_node_id);
-            if source_node.focus_id.is_some() && source_node.focus_id == focus {
-                contains_focus = true;
-            }
-            self.move_node(source_node);
-        }
-
-        while !source_stack.is_empty() {
-            source_stack.pop();
-            self.pop_node();
-        }
-
-        ReusedSubtree {
-            old_range,
-            new_range,
-            contains_focus,
-        }
+        recorded.focus_id
     }
 
     pub fn truncate(&mut self, index: usize) {
@@ -583,16 +566,6 @@ impl DispatchTree {
         }
         focus_path.reverse(); // Reverse the path so it goes from the root to the focused node.
         focus_path
-    }
-
-    pub fn view_path_reversed(&self, view_id: EntityId) -> impl Iterator<Item = EntityId> {
-        let mut current_node_id = self.view_node_ids.get(&view_id).copied();
-
-        std::iter::successors(
-            current_node_id.map(|node_id| self.node(node_id)),
-            |node_id| Some(self.node(node_id.parent?)),
-        )
-        .filter_map(|node| node.view_id)
     }
 
     pub fn node(&self, node_id: DispatchNodeId) -> &DispatchNode {
@@ -1656,24 +1629,16 @@ mod tests {
         cx.update(|window, _| assert!(window.has_pending_keystrokes()));
         assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(false));
 
-        let prefers_ime_after_blur = {
-            let mut platform_window = cx.test_window(cx.window_handle());
-            let mut input_handler = platform_window.take_input_handler();
-            cx.update(|window, cx| {
-                window.blur(cx);
-                assert!(!window.has_pending_keystrokes());
-                assert!(window.pending_input_is_none());
-            });
-            let prefers_ime = input_handler
-                .as_mut()
-                .map(|input_handler| input_handler.query_prefers_ime_for_printable_keys());
-            if let Some(input_handler) = input_handler {
-                platform_window.set_input_handler(input_handler);
-            }
-            prefers_ime
-        };
-        assert_eq!(prefers_ime_after_blur, Some(true));
+        cx.update(|window, cx| {
+            window.blur(cx);
+            assert!(!window.has_pending_keystrokes());
+            assert!(window.pending_input_is_none());
+        });
+        // Nothing is focused, so the platform has no text input to ask.
+        assert_eq!(query_prefers_ime_for_printable_keys(cx), None);
         cx.update(|window, cx| window.focus(&focus_handle, cx));
+        // Blurring cleared the pending keystrokes, so the IME is preferred again.
+        assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(true));
 
         cx.simulate_keystrokes("ctrl-x");
         assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(false));

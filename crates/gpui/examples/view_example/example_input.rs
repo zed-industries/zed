@@ -6,23 +6,26 @@
 //!   * `Input::editor(editor: Entity<Editor>)` — you hold the editor; cursor/selection
 //!     are now yours to read and drive too.
 //!
-//! Either way the chrome is identical. Because the string (or editor) is the
-//! input's *identity*, the internal `use_state(Editor)` is collision-safe across
-//! any number of inputs.
+//! Either way the chrome is identical. `Input` is a `Component`: it renders inline
+//! with its parent, and each inline `Input` gets its own element-id scope, so the
+//! internal `use_state(Editor)` is collision-safe across any number of inputs.
+//! It derives `PartialEq` so a parent can `.cached()` it and skip re-rendering it
+//! while its inputs are unchanged.
 
 use gpui::{
-    App, BoxShadow, CursorStyle, Entity, EntityId, Hsla, IntoElement, Pixels, StyleRefinement,
+    App, BoxShadow, Component, CursorStyle, Entity, Hsla, IntoElement, Pixels, StyleRefinement,
     Window, div, hsla, point, prelude::*, px, white,
 };
 
 use crate::example_editor::{Editor, standard_actions};
 
+#[derive(PartialEq)]
 enum Source {
     Value(Entity<String>),
     Editor(Entity<Editor>),
 }
 
-#[derive(IntoElement)]
+#[derive(PartialEq)]
 pub struct Input {
     source: Source,
     width: Option<Pixels>,
@@ -59,22 +62,16 @@ impl Input {
     }
 }
 
-impl gpui::View for Input {
-    fn entity_id(&self) -> Option<EntityId> {
-        Some(match &self.source {
-            Source::Value(value) => value.entity_id(),
-            Source::Editor(editor) => editor.entity_id(),
-        })
-    }
-
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        // Get the editor: use the one we were handed, or allocate it under our
-        // own (string-derived) identity so it persists and never collides.
-        let editor = match self.source {
+impl Component for Input {
+    fn render(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // Get the editor: use the one we were handed, or allocate one that lives as
+        // long as this input keeps rendering.
+        let editor = match &self.source {
             Source::Value(value) => {
+                let value = value.clone();
                 window.use_state(cx, move |window, cx| Editor::over(value, window, cx))
             }
-            Source::Editor(editor) => editor,
+            Source::Editor(editor) => editor.clone(),
         };
 
         let focus_handle = editor.read(cx).focus_handle.clone();

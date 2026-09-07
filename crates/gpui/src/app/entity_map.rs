@@ -1,4 +1,8 @@
-use crate::{App, AppContext, GpuiBorrow, VisualContext, Window, seal::Sealed};
+use crate::{
+    App, AppContext, GpuiBorrow, VisualContext, Window,
+    node_engine::{DependencySet, record_dependency},
+    seal::Sealed,
+};
 use anyhow::{Context as _, Result};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
@@ -56,6 +60,8 @@ impl Display for EntityId {
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Box<dyn Any>>,
     pub accessed_entities: RefCell<FxHashSet<EntityId>>,
+    accessed_entity_scopes: RefCell<Vec<DependencySet>>,
+    recycled_access_scopes: Vec<DependencySet>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
@@ -72,6 +78,8 @@ impl EntityMap {
         Self {
             entities: SecondaryMap::new(),
             accessed_entities: RefCell::new(FxHashSet::default()),
+            accessed_entity_scopes: RefCell::new(Vec::new()),
+            recycled_access_scopes: Vec::new(),
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
                 dropped_entity_ids: Vec::new(),
@@ -121,9 +129,8 @@ impl EntityMap {
     where
         T: 'static,
     {
-        let mut accessed_entities = self.accessed_entities.get_mut();
-        accessed_entities.insert(slot.entity_id);
-
+        // Creating an entity is not reading it: a render that constructs an entity without
+        // reading it does not depend on it.
         let handle = slot.0;
         self.entities.insert(handle.entity_id, Box::new(entity));
         handle
@@ -133,8 +140,7 @@ impl EntityMap {
     #[track_caller]
     pub fn lease<T>(&mut self, pointer: &Entity<T>) -> Lease<T> {
         self.assert_valid_context(pointer);
-        let mut accessed_entities = self.accessed_entities.get_mut();
-        accessed_entities.insert(pointer.entity_id);
+        self.record_access(pointer.entity_id);
 
         let entity = Some(
             self.entities
@@ -155,8 +161,7 @@ impl EntityMap {
 
     pub fn read<T: 'static>(&self, entity: &Entity<T>) -> &T {
         self.assert_valid_context(entity);
-        let mut accessed_entities = self.accessed_entities.borrow_mut();
-        accessed_entities.insert(entity.entity_id);
+        self.record_access(entity.entity_id);
 
         self.entities
             .get(entity.entity_id)
@@ -171,14 +176,56 @@ impl EntityMap {
         );
     }
 
-    pub fn extend_accessed(&mut self, entities: &FxHashSet<EntityId>) {
-        self.accessed_entities
-            .get_mut()
-            .extend(entities.iter().copied());
+    pub(crate) fn suspend_access_tracking(&mut self) -> (FxHashSet<EntityId>, Vec<DependencySet>) {
+        (
+            std::mem::take(self.accessed_entities.get_mut()),
+            std::mem::take(self.accessed_entity_scopes.get_mut()),
+        )
     }
 
+    pub(crate) fn restore_access_tracking(
+        &mut self,
+        previous: (FxHashSet<EntityId>, Vec<DependencySet>),
+    ) {
+        debug_assert!(self.accessed_entity_scopes.get_mut().is_empty());
+        *self.accessed_entities.get_mut() = previous.0;
+        *self.accessed_entity_scopes.get_mut() = previous.1;
+    }
+
+    #[cfg(test)]
     pub fn clear_accessed(&mut self) {
         self.accessed_entities.get_mut().clear();
+        debug_assert!(self.accessed_entity_scopes.get_mut().is_empty());
+    }
+
+    /// Opens a scope that collects the entities accessed until the matching
+    /// `end_access_scope`. Scopes nest; an inner scope's accesses are its own, not its
+    /// parent's, since a node is dirtied when any of its descendants is.
+    pub(crate) fn begin_access_scope(&mut self) {
+        let scope = self.recycled_access_scopes.pop().unwrap_or_default();
+        self.accessed_entity_scopes.get_mut().push(scope);
+    }
+
+    /// Closes the innermost scope, adding the entities it collected to `accessed`.
+    pub(crate) fn end_access_scope(&mut self, accessed: &mut DependencySet) {
+        let scopes = self.accessed_entity_scopes.get_mut();
+        let completed_scope = scopes.pop();
+        debug_assert!(
+            completed_scope.is_some(),
+            "entity access scope stack underflow"
+        );
+        let mut completed_scope = completed_scope.unwrap_or_default();
+        for entity_id in completed_scope.drain(..) {
+            record_dependency(accessed, entity_id);
+        }
+        self.recycled_access_scopes.push(completed_scope);
+    }
+
+    pub(crate) fn record_access(&self, entity_id: EntityId) {
+        self.accessed_entities.borrow_mut().insert(entity_id);
+        if let Some(scope) = self.accessed_entity_scopes.borrow_mut().last_mut() {
+            record_dependency(scope, entity_id);
+        }
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
@@ -1184,6 +1231,7 @@ impl fmt::Debug for BacktraceFormatter {
 
 #[cfg(test)]
 mod test {
+    use super::DependencySet;
     use crate::EntityMap;
 
     struct TestEntity {
@@ -1274,5 +1322,27 @@ mod test {
 
         drop(pre_existing);
         drop(leaked);
+    }
+
+    #[test]
+    fn nested_access_scopes_attribute_repeated_reads_to_each_boundary() {
+        let mut entity_map = EntityMap::new();
+        let slot = entity_map.reserve::<TestEntity>();
+        let entity = entity_map.insert(slot, TestEntity { i: 1 });
+        entity_map.clear_accessed();
+
+        entity_map.begin_access_scope();
+        assert_eq!(entity_map.read(&entity).i, 1);
+        entity_map.begin_access_scope();
+        assert_eq!(entity_map.read(&entity).i, 1);
+        let mut inner_accesses = DependencySet::new();
+        entity_map.end_access_scope(&mut inner_accesses);
+        let mut outer_accesses = DependencySet::new();
+        entity_map.end_access_scope(&mut outer_accesses);
+
+        assert_eq!(inner_accesses.len(), 1);
+        assert!(inner_accesses.contains(&entity.entity_id()));
+        assert_eq!(outer_accesses.len(), 1);
+        assert!(outer_accesses.contains(&entity.entity_id()));
     }
 }

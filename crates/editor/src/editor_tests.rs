@@ -186,6 +186,119 @@ fn test_highlighted_display_rows_in_range(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_workspace_rendering_stress(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let text: String = (0..250)
+        .map(|index| format!("fn function_{index}(value: usize) -> usize {{\n    // Rendering stress: λ\n    value + {index}\n}}\n"))
+        .collect();
+    let files: serde_json::Map<String, serde_json::Value> = (0..6)
+        .map(|index| (format!("file{index}.rs"), json!(text)))
+        .collect();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/rendering-stress"), json!(files))
+        .await;
+    let project = Project::test(fs, [path!("/rendering-stress").as_ref()], cx).await;
+    project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let window_handle = cx.update(|window, _| window.window_handle());
+    cx.simulate_window_resize(window_handle, size(px(1600.), px(1000.)));
+    let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .expect("worktree")
+            .read(cx)
+            .id()
+    });
+    let mut pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    let mut editors = Vec::new();
+    for index in 0..6 {
+        if index != 0 && index % 2 == 0 {
+            pane = workspace.update_in(cx, |workspace, window, cx| {
+                workspace.split_pane(pane.clone(), SplitDirection::Right, window, cx)
+            });
+        }
+        let file = format!("file{index}.rs");
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(
+                    (worktree_id, rel_path(&file)),
+                    Some(pane.downgrade()),
+                    true,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("open file")
+            .downcast::<Editor>()
+            .expect("editor");
+        editors.push((pane.clone(), editor));
+    }
+    cx.run_until_parked();
+    let mut reused_subtrees = 0;
+    let mut maximum_layout_nodes = 0;
+    let mut maximum_retained_bytes = 0;
+    let mut maximum_live_nodes = 0;
+    let steps = std::env::var("GPUI_STRESS_STEPS").map_or(48, |value| {
+        value.parse::<usize>().expect("stress step count")
+    });
+    assert!(steps >= 4, "stress workload needs at least four updates");
+    for step in 0..steps {
+        let editor_index = step / 4 % editors.len();
+        let (pane, editor) = &editors[editor_index];
+        if step % 4 == 0 {
+            pane.update_in(cx, |pane, window, cx| {
+                pane.activate_item(editor_index % 2, true, true, window, cx);
+            });
+        }
+        editor.update_in(cx, |editor, window, cx| {
+            let row = (step * 17 % 225 * 4) as u32;
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([Point::new(row, 0)..Point::new(row, 2)]);
+            });
+            if step % 3 == 0 {
+                editor.handle_input("// edited ", window, cx);
+            }
+            editor.scroll_screen(
+                &ScrollAmount::Page(if step % 2 == 0 { 1. } else { -0.5 }),
+                window,
+                cx,
+            );
+        });
+        if step % 8 == 0 {
+            cx.simulate_window_resize(
+                window_handle,
+                size(px(1200. + (step % 3) as f32 * 100.), px(800.)),
+            );
+        }
+        cx.run_until_parked();
+        let scene_size = cx.update(|window, _| window.scene_snapshot_for_test().len());
+        assert!(
+            scene_size > 1000,
+            "workspace must produce a nontrivial scene"
+        );
+        let stats = cx.assert_incremental_matches_full_refresh(format_args!("step {step}"));
+        if step < 4 {
+            eprintln!("workspace rendering step {step}: {stats:?}");
+        }
+        reused_subtrees += stats.reused_subtrees;
+        maximum_layout_nodes = maximum_layout_nodes.max(stats.layout_nodes);
+        maximum_retained_bytes = maximum_retained_bytes.max(stats.retained_bytes);
+        maximum_live_nodes = maximum_live_nodes.max(stats.live_nodes);
+    }
+    assert!(
+        reused_subtrees > 0,
+        "stress workload must exercise node reuse"
+    );
+    eprintln!(
+        "workspace rendering stress: 6 Rust files, 3 panes, {steps} updates; reused subtrees={reused_subtrees}, maximum live nodes={maximum_live_nodes}, maximum layout nodes={maximum_layout_nodes}, maximum retained bytes={maximum_retained_bytes}"
+    );
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod property_test;
 
@@ -524,6 +637,114 @@ fn test_accessibility_keyboard_word_completion(cx: &mut TestAppContext) {
 
         editor
     });
+}
+
+#[gpui::test]
+fn test_ime_platform_handler_across_memoized_frames(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let buffer = MultiBuffer::build_simple("abcde\nsecond line", cx);
+        let editor = build_editor(buffer, window, cx);
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+    let handle = cx.update(|window, _| window.window_handle());
+    cx.run_until_parked();
+
+    for text in ["に", "日本😀", "日本語"] {
+        let mut handler = cx
+            .input_handler(handle)
+            .expect("focused editor input handler");
+        let replacement_end = handler.marked_text_range().map_or(1, |range| range.end);
+        handler.replace_and_mark_text_in_range(
+            Some(0..replacement_end),
+            text,
+            Some(text.encode_utf16().count()..text.encode_utf16().count()),
+        );
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|window, _| {
+            let stats = window.node_stats();
+            assert!(
+                stats.reused_subtrees > 0,
+                "IME test must replay a cached handler: {stats:?}"
+            );
+        });
+        let mut handler = cx.input_handler(handle).expect("replayed input handler");
+        assert_eq!(
+            handler.marked_text_range(),
+            Some(0..text.encode_utf16().count())
+        );
+        assert_eq!(
+            handler.text_for_range(0..text.encode_utf16().count(), &mut None),
+            Some(text.to_owned())
+        );
+        let configuration = cx.update(|window, cx| handler.text_input_configuration(window, cx));
+        let editable = handler.text_input_editable_range();
+        let candidate = handler
+            .ime_candidate_bounds()
+            .expect("composition candidate bounds");
+        let selection = handler
+            .selected_text_range(true)
+            .expect("composition selection");
+        let end = text.encode_utf16().count();
+        assert_eq!(selection.range, end..end);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let mut handler = cx.input_handler(handle).expect("rebuilt input handler");
+        assert_eq!(handler.ime_candidate_bounds(), Some(candidate));
+        assert_eq!(
+            cx.update(|window, cx| handler.text_input_configuration(window, cx)),
+            configuration
+        );
+        assert_eq!(handler.text_input_editable_range(), editable);
+        let rebuilt_selection = handler
+            .selected_text_range(true)
+            .expect("rebuilt selection");
+        assert_eq!(rebuilt_selection.range, selection.range);
+        assert_eq!(rebuilt_selection.reversed, selection.reversed);
+    }
+    let mut handler = cx
+        .input_handler(handle)
+        .expect("input handler before commit");
+    handler.replace_text_in_range(None, "確定");
+    cx.run_until_parked();
+    assert_eq!(handler.marked_text_range(), None);
+    assert_eq!(
+        editor.read_with(cx, |editor, cx| editor.text(cx)),
+        "確定bcde\nsecond line"
+    );
+    handler.replace_and_mark_text_in_range(Some(0..2), "未確定", Some(3..3));
+    cx.run_until_parked();
+    cx.simulate_window_resize(handle, size(px(500.), px(250.)));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.scroll_screen(&ScrollAmount::Page(0.5), window, cx);
+    });
+    cx.run_until_parked();
+    let mut handler = cx
+        .input_handler(handle)
+        .expect("input handler after geometry change");
+    assert_eq!(handler.marked_text_range(), Some(0..3));
+    let candidate = handler.ime_candidate_bounds();
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    let mut handler = cx
+        .input_handler(handle)
+        .expect("input handler after refresh");
+    assert_eq!(handler.ime_candidate_bounds(), candidate);
+    handler.unmark_text();
+    assert_eq!(handler.marked_text_range(), None);
+    handler.replace_and_mark_text_in_range(Some(0..3), "途中", Some(2..2));
+    cx.run_until_parked();
+    assert_eq!(handler.marked_text_range(), Some(0..2));
+    cx.update(|window, cx| {
+        window.replace_root(cx, |_, _| gpui::Empty);
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.input_handler(handle).is_none(),
+        "removed editor must relinquish platform input"
+    );
 }
 
 #[gpui::test]

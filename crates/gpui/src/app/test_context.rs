@@ -1,12 +1,12 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
-    Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, Result, SharedString, Size, SystemNotification,
-    SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
-    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
-    app::GpuiMode, window::ElementArenaScope,
+    Element, ElementId, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, GlobalElementId,
+    InputEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, NodeStats, Pixels, Platform, Point, Render, Result, SharedString,
+    Size, SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
+    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
+    WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -527,6 +527,17 @@ impl TestAppContext {
         .unwrap();
     }
 
+    /// Returns a handle to the platform input handler installed by the last draw, for
+    /// input-method tests. Like the platform's own handle, it stops resolving once the
+    /// window draws again, so fetch a fresh one after each frame.
+    pub fn input_handler(&self, window: AnyWindowHandle) -> Option<crate::PlatformInputHandler> {
+        use crate::PlatformWindow as _;
+        let mut window = self.test_window(window);
+        let handler = window.take_input_handler()?;
+        window.set_input_handler(handler.resolving_again());
+        Some(handler)
+    }
+
     /// Returns the `TestWindow` backing the given handle.
     pub(crate) fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
         self.app
@@ -766,6 +777,33 @@ impl VisualTestContext {
         self.cx.background_executor.run_until_parked();
     }
 
+    /// The node engine's oracle: the frame the window drew incrementally, reusing nodes,
+    /// must equal the frame a full refresh draws from the same state. Asserts that for the
+    /// window's rendered frame and returns the incremental frame's node statistics, which
+    /// callers use to check the workload exercised reuse at all.
+    ///
+    /// Call after `run_until_parked`, so the incremental frame is the one on screen. On
+    /// return the window has been fully refreshed.
+    pub fn assert_incremental_matches_full_refresh(
+        &mut self,
+        step: impl std::fmt::Display,
+    ) -> NodeStats {
+        let (incremental, stats) =
+            self.update(|window, _| (window.scene_snapshot_for_test(), window.node_stats()));
+        assert!(
+            !incremental.is_empty(),
+            "the window must have drawn a frame before {step}"
+        );
+        self.update(|window, _| window.refresh());
+        self.run_until_parked();
+        let rebuilt = self.update(|window, _| window.scene_snapshot_for_test());
+        assert!(
+            incremental == rebuilt,
+            "incremental scene differs from full refresh at {step}"
+        );
+        stats
+    }
+
     /// Dispatch the action to the currently focused node.
     pub fn dispatch_action<A>(&mut self, action: A)
     where
@@ -886,7 +924,7 @@ impl VisualTestContext {
 
     /// debug_bounds returns the bounds of the element with the given selector.
     pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
-        self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())
+        self.update(|window, _| window.debug_bounds(selector))
     }
 
     /// Draw an element to the window. Useful for simulating events or actions
@@ -902,15 +940,39 @@ impl VisualTestContext {
         self.update(|window, cx| {
             let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
-            window.invalidator.set_phase(DrawPhase::Prepaint);
+            window.set_draw_phase(DrawPhase::Prepaint);
+            // The element is drawn as a root of the frame that follows, ahead of the
+            // window's root view, and is gone from the frame after that.
+            let cache_key = window.view_node_key(Bounds::default());
+            let root = window.node_engine.mount_root(
+                GlobalElementId(std::sync::Arc::from([ElementId::Name(
+                    "VisualTestContext::draw".into(),
+                )])),
+                // A path of its own, hashed by nothing else: no real path is drawn from
+                // an empty scope with this hash.
+                u64::MAX,
+                &cache_key,
+            );
+            window.restart_node_render(root);
+
             let mut element = Drawable::new(f(window, cx));
+            window.enter_node_layout(root);
             element.layout_as_root(space.into(), window, cx);
+            window.finish_node_phase(root, true);
+            window.enter_node_prepaint(root);
             window.with_absolute_element_offset(origin, |window| element.prepaint(window, cx));
+            window.finish_node_phase(root, true);
 
-            window.invalidator.set_phase(DrawPhase::Paint);
+            window.set_draw_phase(DrawPhase::Paint);
+            window.enter_node_paint(root);
+            window.begin_view_node_paint(root);
             let (request_layout_state, prepaint_state) = element.paint(window, cx);
+            window.finish_view_node_paint(root);
+            window.finish_node_phase(root, true);
+            let accessed_entities = window.node_engine.take_dependency_set();
+            window.store_node_render(root, cache_key, accessed_entities);
 
-            window.invalidator.set_phase(DrawPhase::None);
+            window.set_draw_phase(DrawPhase::None);
             window.refresh();
 
             drop(element);

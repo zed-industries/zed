@@ -46,3 +46,7 @@ slow-timeout = { period = "300s", terminate-after = 1 }
 [[profile.default.overrides]]
 filter =  'package(editor) and test(test_random_blocks)'
 slow-timeout = { period = "300s", terminate-after = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(editor) and test(test_workspace_rendering_stress)'
+slow-timeout = { period = "300s", terminate-after = 1 }
