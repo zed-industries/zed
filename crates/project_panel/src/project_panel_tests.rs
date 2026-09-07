@@ -174,6 +174,17 @@ async fn test_opening_file(cx: &mut gpui::TestAppContext) {
         ]
     );
     ensure_single_file_is_opened(&workspace, "test/second.rs", cx);
+
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    pane.read_with(cx, |pane, _| {
+        assert_eq!(pane.items_len(), 1);
+        let active_item = pane.active_item();
+        assert!(active_item.is_some());
+        assert_eq!(
+            pane.preview_item_id(),
+            active_item.map(|item| item.item_id())
+        );
+    });
 }
 
 #[gpui::test]
