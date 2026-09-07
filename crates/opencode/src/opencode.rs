@@ -1094,7 +1094,7 @@ impl Model {
 ///
 /// Unlike `google_ai::stream_generate_content()`, this uses:
 /// - `/v1/models/{model}` path (not `/v1beta/models/{model}`)
-/// - `Authorization: Bearer` header (not `key=` query param)
+/// - `x-goog-api-key` header (not `key=` query param)
 pub async fn stream_generate_content(
     client: &dyn HttpClient,
     api_url: &str,
@@ -1112,7 +1112,7 @@ pub async fn stream_generate_content(
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {api_key}"))
+        .header("x-goog-api-key", api_key)
         .extra_headers(extra_headers)
         .body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
