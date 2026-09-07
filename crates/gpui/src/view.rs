@@ -937,8 +937,9 @@ mod tests {
     }
 
     use crate::{
-        Bounds, Component, Context, Entity, Modifiers, Render, ScaledPixels, StyleRefinement,
-        TestAppContext, VisualTestContext, Window, deferred, div, point, prelude::*, px, rgb, size,
+        Bounds, Component, Context, Entity, FocusHandle, Modifiers, Render, ScaledPixels,
+        StyleRefinement, TestAppContext, VisualTestContext, Window, deferred, div, point,
+        prelude::*, px, rgb, size,
     };
     use std::{cell::Cell, rc::Rc};
 
@@ -1248,6 +1249,51 @@ mod tests {
                     .bg(rgb(0xff00ff)),
             ))
         }
+    }
+
+    struct TabStopsRoot {
+        first: FocusHandle,
+        second: FocusHandle,
+    }
+
+    impl Render for TabStopsRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .child(div().id("first").track_focus(&self.first))
+                .child(div().id("second").track_focus(&self.second))
+        }
+    }
+
+    #[gpui::test]
+    fn focus_at_tab_edge_reports_where_traversal_would_wrap(cx: &mut TestAppContext) {
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| TabStopsRoot {
+            first: cx.focus_handle().tab_stop(true).tab_index(0),
+            second: cx.focus_handle().tab_stop(true).tab_index(1),
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |root, window, cx| {
+                // Nothing focused: both directions have somewhere to go.
+                assert!(!window.focus_at_tab_edge(false));
+                assert!(!window.focus_at_tab_edge(true));
+                window.focus(&root.first, cx);
+            })
+            .expect("window");
+        cx.run_until_parked();
+        window
+            .update(cx, |root, window, cx| {
+                assert!(window.focus_at_tab_edge(true));
+                assert!(!window.focus_at_tab_edge(false));
+                window.focus(&root.second, cx);
+            })
+            .expect("window");
+        cx.run_until_parked();
+        window
+            .update(cx, |_, window, _| {
+                assert!(!window.focus_at_tab_edge(true));
+                assert!(window.focus_at_tab_edge(false));
+            })
+            .expect("window");
     }
 
     #[gpui::test]

@@ -171,6 +171,24 @@ impl TabStopMap {
         }
     }
 
+    /// Whether moving focus forward from `focused_id` would wrap: it is on the last tab
+    /// stop, or there is nothing to move to.
+    pub fn is_last(&self, focused_id: Option<&FocusId>) -> bool {
+        match focused_id.and_then(|id| self.tab_node_for_focus_id(id)) {
+            Some(node) => self.next_inner(node).is_none(),
+            None => self.next(None).is_none(),
+        }
+    }
+
+    /// Whether moving focus backward from `focused_id` would wrap: it is on the first
+    /// tab stop, or there is nothing to move to.
+    pub fn is_first(&self, focused_id: Option<&FocusId>) -> bool {
+        match focused_id.and_then(|id| self.tab_node_for_focus_id(id)) {
+            Some(node) => self.prev_inner(node).is_none(),
+            None => self.prev(None).is_none(),
+        }
+    }
+
     fn prev_inner(&self, node: &TabStopNode) -> Option<&TabStopNode> {
         let mut cursor = self.order.cursor::<TabStopNode>(());
         cursor.seek(&node, Bias::Left);
