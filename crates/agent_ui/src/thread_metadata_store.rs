@@ -334,11 +334,28 @@ impl ThreadMetadata {
 
     pub fn display_title(&self) -> SharedString {
         self.title()
+            .map(|title| {
+                let sanitized = title.replace(['\n', '\r'], " ").trim().to_string();
+                if sanitized.is_empty() {
+                    crate::DEFAULT_THREAD_TITLE.into()
+                } else {
+                    sanitized.into()
+                }
+            })
             .unwrap_or_else(|| crate::DEFAULT_THREAD_TITLE.into())
     }
 
     pub fn title(&self) -> Option<SharedString> {
         self.title_override.clone().or_else(|| self.title.clone())
+    }
+
+    fn sanitize_title(title: SharedString) -> Option<SharedString> {
+        let sanitized = title.replace(['\n', '\r'], " ").trim().to_string();
+        if sanitized.is_empty() {
+            None
+        } else {
+            Some(sanitized.into())
+        }
     }
 
     pub fn folder_paths(&self) -> &PathList {
@@ -708,11 +725,12 @@ impl ThreadMetadataStore {
         let Some(existing) = self.entry(thread_id) else {
             return;
         };
-        if existing.title_override.as_ref() == Some(&title_override) {
+        let title_override = ThreadMetadata::sanitize_title(title_override);
+        if existing.title_override == title_override {
             return;
         }
         let metadata = ThreadMetadata {
-            title_override: Some(title_override),
+            title_override,
             ..existing.clone()
         };
         self.save(metadata, cx);
@@ -727,11 +745,12 @@ impl ThreadMetadataStore {
         let Some(existing) = self.entry(thread_id) else {
             return;
         };
-        if existing.title.as_ref() == Some(&title) && existing.title_override.is_none() {
+        let title = ThreadMetadata::sanitize_title(title);
+        if existing.title == title && existing.title_override.is_none() {
             return;
         }
         let metadata = ThreadMetadata {
-            title: Some(title),
+            title,
             title_override: None,
             ..existing.clone()
         };
@@ -1944,6 +1963,130 @@ mod tests {
         metadata.title_override = None;
         assert_eq!(metadata.title().as_deref(), Some("Agent Generated Title"));
         assert_eq!(metadata.display_title().as_ref(), "Agent Generated Title");
+    }
+
+    #[test]
+    fn test_display_title_strips_newlines() {
+        let metadata = make_metadata(
+            "session-1",
+            "See repo structure.\nHow I can improve codebase?",
+            Utc::now(),
+            PathList::default(),
+        );
+        assert_eq!(
+            metadata.display_title().as_ref(),
+            "See repo structure. How I can improve codebase?"
+        );
+    }
+
+    #[test]
+    fn test_display_title_whitespace_only_falls_back_to_default() {
+        let metadata = make_metadata("session-1", "\n\r\n", Utc::now(), PathList::default());
+        assert_eq!(
+            metadata.display_title().as_ref(),
+            crate::DEFAULT_THREAD_TITLE
+        );
+    }
+
+    #[gpui::test]
+    async fn test_set_title_strips_newlines(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let metadata = make_metadata(
+            "session-1",
+            "Old Title",
+            Utc::now(),
+            PathList::default(),
+        );
+        let thread_id = metadata.thread_id;
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata, cx);
+                store.set_generated_title(
+                    thread_id,
+                    "See repo structure.\nHow I can improve codebase?".into(),
+                    cx,
+                );
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            let metadata = store.entry(thread_id).expect("metadata should be cached");
+            assert_eq!(
+                metadata.title.as_deref(),
+                Some("See repo structure. How I can improve codebase?")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_title_override_strips_newlines(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let metadata = make_metadata(
+            "session-1",
+            "Old Title",
+            Utc::now(),
+            PathList::default(),
+        );
+        let thread_id = metadata.thread_id;
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata, cx);
+                store.set_title_override(thread_id, "Custom\nTitle\r\n".into(), cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            let metadata = store.entry(thread_id).expect("metadata should be cached");
+            assert_eq!(metadata.title_override.as_deref(), Some("Custom Title"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_title_whitespace_only_clears_title(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let metadata = make_metadata(
+            "session-1",
+            "Old Title",
+            Utc::now(),
+            PathList::default(),
+        );
+        let thread_id = metadata.thread_id;
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata, cx);
+                store.set_generated_title(thread_id, "\n\r\n".into(), cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            let metadata = store.entry(thread_id).expect("metadata should be cached");
+            assert_eq!(metadata.title, None);
+            assert_eq!(
+                metadata.display_title().as_ref(),
+                crate::DEFAULT_THREAD_TITLE
+            );
+        });
     }
 
     #[gpui::test]
