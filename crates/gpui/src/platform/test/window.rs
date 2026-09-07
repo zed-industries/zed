@@ -111,8 +111,7 @@ impl TestWindow {
             text_input_configurations: Vec::new(),
             text_input_state_changes: Vec::new(),
             is_fullscreen: false,
-            // Matches the value `scale_factor()` has always returned, so existing
-            // tests keep rendering at 2x unless they simulate a change.
+            // Preserve the test platform's historical 2x default.
             scale_factor: 2.0,
             appearance: WindowAppearance::Light,
             external_drag_files: Vec::new(),
@@ -164,10 +163,7 @@ impl TestWindow {
         self.0.lock().resize_callback = Some(callback);
     }
 
-    /// Simulates the window moving to a display with a different scale factor
-    /// (e.g. dragging from a Retina screen to a 1x external monitor). Reported
-    /// through the resize callback with the unchanged size, the same channel a
-    /// real DPI change reaches the window on.
+    /// Simulates a display scale change through the resize callback, preserving logical bounds.
     pub fn simulate_scale_factor_change(&mut self, scale_factor: f32) {
         let size = {
             let mut lock = self.0.lock();
