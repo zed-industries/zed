@@ -22,7 +22,7 @@ pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
 pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
 
 /// Text mime types that we'll accept from other programs.
-pub(crate) const ALLOWED_TEXT_MIME_TYPES: [&str; 2] = ["text/plain;charset=utf-8", "UTF8_STRING"];
+pub(crate) const ALLOWED_TEXT_MIME_TYPES: [&str; 3] = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"];
 
 pub(crate) struct Clipboard {
     connection: Connection,
@@ -169,6 +169,10 @@ impl Clipboard {
     pub fn set_offer(&mut self, data_offer: Option<DataOffer<WlDataOffer>>) {
         self.cached_read = None;
         self.current_offer = data_offer;
+    }
+
+    pub fn current_offer(&self) -> Option<&DataOffer<WlDataOffer>> {
+        self.current_offer.as_ref()
     }
 
     pub fn set_primary_offer(&mut self, data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>) {
