@@ -631,11 +631,11 @@ async fn test_fake_fs_rename_ignore_if_exists_leaves_source_and_target_unchanged
         "from target"
     );
 
-    // An ignored rename must not be recorded as a move either, or a handle held
-    // across it reports a path its file never went to.
-    assert!(
-        handle.current_path(&(fs.clone() as Arc<dyn Fs>)).is_err(),
-        "an ignored rename should not record a move"
+    // A handle held across an ignored rename must keep reporting the path the
+    // file is actually at, not the one it never went to.
+    assert_eq!(
+        handle.current_path(&(fs.clone() as Arc<dyn Fs>)).unwrap(),
+        PathBuf::from(path!("/root/source.txt"))
     );
 }
 
