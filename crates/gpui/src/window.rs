@@ -5019,6 +5019,11 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
 
         let mut layout_engine = self.layout_engine.take().unwrap();
+        // A tree laid out as a root inside a node (a list item, an editor block) hangs off
+        // nothing the node retains, so retiring the node's root would never reach it.
+        if self.node_engine.current_node().is_some() && layout_engine.parent(layout_id).is_none() {
+            layout_engine.mark_frame_node(layout_id);
+        }
         layout_engine.compute_layout(layout_id, available_space, self, cx);
         self.layout_engine = Some(layout_engine);
     }

@@ -35,9 +35,12 @@ pub struct TaffyLayoutEngine {
     /// `clear` and `remove` leave contexts behind and a context may own frame-arena
     /// captures.
     live: slotmap::SecondaryMap<slotmap::DefaultKey, LiveNode>,
-    /// Nodes requested outside every view node this frame. Nothing retains them, so they
-    /// are removed when the frame ends; their children are the retained roots they wrap,
-    /// which removal detaches rather than drops.
+    /// Layout nothing retains past this frame: nodes requested outside every view node, and
+    /// trees laid out as roots inside one (a list item or editor block measured with
+    /// `layout_as_root`), which the node's own retained root does not reach. They are
+    /// removed when the frame ends, except for a tree that turned out to be the root a node
+    /// painted with, which is that node's to retain. Retained roots below them are
+    /// detached rather than dropped.
     frame_nodes: Vec<LayoutId>,
     /// The layout each retained root had when its node last drew, so a reused node can
     /// tell whether its box moved. A subtree's layout is a function of its root's box and
@@ -118,27 +121,32 @@ impl TaffyLayoutEngine {
         self.live.contains_key(layout.0.into())
     }
 
-    /// Marks a node requested outside every view node, to be dropped when the frame ends.
+    /// Marks layout no node retains, to be dropped when the frame ends.
     pub(crate) fn mark_frame_node(&mut self, layout: LayoutId) {
         self.frame_nodes.push(layout);
     }
 
-    /// Drops the nodes nothing retains past this frame and the per-frame bounds caches.
+    pub(crate) fn parent(&self, layout: LayoutId) -> Option<LayoutId> {
+        self.taffy.parent(layout.0).map(LayoutId)
+    }
+
+    /// Drops the layout nothing retains past this frame and the per-frame bounds caches.
     pub(crate) fn finish_frame(&mut self) {
-        // Parents before children would let Taffy detach whole child lists; these are
-        // allocated children first, so remove in reverse.
         while let Some(layout) = self.frame_nodes.pop() {
-            self.remove_node(layout);
+            if !self.root_layouts.contains_key(layout.0.into()) {
+                self.remove_subtree(layout);
+            }
         }
         self.absolute_layout_bounds.clear();
         self.absolute_outer_origins.clear();
         self.computed_layouts.clear();
     }
 
-    /// Removes a retained tree that no node refers to any more: a re-rendered node's previous
-    /// tree, an unmounted node's tree, or a frame-bound node's tree at the end of the frame.
-    /// Descendants that are retained roots of other nodes are left in place (detached, since
-    /// their parent is gone): a frame-bound node's children may well be reused next frame.
+    /// Removes a tree that no node refers to any more: a re-rendered node's previous tree,
+    /// an unmounted node's tree, or at the end of the frame a frame-bound node's tree or a
+    /// frame node's. Descendants that are retained roots of other nodes are left in place
+    /// (detached, since their parent is gone): a frame-bound node's children may well be
+    /// reused next frame.
     /// Nodes already removed as part of an ancestor's tree are skipped, so removal is
     /// idempotent.
     pub(crate) fn remove_subtree(&mut self, root: LayoutId) {

@@ -1293,4 +1293,71 @@ mod oracle_tests {
             );
         }
     }
+
+    /// A list whose items are plain elements rather than views. Each visible item, and the
+    /// item measured for the row height, is laid out as its own root every frame the list
+    /// draws, so nothing in the list's retained layout tree reaches those trees.
+    struct ListOfDivs {
+        revision: usize,
+        /// Stays clean, so redrawing the list is an incremental frame rather than a full
+        /// refresh that clears the layout tree.
+        sibling: Entity<Row>,
+    }
+
+    impl Render for ListOfDivs {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let revision = self.revision;
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(self.sibling.clone())
+                .child(
+                    uniform_list("rows", 40, move |range, _, _| {
+                        range
+                            .map(|index| {
+                                div()
+                                    .h(px(20.))
+                                    .w_full()
+                                    .child(SharedString::from(format!("row {index} r{revision}")))
+                            })
+                            .collect()
+                    })
+                    .h(px(200.))
+                    .w_full(),
+                )
+        }
+    }
+
+    /// Layout trees laid out as roots inside a node (list items, editor blocks) are dropped
+    /// with the frame, or the layout tree grows by one such tree per item per frame.
+    #[gpui::test]
+    fn layout_trees_measured_inside_a_node_do_not_accumulate(cx: &mut TestAppContext) {
+        let window = cx.open_window(size(px(300.), px(300.)), |_, cx| ListOfDivs {
+            revision: 0,
+            sibling: cx.new(|_| Row {
+                index: 0,
+                color: 0x336699,
+            }),
+        });
+        cx.run_until_parked();
+        let mut redraw = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |list, _, cx| {
+                    list.revision += 1;
+                    cx.notify();
+                })
+                .expect("window open");
+            cx.run_until_parked();
+            window
+                .update(cx, |_, window, _| window.node_stats())
+                .expect("window open")
+        };
+        let settled = redraw(cx);
+        assert!(settled.reused_subtrees > 0, "the sibling must be reused");
+        for step in 0..50 {
+            let stats = redraw(cx);
+            assert_eq!(stats.layout_nodes, settled.layout_nodes, "step {step}");
+        }
+    }
 }
