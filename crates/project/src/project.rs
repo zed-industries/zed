@@ -5628,7 +5628,7 @@ impl Project {
             },
         );
         let uri = lsp::Uri::from_str(&payload.uri)
-            .map_err(|error| anyhow!("invalid show document uri {}: {error:?}", payload.uri))?;
+            .with_context(|| format!("parsing show document uri {}", payload.uri))?;
         let (tx, rx) = async_channel::bounded(1);
         project.update(&mut cx, |_, cx| {
             cx.emit(Event::LanguageServerShowDocument(

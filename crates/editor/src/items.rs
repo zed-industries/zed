@@ -46,7 +46,11 @@ use std::{
 };
 use text::{BufferId, BufferSnapshot, OffsetRangeExt, Selection, ToPoint as _};
 use ui::{IconDecorationKind, prelude::*};
-use util::{ResultExt, TryFutureExt, debug_panic, paths::PathExt, rel_path::RelPath};
+use util::{
+    ResultExt, TryFutureExt, debug_panic,
+    paths::{PathExt, UrlExt as _},
+    rel_path::RelPath,
+};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, OpenOptions, OpenVisible, ToolbarItemLocation, ViewId,
@@ -2520,7 +2524,7 @@ pub(crate) fn handle_lsp_show_document(
         request.respond(true);
         return Task::ready(());
     }
-    let Ok(abs_path) = request.uri.to_file_path() else {
+    let Ok(abs_path) = request.uri.to_file_path_ext(workspace.path_style(cx)) else {
         log::error!(
             "language server requested to show document with unsupported uri {}",
             request.uri.as_str()
@@ -2540,25 +2544,23 @@ pub(crate) fn handle_lsp_show_document(
     );
     cx.spawn_in(window, async move |_, cx| {
         let success = match open_task.await {
-            Ok(item) => match item.downcast::<Editor>() {
-                Some(editor) => editor
+            Ok(item) => match item.downcast::<Editor>().zip(request.selection) {
+                Some((editor, selection)) => editor
                     .update_in(cx, |editor, window, cx| {
-                        if let Some(selection) = request.selection {
-                            let snapshot = editor.buffer().read(cx).snapshot(cx);
-                            let range = language::range_from_lsp(selection);
-                            let start = snapshot.point_utf16_to_offset(
-                                snapshot.clip_point_utf16(range.start, Bias::Left),
-                            );
-                            let end = snapshot.point_utf16_to_offset(
-                                snapshot.clip_point_utf16(range.end, Bias::Left),
-                            );
-                            editor.change_selections(
-                                SelectionEffects::scroll(Autoscroll::center()),
-                                window,
-                                cx,
-                                |selections| selections.select_ranges([start..end]),
-                            );
-                        }
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let range = language::range_from_lsp(selection);
+                        let start = snapshot.point_utf16_to_offset(
+                            snapshot.clip_point_utf16(range.start, Bias::Left),
+                        );
+                        let end = snapshot.point_utf16_to_offset(
+                            snapshot.clip_point_utf16(range.end, Bias::Left),
+                        );
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |selections| selections.select_ranges([start..end]),
+                        );
                     })
                     .is_ok(),
                 None => true,
