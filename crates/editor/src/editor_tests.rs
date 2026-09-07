@@ -49680,6 +49680,7 @@ async fn test_soft_wrap_indent_updated_on_language_changed(cx: &mut gpui::TestAp
         settings.defaults.soft_wrap = Some(language::language_settings::SoftWrap::Bounded);
         settings.defaults.soft_wrap_indent =
             Some(language::language_settings::SoftWrapIndent::Same);
+        settings.defaults.preferred_line_length = Some(20);
         settings.languages.0.insert(
             "Rust".into(),
             LanguageSettingsContent {
@@ -49690,12 +49691,15 @@ async fn test_soft_wrap_indent_updated_on_language_changed(cx: &mut gpui::TestAp
     });
 
     let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("ˇ    let a_long_variable = 123456789;\n");
 
     cx.update_editor(|editor, _window, cx| {
         assert_eq!(
             editor.soft_wrap_indent(cx),
             language::language_settings::SoftWrapIndent::Same
         );
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(snapshot.soft_wrap_indent(DisplayRow(0)), Some(4));
     });
 
     cx.update_buffer(|buffer, cx| {
@@ -49707,6 +49711,8 @@ async fn test_soft_wrap_indent_updated_on_language_changed(cx: &mut gpui::TestAp
             editor.soft_wrap_indent(cx),
             language::language_settings::SoftWrapIndent::None
         );
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(snapshot.soft_wrap_indent(DisplayRow(0)), Some(0));
     });
 }
 
