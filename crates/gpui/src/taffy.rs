@@ -114,6 +114,10 @@ impl TaffyLayoutEngine {
         self.live.len()
     }
 
+    pub(crate) fn contains(&self, layout: LayoutId) -> bool {
+        self.live.contains_key(layout.0.into())
+    }
+
     /// Marks a node requested outside every view node, to be dropped when the frame ends.
     pub(crate) fn mark_frame_node(&mut self, layout: LayoutId) {
         self.frame_nodes.push(layout);
@@ -131,16 +135,21 @@ impl TaffyLayoutEngine {
         self.computed_layouts.clear();
     }
 
-    /// Removes a retained subtree that no node refers to any more: a re-rendered node's
-    /// previous tree, once its still-live children have been detached into the new one, or
-    /// an unmounted node's tree. Nodes already removed (as part of an ancestor's tree) are
-    /// skipped, so removal is idempotent.
+    /// Removes a retained tree that no node refers to any more: a re-rendered node's previous
+    /// tree, an unmounted node's tree, or a frame-bound node's tree at the end of the frame.
+    /// Descendants that are retained roots of other nodes are left in place (detached, since
+    /// their parent is gone): a frame-bound node's children may well be reused next frame.
+    /// Nodes already removed as part of an ancestor's tree are skipped, so removal is
+    /// idempotent.
     pub(crate) fn remove_subtree(&mut self, root: LayoutId) {
         let mut pending = std::mem::take(&mut self.layout_bounds_scratch_space);
         pending.clear();
         pending.push(root);
         while let Some(layout) = pending.pop() {
-            if !self.live.contains_key(layout.0.into()) {
+            let key = layout.0.into();
+            if !self.live.contains_key(key)
+                || (layout != root && self.root_layouts.contains_key(key))
+            {
                 continue;
             }
             pending.extend(self.taffy.child_ids(layout.0).map(LayoutId));

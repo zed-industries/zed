@@ -4891,6 +4891,14 @@ impl Window {
         }
     }
 
+    /// Whether a retained layout root is still in the layout tree. A node that was never
+    /// painted may have had its tree dropped with a frame-bound ancestor's.
+    pub(crate) fn layout_is_retained(&self, layout: LayoutId) -> bool {
+        self.layout_engine
+            .as_ref()
+            .is_some_and(|engine| engine.contains(layout))
+    }
+
     /// Drops the layout tree a node no longer refers to.
     pub(crate) fn retire_layout(&mut self, layout: Option<LayoutId>) {
         if let Some(layout) = layout {
