@@ -15,10 +15,15 @@ $PSNativeCommandUseErrorActionPreference = $true
 $buildSuccess = $false
 $canCodeSign = $false
 
-$OSArchitecture = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
-    "X64" { "x86_64" }
-    "Arm64" { "aarch64" }
-    default { throw "Unsupported architecture" }
+$DetectedOSArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+if (-not $DetectedOSArchitecture) {
+    $DetectedOSArchitecture = $env:PROCESSOR_ARCHITECTURE
+}
+
+$OSArchitecture = switch ($DetectedOSArchitecture) {
+    { $_ -in @("X64", "AMD64") } { "x86_64" }
+    { $_ -in @("Arm64", "ARM64") } { "aarch64" }
+    default { throw "Unsupported architecture: $DetectedOSArchitecture" }
 }
 
 $Architecture = if ($Architecture) {
@@ -40,8 +45,36 @@ function Get-VSArch {
     }
 }
 
+function Get-VSDevShellPath {
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if ($installPath) {
+            $devShellPath = Join-Path $installPath "Common7\Tools\Launch-VsDevShell.ps1"
+            if (Test-Path $devShellPath) {
+                return $devShellPath
+            }
+        }
+    }
+
+    $candidatePaths = @(
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\Common7\Tools\Launch-VsDevShell.ps1",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Launch-VsDevShell.ps1",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\Launch-VsDevShell.ps1"
+    )
+
+    foreach ($path in $candidatePaths) {
+        if (Test-Path $path) {
+            return $path
+        }
+    }
+
+    throw "Unable to find Launch-VsDevShell.ps1. Install Visual Studio 2022 or Build Tools with the Desktop development with C++ workload."
+}
+
 Push-Location
-& "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
+& (Get-VSDevShellPath) -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
 Pop-Location
 
 $target = "$Architecture-pc-windows-msvc"
