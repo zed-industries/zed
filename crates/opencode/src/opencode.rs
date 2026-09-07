@@ -170,6 +170,8 @@ pub enum Model {
     Grok4_6,
     #[serde(rename = "muse-spark-1.2")]
     MuseSpark1_2,
+    #[serde(rename = "muse-spark-1.3")]
+    MuseSpark1_3,
     #[serde(rename = "muse-spark-1.2-contributor")]
     MuseSpark1_2Contributor,
     #[serde(rename = "muse-spark-1.3-contributor")]
@@ -341,6 +343,7 @@ impl Model {
             Self::Grok4_5 => "grok-4.5",
             Self::Grok4_6 => "grok-4.6",
             Self::MuseSpark1_2 => "muse-spark-1.2",
+            Self::MuseSpark1_3 => "muse-spark-1.3",
             Self::MuseSpark1_2Contributor => "muse-spark-1.2-contributor",
             Self::MuseSpark1_3Contributor => "muse-spark-1.3-contributor",
             Self::KimiK2_5 => "kimi-k2.5",
@@ -424,6 +427,7 @@ impl Model {
             Self::Grok4_5 => "Grok 4.5",
             Self::Grok4_6 => "Grok 4.6",
             Self::MuseSpark1_2 => "Muse Spark 1.2",
+            Self::MuseSpark1_3 => "Muse Spark 1.3",
             Self::MuseSpark1_2Contributor => "Muse Spark 1.2 (Contributor)",
             Self::MuseSpark1_3Contributor => "Muse Spark 1.3 (Contributor)",
             Self::KimiK2_5 => "Kimi K2.5",
@@ -504,6 +508,7 @@ impl Model {
             | Self::Grok4_5
             | Self::GrokBuild0_1
             | Self::MuseSpark1_2
+            | Self::MuseSpark1_3
             | Self::MuseSpark1_2Contributor
             | Self::MuseSpark1_3Contributor => ApiProtocol::OpenAiResponses,
 
@@ -641,9 +646,10 @@ impl Model {
             Self::KimiK3 => 1_048_576,
             Self::GrokBuild0_1 => 256_000,
             Self::Grok4_6 | Self::Grok4_5 => 500_000,
-            Self::MuseSpark1_2 | Self::MuseSpark1_2Contributor | Self::MuseSpark1_3Contributor => {
-                1_048_576
-            }
+            Self::MuseSpark1_2
+            | Self::MuseSpark1_3
+            | Self::MuseSpark1_2Contributor
+            | Self::MuseSpark1_3Contributor => 1_048_576,
             Self::MimoV2_5Pro => 1_048_576,
             Self::MimoV2_5 => 1_000_000,
             Self::Qwen3_5Plus => 262_144,
@@ -744,9 +750,10 @@ impl Model {
             Self::KimiK3 => Some(131_072),
             Self::GrokBuild0_1 => Some(256_000),
             Self::Grok4_6 | Self::Grok4_5 => Some(500_000),
-            Self::MuseSpark1_2 | Self::MuseSpark1_2Contributor | Self::MuseSpark1_3Contributor => {
-                Some(131_072)
-            }
+            Self::MuseSpark1_2
+            | Self::MuseSpark1_3
+            | Self::MuseSpark1_2Contributor
+            | Self::MuseSpark1_3Contributor => Some(131_072),
             Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
                 Some(65_536)
             }
@@ -828,6 +835,7 @@ impl Model {
             | Self::Grok4_5
             | Self::Grok4_6
             | Self::MuseSpark1_2
+            | Self::MuseSpark1_3
             | Self::MuseSpark1_2Contributor
             | Self::MuseSpark1_3Contributor
             | Self::MimoV2_5
@@ -1068,6 +1076,15 @@ impl Model {
                     ReasoningEffort::XHigh,
                 ])
             }
+
+            Self::MuseSpark1_3 => Some(vec![
+                ReasoningEffort::Minimal,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+                ReasoningEffort::Max,
+            ]),
 
             Self::MiniMaxM3 => {
                 if subscription == OpenCodeSubscription::Go {
