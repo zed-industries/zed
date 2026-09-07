@@ -1,9 +1,9 @@
 use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
 use collections::FxHashMap;
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
     borrow::Borrow,
+    cell::RefCell,
     hash::{Hash, Hasher},
     sync::Arc,
 };
@@ -450,9 +450,11 @@ impl WrappedLineLayout {
     }
 }
 
+/// Per window and used only on its thread: `RefCell`s rather than locks, since every
+/// element paints through here and a node's text use is opened and closed per phase.
 pub(crate) struct LineLayoutCache {
-    previous_frame: Mutex<FrameCache>,
-    current_frame: RwLock<FrameCache>,
+    previous_frame: RefCell<FrameCache>,
+    current_frame: RefCell<FrameCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
 }
 
@@ -560,15 +562,15 @@ pub(crate) struct TextUseCheckpoint {
 impl LineLayoutCache {
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         Self {
-            previous_frame: Mutex::default(),
-            current_frame: RwLock::default(),
+            previous_frame: RefCell::default(),
+            current_frame: RefCell::default(),
             platform_text_system,
         }
     }
 
     /// Starts recording the layouts a scope looks up; ended by `end_use`.
     pub(crate) fn begin_use(&self) {
-        let mut frame = self.current_frame.write();
+        let mut frame = self.current_frame.borrow_mut();
         let text_use = frame.spare_uses.pop().unwrap_or_default();
         frame.uses.push(text_use);
     }
@@ -576,7 +578,7 @@ impl LineLayoutCache {
     /// Takes back a use a redrawing node no longer needs, keeping its buffers for the next
     /// scope. Bounded, since a burst of unmounts could otherwise hand back thousands.
     pub(crate) fn recycle(&self, mut text_use: TextUse) {
-        let mut frame = self.current_frame.write();
+        let mut frame = self.current_frame.borrow_mut();
         if frame.spare_uses.len() < 256 {
             text_use.clear();
             frame.spare_uses.push(text_use);
@@ -584,7 +586,7 @@ impl LineLayoutCache {
     }
 
     pub(crate) fn end_use(&self) -> TextUse {
-        let mut frame = self.current_frame.write();
+        let mut frame = self.current_frame.borrow_mut();
         // The frame's own use stays as the outermost scope.
         if frame.uses.len() > 1 {
             frame.uses.pop().unwrap_or_default()
@@ -596,7 +598,7 @@ impl LineLayoutCache {
     /// Makes the layouts a scope used the last time it drew available to this frame, so a
     /// redraw finds them without reshaping.
     pub(crate) fn seed(&self, text_use: &TextUse) {
-        let mut frame = self.current_frame.write();
+        let mut frame = self.current_frame.borrow_mut();
         for (key, layout) in &text_use.lines {
             frame.lines.insert(key.clone(), layout.clone());
         }
@@ -614,19 +616,19 @@ impl LineLayoutCache {
     }
 
     pub(crate) fn use_checkpoint(&self) -> TextUseCheckpoint {
-        self.current_frame.write().current_use().checkpoint()
+        self.current_frame.borrow_mut().current_use().checkpoint()
     }
 
     pub(crate) fn rollback_use(&self, checkpoint: TextUseCheckpoint) {
         self.current_frame
-            .write()
+            .borrow_mut()
             .current_use()
             .rollback(checkpoint)
     }
 
     pub fn finish_frame(&self) {
-        let mut previous_frame = self.previous_frame.lock();
-        let mut current_frame = self.current_frame.write();
+        let mut previous_frame = self.previous_frame.borrow_mut();
+        let mut current_frame = self.current_frame.borrow_mut();
         std::mem::swap(&mut *previous_frame, &mut *current_frame);
         current_frame.clear();
     }
@@ -651,10 +653,10 @@ impl LineLayoutCache {
             force_width: None,
         } as &dyn AsCacheKeyRef;
 
-        let current_frame = self.current_frame.upgradable_read();
+        let current_frame = self.current_frame.borrow_mut();
         if let Some((key, layout)) = current_frame.wrapped_lines.get_key_value(key) {
             let (key, layout) = (key.clone(), layout.clone());
-            let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+            let mut current_frame = current_frame;
             current_frame
                 .current_use()
                 .wrapped_lines
@@ -662,9 +664,13 @@ impl LineLayoutCache {
             return layout;
         }
 
-        let previous_frame_entry = self.previous_frame.lock().wrapped_lines.remove_entry(key);
+        let previous_frame_entry = self
+            .previous_frame
+            .borrow_mut()
+            .wrapped_lines
+            .remove_entry(key);
         if let Some((key, layout)) = previous_frame_entry {
-            let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+            let mut current_frame = current_frame;
             current_frame
                 .wrapped_lines
                 .insert(key.clone(), layout.clone());
@@ -695,7 +701,7 @@ impl LineLayoutCache {
                 force_width: None,
             });
 
-            let mut current_frame = self.current_frame.write();
+            let mut current_frame = self.current_frame.borrow_mut();
             current_frame
                 .wrapped_lines
                 .insert(key.clone(), layout.clone());
@@ -727,10 +733,10 @@ impl LineLayoutCache {
             force_width,
         } as &dyn AsCacheKeyRef;
 
-        let current_frame = self.current_frame.upgradable_read();
+        let current_frame = self.current_frame.borrow_mut();
         if let Some((key, layout)) = current_frame.lines.get_key_value(key) {
             let (key, layout) = (key.clone(), layout.clone());
-            let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+            let mut current_frame = current_frame;
             current_frame
                 .current_use()
                 .lines
@@ -738,8 +744,8 @@ impl LineLayoutCache {
             return layout;
         }
 
-        let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
-        let previous_frame_entry = self.previous_frame.lock().lines.remove_entry(key);
+        let mut current_frame = current_frame;
+        let previous_frame_entry = self.previous_frame.borrow_mut().lines.remove_entry(key);
         if let Some((key, layout)) = previous_frame_entry {
             current_frame.lines.insert(key.clone(), layout.clone());
             current_frame
@@ -799,7 +805,7 @@ impl LineLayoutCache {
             force_width,
         };
 
-        let current_frame = self.current_frame.read();
+        let current_frame = self.current_frame.borrow();
         if let Some((_, layout)) = current_frame.lines_by_hash.iter().find(|(key, _)| {
             HashedCacheKeyRef {
                 text_hash: key.text_hash,
@@ -813,7 +819,7 @@ impl LineLayoutCache {
             return Some(layout.clone());
         }
 
-        let previous_frame = self.previous_frame.lock();
+        let previous_frame = self.previous_frame.borrow_mut();
         previous_frame
             .lines_by_hash
             .iter()
@@ -857,7 +863,7 @@ impl LineLayoutCache {
         };
 
         // Fast path: already cached (no allocation).
-        let current_frame = self.current_frame.upgradable_read();
+        let current_frame = self.current_frame.borrow_mut();
         if let Some((key, layout)) = current_frame.lines_by_hash.iter().find(|(key, _)| {
             HashedCacheKeyRef {
                 text_hash: key.text_hash,
@@ -869,7 +875,7 @@ impl LineLayoutCache {
             } == key_ref
         }) {
             let (key, layout) = (key.clone(), layout.clone());
-            let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+            let mut current_frame = current_frame;
             current_frame
                 .current_use()
                 .lines_by_hash
@@ -877,11 +883,11 @@ impl LineLayoutCache {
             return layout;
         }
 
-        let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+        let mut current_frame = current_frame;
 
         // Try to reuse from previous frame without allocating; do a linear scan to find a matching key.
         // (We avoid `drain()` here because it would eagerly move all entries.)
-        let mut previous_frame = self.previous_frame.lock();
+        let mut previous_frame = self.previous_frame.borrow_mut();
         let existing_key = previous_frame
             .lines_by_hash
             .keys()
