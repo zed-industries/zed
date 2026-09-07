@@ -4,14 +4,12 @@ use collections::{HashMap, HashSet};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use editor::Editor;
 use futures::channel::oneshot;
-use gpui::{
-    AnyElement, App, BorderStyle, Corners, Div, Edges, Empty, Entity, Hsla, SharedString, Window,
-    canvas, div, quad,
-};
+use gpui::{AnyElement, App, Div, Empty, Entity, Hsla, SharedString, Window, div};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use ui::{
-    Button, Checkbox, Color, Icon, IconName, IconSize, Label, LabelSize, ToggleState, prelude::*,
+    Button, Checkbox, Color, Icon, IconName, IconSize, Label, LabelSize, RadioIndicator,
+    ToggleState, prelude::*,
 };
 
 #[derive(Clone)]
@@ -1809,7 +1807,7 @@ impl<'a> ElicitationCard<'a> {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(Self::render_radio_indicator(
+                            .child(RadioIndicator::new(
                                 is_selected,
                                 border_color,
                                 control_background,
@@ -1858,44 +1856,6 @@ impl<'a> ElicitationCard<'a> {
 
     fn option_control_background(cx: &App) -> Hsla {
         cx.theme().colors().editor_background
-    }
-
-    fn render_radio_indicator(is_selected: bool, border_color: Hsla, background: Hsla) -> Div {
-        div().size_3().flex_none().child(
-            canvas(
-                |_, _, _| {},
-                move |bounds, _, window, cx| {
-                    let bounds = window.pixel_snap_bounds(bounds);
-                    let radius = bounds.size.width.min(bounds.size.height) / 2.;
-                    window.paint_quad(quad(
-                        bounds,
-                        Corners::all(radius),
-                        background,
-                        Edges::all(px(1.)),
-                        border_color,
-                        BorderStyle::Solid,
-                    ));
-
-                    if is_selected {
-                        // Equal whole-device-pixel insets keep both circles concentric
-                        // when their independently rounded diameters would have different parity.
-                        let scale_factor = window.scale_factor();
-                        let inset =
-                            px((f32::from(radius) * scale_factor / 2.).round() / scale_factor);
-                        let dot_bounds = bounds.dilate(-inset);
-                        window.paint_quad(quad(
-                            dot_bounds,
-                            Corners::all(dot_bounds.size.width.min(dot_bounds.size.height) / 2.),
-                            Color::Accent.color(cx),
-                            Edges::default(),
-                            Hsla::transparent_black(),
-                            BorderStyle::Solid,
-                        ));
-                    }
-                },
-            )
-            .size_full(),
-        )
     }
 
     fn render_url_elicitation(&self, mode: &acp::ElicitationUrlMode) -> AnyElement {
