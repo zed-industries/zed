@@ -1859,12 +1859,24 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 ```json [settings]
 {
   "status_bar": {
+    "show_active_file": false,
     "active_language_button": true,
     "cursor_position_button": true,
-    "line_endings_button": false
+    "line_endings_button": false,
+    "active_encoding_button": "non_utf8",
+    "pending_keystrokes_indicator": true
   }
 }
 ```
+
+**Options**
+
+- `show_active_file`: Whether to show the name of the active file in the status bar
+- `active_language_button`: Whether to show the active language button (clicking it opens the language selector)
+- `cursor_position_button`: Whether to show the cursor position button (clicking it opens the go-to-line/column input)
+- `line_endings_button`: Whether to show the active line endings button (clicking it opens the line-ending selector)
+- `active_encoding_button`: When to show the active encoding button: `"enabled"`, `"disabled"`, or `"non_utf8"` (only for encodings other than UTF-8 without BOM)
+- `pending_keystrokes_indicator`: Whether to show an indicator with a countdown while timed multi-stroke input is pending. Hovering the indicator pauses the timeout. Its binding preview popover is disabled when the which-key popup is enabled (see [key bindings](../key-bindings.md#precedence))
 
 There is an experimental setting that completely hides the status bar. This causes major usability problems (you will be unable to use many of Zed's features), but is provided for those who value screen real-estate above all else.
 
@@ -5261,6 +5273,50 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_menus`: Whether to show the menus in the titlebar
 - `button_layout`: The layout of window control buttons in the title bar (Linux only). Can be set to `"platform_default"` to follow the system setting, `"standard"` to use Zed's built-in layout, or a custom format like `"close:minimize,maximize"`
 
+## Window Title Format
+
+- Description: Template for the window title. Use `${separator}` to insert a
+  separator that is omitted when adjacent variables are empty. The collaboration
+  indicator, when present, is appended after the rendered template. If the
+  template renders to nothing (for example `${branch}` outside a Git
+  repository), the default template is used instead.
+- Setting: `window_title_format`
+- Default: `"${projectName}${separator}${fileName}"`
+
+Available variables:
+
+| Variable       | Description                                           |
+| -------------- | ----------------------------------------------------- |
+| `projectName`  | Name of the current project                           |
+| `fileName`     | Name of the active file (e.g. `main.rs`)              |
+| `filePath`     | Absolute path of the active file                      |
+| `relativePath` | Path of the active file relative to its worktree root |
+| `fileStem`     | File name without extension (e.g. `main`)             |
+| `remoteName`   | Display name of the remote connection, if any         |
+| `remoteHost`   | Host of the remote connection, if any                 |
+| `appName`      | Zed release channel name (e.g. `Zed`, `Zed Nightly`)  |
+| `branch`       | Git branch checked out in the active repository       |
+| `separator`    | Separator string, omitted when neighbors are empty    |
+
+```json [settings]
+{
+  "window_title_format": "${projectName}${separator}${fileName}"
+}
+```
+
+## Window Title Separator
+
+- Description: The string substituted for `${separator}` in the window title
+  format. Include any surrounding whitespace in the value.
+- Setting: `window_title_separator`
+- Default: `" — "`
+
+```json [settings]
+{
+  "window_title_separator": " — "
+}
+```
+
 ## Window Decorations
 
 - Description: Controls whether Zed or the window manager or compositor draws window decorations.
@@ -5292,6 +5348,26 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - Description: Whether or not to enable vim mode.
 - Setting: `vim_mode`
 - Default: `false`
+
+## Which-key Menu
+
+- Description: Show matching bindings while a multi-stroke binding is pending.
+- Setting: `which_key`
+- Default:
+
+```json [settings]
+{
+  "which_key": {
+    "enabled": false,
+    "delay_ms": 1000
+  }
+}
+```
+
+**Options**
+
+- `enabled`: Whether to show the which-key menu. When enabled, the pending keystrokes indicator remains visible, but its binding preview popover is disabled.
+- `delay_ms`: How long Zed waits before showing the menu, in milliseconds.
 
 ## When Closing With No Tabs
 

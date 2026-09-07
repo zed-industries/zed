@@ -7197,7 +7197,6 @@ dependencies = [
  "menu",
  "multi_buffer",
  "notifications",
- "panel",
  "picker",
  "pretty_assertions",
  "project",
@@ -12522,15 +12521,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "panel"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "ui",
- "workspace",
-]
-
-[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16575,6 +16565,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
+ "language_models",
  "log",
  "menu",
  "paths",
@@ -18596,6 +18587,7 @@ dependencies = [
  "smallvec",
  "telemetry",
  "theme",
+ "theme_settings",
  "ui",
  "util",
  "workspace",
@@ -20992,13 +20984,17 @@ dependencies = [
 name = "which_key"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "command_palette",
  "gpui",
  "settings",
+ "theme",
  "theme_settings",
  "ui",
  "util",
+ "vim_mode_setting",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -22256,6 +22252,7 @@ dependencies = [
  "project",
  "proptest",
  "proptest-derive",
+ "release_channel",
  "remote",
  "schemars 1.0.4",
  "serde",
