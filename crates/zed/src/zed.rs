@@ -8258,6 +8258,7 @@ mod tests {
             )
             .await
             .expect("failed to save disable_ai=true to the fake settings file");
+        executor.advance_clock(Duration::from_secs(2));
         executor.run_until_parked();
 
         cx.update(|cx| {
