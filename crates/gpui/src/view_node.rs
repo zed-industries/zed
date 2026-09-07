@@ -114,7 +114,8 @@ pub(crate) enum OutputItem {
     /// root list.
     Root(crate::node_engine::ViewNodeId, usize),
     Hitbox(Hitbox),
-    Tooltip(TooltipRequest),
+    /// Boxed: at 80 bytes the request would otherwise set the size of every item.
+    Tooltip(Box<TooltipRequest>),
     CursorStyle(CursorStyleRequest),
     WindowControl(crate::WindowControlArea, Hitbox),
     TabStop(crate::TabStopOperation),
@@ -129,6 +130,10 @@ pub(crate) enum OutputItem {
     #[cfg(any(test, feature = "test-support"))]
     DebugBounds(String, Bounds<Pixels>),
 }
+
+// Every element pushes items, so their size is paid per element per frame. `Hitbox` is
+// the widest common variant; anything wider is boxed.
+const _: () = assert!(size_of::<OutputItem>() <= 56);
 
 /// What one scope produced in one phase.
 #[derive(Default)]

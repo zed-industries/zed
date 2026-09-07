@@ -3762,7 +3762,10 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
         let id = TooltipId(post_inc(&mut self.next_tooltip_id.0));
         self.node_engine
-            .push(OutputItem::Tooltip(TooltipRequest { id, tooltip }));
+            .push(OutputItem::Tooltip(Box::new(TooltipRequest {
+                id,
+                tooltip,
+            })));
         id
     }
 

@@ -295,7 +295,7 @@ of the ~330 µs of overhead per frame, before the passes listed below:
 | dispatch-node snapshot | 7% | `clone_from` of 2 dispatch nodes per leaf after paint |
 | cache-key `TextStyle` | 3% | built twice per node |
 | scene recording | 1% | |
-| node lifecycle | ~67% | occurrence lookup (path hash ×2 sets), output reset, item pushes (88 B memmoves), dirty propagation, frame walks, per-`ViewElement` dispatch push, `Arc` handle churn in text uses, `ViewNode`/`TextUse`/`ElementDrawPhase` moves and drops |
+| node lifecycle | ~67% | occurrence lookup (path hash ×2 sets), output reset, item pushes (56 B memmoves; 88 B before `Tooltip` was boxed), dirty propagation, frame walks, per-`ViewElement` dispatch push, `Arc` handle churn in text uses, `ViewNode`/`TextUse`/`ElementDrawPhase` moves and drops |
 
 Self-time, by symbol, of what the branch adds: `memmove` +1.5%, `Arc` refcount ops
 +1.9% (text-layout handles), entity-id hashing +1.4%, malloc/free +0.5%, then a long
