@@ -317,7 +317,7 @@ impl UserMessage {
                     let trimmed = text.text.trim_start();
                     (!trimmed.is_empty()).then_some(trimmed.starts_with("<task-notification"))
                 }
-                _ => Some(false),
+                _ => None,
             })
             .unwrap_or(false)
     }
