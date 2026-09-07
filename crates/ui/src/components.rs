@@ -38,6 +38,7 @@ mod sticky_items;
 mod tab;
 mod tab_bar;
 mod toggle;
+mod tool_call;
 mod tooltip;
 mod tree_view_item;
 
@@ -81,5 +82,6 @@ pub use sticky_items::*;
 pub use tab::*;
 pub use tab_bar::*;
 pub use toggle::*;
+pub use tool_call::*;
 pub use tooltip::*;
 pub use tree_view_item::*;
