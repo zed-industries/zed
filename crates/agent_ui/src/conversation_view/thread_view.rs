@@ -5631,15 +5631,16 @@ impl ThreadView {
                         }),
                 )
                 .item(
-                    ContextMenuEntry::new("Branch Diff")
+                    ContextMenuEntry::new("Diff")
                         .icon(IconName::GitBranch)
                         .icon_color(Color::Muted)
                         .icon_size(IconSize::XSmall)
                         .disabled(!supports_embedded_context)
                         .handler({
                             move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
                                 message_editor.update(cx, |editor, cx| {
-                                    editor.insert_branch_diff_crease(window, cx);
+                                    editor.insert_context_type("diff", window, cx);
                                 });
                             }
                         }),

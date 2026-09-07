@@ -261,7 +261,7 @@ impl PromptContextType {
             Self::Thread => "thread",
             Self::Skill => "skill",
             Self::Diagnostics => "diagnostics",
-            Self::BranchDiff => "branch diff",
+            Self::BranchDiff => "diff",
         }
     }
 
@@ -273,7 +273,7 @@ impl PromptContextType {
             Self::Thread => "Threads",
             Self::Skill => "Skills",
             Self::Diagnostics => "Diagnostics",
-            Self::BranchDiff => "Branch Diff",
+            Self::BranchDiff => "Diff",
         }
     }
 
@@ -304,6 +304,7 @@ pub(crate) enum Match {
 #[derive(Debug, Clone)]
 pub struct BranchDiffMatch {
     pub base_ref: SharedString,
+    pub is_head: bool,
 }
 
 impl Match {
@@ -967,6 +968,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
     fn build_branch_diff_completion(
         base_ref: SharedString,
+        is_head: bool,
         source_range: Range<Anchor>,
         source: Arc<T>,
         editor: WeakEntity<Editor>,
@@ -977,16 +979,25 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let uri = MentionUri::GitDiff {
             base_ref: base_ref.to_string(),
         };
-        let crease_text: SharedString = format!("Branch Diff (vs {})", base_ref).into();
+        let crease_text: SharedString = if is_head {
+            "Working Changes".into()
+        } else {
+            format!("Branch Diff (vs {})", base_ref).into()
+        };
         let display_text = format!("@{}", crease_text);
         let new_text = format!("[{}]({}) ", display_text, uri.to_uri());
         let new_text_len = new_text.len();
         let icon_path = uri.icon_path(cx);
+        let label_text = if is_head {
+            "Working Changes".to_string()
+        } else {
+            base_ref.to_string()
+        };
 
         Completion {
             replace_range: source_range.clone(),
             new_text,
-            label: CodeLabel::plain(crease_text.to_string(), None),
+            label: CodeLabel::plain(label_text, None),
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
@@ -1068,27 +1079,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         })
     }
 
-    fn fetch_branch_diff_match(
-        &self,
-        workspace: &Entity<Workspace>,
-        cx: &mut App,
-    ) -> Option<Task<Option<BranchDiffMatch>>> {
-        let project = workspace.read(cx).project().clone();
-        let repo = project.read(cx).active_repository(cx)?;
-
-        let default_branch_receiver = repo.update(cx, |repo, _| repo.default_branch(true));
-
-        Some(cx.spawn(async move |_cx| {
-            let base_ref = default_branch_receiver
-                .await
-                .ok()
-                .and_then(|r| r.ok())
-                .flatten()?;
-
-            Some(BranchDiffMatch { base_ref })
-        }))
-    }
-
     fn search_mentions(
         &self,
         mode: Option<PromptContextType>,
@@ -1157,7 +1147,17 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
             Some(PromptContextType::Diagnostics) => Task::ready(Vec::new()),
 
-            Some(PromptContextType::BranchDiff) => Task::ready(Vec::new()),
+            Some(PromptContextType::BranchDiff) => {
+                let search_branches_task =
+                    search_branches(query, cancellation_flag, &workspace, cx);
+                cx.background_spawn(async move {
+                    search_branches_task
+                        .await
+                        .into_iter()
+                        .map(Match::BranchDiff)
+                        .collect()
+                })
+            }
 
             None if query.is_empty() => {
                 let recent_task = self.recent_context_picker_entries(&workspace, cx);
@@ -1172,25 +1172,9 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     })
                     .collect::<Vec<_>>();
 
-                let branch_diff_task = if self
-                    .source
-                    .supports_context(PromptContextType::BranchDiff, cx)
-                {
-                    self.fetch_branch_diff_match(&workspace, cx)
-                } else {
-                    None
-                };
-
                 cx.spawn(async move |_cx| {
                     let mut matches = recent_task.await;
                     matches.extend(entries);
-
-                    if let Some(branch_diff_task) = branch_diff_task {
-                        if let Some(branch_diff_match) = branch_diff_task.await {
-                            matches.push(Match::BranchDiff(branch_diff_match));
-                        }
-                    }
-
                     matches
                 })
             }
@@ -1207,16 +1191,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     .map(|(ix, entry)| StringMatchCandidate::new(ix, entry.keyword()))
                     .collect::<Vec<_>>();
 
-                let branch_diff_task = if self
-                    .source
-                    .supports_context(PromptContextType::BranchDiff, cx)
-                {
-                    self.fetch_branch_diff_match(&workspace, cx)
-                } else {
-                    None
-                };
-
-                cx.spawn(async move |cx| {
+                cx.spawn(async move |_cx| {
                     let mut matches = search_files_task
                         .await
                         .into_iter()
@@ -1240,26 +1215,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                             mat: Some(mat),
                         })
                     }));
-
-                    if let Some(branch_diff_task) = branch_diff_task {
-                        let branch_diff_keyword = PromptContextType::BranchDiff.keyword();
-                        let branch_diff_matches = fuzzy::match_strings(
-                            &[StringMatchCandidate::new(0, branch_diff_keyword)],
-                            &query,
-                            false,
-                            true,
-                            1,
-                            &Arc::new(AtomicBool::default()),
-                            cx.background_executor().clone(),
-                        )
-                        .await;
-
-                        if !branch_diff_matches.is_empty() {
-                            if let Some(branch_diff_match) = branch_diff_task.await {
-                                matches.push(Match::BranchDiff(branch_diff_match));
-                            }
-                        }
-                    }
 
                     matches.sort_by(|a, b| {
                         b.score()
@@ -1403,6 +1358,13 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             if summary.error_count > 0 || summary.warning_count > 0 {
                 entries.push(PromptContextEntry::Mode(PromptContextType::Diagnostics));
             }
+        }
+
+        if self
+            .source
+            .supports_context(PromptContextType::BranchDiff, cx)
+        {
+            entries.push(PromptContextEntry::Mode(PromptContextType::BranchDiff));
         }
 
         entries
@@ -1862,6 +1824,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     Match::BranchDiff(branch_diff) => {
                                         Some(Self::build_branch_diff_completion(
                                             branch_diff.base_ref,
+                                            branch_diff.is_head,
                                             source_range.clone(),
                                             source.clone(),
                                             editor.clone(),
@@ -2421,6 +2384,99 @@ pub(crate) fn search_symbols(
                     *position += filter_start;
                 }
                 SymbolMatch { symbol }
+            })
+            .collect()
+    })
+}
+
+pub(crate) fn search_branches(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) -> Task<Vec<BranchDiffMatch>> {
+    let project = workspace.read(cx).project().clone();
+    let Some(repo) = project.read(cx).active_repository(cx) else {
+        return Task::ready(Vec::new());
+    };
+
+    struct BranchEntry {
+        is_head: bool,
+        commit_timestamp: Option<i64>,
+        name: SharedString,
+    }
+
+    let entries: Vec<BranchEntry> = repo
+        .read(cx)
+        .branch_list
+        .iter()
+        .map(|branch| BranchEntry {
+            is_head: branch.is_head,
+            commit_timestamp: branch
+                .most_recent_commit
+                .as_ref()
+                .map(|commit| commit.commit_timestamp),
+            name: branch.name().to_owned().into(),
+        })
+        .collect();
+
+    if entries.is_empty() {
+        return Task::ready(Vec::new());
+    }
+
+    if query.is_empty() {
+        let mut sorted = entries;
+        sorted.sort_unstable_by_key(|entry| {
+            Reverse((entry.is_head, entry.commit_timestamp.unwrap_or(0)))
+        });
+        return Task::ready(
+            sorted
+                .into_iter()
+                .map(|entry| BranchDiffMatch {
+                    base_ref: entry.name,
+                    is_head: entry.is_head,
+                })
+                .collect(),
+        );
+    }
+
+    let candidates = entries
+        .iter()
+        .enumerate()
+        .map(|(id, entry)| StringMatchCandidate::new(id, entry.name.as_ref()))
+        .collect::<Vec<_>>();
+
+    let executor = cx.background_executor().clone();
+    cx.background_spawn(async move {
+        let mut matches = fuzzy::match_strings(
+            &candidates,
+            &query,
+            false,
+            true,
+            100,
+            &cancellation_flag,
+            executor,
+        )
+        .await;
+
+        // Sort: HEAD first, then by fuzzy match score, then by recency
+        matches.sort_unstable_by_key(|mat| {
+            let entry = &entries[mat.candidate_id];
+            Reverse((
+                entry.is_head,
+                OrderedFloat(mat.score),
+                entry.commit_timestamp.unwrap_or(0),
+            ))
+        });
+
+        matches
+            .into_iter()
+            .map(|mat| {
+                let entry = &entries[mat.candidate_id];
+                BranchDiffMatch {
+                    base_ref: entry.name.clone(),
+                    is_head: entry.is_head,
+                }
             })
             .collect()
     })
