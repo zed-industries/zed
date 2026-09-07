@@ -361,10 +361,13 @@ impl X11Client {
         let xinput_version = get_reply(
             || "XInput XiQueryVersion failed",
             xcb_connection.xinput_xi_query_version(2, 4),
-        )?;
-        assert!(
+        )
+        .context("Failed to initialize XInput 2. Zed requires XInput 2 or newer")?;
+        anyhow::ensure!(
             xinput_version.major_version >= 2,
-            "XInput version >= 2 required."
+            "This X server only supports XInput {}.{}. Zed requires XInput 2 or newer",
+            xinput_version.major_version,
+            xinput_version.minor_version,
         );
         let supports_xinput_gestures = xinput_version.major_version > 2
             || (xinput_version.major_version == 2 && xinput_version.minor_version >= 4);
