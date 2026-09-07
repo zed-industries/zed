@@ -3615,93 +3615,161 @@ mod tests {
     fn test_insert_above_blocks_matches_generic_insertion(
         cx: &mut gpui::TestAppContext,
         #[strategy = proptest::collection::vec(
-            (0u32..8, 0u32..4, proptest::option::of(0u32..5), 0usize..4),
+            (0usize..20, 0u32..4, proptest::option::of(0u32..5), 0usize..4),
             1..24,
         )]
-        additions: Vec<(u32, u32, Option<u32>, usize)>,
+        additions: Vec<(usize, u32, Option<u32>, usize)>,
         #[strategy = proptest::collection::vec(
-            (0u32..8, proptest::bool::ANY, proptest::option::of(0u32..5), 0usize..4),
+            (0usize..8, proptest::bool::ANY, proptest::option::of(0u32..5), 0usize..4),
             0..16,
         )]
-        existing: Vec<(u32, bool, Option<u32>, usize)>,
+        existing: Vec<(usize, bool, Option<u32>, usize)>,
+        #[strategy = proptest::collection::vec(
+            (1usize..4, 1usize..4),
+            4,
+        )]
+        hunk_lengths: Vec<(usize, usize)>,
     ) {
         cx.update(init_test);
 
-        let text = vec!["aaa"; 16].join("\n");
-        let buffer = cx.new(|cx| Buffer::local(&text, cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(
-                &format!("deleted\n{text}"),
-                &buffer.read(cx).text_snapshot(),
-                cx,
-            )
-        });
-        let base_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
-        let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_excerpts_for_buffer(
-                buffer.clone(),
-                [Point::zero()..buffer.read(cx).max_point()],
-                0,
-                cx,
-            );
-            multibuffer.add_diff(diff.clone(), cx);
-            multibuffer
-        });
-        let companion_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.set_excerpts_for_buffer(
-                base_buffer.clone(),
-                [Point::zero()..base_buffer.read(cx).max_point()],
-                0,
-                cx,
-            );
-            multibuffer.add_inverted_diff(diff.clone(), buffer.clone(), cx);
-            multibuffer
-        });
+        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let companion_multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let mut insertion_points = Vec::new();
+        let mut existing_points = Vec::new();
+        for (file, sections) in hunk_lengths.chunks_exact(2).enumerate() {
+            let mut lines = Vec::new();
+            let mut base_lines = Vec::new();
+            let mut ranges = Vec::new();
+            let mut base_ranges = Vec::new();
+            let mut insertion_rows = Vec::new();
+            let mut existing_rows = Vec::new();
+            for (section, &(deleted, inserted)) in sections.iter().enumerate() {
+                let start = lines.len();
+                let base_start = base_lines.len();
+                let common = |line| format!("file {file} section {section} common {line}");
+                lines.extend([common(0), common(1), common(2), common(3)]);
+                base_lines.extend([common(0), common(1)]);
+                base_lines.extend(
+                    (0..deleted)
+                        .map(|line| format!("file {file} section {section} deleted {line}")),
+                );
+                base_lines.extend([common(2), common(3), common(4), common(5)]);
+                lines.extend(
+                    (0..inserted)
+                        .map(|line| format!("file {file} section {section} inserted {line}")),
+                );
+                lines.extend([common(4), common(5)]);
+                ranges.push(
+                    Point::new(start as u32, 0)
+                        ..Point::new((lines.len() - 1) as u32, common(5).len() as u32),
+                );
+                base_ranges.push(
+                    Point::new(base_start as u32, 0)
+                        ..Point::new((base_lines.len() - 1) as u32, common(5).len() as u32),
+                );
+                // Exercise excerpt starts, deletion spacers, and inserted rows that collapse to
+                // the same companion position. Keep preexisting blocks on separate common rows.
+                insertion_rows.extend([
+                    start,
+                    start + 2,
+                    start + 4,
+                    start + 4 + inserted - 1,
+                    start + 4 + inserted,
+                ]);
+                existing_rows.extend([start + 1, start + 5 + inserted]);
+                for gap in 0..2 {
+                    let line = format!("file {file} section {section} omitted {gap}");
+                    lines.push(line.clone());
+                    base_lines.push(line);
+                }
+            }
+            let buffer = cx.new(|cx| Buffer::local(lines.join("\n"), cx));
+            let diff = cx.new(|cx| {
+                BufferDiff::new_with_base_text(
+                    &base_lines.join("\n"),
+                    &buffer.read(cx).text_snapshot(),
+                    cx,
+                )
+            });
+            diff.read_with(cx, |diff, cx| {
+                assert_eq!(
+                    diff.snapshot(cx)
+                        .hunks(&buffer.read(cx).text_snapshot())
+                        .count(),
+                    4,
+                );
+            });
+            let base_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+            multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.set_excerpts_for_buffer(buffer.clone(), ranges, 0, cx);
+                multibuffer.add_diff(diff.clone(), cx);
+            });
+            companion_multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.set_excerpts_for_buffer(base_buffer, base_ranges, 0, cx);
+                multibuffer.add_inverted_diff(diff, buffer.clone(), cx);
+            });
+            insertion_points.extend(insertion_rows.into_iter().map(|row| (buffer.clone(), row)));
+            existing_points.extend(existing_rows.into_iter().map(|row| (buffer.clone(), row)));
+        }
         let buffer_snapshot = cx.update(|cx| multibuffer.read(cx).snapshot(cx));
+        assert_eq!(buffer_snapshot.excerpts().count(), 4);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
         let (_, wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         let companion_buffer_snapshot = cx.update(|cx| companion_multibuffer.read(cx).snapshot(cx));
+        assert_eq!(companion_buffer_snapshot.excerpts().count(), 4);
         let (_, inlay_snapshot) = InlayMap::new(companion_buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
         let (_, companion_wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
-        // Separate existing Above blocks from new ones so every generated case exercises the fast
-        // path, rather than passing only because it fell back to generic insertion.
-        let blocks = additions
-            .into_iter()
-            .map(|(row, column, height, priority)| BlockProperties {
-                style: BlockStyle::Sticky,
-                placement: BlockPlacement::Above(
-                    buffer_snapshot.anchor_after(Point::new(row * 2, column)),
-                ),
-                height,
-                render: Arc::new(|_| div().into_any()),
-                priority,
-            })
-            .collect::<Vec<_>>();
-        let existing_blocks = existing
-            .into_iter()
-            .map(|(row, above, height, priority)| {
-                let anchor = buffer_snapshot.anchor_after(Point::new(row * 2 + 1, 0));
-                BlockProperties {
-                    style: BlockStyle::Fixed,
-                    placement: if above {
-                        BlockPlacement::Above(anchor)
-                    } else {
-                        BlockPlacement::Below(anchor)
-                    },
-                    height,
-                    render: Arc::new(|_| div().into_any()),
-                    priority,
-                }
-            })
-            .collect::<Vec<_>>();
+        let blocks = cx.update(|cx| {
+            additions
+                .into_iter()
+                .map(|(index, column, height, priority)| {
+                    let (buffer, row) = &insertion_points[index];
+                    let anchor = buffer
+                        .read(cx)
+                        .anchor_after(Point::new(*row as u32, column));
+                    BlockProperties {
+                        style: BlockStyle::Sticky,
+                        placement: BlockPlacement::Above(
+                            buffer_snapshot
+                                .anchor_in_excerpt(anchor)
+                                .expect("included row"),
+                        ),
+                        height,
+                        render: Arc::new(|_| div().into_any()),
+                        priority,
+                    }
+                })
+                .collect::<Vec<_>>()
+        });
+        let existing_blocks = cx.update(|cx| {
+            existing
+                .into_iter()
+                .map(|(index, above, height, priority)| {
+                    let (buffer, row) = &existing_points[index];
+                    let anchor = buffer.read(cx).anchor_after(Point::new(*row as u32, 0));
+                    let anchor = buffer_snapshot
+                        .anchor_in_excerpt(anchor)
+                        .expect("included row");
+                    BlockProperties {
+                        style: BlockStyle::Fixed,
+                        placement: if above {
+                            BlockPlacement::Above(anchor)
+                        } else {
+                            BlockPlacement::Below(anchor)
+                        },
+                        height,
+                        render: Arc::new(|_| div().into_any()),
+                        priority,
+                    }
+                })
+                .collect::<Vec<_>>()
+        });
 
         let additional_block = BlockProperties {
             style: BlockStyle::Sticky,
@@ -3837,10 +3905,12 @@ mod tests {
                         )),
                     )
                     .snapshot;
-                assert!(
+                assert_eq!(
                     snapshot
                         .blocks_in_range(BlockRow(0)..snapshot.max_point().row() + BlockRow(1))
-                        .any(|(_, block)| matches!(block, Block::Spacer { .. }))
+                        .filter(|(_, block)| matches!(block, Block::Spacer { .. }))
+                        .count(),
+                    4,
                 );
                 let companion_snapshot = companion_block_map
                     .read(
@@ -3854,6 +3924,15 @@ mod tests {
                         )),
                     )
                     .snapshot;
+                assert_eq!(
+                    companion_snapshot
+                        .blocks_in_range(
+                            BlockRow(0)..companion_snapshot.max_point().row() + BlockRow(1)
+                        )
+                        .filter(|(_, block)| matches!(block, Block::Spacer { .. }))
+                        .count(),
+                    4,
+                );
                 results.push([(snapshot, ids.clone()), (companion_snapshot, companion_ids)]);
             }
             results
