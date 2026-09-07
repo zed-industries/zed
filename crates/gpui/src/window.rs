@@ -2205,6 +2205,19 @@ impl Window {
         }
     }
 
+    /// Whether moving focus in tab order would wrap around: focus is on the last tab
+    /// stop (or the first, when `backward`), or there is no tab stop to move to. An
+    /// embedder whose window is one region of a larger focus order uses this to hand
+    /// traversal back to the outside instead of wrapping.
+    pub fn focus_at_tab_edge(&self, backward: bool) -> bool {
+        let tab_stops = self.tab_stops(FrameOutput::Rendered);
+        if backward {
+            tab_stops.is_first(self.focus.as_ref())
+        } else {
+            tab_stops.is_last(self.focus.as_ref())
+        }
+    }
+
     /// The tab order of a frame, built from the tab stop operations in the tree.
     pub(crate) fn tab_stops(&self, root: FrameOutput) -> TabStopMap {
         let mut tab_stops = TabStopMap::default();
