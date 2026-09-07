@@ -172,15 +172,6 @@ impl EntityMap {
         );
     }
 
-    pub fn extend_accessed(&mut self, entities: &FxHashSet<EntityId>) {
-        self.accessed_entities
-            .get_mut()
-            .extend(entities.iter().copied());
-        if let Some(scope) = self.accessed_entity_scopes.get_mut().last_mut() {
-            scope.extend(entities.iter().copied());
-        }
-    }
-
     pub(crate) fn suspend_access_tracking(
         &mut self,
     ) -> (FxHashSet<EntityId>, Vec<FxHashSet<EntityId>>) {
@@ -206,7 +197,8 @@ impl EntityMap {
     }
 
     /// Opens a scope that collects the entities accessed until the matching
-    /// `end_access_scope`. Scopes nest; a completed scope's accesses also count for its parent.
+    /// `end_access_scope`. Scopes nest; an inner scope's accesses are its own, not its
+    /// parent's, since a node is dirtied when any of its descendants is.
     pub(crate) fn begin_access_scope(&mut self) {
         let scope = self.recycled_access_scopes.pop().unwrap_or_default();
         self.accessed_entity_scopes.get_mut().push(scope);
@@ -221,9 +213,6 @@ impl EntityMap {
             "entity access scope stack underflow"
         );
         let mut completed_scope = completed_scope.unwrap_or_default();
-        if let Some(parent_scope) = scopes.last_mut() {
-            parent_scope.extend(completed_scope.iter().copied());
-        }
         accessed.extend(completed_scope.iter().copied());
         completed_scope.clear();
         self.recycled_access_scopes.push(completed_scope);

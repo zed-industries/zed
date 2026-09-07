@@ -432,8 +432,6 @@ impl<V: View> Element for ViewElement<V> {
                 .reuse_layout(node_id, &cache_key)
                 .filter(|layout| window.layout_is_retained(*layout))
             {
-                cx.entities
-                    .extend_accessed(&window.node_engine.node(node_id).accessed_entities);
                 window.finish_node_phase(node_id, false);
                 self.node_layout = Some(NodeViewLayout {
                     layout,
@@ -2648,6 +2646,91 @@ mod tests {
                 .child(self.prefix.clone())
                 .child(self.branch.clone())
         }
+    }
+
+    /// An entity read only while a deferred root paints is one of that root's dependencies,
+    /// not its owner's; when the owner is clean and reused, the notification must still
+    /// reach the window.
+    #[gpui::test]
+    fn node_engine_tracks_entities_read_only_by_a_reused_deferred_root(cx: &mut TestAppContext) {
+        struct Value(u32);
+
+        struct Owner {
+            value: Entity<Value>,
+            paints: Rc<Cell<u32>>,
+        }
+
+        impl Render for Owner {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let value = self.value.clone();
+                let paints = self.paints.clone();
+                div().size_full().child(crate::deferred(
+                    crate::anchored().child(
+                        crate::canvas(
+                            |_, _, _| {},
+                            move |bounds, _, window, cx| {
+                                paints.set(paints.get() + 1);
+                                let shade = value.read(cx).0;
+                                window.paint_quad(crate::fill(bounds, rgb(shade)));
+                            },
+                        )
+                        .size(px(40.)),
+                    ),
+                ))
+            }
+        }
+
+        struct Root {
+            owner: Entity<Owner>,
+            sibling: Entity<Owner>,
+        }
+
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .flex()
+                    .child(self.owner.clone())
+                    .child(self.sibling.clone())
+            }
+        }
+
+        let paints = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(200.), px(200.)), |_, cx| {
+            let new_owner = |cx: &mut Context<Root>, paints: Rc<Cell<u32>>| {
+                cx.new(|cx| Owner {
+                    value: cx.new(|_| Value(0x112233)),
+                    paints,
+                })
+            };
+            Root {
+                owner: new_owner(cx, paints.clone()),
+                sibling: new_owner(cx, Rc::new(Cell::new(0))),
+            }
+        });
+        cx.run_until_parked();
+        // Redraw once with the owner clean, so the deferred root is reused rather than drawn.
+        window
+            .update(cx, |root, _, cx| {
+                root.sibling.update(cx, |_, cx| cx.notify());
+            })
+            .expect("window open");
+        cx.run_until_parked();
+        let painted_before = paints.get();
+
+        window
+            .update(cx, |root, _, cx| {
+                root.owner.read(cx).value.clone().update(cx, |value, cx| {
+                    value.0 = 0xaabbcc;
+                    cx.notify();
+                });
+            })
+            .expect("window open");
+        cx.run_until_parked();
+        assert!(
+            paints.get() > painted_before,
+            "notifying the entity the deferred root reads must repaint it"
+        );
     }
 
     #[gpui::test]

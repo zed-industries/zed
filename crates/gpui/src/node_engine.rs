@@ -527,6 +527,11 @@ impl NodeEngine {
         }
     }
 
+    /// Every entity some live node's recorded output was computed from.
+    pub(crate) fn dependency_sources(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.consumers.keys().copied()
+    }
+
     /// Marks dirty the nodes that read `source` and their ancestors. Does nothing when no
     /// node has read `source`.
     pub(crate) fn invalidate_consumers(&mut self, source: EntityId) {

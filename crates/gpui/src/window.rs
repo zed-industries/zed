@@ -3097,9 +3097,13 @@ impl Window {
         focus_before_listeners
     }
 
+    /// Registers the entities whose notifications must redraw this window: those read while
+    /// drawing the frame, and those the recorded output of every live node was computed
+    /// from, since a reused node reads nothing when it is drawn.
     fn record_entities_accessed(&mut self, cx: &mut App) {
         let mut entities_ref = cx.entities.accessed_entities.get_mut();
         let mut entities = mem::take(entities_ref.deref_mut());
+        entities.extend(self.node_engine.dependency_sources());
         let handle = self.handle;
         cx.record_entities_accessed(
             handle,
