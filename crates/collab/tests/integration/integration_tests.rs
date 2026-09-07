@@ -7758,10 +7758,8 @@ async fn test_project_search_excludes_private_files(
     }
 
     let mut paths = results
-        .into_iter()
-        .map(|(buffer, _)| {
-            buffer.read_with(cx_b, |buffer, cx| buffer.file().unwrap().full_path(cx))
-        })
+        .into_keys()
+        .map(|buffer| buffer.read_with(cx_b, |buffer, cx| buffer.file().unwrap().full_path(cx)))
         .collect::<Vec<_>>();
     paths.sort();
 
