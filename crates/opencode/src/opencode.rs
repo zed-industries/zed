@@ -122,6 +122,8 @@ pub enum Model {
     Gpt5Codex,
     #[serde(rename = "gpt-5-nano")]
     Gpt5Nano,
+    #[serde(rename = "gpt-6-astra")]
+    Gpt6Astra,
 
     // -- Google protocol models --
     #[serde(rename = "gemini-3.1-pro")]
@@ -315,6 +317,7 @@ impl Model {
             Self::Gpt5 => "gpt-5",
             Self::Gpt5Codex => "gpt-5-codex",
             Self::Gpt5Nano => "gpt-5-nano",
+            Self::Gpt6Astra => "gpt-6-astra",
 
             Self::Gemini3_1Pro => "gemini-3.1-pro",
             Self::Gemini3Flash => "gemini-3-flash",
@@ -397,6 +400,7 @@ impl Model {
             Self::Gpt5 => "GPT 5",
             Self::Gpt5Codex => "GPT 5 Codex",
             Self::Gpt5Nano => "GPT 5 Nano",
+            Self::Gpt6Astra => "GPT 6 Astra",
 
             Self::Gemini3_1Pro => "Gemini 3.1 Pro",
             Self::Gemini3Flash => "Gemini 3 Flash",
@@ -493,7 +497,8 @@ impl Model {
             | Self::Gpt5_1CodexMini
             | Self::Gpt5
             | Self::Gpt5Codex
-            | Self::Gpt5Nano => ApiProtocol::OpenAiResponses,
+            | Self::Gpt5Nano
+            | Self::Gpt6Astra => ApiProtocol::OpenAiResponses,
 
             Self::Grok4_6
             | Self::Grok4_5
@@ -602,6 +607,7 @@ impl Model {
                 400_000
             }
             Self::Gpt5 | Self::Gpt5Codex | Self::Gpt5Nano => 400_000,
+            Self::Gpt6Astra => 1_050_000,
 
             // Google models
             Self::Gemini3_1Pro
@@ -696,7 +702,8 @@ impl Model {
             | Self::Gpt5_1CodexMini
             | Self::Gpt5
             | Self::Gpt5Codex
-            | Self::Gpt5Nano => Some(128_000),
+            | Self::Gpt5Nano
+            | Self::Gpt6Astra => Some(128_000),
 
             // Google models
             Self::Gemini3_1Pro
@@ -797,7 +804,8 @@ impl Model {
             | Self::Gpt5_1CodexMini
             | Self::Gpt5
             | Self::Gpt5Codex
-            | Self::Gpt5Nano => true,
+            | Self::Gpt5Nano
+            | Self::Gpt6Astra => true,
 
             // OpenAI models without image support
             Self::Gpt5_3Spark => false,
@@ -943,6 +951,14 @@ impl Model {
 
             Self::Gpt5_6Sol | Self::Gpt5_6Terra | Self::Gpt5_6Luna => Some(vec![
                 ReasoningEffort::None,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+                ReasoningEffort::Max,
+            ]),
+
+            Self::Gpt6Astra => Some(vec![
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
