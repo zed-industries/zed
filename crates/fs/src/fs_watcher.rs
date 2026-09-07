@@ -1200,8 +1200,10 @@ fn dispatch_batch(
     first: DispatchEvent,
     event_rx: &async_channel::Receiver<DispatchEvent>,
 ) {
-    // A single backend overflow can enqueue many rescan markers. One rescan
-    // per mode covers the entire drained batch; ordinary events still run.
+    // A single backend overflow can enqueue many pathless rescan markers, each
+    // of which rescans every watched root, so one per mode covers the entire
+    // drained batch. Rescans that name paths only cover those subtrees and are
+    // all dispatched; ordinary events still run.
     let mut native_rescan_dispatched = false;
     let mut poll_rescan_dispatched = false;
 
@@ -1212,7 +1214,10 @@ fn dispatch_batch(
             WatcherMode::Native => &mut native_rescan_dispatched,
             WatcherMode::Poll => &mut poll_rescan_dispatched,
         };
-        if event.as_ref().is_ok_and(notify::Event::need_rescan) {
+        if event
+            .as_ref()
+            .is_ok_and(|event| event.need_rescan() && event.paths.is_empty())
+        {
             if *rescan_dispatched {
                 continue;
             }
@@ -1718,6 +1723,42 @@ mod tests {
                 "/repo/a".to_owned(),
                 "/repo/a".to_owned(),
                 "/repo/a/nested".to_owned(),
+                "/repo/b".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn queued_rescans_naming_distinct_paths_are_all_dispatched() {
+        let (watcher, fired) = recording_watcher();
+        let (event_tx, event_rx) = async_channel::unbounded();
+        let rescan_of = |path: &str| {
+            notify::Event::new(EventKind::Other)
+                .set_flag(notify::event::Flag::Rescan)
+                .add_path(PathBuf::from(path))
+        };
+
+        event_tx
+            .try_send((WatcherMode::Native, Ok(rescan_of("/repo/b"))))
+            .unwrap();
+        watcher.dispatch_batch(
+            (WatcherMode::Native, Ok(rescan_of("/repo/a/nested"))),
+            &event_rx,
+        );
+
+        // Each named rescan only covers its own subtree once it reaches the
+        // callbacks, so collapsing the second one would lose /repo/b's resync.
+        // Both are broadcast to every registration of the mode.
+        let mut got = fired.lock().clone();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "/repo/a".to_owned(),
+                "/repo/a".to_owned(),
+                "/repo/a/nested".to_owned(),
+                "/repo/a/nested".to_owned(),
+                "/repo/b".to_owned(),
                 "/repo/b".to_owned(),
             ]
         );
