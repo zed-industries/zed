@@ -937,9 +937,9 @@ mod tests {
     }
 
     use crate::{
-        Bounds, Component, Context, Entity, FocusHandle, Modifiers, Render, ScaledPixels,
-        StyleRefinement, TestAppContext, VisualTestContext, Window, deferred, div, point,
-        prelude::*, px, rgb, size,
+        Bounds, Component, Context, Entity, FocusHandle, HitRegion, Modifiers, Render,
+        ScaledPixels, StyleRefinement, TestAppContext, VisualTestContext, Window, deferred, div,
+        point, prelude::*, px, rgb, size,
     };
     use std::{cell::Cell, rc::Rc};
 
@@ -1129,7 +1129,7 @@ mod tests {
         });
         let left_bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), px(100.)));
         let right_bounds = Bounds::new(point(px(200.), px(0.)), size(px(100.), px(100.)));
-        let (left_root, right_root) = window
+        let (mut left_root, mut right_root) = window
             .update(cx, |_, window, _| {
                 (
                     window.attach_root(left.clone(), left_bounds),
@@ -1145,14 +1145,14 @@ mod tests {
         window
             .update(cx, |_, window, _| {
                 let scale = window.scale_factor();
-                let left_scene = window.take_root_scene(left_root).expect("left was drawn");
+                let left_scene = left_root.take_scene(window).expect("left was drawn");
                 assert_eq!(left_scene.quads.len(), 1);
                 assert_eq!(left_scene.quads[0].bounds.origin.x, ScaledPixels(0.));
-                let right_scene = window.take_root_scene(right_root).expect("right was drawn");
+                let right_scene = right_root.take_scene(window).expect("right was drawn");
                 assert_eq!(right_scene.quads.len(), 1);
                 assert_eq!(right_scene.quads[0].bounds.origin.x, px(200.).scale(scale));
-                assert!(window.take_root_scene(left_root).is_none());
-                assert!(window.take_root_scene(right_root).is_none());
+                assert!(left_root.take_scene(window).is_none());
+                assert!(right_root.take_scene(window).is_none());
                 // The window's own scene holds both.
                 assert_eq!(window.rendered_frame.scene.quads.len(), 2);
             })
@@ -1164,8 +1164,8 @@ mod tests {
         assert_eq!((left_renders.get(), right_renders.get()), (1, 2));
         window
             .update(cx, |_, window, _| {
-                assert!(window.take_root_scene(left_root).is_none());
-                assert!(window.take_root_scene(right_root).is_some());
+                assert!(left_root.take_scene(window).is_none());
+                assert!(right_root.take_scene(window).is_some());
             })
             .expect("window");
 
@@ -1173,16 +1173,16 @@ mod tests {
         let moved_bounds = Bounds::new(point(px(200.), px(0.)), size(px(50.), px(100.)));
         window
             .update(cx, |_, window, _| {
-                window.set_root_bounds(right_root, moved_bounds)
+                right_root.set_bounds(window, moved_bounds)
             })
             .expect("window");
         cx.run_until_parked();
         window
             .update(cx, |_, window, _| {
                 let scale = window.scale_factor();
-                let right_scene = window.take_root_scene(right_root).expect("right moved");
+                let right_scene = right_root.take_scene(window).expect("right moved");
                 assert_eq!(right_scene.quads[0].bounds.size.width, px(50.).scale(scale));
-                assert!(window.take_root_scene(left_root).is_none());
+                assert!(left_root.take_scene(window).is_none());
             })
             .expect("window");
 
@@ -1200,12 +1200,11 @@ mod tests {
 
         // A detached root is gone from the frame.
         window
-            .update(cx, |_, window, _| window.detach_root(left_root))
+            .update(cx, |_, window, _| left_root.detach(window))
             .expect("window");
         cx.run_until_parked();
         window
             .update(cx, |_, window, _| {
-                assert!(window.take_root_scene(left_root).is_none());
                 assert_eq!(window.rendered_frame.scene.quads.len(), 1);
             })
             .expect("window");
@@ -1297,13 +1296,11 @@ mod tests {
     }
 
     #[gpui::test]
-    fn attached_roots_ship_their_deferred_draws_and_unowned_roots_as_overlays(
-        cx: &mut TestAppContext,
-    ) {
+    fn attached_roots_ship_their_deferred_draws_as_overlays(cx: &mut TestAppContext) {
         let window = cx.open_window(size(px(400.), px(100.)), |_, _| TooltipRoot);
         let left = cx.new(|_| PopoverRoot { open: false });
         let left_bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), px(100.)));
-        let left_root = window
+        let mut left_root = window
             .update(cx, |_, window, _| {
                 window.attach_root(left.clone(), left_bounds)
             })
@@ -1312,24 +1309,12 @@ mod tests {
 
         window
             .update(cx, |_, window, _| {
-                assert_eq!(
-                    window
-                        .take_root_scene(left_root)
-                        .expect("drawn")
-                        .quads
-                        .len(),
-                    1
-                );
-                // Nothing deferred yet; the root view's deferred draw is unowned.
-                let owned = window
-                    .take_root_overlay_scene(left_root, false)
-                    .expect("first take");
-                assert!(owned.quads.is_empty());
-                let all = window
-                    .take_root_overlay_scene(left_root, true)
-                    .expect("unowned added");
-                assert_eq!(all.quads.len(), 1);
-                assert!(window.take_root_overlay_scene(left_root, true).is_none());
+                assert_eq!(left_root.take_scene(window).expect("drawn").quads.len(), 1);
+                // Nothing deferred yet: an empty overlay, handed out once.
+                let overlay = left_root.take_overlay_scene(window).expect("first take");
+                assert!(overlay.quads.is_empty());
+                assert!(left_root.take_overlay_scene(window).is_none());
+                assert!(left_root.overlay_hit_regions(window).is_empty());
             })
             .expect("window");
 
@@ -1342,35 +1327,81 @@ mod tests {
             .update(cx, |_, window, _| {
                 // The popover is not part of the root's own scene...
                 assert_eq!(
-                    window
-                        .take_root_scene(left_root)
-                        .expect("redrawn")
-                        .quads
-                        .len(),
+                    left_root.take_scene(window).expect("redrawn").quads.len(),
                     1
                 );
-                // ...but of its overlay, ahead of the unowned root.
+                // ...but of its overlay.
                 let scale = window.scale_factor();
-                let overlay = window
-                    .take_root_overlay_scene(left_root, true)
-                    .expect("popover");
-                assert_eq!(overlay.quads.len(), 2);
+                let overlay = left_root.take_overlay_scene(window).expect("popover");
+                assert_eq!(overlay.quads.len(), 1);
                 assert_eq!(overlay.quads[0].bounds.origin.x, px(50.).scale(scale));
-                assert!(window.take_root_overlay_scene(left_root, true).is_none());
-                // Dropping the unowned roots changes the overlay again.
-                let owned = window
-                    .take_root_overlay_scene(left_root, false)
-                    .expect("changed set");
-                assert_eq!(owned.quads.len(), 1);
-                // The popover occludes exactly its own bounds; the tooltip-like root has
-                // no hitbox, so clicks pass through it.
-                let regions = window.root_overlay_hit_regions(left_root, true);
-                assert_eq!(regions.len(), 1);
+                assert!(left_root.take_overlay_scene(window).is_none());
+                // The popover occludes exactly its own bounds.
+                let regions = left_root.overlay_hit_regions(window);
                 assert_eq!(
-                    regions[0].0,
-                    Bounds::new(point(px(50.), px(10.)), size(px(80.), px(80.)))
+                    regions,
+                    vec![HitRegion {
+                        bounds: Bounds::new(point(px(50.), px(10.)), size(px(80.), px(80.))),
+                        behavior: crate::HitboxBehavior::BlockMouse,
+                    }]
                 );
-                assert_eq!(regions[0].1, crate::HitboxBehavior::BlockMouse);
+            })
+            .expect("window");
+
+        // Closing the popover hands out the now-empty overlay once more.
+        left.update(cx, |root, cx| {
+            root.open = false;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |_, window, _| {
+                let overlay = left_root.take_overlay_scene(window).expect("gone");
+                assert!(overlay.quads.is_empty());
+                assert!(left_root.take_overlay_scene(window).is_none());
+            })
+            .expect("window");
+    }
+
+    #[gpui::test]
+    fn unowned_overlays_belong_to_the_window_not_to_a_root(cx: &mut TestAppContext) {
+        // The root view defers a draw of its own (as a tooltip or drag preview would be);
+        // the attached root defers a popover.
+        let window = cx.open_window(size(px(400.), px(100.)), |_, _| TooltipRoot);
+        let left = cx.new(|_| PopoverRoot { open: true });
+        let left_bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), px(100.)));
+        let mut left_root = window
+            .update(cx, |_, window, _| {
+                window.attach_root(left.clone(), left_bounds)
+            })
+            .expect("window");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |_, window, _| {
+                let scale = window.scale_factor();
+                // The window's unowned overlay is the root view's deferred draw alone...
+                let unowned = window.take_unowned_overlay_scene().expect("first take");
+                assert_eq!(unowned.quads.len(), 1);
+                assert_eq!(unowned.quads[0].bounds.origin.x, ScaledPixels(0.));
+                assert!(window.take_unowned_overlay_scene().is_none());
+                // ...with no hitbox, so clicks pass through it...
+                assert!(window.unowned_overlay_hit_regions().is_empty());
+                // ...and the root's overlay is its popover alone.
+                let owned = left_root.take_overlay_scene(window).expect("popover");
+                assert_eq!(owned.quads.len(), 1);
+                assert_eq!(owned.quads[0].bounds.origin.x, px(50.).scale(scale));
+            })
+            .expect("window");
+
+        // Detaching the root does not touch the unowned set.
+        window
+            .update(cx, |_, window, _| left_root.detach(window))
+            .expect("window");
+        cx.run_until_parked();
+        window
+            .update(cx, |_, window, _| {
+                assert!(window.take_unowned_overlay_scene().is_none());
             })
             .expect("window");
     }
