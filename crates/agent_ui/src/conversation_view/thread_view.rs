@@ -7005,16 +7005,12 @@ impl ThreadView {
             return;
         }
 
-        // Walk earlier when the bound index (or most-recent UserMessage) is a
-        // Claude Code <task-notification>, which is stored as a UserMessage.
         let search_end = user_message_index.unwrap_or(entries.len() - 1);
         if let Some(ix) = (0..=search_end).rev().find(|&ix| {
-            entries.get(ix).is_some_and(|entry| {
-                matches!(
-                    entry,
-                    AgentThreadEntry::UserMessage(message) if !message.is_task_notification()
-                )
-            })
+            matches!(
+                entries.get(ix),
+                Some(AgentThreadEntry::UserMessage(message)) if !message.is_task_notification()
+            )
         }) {
             self.list_state.scroll_to(ListOffset {
                 item_ix: ix,

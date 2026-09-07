@@ -315,11 +315,7 @@ impl UserMessage {
             .find_map(|chunk| match chunk {
                 acp::ContentBlock::Text(text) => {
                     let trimmed = text.text.trim_start();
-                    if trimmed.is_empty() {
-                        None
-                    } else {
-                        Some(trimmed.starts_with("<task-notification"))
-                    }
+                    (!trimmed.is_empty()).then_some(trimmed.starts_with("<task-notification"))
                 }
                 _ => Some(false),
             })
