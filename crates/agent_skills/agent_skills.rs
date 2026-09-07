@@ -1371,6 +1371,30 @@ Content.
     }
 
     #[test]
+    fn test_parse_unicode_description_at_limit_loads_without_warning() {
+        let description = "中".repeat(MAX_SKILL_DESCRIPTION_LEN);
+        let content = format!(
+            r#"---
+name: test
+description: {description}
+---
+
+Content.
+"#
+        );
+
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/test/SKILL.md"),
+            &content,
+            SkillSource::Global,
+        )
+        .expect("descriptions at the character limit should load without a warning");
+
+        assert_eq!(skill.description, description);
+        assert!(skill.load_warnings.is_empty());
+    }
+
+    #[test]
     fn test_parse_description_too_long_loads_with_warning() {
         let long_desc = "中".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
         let content = format!(
