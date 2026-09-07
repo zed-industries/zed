@@ -66,32 +66,6 @@ const DEFAULT_FPS: u64 = 120;
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 
-/// Aggregate statistics for total foreground executor work observed during a
-/// measured interval, returned by [`BenchReport::foreground_work`].
-#[derive(Clone, Copy, Debug)]
-pub struct ForegroundWorkSummary {
-    /// Number of foreground work items recorded: task polls, action
-    /// handlers, input dispatches, and folded sub-floor poll flushes.
-    pub count: u64,
-    /// Sum of every recorded item's duration.
-    pub total: Duration,
-    /// The longest single recorded item.
-    pub max: Duration,
-    /// 50th percentile duration.
-    pub p50: Duration,
-    /// 90th percentile duration.
-    pub p90: Duration,
-    /// 95th percentile duration.
-    pub p95: Duration,
-    /// 99th percentile duration.
-    pub p99: Duration,
-    /// How many whole frame budgets (at the report's configured FPS) were
-    /// exceeded in total, summed across every recorded item.
-    pub frame_budget_overruns_total: u64,
-    /// How many whole frame budgets the longest recorded item exceeded.
-    pub frame_budget_overruns_max: u64,
-}
-
 /// A small report produced by GPUI benchmarks.
 #[derive(Clone)]
 pub struct BenchReport {
@@ -171,7 +145,11 @@ impl BenchReport {
                 ForegroundEvent::SmallPolls(flush) => flush.summary.total,
                 _ => event.duration(),
             };
-            snapshot.foreground_work.record(duration);
+            // Infallible: the histogram auto-resizes.
+            snapshot
+                .foreground_work
+                .record(duration.as_nanos() as u64)
+                .ok();
         }
     }
 
@@ -199,34 +177,18 @@ impl BenchReport {
         over_budget_nanos.div_ceil(self.frame_budget_nanos) as u64
     }
 
-    /// Returns aggregate statistics for total foreground executor work
-    /// observed during the measured interval: every task poll, action
-    /// handler, and input dispatch on the foreground thread, whether or not
-    /// it produced a window draw. This is captured through GPUI's foreground
-    /// journal, so it requires no window and surfaces a slow or stalled task
-    /// even when nothing was drawn while it ran.
+    /// Returns a snapshot of total foreground executor work observed during
+    /// the measured interval: every task poll, action handler, and input
+    /// dispatch on the foreground thread, whether or not it produced a
+    /// window draw. This is captured through GPUI's foreground journal, so
+    /// it requires no window and surfaces a slow or stalled task even when
+    /// nothing was drawn while it ran. Durations are recorded in
+    /// nanoseconds.
     ///
-    /// Returns `None` when no foreground work was recorded, e.g. a
+    /// Empty when no foreground work was recorded, e.g. a
     /// [`BenchAppContext::bench_iter`] measurement that does no async work.
-    pub fn foreground_work(&self) -> Option<ForegroundWorkSummary> {
-        let frame_snapshot = self.frame_snapshot.borrow();
-        let foreground_work = &frame_snapshot.foreground_work;
-        if foreground_work.histogram.is_empty() {
-            return None;
-        }
-
-        let max = Duration::from_nanos(foreground_work.histogram.max());
-        Some(ForegroundWorkSummary {
-            count: foreground_work.histogram.len(),
-            total: Duration::from_nanos(foreground_work.total_nanos),
-            max,
-            p50: Duration::from_nanos(foreground_work.histogram.value_at_quantile(0.50)),
-            p90: Duration::from_nanos(foreground_work.histogram.value_at_quantile(0.90)),
-            p95: Duration::from_nanos(foreground_work.histogram.value_at_quantile(0.95)),
-            p99: Duration::from_nanos(foreground_work.histogram.value_at_quantile(0.99)),
-            frame_budget_overruns_total: self.total_budget_overruns(&foreground_work.histogram),
-            frame_budget_overruns_max: self.budget_overruns(max),
-        })
+    pub fn foreground_work(&self) -> Histogram<u64> {
+        self.frame_snapshot.borrow().foreground_work.clone()
     }
 
     /// Prints this report to stderr.
@@ -261,18 +223,14 @@ impl BenchReport {
         self.print_histogram_body(histogram);
     }
 
-    fn print_foreground_work(&self, foreground_work: &DurationHistogram) {
-        if foreground_work.histogram.is_empty() {
+    fn print_foreground_work(&self, foreground_work: &Histogram<u64>) {
+        if foreground_work.is_empty() {
             return;
         }
 
         eprintln!("  foreground executor work (task polls, actions, input dispatch):");
         eprintln!("    note: excludes window draw/present, reported separately above");
-        eprintln!(
-            "    total: {}",
-            format_duration(Duration::from_nanos(foreground_work.total_nanos))
-        );
-        self.print_histogram_body(&foreground_work.histogram);
+        self.print_histogram_body(foreground_work);
     }
 
     fn print_histogram_body(&self, histogram: &Histogram<u64>) {
@@ -315,7 +273,7 @@ struct WindowFrameSnapshot {
     draw: Histogram<u64>,
     present_interval: Histogram<u64>,
     invalidations_per_frame: Histogram<u64>,
-    foreground_work: DurationHistogram,
+    foreground_work: Histogram<u64>,
 }
 
 impl WindowFrameSnapshot {
@@ -325,7 +283,7 @@ impl WindowFrameSnapshot {
             draw: Histogram::new(3).expect("3 significant digits is valid"),
             present_interval: Histogram::new(3).expect("3 significant digits is valid"),
             invalidations_per_frame: Histogram::new(3).expect("3 significant digits is valid"),
-            foreground_work: DurationHistogram::new(),
+            foreground_work: Histogram::new(3).expect("3 significant digits is valid"),
         }
     }
 
@@ -333,31 +291,7 @@ impl WindowFrameSnapshot {
         self.dirty_to_draw.is_empty()
             && self.draw.is_empty()
             && self.present_interval.is_empty()
-            && self.foreground_work.histogram.is_empty()
-    }
-}
-
-/// A duration histogram paired with an exact running total, since the
-/// histogram's bucketed values (3 significant digits) approximate a sum less
-/// precisely than tracking it directly.
-struct DurationHistogram {
-    histogram: Histogram<u64>,
-    total_nanos: u64,
-}
-
-impl DurationHistogram {
-    fn new() -> Self {
-        Self {
-            histogram: Histogram::new(3).expect("3 significant digits is valid"),
-            total_nanos: 0,
-        }
-    }
-
-    fn record(&mut self, duration: Duration) {
-        let nanos = duration.as_nanos() as u64;
-        // Infallible: the histogram auto-resizes.
-        self.histogram.record(nanos).ok();
-        self.total_nanos += nanos;
+            && self.foreground_work.is_empty()
     }
 }
 
@@ -1154,25 +1088,20 @@ mod tests {
         let report = BenchReport::default();
         report.record_foreground_events(events.foreground_events());
 
-        let summary = report
-            .foreground_work()
-            .expect("a long task poll should be reported even without a window draw");
+        let histogram = report.foreground_work();
+        assert!(
+            !histogram.is_empty(),
+            "a long task poll should be reported even without a window draw"
+        );
         // The spawned task's own poll is one sample; the tiny wrapper poll
         // that observes its completion in `run_task_to_completion` folds
         // into a second, near-zero sample rather than being dropped.
-        assert!(summary.count >= 1, "expected at least one recorded item");
+        assert!(histogram.len() >= 1, "expected at least one recorded item");
+        let max = Duration::from_nanos(histogram.max());
         assert!(
-            summary.max >= Duration::from_millis(55),
+            max >= Duration::from_millis(55),
             "expected the long poll's duration to be recorded, got {:?}",
-            summary.max
-        );
-        // `total` is an exact sum, while `max` may be rounded up to its
-        // histogram bucket's boundary, so compare each against the expected
-        // floor directly instead of against each other.
-        assert!(
-            summary.total >= Duration::from_millis(55),
-            "expected the long poll's duration to be included in the total, got {:?}",
-            summary.total
+            max
         );
     }
 
@@ -1201,18 +1130,16 @@ mod tests {
         let report = BenchReport::default();
         report.record_foreground_events(events.foreground_events());
 
-        let summary = report
-            .foreground_work()
-            .expect("the measured task's poll should be reported");
+        let histogram = report.foreground_work();
         assert!(
-            summary.max < Duration::from_millis(40),
-            "setup work's 80ms poll must not leak into the measured summary, got {:?}",
-            summary.max
+            !histogram.is_empty(),
+            "the measured task's poll should be reported"
         );
+        let max = Duration::from_nanos(histogram.max());
         assert!(
-            summary.total < Duration::from_millis(40),
-            "setup work's 80ms poll must not leak into the measured total, got {:?}",
-            summary.total
+            max < Duration::from_millis(40),
+            "setup work's 80ms poll must not leak into the measured summary, got {:?}",
+            max
         );
     }
 
@@ -1243,13 +1170,16 @@ mod tests {
             cx.teardown();
         });
 
-        let summary = report
-            .foreground_work()
-            .expect("bench_task should report foreground work with no window involved");
+        let histogram = report.foreground_work();
         assert!(
-            summary.max >= Duration::from_millis(15),
+            !histogram.is_empty(),
+            "bench_task should report foreground work with no window involved"
+        );
+        let max = Duration::from_nanos(histogram.max());
+        assert!(
+            max >= Duration::from_millis(15),
             "expected a ~20ms task poll to be recorded, got {:?}",
-            summary.max
+            max
         );
     }
 
