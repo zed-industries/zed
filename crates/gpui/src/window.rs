@@ -3478,7 +3478,68 @@ impl Window {
         root: AttachedRootId,
         include_unowned: bool,
     ) -> Option<Scene> {
-        let node = self.attached_root_mut(root)?.node?;
+        let parts = self.overlay_parts(root, include_unowned)?;
+        let stamp: Vec<(ViewNodeId, u64)> = parts
+            .iter()
+            .filter_map(|part| Some((*part, self.node_engine.try_node(*part)?.output.generation)))
+            .collect();
+        let attached = self.attached_root_mut(root)?;
+        if attached.overlay_stamp.as_ref() == Some(&stamp) {
+            return None;
+        }
+        attached.overlay_stamp = Some(stamp);
+
+        let mut scene = Scene::default();
+        for part in parts {
+            self.node_engine.replay_scene(part, &mut scene);
+        }
+        scene.finish();
+        Some(scene)
+    }
+
+    /// Where the roots that [`Window::take_root_overlay_scene`] would replay accept
+    /// input: every hitbox they recorded in the last frame drawn, clipped to its content
+    /// mask, in window coordinates, with whether it blocks the mouse from what is under
+    /// it. An embedder that paints the overlay elsewhere puts these in front of its own
+    /// tree so clicks reach the overlay exactly where its elements are, and pass
+    /// through where they are not.
+    pub fn root_overlay_hit_regions(
+        &self,
+        root: AttachedRootId,
+        include_unowned: bool,
+    ) -> Vec<(Bounds<Pixels>, HitboxBehavior)> {
+        let mut regions = Vec::new();
+        let Some(parts) = self.overlay_parts(root, include_unowned) else {
+            return regions;
+        };
+        for part in parts {
+            self.node_engine
+                .walk_node(part, MetadataPhase::Prepaint, |_, item| {
+                    if let OutputItem::Hitbox(hitbox) = item {
+                        let bounds = hitbox.bounds.intersect(&hitbox.content_mask.bounds);
+                        if !bounds.is_empty() {
+                            regions.push((bounds, hitbox.behavior));
+                        }
+                    }
+                    ControlFlow::Continue(())
+                });
+        }
+        regions
+    }
+
+    /// The roots an attached root's overlay is made of, in drawing order: the deferred
+    /// draws its subtree attached, by priority, then (when asked) the roots that belong
+    /// to no attached root and are not the root view. `None` before the root was drawn.
+    fn overlay_parts(
+        &self,
+        root: AttachedRootId,
+        include_unowned: bool,
+    ) -> Option<Vec<ViewNodeId>> {
+        let node = self
+            .attached_roots
+            .iter()
+            .find(|attached| attached.id == root)?
+            .node?;
         let mut owned: Vec<(usize, ViewNodeId)> = self
             .rendered_frame
             .deferred_draws
@@ -3507,22 +3568,7 @@ impl Window {
                 }
             }
         }
-        let stamp: Vec<(ViewNodeId, u64)> = parts
-            .iter()
-            .filter_map(|part| Some((*part, self.node_engine.try_node(*part)?.output.generation)))
-            .collect();
-        let attached = self.attached_root_mut(root)?;
-        if attached.overlay_stamp.as_ref() == Some(&stamp) {
-            return None;
-        }
-        attached.overlay_stamp = Some(stamp);
-
-        let mut scene = Scene::default();
-        for part in parts {
-            self.node_engine.replay_scene(part, &mut scene);
-        }
-        scene.finish();
-        Some(scene)
+        Some(parts)
     }
 
     fn attached_root_mut(&mut self, root: AttachedRootId) -> Option<&mut AttachedRoot> {
