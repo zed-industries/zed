@@ -43,8 +43,9 @@ use anthropic::completion::{
     AnthropicEventMapper, AnthropicPromptCacheMode, collect_compaction_result, into_anthropic,
 };
 use google_ai::completion::{GoogleEventMapper, into_google};
+use language_model::chat_completion::ChatCompletionEventMapper;
 use open_ai::completion::{
-    ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
+    ChatCompletionMaxTokensParameter, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response, token_usage_from_response_usage,
 };
 
@@ -665,9 +666,11 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto
-            | LanguageModelToolChoice::Any
-            | LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::Auto | LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::Any => {
+                self.model.provider != cloud_llm_client::LanguageModelProvider::Anthropic
+                    || anthropic::supports_forced_tool_use(self.id.0.as_ref())
+            }
         }
     }
 
@@ -745,6 +748,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 if enable_thinking && effort.is_some() {
                     request.thinking = Some(anthropic::Thinking::Adaptive {
                         display: Some(anthropic::AdaptiveThinkingDisplay::Summarized),
+                        // Thinking block binding needs a beta header on the
+                        // upstream Anthropic request, which the cloud proxy
+                        // controls, so opting in belongs server-side.
+                        block_binding: None,
                     });
                     request.output_config = Some(anthropic::OutputConfig { effort });
                 }
@@ -912,7 +919,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     )
                     .await?;
 
-                    let mut mapper = OpenAiEventMapper::new();
+                    let mut mapper = ChatCompletionEventMapper::new();
                     let events = map_cloud_completion_events(
                         Box::pin(response_lines(response, includes_status_messages)),
                         &provider_name,

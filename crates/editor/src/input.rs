@@ -335,10 +335,7 @@ impl Editor {
                 );
 
                 // Remove shortcode from buffer
-                edits.push((
-                    emoji_shortcode_start..selection.start,
-                    "".to_string().into(),
-                ));
+                edits.push((emoji_shortcode_start..selection.start, Arc::from("")));
                 new_selections.push((
                     Selection {
                         id: selection.id,

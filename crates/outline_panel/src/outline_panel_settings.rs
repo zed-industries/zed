@@ -18,6 +18,7 @@ pub struct OutlinePanelSettings {
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
     pub expand_outlines_with_depth: usize,
+    pub multi_buffer_hide_symbols: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -76,6 +77,7 @@ impl Settings for OutlinePanelSettings {
                     .map(ui_scrollbar_settings_from_raw),
             },
             expand_outlines_with_depth: panel.expand_outlines_with_depth.unwrap(),
+            multi_buffer_hide_symbols: panel.multi_buffer_hide_symbols.unwrap(),
         }
     }
 }
