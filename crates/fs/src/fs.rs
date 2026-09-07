@@ -152,9 +152,6 @@ pub trait Fs: Send + Sync {
         Ok(())
     }
 
-    /// Whether `path` exists, without following a final symlink. Synchronous
-    /// because watches are registered synchronously by the worktree scanner.
-    fn path_exists(&self, path: &Path) -> bool;
     /// Whether the volume holding `path` compares file names case-sensitively.
     fn is_path_case_sensitive(&self, path: &Path) -> bool;
     /// Whether `path` sits on a filesystem where native file watching does not
@@ -1175,12 +1172,11 @@ impl Fs for RealFs {
         self.native_watcher.ensure_backend()
     }
 
-    fn path_exists(&self, path: &Path) -> bool {
-        std::fs::symlink_metadata(path).is_ok()
-    }
-
     fn is_path_case_sensitive(&self, path: &Path) -> bool {
-        !fs_watcher::case_insensitive_path(path)
+        let ancestor = path
+            .ancestors()
+            .find(|ancestor| std::fs::symlink_metadata(ancestor).is_ok());
+        !fs_watcher::case_insensitive_path(ancestor.unwrap_or(path))
     }
 
     fn requires_poll_watcher(&self, path: &Path) -> bool {
@@ -1769,6 +1765,9 @@ impl fs_watcher::WatchBackend for FakeWatchBackend {
             "fake filesystem state is locked; this execution would have caused a test hang",
         );
         state.watches.watch_calls.push(path.clone());
+        if state.try_entry(&path, false).is_none() {
+            return Err(notify::Error::path_not_found());
+        }
         state.watches.registered_paths.push(path);
         Ok(())
     }
@@ -3395,13 +3394,6 @@ impl Fs for FakeFs {
 
     async fn git_config(&self, _abs_work_directory: &Path, _args: Vec<String>) -> Result<String> {
         anyhow::bail!("Git config is not supported in fake Fs")
-    }
-
-    fn path_exists(&self, path: &Path) -> bool {
-        self.state
-            .lock()
-            .try_entry(&normalize_path(path), false)
-            .is_some()
     }
 
     fn is_path_case_sensitive(&self, _path: &Path) -> bool {

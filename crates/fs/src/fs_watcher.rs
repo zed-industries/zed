@@ -1,4 +1,4 @@
-use futures::{Stream, StreamExt as _};
+use futures::{FutureExt as _, Stream, StreamExt as _};
 use gpui::{BackgroundExecutor, Task};
 use notify::{Event, EventKind};
 use parking_lot::Mutex;
@@ -46,7 +46,6 @@ pub(crate) async fn watch(
         native_watcher,
         poll_watcher,
         fs.clone(),
-        executor.clone(),
         tx,
         pending_paths.clone(),
     ));
@@ -102,11 +101,9 @@ pub struct FsWatcher {
     native_watcher: Arc<OsWatcher>,
     poll_watcher: Arc<OsWatcher>,
     fs: Arc<dyn Fs>,
-    executor: BackgroundExecutor,
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-    registrations: Arc<Mutex<HashMap<WatchKey, FsWatcherRegistration>>>,
-    pending_registrations: Arc<Mutex<HashMap<Arc<std::path::Path>, Task<()>>>>,
+    registrations: Mutex<HashMap<WatchKey, FsWatcherRegistration>>,
 }
 
 #[derive(Clone)]
@@ -120,7 +117,6 @@ impl FsWatcher {
         native_watcher: Arc<OsWatcher>,
         poll_watcher: Arc<OsWatcher>,
         fs: Arc<dyn Fs>,
-        executor: BackgroundExecutor,
         tx: async_channel::Sender<()>,
         pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
     ) -> Self {
@@ -128,69 +124,36 @@ impl FsWatcher {
             native_watcher,
             poll_watcher,
             fs,
-            executor,
             tx,
             pending_path_events,
             registrations: Default::default(),
-            pending_registrations: Default::default(),
         }
     }
 
     fn add_existing_path(&self, path: Arc<Path>) -> anyhow::Result<()> {
         let case_insensitive = !self.fs.is_path_case_sensitive(&path);
         let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
-        if self.registrations.lock().contains_key(&key) {
+        let mut registrations = self.registrations.lock();
+        if registrations.contains_key(&key) {
             log::trace!("path to watch is already watched: {path:?}");
             return Ok(());
         }
-        match register_existing_path(
+        let registration = register_existing_path(
             &self.native_watcher,
             &self.poll_watcher,
             self.fs.as_ref(),
-            path.clone(),
+            path,
             case_insensitive,
             self.tx.clone(),
             self.pending_path_events.clone(),
-        )? {
-            Some(registration) => {
-                self.registrations.lock().insert(key, registration);
-            }
-            None => {
-                // Registration was skipped (e.g. the native watch-limit cooldown
-                // is active). Retry in the background rather than silently leaving
-                // the path unwatched forever.
-                log::warn!("watch registration for {path:?} was skipped; retrying in background");
-                self.add_pending_path(path);
-            }
-        }
+        );
+        registrations.insert(key, registration);
         Ok(())
-    }
-
-    fn add_pending_path(&self, path: Arc<Path>) {
-        let mut pending_registrations = self.pending_registrations.lock();
-        if pending_registrations.contains_key(path.as_ref()) {
-            return;
-        }
-
-        let task = self.executor.spawn(poll_path_until_created(
-            self.native_watcher.clone(),
-            self.poll_watcher.clone(),
-            self.fs.clone(),
-            self.executor.clone(),
-            path.clone(),
-            self.tx.clone(),
-            self.pending_path_events.clone(),
-            self.registrations.clone(),
-            self.pending_registrations.clone(),
-        ));
-        pending_registrations.insert(path, task);
     }
 }
 
 impl Drop for FsWatcher {
     fn drop(&mut self) {
-        self.pending_registrations.lock().clear();
-
         let mut registrations = HashMap::new();
         {
             let old = &mut self.registrations.lock();
@@ -216,26 +179,11 @@ impl Watcher for FsWatcher {
             return Ok(());
         }
 
-        if self
-            .pending_registrations
-            .lock()
-            .contains_key(path.as_ref())
-        {
-            log::trace!("path to watch is already pending: {path:?}");
-            return Ok(());
-        }
-
-        if !self.fs.path_exists(&path) {
-            self.add_pending_path(path);
-            return Ok(());
-        }
-
         self.add_existing_path(path)
     }
 
     fn remove(&self, path: &std::path::Path) -> anyhow::Result<()> {
         log::trace!("remove watched path: {path:?}");
-        self.pending_registrations.lock().remove(path);
 
         let sanitized = SanitizedPath::new(path);
         let registration = {
@@ -309,7 +257,7 @@ fn register_existing_path(
     case_insensitive: bool,
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-) -> anyhow::Result<Option<FsWatcherRegistration>> {
+) -> FsWatcherRegistration {
     let os_watcher = if fs.requires_poll_watcher(path.as_ref()) {
         log::info!(
             "Using poll watcher ({}ms interval) for {}",
@@ -323,25 +271,21 @@ fn register_existing_path(
     };
     let root_path = SanitizedPath::new_arc(path.as_ref());
     let path_for_callback = path.clone();
-    let Some(registration_id) =
-        os_watcher.add(path, case_insensitive, move |event: &notify::Event| {
-            log::trace!("watcher received event: {event:?}");
-            push_notify_event(
-                &tx,
-                &pending_path_events,
-                &root_path,
-                case_insensitive,
-                path_for_callback.as_ref(),
-                event,
-            );
-        })?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(FsWatcherRegistration {
+    let registration_id = os_watcher.add(path, case_insensitive, move |event: &notify::Event| {
+        log::trace!("watcher received event: {event:?}");
+        push_notify_event(
+            &tx,
+            &pending_path_events,
+            &root_path,
+            case_insensitive,
+            path_for_callback.as_ref(),
+            event,
+        );
+    });
+    FsWatcherRegistration {
         id: registration_id,
         os_watcher: os_watcher.clone(),
-    }))
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -569,80 +513,6 @@ impl WatchKey {
     }
 }
 
-async fn poll_path_until_created(
-    native_watcher: Arc<OsWatcher>,
-    poll_watcher: Arc<OsWatcher>,
-    fs: Arc<dyn Fs>,
-    executor: BackgroundExecutor,
-    path: Arc<Path>,
-    tx: async_channel::Sender<()>,
-    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-    registrations: Arc<Mutex<HashMap<WatchKey, FsWatcherRegistration>>>,
-    pending_registrations: Arc<Mutex<HashMap<Arc<Path>, Task<()>>>>,
-) {
-    loop {
-        executor.timer(poll_interval()).await;
-
-        if !pending_registrations.lock().contains_key(path.as_ref()) {
-            return;
-        }
-
-        if !fs.path_exists(&path) {
-            continue;
-        }
-
-        // Probe case sensitivity now that the path exists, rather than at add
-        // time when it didn't.
-        let case_insensitive = !fs.is_path_case_sensitive(&path);
-        let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
-
-        if registrations.lock().contains_key(&key) {
-            pending_registrations.lock().remove(path.as_ref());
-            return;
-        }
-
-        match register_existing_path(
-            &native_watcher,
-            &poll_watcher,
-            fs.as_ref(),
-            path.clone(),
-            case_insensitive,
-            tx.clone(),
-            pending_path_events.clone(),
-        ) {
-            Ok(Some(registration)) => {
-                {
-                    let mut pending_registrations = pending_registrations.lock();
-                    if pending_registrations.remove(path.as_ref()).is_none() {
-                        registration.os_watcher.remove(registration.id);
-                        return;
-                    }
-                    registrations.lock().insert(key, registration);
-                }
-                enqueue_path_events(
-                    &tx,
-                    &pending_path_events,
-                    vec![
-                        PathEvent {
-                            path: path.to_path_buf(),
-                            kind: Some(PathEventKind::Created),
-                        },
-                        PathEvent {
-                            path: path.to_path_buf(),
-                            kind: Some(PathEventKind::Rescan),
-                        },
-                    ],
-                );
-                return;
-            }
-            Ok(None) => {}
-            Err(error) => {
-                log::warn!("failed to watch newly-created path {path:?}: {error}; retrying");
-            }
-        }
-    }
-}
-
 fn enqueue_path_events(
     tx: &smol::channel::Sender<()>,
     pending_path_events: &Arc<Mutex<Vec<PathEvent>>>,
@@ -795,7 +665,66 @@ struct WatcherRegistrationState {
 
 struct PathRegistrationState {
     watcher_ids: Vec<WatcherRegistrationId>,
-    has_os_watcher: bool,
+    os: OsWatch,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WatchError {
+    NotFound,
+    ResourceLimit,
+    Io(Arc<str>),
+}
+
+impl WatchError {
+    fn classify(error: &anyhow::Error) -> Self {
+        if let Some(error) = error.downcast_ref::<notify::Error>() {
+            match &error.kind {
+                notify::ErrorKind::PathNotFound => return Self::NotFound,
+                notify::ErrorKind::MaxFilesWatch | notify::ErrorKind::FsEventStreamStart => {
+                    return Self::ResourceLimit;
+                }
+                notify::ErrorKind::Io(error) => return Self::from_io(error),
+                _ => {}
+            }
+        }
+        if let Some(error) = error.downcast_ref::<std::io::Error>() {
+            return Self::from_io(error);
+        }
+        Self::Io(error.to_string().into())
+    }
+
+    fn from_io(error: &std::io::Error) -> Self {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            return Self::NotFound;
+        }
+        #[cfg(unix)]
+        if matches!(
+            error.raw_os_error(),
+            Some(libc::ENOSPC | libc::EMFILE | libc::ENFILE)
+        ) {
+            return Self::ResourceLimit;
+        }
+        Self::Io(error.to_string().into())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum OsWatch {
+    Active,
+    CoveredBy(WatchKey),
+    Pending {
+        last_error: Option<WatchError>,
+        attempts: u32,
+        next_attempt: Instant,
+    },
+}
+
+fn retry_delay(error: Option<&WatchError>, attempts: u32) -> Duration {
+    if error == Some(&WatchError::NotFound) {
+        poll_interval()
+    } else {
+        Duration::from_secs((2u64 << attempts.saturating_sub(1).min(5)).min(60))
+    }
 }
 
 /// The registered watch paths for one backend, keyed by [`WatchKey`] so that
@@ -823,16 +752,25 @@ impl WatchPaths {
         self.0.remove(key);
     }
 
-    /// True if a recursive registration on a strict ancestor already covers
+    /// A recursive registration on a strict ancestor that already covers
     /// `path`. Only poll watches and native macOS/Windows watches are recursive.
-    fn covered_by_recursive_ancestor(&self, path: &SanitizedPath, recursive: bool) -> bool {
+    fn covered_by_recursive_ancestor(
+        &self,
+        path: &SanitizedPath,
+        recursive: bool,
+    ) -> Option<WatchKey> {
         if !recursive {
-            return false;
+            return None;
         }
-        path.as_path().ancestors().skip(1).any(|ancestor| {
+        path.as_path().ancestors().skip(1).find_map(|ancestor| {
             let ancestor = SanitizedPath::unchecked_new(ancestor);
-            self.0.contains_key(&WatchKey::exact(ancestor))
-                || self.0.contains_key(&WatchKey::folded(ancestor))
+            [WatchKey::exact(ancestor), WatchKey::folded(ancestor)]
+                .into_iter()
+                .find(|key| {
+                    self.0.get(key).is_some_and(|registration| {
+                        matches!(registration.os, OsWatch::Active | OsWatch::Pending { .. })
+                    })
+                })
         })
     }
 
@@ -852,20 +790,74 @@ impl WatchPaths {
     }
 }
 
+struct WatchLimit {
+    exhausted_until: Instant,
+    attempts: u32,
+}
+
 struct WatcherState {
     watchers: HashMap<WatcherRegistrationId, WatcherRegistrationState>,
     paths: WatchPaths,
-    cooldown_until: Option<Instant>,
+    limit: Option<WatchLimit>,
     last_registration: WatcherRegistrationId,
 }
 
 impl WatcherState {
-    fn is_native_watch_limit_cooldown_active(&self) -> bool {
-        self.cooldown_until
-            .is_some_and(|cooldown_until| cooldown_until > Instant::now())
+    fn resource_limit_reached(
+        &mut self,
+        kind: OsWatcherKind,
+        key: &WatchKey,
+        now: Instant,
+    ) -> Instant {
+        let attempts = self
+            .limit
+            .as_ref()
+            .map_or(1, |limit| limit.attempts.saturating_add(1));
+        let exhausted_until = now + retry_delay(Some(&WatchError::ResourceLimit), attempts);
+        if self.limit.is_none() {
+            let pending = self
+                .paths
+                .0
+                .values()
+                .filter(|registration| matches!(registration.os, OsWatch::Pending { .. }))
+                .count()
+                + usize::from(!self.paths.0.get(key).is_some_and(|registration| {
+                    matches!(registration.os, OsWatch::Pending { .. })
+                }));
+            log::warn!(
+                "filesystem watcher resource limit reached for {kind:?}; {} paths pending; retrying in background",
+                pending
+            );
+        }
+        self.limit = Some(WatchLimit {
+            exhausted_until,
+            attempts,
+        });
+        for registration in self.paths.0.values_mut() {
+            if let OsWatch::Pending {
+                last_error: None | Some(WatchError::ResourceLimit),
+                next_attempt,
+                ..
+            } = &mut registration.os
+            {
+                *next_attempt = exhausted_until;
+            }
+        }
+        exhausted_until
     }
 
-    fn remove_registration(&mut self, id: WatcherRegistrationId) -> Option<Arc<SanitizedPath>> {
+    fn resource_limit_recovered(&mut self, kind: OsWatcherKind) {
+        if self.limit.take().is_some() {
+            log::info!("filesystem watcher resource limit recovered for {kind:?}");
+        }
+    }
+
+    fn remove_registration(
+        &mut self,
+        id: WatcherRegistrationId,
+        recursive: bool,
+        now: Instant,
+    ) -> Option<Arc<SanitizedPath>> {
         let registration_state = self.watchers.remove(&id)?;
         let path_state = self.paths.get_mut(&registration_state.key)?;
         path_state.watcher_ids.retain(|&existing| existing != id);
@@ -873,9 +865,40 @@ impl WatcherState {
             return None;
         }
 
-        let was_actually_watched = path_state.has_os_watcher;
+        let was_actually_watched = path_state.os == OsWatch::Active;
         self.paths.remove(&registration_state.key);
 
+        let orphaned = self
+            .paths
+            .0
+            .iter()
+            .filter(|(_, registration)| {
+                registration.os == OsWatch::CoveredBy(registration_state.key.clone())
+            })
+            .filter_map(|(key, registration)| {
+                registration
+                    .watcher_ids
+                    .first()
+                    .map(|id| (key.clone(), *id))
+            })
+            .collect::<Vec<_>>();
+        for (key, id) in orphaned {
+            let Some(registration) = self.watchers.get(&id) else {
+                continue;
+            };
+            let os = self
+                .paths
+                .covered_by_recursive_ancestor(&registration.path, recursive)
+                .map(OsWatch::CoveredBy)
+                .unwrap_or(OsWatch::Pending {
+                    last_error: None,
+                    attempts: 0,
+                    next_attempt: now,
+                });
+            if let Some(registration) = self.paths.get_mut(&key) {
+                registration.os = os;
+            }
+        }
         was_actually_watched.then_some(registration_state.path)
     }
 }
@@ -887,6 +910,9 @@ pub(crate) trait WatchBackend: Send {
 
 impl<T: notify::Watcher + Send> WatchBackend for T {
     fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()> {
+        // The Windows backend reports a generic error for a missing path.
+        #[cfg(target_os = "windows")]
+        std::fs::metadata(path).map_err(notify::Error::io_watch)?;
         notify::Watcher::watch(self, path, mode)
     }
 
@@ -895,10 +921,24 @@ impl<T: notify::Watcher + Send> WatchBackend for T {
     }
 }
 
-pub struct OsWatcher {
+struct PollWatchBackend(notify::PollWatcher);
+
+impl WatchBackend for PollWatchBackend {
+    fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()> {
+        // PollWatcher returns Ok even if a missing root prevents registration.
+        std::fs::metadata(path).map_err(notify::Error::io_watch)?;
+        notify::Watcher::watch(&mut self.0, path, mode)
+    }
+
+    fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
+        notify::Watcher::unwatch(&mut self.0, path)
+    }
+}
+
+struct Inner {
     kind: OsWatcherKind,
     recursive: bool,
-    state: Arc<Mutex<WatcherState>>,
+    state: Mutex<WatcherState>,
 
     // Never hold the state lock while calling the backend: a backend call can be
     // slow (a poll watch scans its whole tree up front, an FSEvents watch rebuilds
@@ -906,7 +946,14 @@ pub struct OsWatcher {
     // events. Whoever re-locks the state afterwards must re-check what they assumed.
     backend: Mutex<Option<Box<dyn WatchBackend>>>,
     event_tx: async_channel::Sender<notify::Result<notify::Event>>,
+    reconcile_tx: async_channel::Sender<()>,
+    executor: BackgroundExecutor,
+}
+
+pub struct OsWatcher {
+    inner: Arc<Inner>,
     _dispatch_task: Task<()>,
+    _reconcile_task: Task<()>,
 }
 
 impl OsWatcher {
@@ -924,30 +971,93 @@ impl OsWatcher {
         backend: Option<Box<dyn WatchBackend>>,
     ) -> Arc<Self> {
         let (event_tx, event_rx) = async_channel::unbounded();
-        let state = Arc::new(Mutex::new(WatcherState {
-            watchers: Default::default(),
-            paths: Default::default(),
-            cooldown_until: None,
-            last_registration: Default::default(),
-        }));
+        let (reconcile_tx, reconcile_rx) = async_channel::bounded(1);
+        let inner = Arc::new(Inner {
+            kind,
+            recursive: kind.is_recursive(),
+            state: Mutex::new(WatcherState {
+                watchers: Default::default(),
+                paths: Default::default(),
+                limit: None,
+                last_registration: Default::default(),
+            }),
+            backend: Mutex::new(backend),
+            event_tx,
+            reconcile_tx,
+            executor: executor.clone(),
+        });
         let dispatch_task = executor.spawn({
-            let state = state.clone();
+            let inner = inner.clone();
             async move {
                 while let Ok(first) = event_rx.recv().await {
-                    dispatch_batch(kind, &state, first, &event_rx);
+                    dispatch_batch(&inner, first, &event_rx);
                 }
             }
         });
+        let reconcile_task = executor.spawn(Inner::reconcile(inner.clone(), reconcile_rx));
         Arc::new(Self {
-            kind,
-            recursive: kind.is_recursive(),
-            state,
-            backend: Mutex::new(backend),
-            event_tx,
+            inner,
             _dispatch_task: dispatch_task,
+            _reconcile_task: reconcile_task,
         })
     }
 
+    #[cfg(feature = "test-support")]
+    pub(crate) fn event_sink(
+        &self,
+    ) -> impl Fn(notify::Result<notify::Event>) + Send + Sync + 'static {
+        self.inner.event_sink()
+    }
+
+    pub(crate) fn is_recursive(&self) -> bool {
+        self.inner.recursive
+    }
+
+    fn add(
+        &self,
+        path: Arc<Path>,
+        case_insensitive: bool,
+        callback: impl Fn(&notify::Event) + Send + Sync + 'static,
+    ) -> WatcherRegistrationId {
+        self.inner.add(path, case_insensitive, callback)
+    }
+
+    pub fn remove(&self, id: WatcherRegistrationId) {
+        self.inner.remove(id);
+    }
+
+    pub(crate) fn ensure_backend(&self) -> anyhow::Result<()> {
+        self.inner.ensure_backend()
+    }
+
+    #[cfg(test)]
+    fn os_watch_state(&self, path: &Path) -> Option<OsWatch> {
+        let state = self.inner.state.lock();
+        let path = SanitizedPath::new(path);
+        state
+            .paths
+            .0
+            .get(&WatchKey::exact(path))
+            .or_else(|| state.paths.0.get(&WatchKey::folded(path)))
+            .map(|registration| registration.os.clone())
+    }
+
+    #[cfg(test)]
+    fn dispatch(&self, event: notify::Result<notify::Event>) {
+        dispatch(&self.inner, event);
+    }
+
+    #[cfg(test)]
+    fn dispatch_batch(
+        &self,
+        first: notify::Result<notify::Event>,
+        event_rx: &async_channel::Receiver<notify::Result<notify::Event>>,
+    ) {
+        dispatch_batch(&self.inner, first, event_rx);
+    }
+}
+
+impl Inner {
     /// The callback a substitute backend uses to report events, standing
     /// in for the `EventHandler` notify would have been constructed with.
     pub(crate) fn event_sink(
@@ -957,17 +1067,13 @@ impl OsWatcher {
         move |event| enqueue(&event_tx, event)
     }
 
-    pub(crate) fn is_recursive(&self) -> bool {
-        self.recursive
-    }
-
     #[must_use]
     fn add(
         &self,
         path: Arc<std::path::Path>,
         case_insensitive: bool,
-        cb: impl Fn(&notify::Event) + Send + Sync + 'static,
-    ) -> anyhow::Result<Option<WatcherRegistrationId>> {
+        callback: impl Fn(&notify::Event) + Send + Sync + 'static,
+    ) -> WatcherRegistrationId {
         let path = SanitizedPath::from_arc(path);
         let key = WatchKey::for_registration(&path, case_insensitive);
         let mut state = self.state.lock();
@@ -976,30 +1082,47 @@ impl OsWatcher {
             .covered_by_recursive_ancestor(&path, self.recursive);
         let path_already_registered = state.paths.contains(&key);
 
-        if !path_already_covered && !path_already_registered {
-            if self.kind == OsWatcherKind::Native && state.is_native_watch_limit_cooldown_active() {
-                return Ok(None);
-            }
-
+        let mut os = path_already_covered
+            .map(OsWatch::CoveredBy)
+            .unwrap_or(OsWatch::Active);
+        if os == OsWatch::Active
+            && let Some(limit) = &state.limit
+            && limit.exhausted_until > self.executor.now()
+        {
+            os = OsWatch::Pending {
+                last_error: None,
+                attempts: 0,
+                next_attempt: limit.exhausted_until,
+            };
+        }
+        if os == OsWatch::Active && !path_already_registered {
             drop(state);
-            match self.watch(path.as_path()) {
-                Ok(()) => {}
-                Err(error)
-                    if self.kind == OsWatcherKind::Native && is_max_files_watch_error(&error) =>
-                {
-                    self.start_native_watch_limit_cooldown(path.as_path());
-                    return Ok(None);
-                }
-                Err(error) => return Err(error),
-            }
+            let result = self.watch(path.as_path());
             state = self.state.lock();
+            match result {
+                Ok(()) => state.resource_limit_recovered(self.kind),
+                Err(error) => {
+                    let classified = WatchError::classify(&error);
+                    let next_attempt = if classified == WatchError::ResourceLimit {
+                        state.resource_limit_reached(self.kind, &key, self.executor.now())
+                    } else {
+                        log::warn!("failed to watch {path:?}: {error}; retrying in background");
+                        self.executor.now() + retry_delay(Some(&classified), 1)
+                    };
+                    os = OsWatch::Pending {
+                        last_error: Some(classified),
+                        attempts: 1,
+                        next_attempt,
+                    };
+                }
+            }
         }
 
         let id = state.last_registration;
         state.last_registration = WatcherRegistrationId(id.0 + 1);
 
         let registration_state = WatcherRegistrationState {
-            callback: Arc::new(cb),
+            callback: Arc::new(callback),
             key: key.clone(),
             path,
         };
@@ -1010,46 +1133,169 @@ impl OsWatcher {
             .and_modify(|registration| registration.watcher_ids.push(id))
             .or_insert_with(|| PathRegistrationState {
                 watcher_ids: vec![id],
-                has_os_watcher: !path_already_covered,
+                os,
             });
 
-        Ok(Some(id))
-    }
-
-    #[cfg(test)]
-    fn dispatch(&self, event: notify::Result<notify::Event>) {
-        dispatch(self.kind, &self.state, event);
-    }
-
-    #[cfg(test)]
-    fn dispatch_batch(
-        &self,
-        first: notify::Result<notify::Event>,
-        event_rx: &async_channel::Receiver<notify::Result<notify::Event>>,
-    ) {
-        dispatch_batch(self.kind, &self.state, first, event_rx);
-    }
-
-    fn start_native_watch_limit_cooldown(&self, path: &Path) {
-        let mut state = self.state.lock();
-        let now = Instant::now();
-        let should_log = !state.is_native_watch_limit_cooldown_active();
-        state.cooldown_until = Some(now + *NATIVE_WATCH_LIMIT_COOLDOWN);
-        if should_log {
-            log::warn!(
-                "OS file watch limit reached while watching {path:?}; skipping new native file watcher registrations for {} seconds",
-                NATIVE_WATCH_LIMIT_COOLDOWN.as_secs()
-            );
-        }
+        drop(state);
+        self.reconcile_tx.try_send(()).ok();
+        id
     }
 
     pub fn remove(&self, id: WatcherRegistrationId) {
         let mut state = self.state.lock();
-        let Some(path) = state.remove_registration(id) else {
-            return;
-        };
+        let removed = state.remove_registration(id, self.recursive, self.executor.now());
         drop(state);
-        self.unwatch(path.as_path()).log_err();
+        if let Some(path) = removed {
+            self.unwatch(path.as_path()).log_err();
+        }
+        self.reconcile_tx.try_send(()).ok();
+    }
+
+    async fn reconcile(self: Arc<Self>, wake: async_channel::Receiver<()>) {
+        loop {
+            self.retry_pending();
+            let next_attempt = self
+                .state
+                .lock()
+                .paths
+                .0
+                .values()
+                .filter_map(|registration| match registration.os {
+                    OsWatch::Pending { next_attempt, .. } => Some(next_attempt),
+                    _ => None,
+                })
+                .min();
+            if let Some(next_attempt) = next_attempt {
+                futures::select_biased! {
+                    result = wake.recv().fuse() => if result.is_err() { return; },
+                    _ = self.executor.timer(next_attempt.saturating_duration_since(self.executor.now())).fuse() => {},
+                }
+            } else if wake.recv().await.is_err() {
+                return;
+            }
+        }
+    }
+
+    fn retry_pending(&self) {
+        let mut pending = {
+            let state = self.state.lock();
+            let now = self.executor.now();
+            state.paths.0.iter()
+                .filter(|(_, registration)| matches!(registration.os, OsWatch::Pending { next_attempt, .. } if next_attempt <= now))
+                .map(|(key, registration)| (key.clone(), registration.watcher_ids.first().map_or(u32::MAX, |id| id.0)))
+                .collect::<Vec<_>>()
+        };
+        pending.sort_unstable_by_key(|(_, id)| *id);
+        for (key, _) in pending {
+            let (path, attempts) = {
+                let mut state = self.state.lock();
+                let exhausted_until = state.limit.as_ref().map(|limit| limit.exhausted_until);
+                let Some(registration) = state.paths.get_mut(&key) else {
+                    continue;
+                };
+                let OsWatch::Pending {
+                    attempts,
+                    next_attempt,
+                    ..
+                } = registration.os
+                else {
+                    continue;
+                };
+                if next_attempt > self.executor.now() {
+                    continue;
+                }
+                if matches!(
+                    registration.os,
+                    OsWatch::Pending {
+                        last_error: None | Some(WatchError::ResourceLimit),
+                        ..
+                    }
+                ) && let Some(until) = exhausted_until
+                    && until > self.executor.now()
+                {
+                    if let OsWatch::Pending { next_attempt, .. } = &mut registration.os {
+                        *next_attempt = until;
+                    }
+                    continue;
+                }
+                let id = registration.watcher_ids.first().copied();
+                let Some(path) = id
+                    .and_then(|id| state.watchers.get(&id))
+                    .map(|registration| registration.path.clone())
+                else {
+                    continue;
+                };
+                (path, attempts)
+            };
+            let result = self.watch(path.as_path());
+            let mut state = self.state.lock();
+            match result {
+                Ok(()) => {
+                    state.resource_limit_recovered(self.kind);
+                    let Some(registration) = state.paths.get_mut(&key) else {
+                        drop(state);
+                        // Removal can race the unlocked OS call.
+                        self.unwatch(path.as_path()).log_err();
+                        continue;
+                    };
+                    let resource_limited = matches!(
+                        registration.os,
+                        OsWatch::Pending {
+                            last_error: None | Some(WatchError::ResourceLimit),
+                            ..
+                        }
+                    );
+                    registration.os = OsWatch::Active;
+                    let callbacks = state
+                        .paths
+                        .0
+                        .iter()
+                        .filter(|(candidate, registration)| {
+                            **candidate == key || registration.os == OsWatch::CoveredBy(key.clone())
+                        })
+                        .flat_map(|(_, registration)| &registration.watcher_ids)
+                        .filter_map(|id| state.watchers.get(id))
+                        .map(|registration| registration.callback.clone())
+                        .collect::<Vec<_>>();
+                    drop(state);
+                    if !resource_limited {
+                        log::info!("watch registration recovered for {path:?}");
+                    }
+                    let created =
+                        notify::Event::new(EventKind::Create(notify::event::CreateKind::Any))
+                            .add_path(path.as_path().to_path_buf());
+                    let rescan = notify::Event::new(EventKind::Other)
+                        .set_flag(notify::event::Flag::Rescan)
+                        .add_path(path.as_path().to_path_buf());
+                    for callback in callbacks {
+                        callback(&created);
+                        callback(&rescan);
+                    }
+                }
+                Err(error) => {
+                    if !state.paths.contains(&key) {
+                        continue;
+                    }
+                    let classified = WatchError::classify(&error);
+                    if attempts == 0 && classified != WatchError::ResourceLimit {
+                        log::warn!("failed to watch {path:?}: {error}; retrying in background");
+                    }
+                    let attempts = attempts.saturating_add(1);
+                    let next_attempt = if classified == WatchError::ResourceLimit {
+                        state.resource_limit_reached(self.kind, &key, self.executor.now())
+                    } else {
+                        self.executor.now() + retry_delay(Some(&classified), attempts)
+                    };
+                    if let Some(registration) = state.paths.get_mut(&key) {
+                        registration.os = OsWatch::Pending {
+                            next_attempt,
+                            last_error: Some(classified),
+                            attempts,
+                        };
+                    }
+                }
+            }
+        }
     }
 
     fn watch(&self, path: &Path) -> anyhow::Result<()> {
@@ -1110,7 +1356,10 @@ impl OsWatcher {
                 }
                 OsWatcherKind::Poll => {
                     let config = notify::Config::default().with_poll_interval(*POLL_INTERVAL);
-                    Box::new(notify::PollWatcher::new(self.event_sink(), config)?)
+                    Box::new(PollWatchBackend(notify::PollWatcher::new(
+                        self.event_sink(),
+                        config,
+                    )?))
                 }
             });
         }
@@ -1118,14 +1367,47 @@ impl OsWatcher {
     }
 }
 
-fn dispatch(
-    kind: OsWatcherKind,
-    state: &Mutex<WatcherState>,
-    event: notify::Result<notify::Event>,
-) {
+fn dispatch(inner: &Inner, event: notify::Result<notify::Event>) {
+    let kind = inner.kind;
     let event = match event {
         Ok(event) => event,
         Err(error) => {
+            if kind == OsWatcherKind::Poll {
+                let paths = error.paths.clone();
+                let error = anyhow::Error::from(error);
+                let classified = WatchError::classify(&error);
+                let mut state = inner.state.lock();
+                let mut handled = false;
+                for path in paths {
+                    let path = SanitizedPath::new(&path);
+                    for key in [WatchKey::exact(path), WatchKey::folded(path)] {
+                        if let Some(registration) = state.paths.get_mut(&key) {
+                            handled = true;
+                            if registration.os != OsWatch::Active {
+                                continue;
+                            }
+                            registration.os = OsWatch::Pending {
+                                last_error: Some(classified.clone()),
+                                attempts: 1,
+                                next_attempt: inner.executor.now()
+                                    + retry_delay(Some(&classified), 1),
+                            };
+                            if classified == WatchError::ResourceLimit {
+                                state.resource_limit_reached(kind, &key, inner.executor.now());
+                            } else {
+                                log::warn!(
+                                    "{kind:?} failed to watch {path:?}: {error}; retrying in background"
+                                );
+                            }
+                            inner.reconcile_tx.try_send(()).ok();
+                        }
+                    }
+                }
+                if !handled {
+                    log::warn!("{kind:?} watcher error: {error}");
+                }
+                return;
+            }
             log::warn!("{kind:?} watcher error: {error}");
             return;
         }
@@ -1134,7 +1416,24 @@ fn dispatch(
     log::trace!("handle {kind:?} watcher event: {event:?}");
 
     let callbacks = {
-        let state = state.lock();
+        let mut state = inner.state.lock();
+        if !inner.recursive && matches!(event.kind, EventKind::Remove(_)) {
+            for path in &event.paths {
+                let path = SanitizedPath::new(path);
+                for key in [WatchKey::exact(path), WatchKey::folded(path)] {
+                    if let Some(registration) = state.paths.get_mut(&key)
+                        && registration.os == OsWatch::Active
+                    {
+                        registration.os = OsWatch::Pending {
+                            last_error: Some(WatchError::NotFound),
+                            attempts: 0,
+                            next_attempt: inner.executor.now() + poll_interval(),
+                        };
+                        inner.reconcile_tx.try_send(()).ok();
+                    }
+                }
+            }
+        }
         if event.need_rescan() {
             let callbacks = state
                 .watchers
@@ -1167,8 +1466,7 @@ fn dispatch(
 }
 
 fn dispatch_batch(
-    kind: OsWatcherKind,
-    state: &Mutex<WatcherState>,
+    inner: &Inner,
     first: notify::Result<notify::Event>,
     event_rx: &async_channel::Receiver<notify::Result<notify::Event>>,
 ) {
@@ -1189,7 +1487,7 @@ fn dispatch_batch(
             rescan_dispatched = true;
         }
 
-        dispatch(kind, state, event);
+        dispatch(inner, event);
     }
 }
 
@@ -1212,12 +1510,6 @@ fn enqueue(
     event_tx.try_send(event).ok();
 }
 
-fn is_max_files_watch_error(error: &anyhow::Error) -> bool {
-    error
-        .downcast_ref::<notify::Error>()
-        .is_some_and(|error| matches!(&error.kind, notify::ErrorKind::MaxFilesWatch))
-}
-
 static POLL_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
     let poll_ms: u64 = std::env::var("ZED_FILE_WATCHER_POLL_MS")
         .ok()
@@ -1225,15 +1517,6 @@ static POLL_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
         .unwrap_or(2000)
         .clamp(500, 30000);
     Duration::from_millis(poll_ms)
-});
-
-static NATIVE_WATCH_LIMIT_COOLDOWN: LazyLock<Duration> = LazyLock::new(|| {
-    let cooldown_seconds: u64 = std::env::var("ZED_NATIVE_WATCH_LIMIT_COOLDOWN_SECONDS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(5)
-        .clamp(0, 300);
-    Duration::from_secs(cooldown_seconds)
 });
 
 pub fn poll_interval() -> Duration {
@@ -1265,6 +1548,10 @@ mod tests {
         watch_calls: Vec<PathBuf>,
         unwatch_calls: Vec<PathBuf>,
         fail_with_watch_limit: bool,
+        fail_with_not_found: bool,
+        fail_with_io: bool,
+        missing_paths: HashSet<PathBuf>,
+        on_watch: Option<Box<dyn FnOnce() + Send>>,
     }
 
     struct SharedFakeWatchBackend(Arc<Mutex<FakeWatchBackend>>);
@@ -1274,8 +1561,19 @@ mod tests {
             let path = path.to_path_buf();
             let mut backend = self.0.lock();
             backend.watch_calls.push(path.clone());
+            if backend.missing_paths.contains(&path) || backend.fail_with_not_found {
+                return Err(notify::Error::path_not_found());
+            }
             if backend.fail_with_watch_limit {
                 return Err(notify::Error::new(notify::ErrorKind::MaxFilesWatch));
+            }
+            if backend.fail_with_io {
+                return Err(notify::Error::io(
+                    std::io::ErrorKind::PermissionDenied.into(),
+                ));
+            }
+            if let Some(on_watch) = backend.on_watch.take() {
+                on_watch();
             }
             backend.watched_paths.insert(path);
             Ok(())
@@ -1301,22 +1599,26 @@ mod tests {
         // rather than going through the OS watcher callbacks, so nothing is ever
         // sent on this channel; the receiver can just be dropped.
         let (event_tx, _event_rx) = async_channel::unbounded();
+        let (reconcile_tx, _reconcile_rx) = async_channel::bounded(1);
         OsWatcher {
-            kind,
-            recursive: kind.is_recursive(),
-            state: Arc::new(Mutex::new(WatcherState {
-                watchers: Default::default(),
-                paths: Default::default(),
-                cooldown_until: None,
-                last_registration: Default::default(),
-            })),
-            backend: Mutex::new(
-                backend.map(|watcher| {
-                    Box::new(SharedFakeWatchBackend(watcher)) as Box<dyn WatchBackend>
+            inner: Arc::new(Inner {
+                kind,
+                recursive: kind.is_recursive(),
+                state: Mutex::new(WatcherState {
+                    watchers: Default::default(),
+                    paths: Default::default(),
+                    limit: None,
+                    last_registration: Default::default(),
                 }),
-            ),
-            event_tx,
+                backend: Mutex::new(backend.map(|watcher| {
+                    Box::new(SharedFakeWatchBackend(watcher)) as Box<dyn WatchBackend>
+                })),
+                event_tx,
+                reconcile_tx,
+                executor: BackgroundExecutor::new(Arc::new(gpui::TestDispatcher::new(0))),
+            }),
             _dispatch_task: Task::ready(()),
+            _reconcile_task: Task::ready(()),
         }
     }
 
@@ -1335,14 +1637,8 @@ mod tests {
         let parent = Arc::<Path>::from(Path::new("/repo"));
         let child = Arc::<Path>::from(Path::new("/repo/foo.csproj"));
 
-        let parent_registration = watcher
-            .add(parent.as_ref().into(), false, |_| {})
-            .expect("add parent watch")
-            .expect("parent watch registered");
-        let child_registration = watcher
-            .add(child.as_ref().into(), false, |_| {})
-            .expect("add covered child watch")
-            .expect("child watch registered");
+        let parent_registration = watcher.add(parent.as_ref().into(), false, |_| {});
+        let child_registration = watcher.add(child.as_ref().into(), false, |_| {});
 
         watcher.remove(parent_registration);
         watcher.remove(child_registration);
@@ -1359,11 +1655,11 @@ mod tests {
 
         let (tx, rx) = async_channel::unbounded();
         let pending_path_events: Arc<Mutex<Vec<PathEvent>>> = Default::default();
+        let native_watcher = OsWatcher::new(OsWatcherKind::Native, cx.executor());
         let watcher = FsWatcher::new(
-            OsWatcher::new(OsWatcherKind::Native, cx.executor()),
+            native_watcher.clone(),
             OsWatcher::new(OsWatcherKind::Poll, cx.executor()),
             crate::RealFs::new(None, cx.executor()),
-            cx.executor(),
             tx,
             pending_path_events.clone(),
         );
@@ -1371,46 +1667,50 @@ mod tests {
         watcher
             .add(&path)
             .expect("add path that does not exist yet");
-        assert!(
-            watcher
-                .pending_registrations
-                .lock()
-                .contains_key(path.as_path())
-        );
-        assert!(watcher.registrations.lock().is_empty());
+        assert_eq!(watcher.registrations.lock().len(), 1);
+        assert!(matches!(
+            native_watcher.os_watch_state(&path),
+            Some(OsWatch::Pending {
+                last_error: Some(WatchError::NotFound),
+                ..
+            })
+        ));
 
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let registration = native_watcher.add(
+            path.clone().into(),
+            !watcher.fs.is_path_case_sensitive(&path),
+            {
+                let events = events.clone();
+                move |event| events.lock().push(event.clone())
+            },
+        );
         std::fs::write(&path, b"contents").expect("create path");
 
-        // poll_path_until_created stats the path on smol's blocking pool, which
-        // the deterministic executor cannot drive; park until the poll task
-        // signals the event channel.
         cx.executor().allow_parking();
         cx.executor().advance_clock(poll_interval());
+        cx.executor().run_until_parked();
         rx.recv().await.expect("receive watcher event");
 
-        assert!(
-            !watcher
-                .pending_registrations
-                .lock()
-                .contains_key(path.as_path())
-        );
+        assert_eq!(native_watcher.os_watch_state(&path), Some(OsWatch::Active));
         let case_insensitive = case_insensitive_path(&path);
         let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
         assert!(watcher.registrations.lock().contains_key(&key));
 
-        // poll_path_until_created also enqueues a Rescan for the same path, but
-        // enqueue_path_events -> util::extend_sorted dedups by path, so only Created survives.
-        assert_eq!(
-            pending_path_events.lock().clone(),
-            vec![PathEvent {
-                path: path.clone(),
-                kind: Some(PathEventKind::Created),
-            }]
+        assert!(events.lock().iter().any(
+            |event| matches!(event.kind, EventKind::Create(_)) && event.paths == [path.clone()]
+        ));
+        assert!(
+            pending_path_events
+                .lock()
+                .iter()
+                .any(|event| event.path == path && event.kind == Some(PathEventKind::Rescan))
         );
+        native_watcher.remove(registration);
     }
 
     #[test]
-    fn native_watch_limit_cools_down_subsequent_native_registrations() {
+    fn native_watch_limit_defers_subsequent_registrations() {
         let native_backend = Arc::new(Mutex::new(FakeWatchBackend {
             fail_with_watch_limit: true,
             ..Default::default()
@@ -1419,18 +1719,451 @@ mod tests {
         let first_path = Arc::<Path>::from(Path::new("/repo/first"));
         let second_path = Arc::<Path>::from(Path::new("/repo/second"));
 
-        let first_registration = watcher
-            .add(first_path.clone(), false, |_| {})
-            .expect("native watch limit is handled");
-        let second_registration = watcher
-            .add(second_path, false, |_| {})
-            .expect("native watch limit backoff is handled");
+        let first_registration = watcher.add(first_path.clone(), false, |_| {});
+        let second_registration = watcher.add(second_path, false, |_| {});
 
-        assert!(first_registration.is_none());
-        assert!(second_registration.is_none());
+        assert!(
+            watcher
+                .inner
+                .state
+                .lock()
+                .watchers
+                .contains_key(&first_registration)
+        );
+        assert!(
+            watcher
+                .inner
+                .state
+                .lock()
+                .watchers
+                .contains_key(&second_registration)
+        );
 
         let native_backend = native_backend.lock();
         assert_eq!(native_backend.watch_calls, &[first_path.to_path_buf()]);
+    }
+
+    #[gpui::test]
+    fn native_watch_limit_registrations_recover(cx: &mut gpui::TestAppContext) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend {
+            fail_with_watch_limit: true,
+            ..Default::default()
+        }));
+        let watcher = OsWatcher::with_backend(
+            OsWatcherKind::Native,
+            cx.executor(),
+            Some(Box::new(SharedFakeWatchBackend(backend.clone()))),
+        );
+        let events = Arc::new(Mutex::new(Vec::new()));
+        for (index, path) in [Path::new("/repo/first"), Path::new("/repo/second")]
+            .into_iter()
+            .enumerate()
+        {
+            let events = events.clone();
+            let watched_path = path.to_path_buf();
+            let id = watcher.add(path.into(), false, move |event| {
+                assert_eq!(event.paths, [watched_path.clone()]);
+                events.lock().push(event.clone());
+            });
+            assert!(watcher.inner.state.lock().watchers.contains_key(&id));
+            assert_eq!(
+                watcher.os_watch_state(path),
+                Some(OsWatch::Pending {
+                    last_error: (index == 0).then_some(WatchError::ResourceLimit),
+                    attempts: u32::from(index == 0),
+                    next_attempt: cx.executor().now() + Duration::from_secs(2),
+                })
+            );
+        }
+        assert_eq!(backend.lock().watch_calls.len(), 1);
+        backend.lock().fail_with_watch_limit = false;
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.executor().run_until_parked();
+        for path in [Path::new("/repo/first"), Path::new("/repo/second")] {
+            assert_eq!(watcher.os_watch_state(path), Some(OsWatch::Active));
+        }
+        assert_eq!(events.lock().len(), 4);
+        assert_eq!(
+            events
+                .lock()
+                .iter()
+                .filter(|event| event.need_rescan())
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .lock()
+                .iter()
+                .filter(|event| matches!(event.kind, EventKind::Create(_)))
+                .count(),
+            2
+        );
+    }
+
+    #[gpui::test]
+    fn failed_registrations_back_off(cx: &mut gpui::TestAppContext) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend {
+            fail_with_watch_limit: true,
+            ..Default::default()
+        }));
+        let watcher = OsWatcher::with_backend(
+            OsWatcherKind::Native,
+            cx.executor(),
+            Some(Box::new(SharedFakeWatchBackend(backend.clone()))),
+        );
+        let path = Path::new("/repo");
+        watcher.add(path.into(), false, |_| {});
+        for (index, seconds) in [2, 4, 8, 16, 32, 60, 60].into_iter().enumerate() {
+            assert_eq!(
+                watcher.os_watch_state(path),
+                Some(OsWatch::Pending {
+                    last_error: Some(WatchError::ResourceLimit),
+                    attempts: index as u32 + 1,
+                    next_attempt: cx.executor().now() + Duration::from_secs(seconds),
+                })
+            );
+            cx.executor()
+                .advance_clock(Duration::from_secs(seconds - 1));
+            cx.executor().run_until_parked();
+            assert_eq!(backend.lock().watch_calls.len(), index + 1);
+            cx.executor().advance_clock(Duration::from_secs(1));
+            cx.executor().run_until_parked();
+            assert_eq!(backend.lock().watch_calls.len(), index + 2);
+        }
+        assert_eq!(
+            retry_delay(Some(&WatchError::NotFound), 100),
+            poll_interval()
+        );
+        assert_eq!(
+            retry_delay(Some(&WatchError::Io("failure".into())), 100),
+            Duration::from_secs(60)
+        );
+    }
+
+    #[gpui::test]
+    fn resource_limit_probes_once_per_window_without_delaying_missing_paths(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let missing = Path::new("/missing");
+        let backend = Arc::new(Mutex::new(FakeWatchBackend {
+            missing_paths: [missing.to_path_buf()].into(),
+            ..Default::default()
+        }));
+        let watcher = OsWatcher::with_backend(
+            OsWatcherKind::Native,
+            cx.executor(),
+            Some(Box::new(SharedFakeWatchBackend(backend.clone()))),
+        );
+        watcher.add(missing.into(), false, |_| {});
+        backend.lock().fail_with_watch_limit = true;
+        for index in 0..100 {
+            watcher.add(
+                PathBuf::from(format!("/repo/{index}")).into(),
+                false,
+                |_| {},
+            );
+        }
+        assert_eq!(backend.lock().watch_calls.len(), 2);
+
+        let poll_backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let poll_watcher = test_os_watcher(OsWatcherKind::Poll, Some(poll_backend.clone()));
+        poll_watcher.add(Path::new("/poll").into(), false, |_| {});
+        assert_eq!(poll_backend.lock().watch_calls.len(), 1);
+
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.executor().run_until_parked();
+        assert_eq!(backend.lock().watch_calls.len(), 4);
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.executor().run_until_parked();
+        assert_eq!(backend.lock().watch_calls.len(), 5);
+        assert_eq!(
+            watcher.os_watch_state(missing),
+            Some(OsWatch::Pending {
+                last_error: Some(WatchError::NotFound),
+                attempts: 3,
+                next_attempt: cx.executor().now() + poll_interval(),
+            })
+        );
+        backend.lock().fail_with_watch_limit = false;
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.executor().run_until_parked();
+        assert_eq!(backend.lock().watch_calls.len(), 106);
+        assert!(watcher.inner.state.lock().limit.is_none());
+        for index in 0..100 {
+            assert_eq!(
+                watcher.os_watch_state(Path::new(&format!("/repo/{index}"))),
+                Some(OsWatch::Active)
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn missing_poll_path_is_retried(cx: &mut gpui::TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("missing");
+        let watcher = OsWatcher::new(OsWatcherKind::Poll, cx.executor());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        watcher.add(path.clone().into(), false, {
+            let events = events.clone();
+            move |event| events.lock().push(event.clone())
+        });
+        assert!(matches!(
+            watcher.os_watch_state(&path),
+            Some(OsWatch::Pending {
+                last_error: Some(WatchError::NotFound),
+                ..
+            })
+        ));
+        std::fs::create_dir(&path).unwrap();
+        cx.executor().advance_clock(poll_interval());
+        cx.executor().run_until_parked();
+        assert_eq!(watcher.os_watch_state(&path), Some(OsWatch::Active));
+        assert!(
+            events
+                .lock()
+                .iter()
+                .any(|event| matches!(event.kind, EventKind::Create(_)))
+        );
+    }
+
+    #[gpui::test]
+    fn io_failures_recover_and_removed_pending_paths_are_not_retried(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend {
+            fail_with_io: true,
+            ..Default::default()
+        }));
+        let watcher = OsWatcher::with_backend(
+            OsWatcherKind::Native,
+            cx.executor(),
+            Some(Box::new(SharedFakeWatchBackend(backend.clone()))),
+        );
+        let path = Path::new("/repo");
+        watcher.add(path.into(), false, |_| {});
+        let removed = watcher.add(Path::new("/removed").into(), false, |_| {});
+        watcher.remove(removed);
+        assert!(matches!(
+            watcher.os_watch_state(path),
+            Some(OsWatch::Pending {
+                last_error: Some(WatchError::Io(_)),
+                attempts: 1,
+                ..
+            })
+        ));
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.executor().run_until_parked();
+        assert_eq!(backend.lock().watch_calls.len(), 3);
+        assert!(matches!(
+            watcher.os_watch_state(path),
+            Some(OsWatch::Pending {
+                last_error: Some(WatchError::Io(_)),
+                attempts: 2,
+                ..
+            })
+        ));
+        backend.lock().fail_with_io = false;
+        cx.executor().advance_clock(Duration::from_secs(4));
+        cx.executor().run_until_parked();
+        assert_eq!(watcher.os_watch_state(path), Some(OsWatch::Active));
+        assert_eq!(backend.lock().watch_calls.len(), 4);
+    }
+
+    #[gpui::test]
+    fn missing_path_uses_ancestor_case_sensitivity(cx: &mut gpui::TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let fs = crate::RealFs::new(None, cx.executor());
+        assert_eq!(
+            fs.is_path_case_sensitive(&directory.path().join("missing/child")),
+            fs.is_path_case_sensitive(directory.path())
+        );
+    }
+
+    #[test]
+    fn covered_child_moves_to_another_recursive_ancestor() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
+        let parent = watcher.add(Path::new("/repo/parent").into(), false, |_| {});
+        watcher.add(Path::new("/repo/parent/child").into(), false, |_| {});
+        watcher.add(Path::new("/repo").into(), false, |_| {});
+        watcher.remove(parent);
+        assert_eq!(
+            watcher.os_watch_state(Path::new("/repo/parent/child")),
+            Some(OsWatch::CoveredBy(WatchKey::exact(SanitizedPath::new(
+                Path::new("/repo")
+            ))))
+        );
+        assert_eq!(backend.lock().watch_calls.len(), 2);
+    }
+
+    #[gpui::test]
+    fn covered_child_gets_os_watch_after_parent_is_removed(cx: &mut gpui::TestAppContext) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = OsWatcher::with_backend(
+            OsWatcherKind::Poll,
+            cx.executor(),
+            Some(Box::new(SharedFakeWatchBackend(backend.clone()))),
+        );
+        let parent = watcher.add(Path::new("/repo").into(), false, |_| {});
+        watcher.add(Path::new("/repo/child").into(), false, |_| {});
+        assert!(matches!(
+            watcher.os_watch_state(Path::new("/repo/child")),
+            Some(OsWatch::CoveredBy(_))
+        ));
+        watcher.remove(parent);
+        cx.executor().run_until_parked();
+        assert_eq!(
+            watcher.os_watch_state(Path::new("/repo/child")),
+            Some(OsWatch::Active)
+        );
+        assert_eq!(
+            backend.lock().watch_calls,
+            [PathBuf::from("/repo"), PathBuf::from("/repo/child")]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    fn removed_native_directory_is_registered_again(cx: &mut gpui::TestAppContext) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = OsWatcher::with_backend(
+            OsWatcherKind::Native,
+            cx.executor(),
+            Some(Box::new(SharedFakeWatchBackend(backend.clone()))),
+        );
+        let path = Path::new("/repo");
+        watcher.add(path.into(), false, |_| {});
+        backend.lock().fail_with_not_found = true;
+        watcher.dispatch(Ok(notify::Event::new(EventKind::Remove(
+            notify::event::RemoveKind::Folder,
+        ))
+        .add_path(path.to_path_buf())));
+        assert!(matches!(
+            watcher.os_watch_state(path),
+            Some(OsWatch::Pending {
+                last_error: Some(WatchError::NotFound),
+                attempts: 0,
+                ..
+            })
+        ));
+        cx.executor().advance_clock(poll_interval());
+        cx.executor().run_until_parked();
+        assert!(matches!(
+            watcher.os_watch_state(path),
+            Some(OsWatch::Pending {
+                last_error: Some(WatchError::NotFound),
+                attempts: 1,
+                ..
+            })
+        ));
+        backend.lock().fail_with_not_found = false;
+        cx.executor().advance_clock(poll_interval());
+        cx.executor().run_until_parked();
+        assert_eq!(watcher.os_watch_state(path), Some(OsWatch::Active));
+        assert_eq!(backend.lock().watch_calls.len(), 3);
+    }
+
+    #[test]
+    fn watch_errors_are_classified() {
+        assert_eq!(
+            WatchError::classify(&notify::Error::path_not_found().into()),
+            WatchError::NotFound
+        );
+        assert_eq!(
+            WatchError::classify(&notify::Error::io(std::io::ErrorKind::NotFound.into()).into()),
+            WatchError::NotFound
+        );
+        for kind in [
+            notify::ErrorKind::MaxFilesWatch,
+            notify::ErrorKind::FsEventStreamStart,
+        ] {
+            assert_eq!(
+                WatchError::classify(&notify::Error::new(kind).into()),
+                WatchError::ResourceLimit
+            );
+        }
+        #[cfg(unix)]
+        for code in [libc::ENOSPC, libc::EMFILE, libc::ENFILE] {
+            assert_eq!(
+                WatchError::classify(
+                    &notify::Error::io(std::io::Error::from_raw_os_error(code)).into()
+                ),
+                WatchError::ResourceLimit
+            );
+        }
+        assert!(matches!(
+            WatchError::classify(
+                &notify::Error::io(std::io::ErrorKind::PermissionDenied.into()).into()
+            ),
+            WatchError::Io(_)
+        ));
+        assert!(matches!(
+            WatchError::classify(&notify::Error::generic("failure").into()),
+            WatchError::Io(_)
+        ));
+    }
+
+    #[gpui::test]
+    fn covered_child_receives_parent_recovery_rescan(cx: &mut gpui::TestAppContext) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend {
+            fail_with_not_found: true,
+            ..Default::default()
+        }));
+        let watcher = OsWatcher::with_backend(
+            OsWatcherKind::Poll,
+            cx.executor(),
+            Some(Box::new(SharedFakeWatchBackend(backend.clone()))),
+        );
+        watcher.add(Path::new("/repo").into(), false, |_| {});
+        let events = Arc::new(Mutex::new(Vec::new()));
+        watcher.add(Path::new("/repo/child").into(), false, {
+            let events = events.clone();
+            move |event| events.lock().push(event.clone())
+        });
+        assert!(matches!(
+            watcher.os_watch_state(Path::new("/repo/child")),
+            Some(OsWatch::CoveredBy(_))
+        ));
+        backend.lock().fail_with_not_found = false;
+        cx.executor().advance_clock(poll_interval());
+        cx.executor().run_until_parked();
+        assert_eq!(backend.lock().watch_calls.len(), 2);
+        let events = events.lock();
+        assert_eq!(events.len(), 2);
+        assert!(
+            events
+                .iter()
+                .any(|event| event.need_rescan() && event.paths == [PathBuf::from("/repo")])
+        );
+    }
+
+    #[gpui::test]
+    fn removed_registration_is_unwatched_after_in_flight_retry(cx: &mut gpui::TestAppContext) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend {
+            fail_with_not_found: true,
+            ..Default::default()
+        }));
+        let watcher = OsWatcher::with_backend(
+            OsWatcherKind::Native,
+            cx.executor(),
+            Some(Box::new(SharedFakeWatchBackend(backend.clone()))),
+        );
+        let path = Path::new("/repo");
+        let registration = watcher.add(path.into(), false, |_| {});
+        {
+            let mut backend = backend.lock();
+            backend.fail_with_not_found = false;
+            backend.on_watch = Some(Box::new({
+                let watcher = watcher.clone();
+                move || watcher.remove(registration)
+            }));
+        }
+        cx.executor().advance_clock(poll_interval());
+        cx.executor().run_until_parked();
+        assert_eq!(watcher.os_watch_state(path), None);
+        assert_eq!(backend.lock().unwatch_calls, [path.to_path_buf()]);
+        assert!(backend.lock().watched_paths.is_empty());
     }
 
     fn modify_event(path: &str) -> notify::Event {
@@ -1447,12 +2180,9 @@ mod tests {
         for dir in ["/repo/a", "/repo/a/nested", "/repo/b"] {
             let fired = fired.clone();
             let label = dir.to_owned();
-            watcher
-                .add(Arc::<Path>::from(Path::new(dir)), false, move |_| {
-                    fired.lock().push(label.clone());
-                })
-                .expect("add watch")
-                .expect("watch registered");
+            watcher.add(Arc::<Path>::from(Path::new(dir)), false, move |_| {
+                fired.lock().push(label.clone());
+            });
         }
         (watcher, fired)
     }
@@ -1523,10 +2253,7 @@ mod tests {
     fn case_insensitive_registration_matches_differently_cased_event() {
         let (fired, cb) = fired_count();
         let watcher = test_os_watcher(OsWatcherKind::Native, Some(Default::default()));
-        watcher
-            .add(Path::new("/Repo/Project").into(), true, cb)
-            .expect("add")
-            .expect("registered");
+        watcher.add(Path::new("/Repo/Project").into(), true, cb);
 
         // Event arrives lowercased (as TSGO/macOS may report it).
         watcher.dispatch(Ok(modify_event("/repo/project/file.txt")));
@@ -1537,10 +2264,7 @@ mod tests {
     fn case_insensitive_registration_survives_case_only_rename() {
         let (fired, cb) = fired_count();
         let watcher = test_os_watcher(OsWatcherKind::Native, Some(Default::default()));
-        watcher
-            .add(Path::new("/Repo/Proj").into(), true, cb)
-            .expect("add")
-            .expect("registered");
+        watcher.add(Path::new("/Repo/Proj").into(), true, cb);
 
         // The watched directory was renamed to a different casing; events now
         // arrive under the new spelling.
@@ -1552,10 +2276,7 @@ mod tests {
     fn case_sensitive_registration_ignores_differently_cased_event() {
         let (fired, cb) = fired_count();
         let watcher = test_os_watcher(OsWatcherKind::Native, Some(Default::default()));
-        watcher
-            .add(Path::new("/Repo/proj").into(), false, cb)
-            .expect("add")
-            .expect("registered");
+        watcher.add(Path::new("/Repo/proj").into(), false, cb);
 
         // On a case-sensitive volume these are genuinely different directories.
         watcher.dispatch(Ok(modify_event("/Repo/PROJ/file.txt")));
@@ -1566,14 +2287,8 @@ mod tests {
     fn differently_cased_adds_dedupe_on_case_insensitive_volume() {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
         let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
-        watcher
-            .add(Path::new("/Repo/Proj").into(), true, |_| {})
-            .expect("add")
-            .expect("registered");
-        watcher
-            .add(Path::new("/repo/proj").into(), true, |_| {})
-            .expect("add")
-            .expect("registered");
+        watcher.add(Path::new("/Repo/Proj").into(), true, |_| {});
+        watcher.add(Path::new("/repo/proj").into(), true, |_| {});
 
         // The second, differently-cased spelling reuses the same OS watch.
         assert_eq!(backend.lock().watch_calls.len(), 1);
@@ -1583,13 +2298,8 @@ mod tests {
     fn recursive_parent_covers_differently_cased_child() {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
         let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
-        watcher
-            .add(Path::new("/Repo").into(), true, |_| {})
-            .expect("add")
-            .expect("registered");
-        watcher
-            .add(Path::new("/repo/child").into(), true, |_| {})
-            .expect("add");
+        watcher.add(Path::new("/Repo").into(), true, |_| {});
+        watcher.add(Path::new("/repo/child").into(), true, |_| {});
 
         // The child is covered by the recursive parent despite the case mismatch.
         assert_eq!(backend.lock().watch_calls, vec![PathBuf::from("/Repo")]);
@@ -1683,14 +2393,11 @@ mod tests {
         let fired = Arc::new(Mutex::new(Vec::new()));
         {
             let fired = fired.clone();
-            watcher
-                .add(
-                    Arc::<Path>::from(Path::new("C:\\repo\\src")),
-                    false,
-                    move |_| fired.lock().push(()),
-                )
-                .expect("add watch")
-                .expect("watch registered");
+            watcher.add(
+                Arc::<Path>::from(Path::new("C:\\repo\\src")),
+                false,
+                move |_| fired.lock().push(()),
+            );
         }
 
         watcher.dispatch(Ok(modify_event("\\\\?\\C:\\repo\\src\\main.rs")));

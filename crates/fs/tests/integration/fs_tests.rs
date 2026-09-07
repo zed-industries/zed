@@ -18,6 +18,45 @@ use tempfile::TempDir;
 use util::path;
 
 #[gpui::test]
+async fn test_fake_fs_missing_watch_recovers(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.executor());
+    fs.set_case_sensitive(false);
+    fs.insert_tree(path!("/root"), json!({})).await;
+    let missing = Path::new(path!("/root/missing"));
+    let (mut events, _watcher) = fs.watch(missing, Duration::ZERO).await;
+    assert_eq!(fs.watch_calls(), [missing.to_path_buf()]);
+
+    fs.insert_file(path!("/ROOT/MISSING"), b"created".to_vec())
+        .await;
+    cx.executor().run_until_parked();
+    assert!(events.next().now_or_never().is_none());
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        fs.watch_calls(),
+        [missing.to_path_buf(), missing.to_path_buf()]
+    );
+    assert_eq!(
+        events.next().await.unwrap(),
+        [PathEvent {
+            path: missing.to_path_buf(),
+            kind: Some(PathEventKind::Rescan),
+        }]
+    );
+
+    fs.insert_file(path!("/ROOT/MISSING"), b"changed".to_vec())
+        .await;
+    assert!(
+        events
+            .next()
+            .await
+            .unwrap()
+            .iter()
+            .any(|event| event.path == Path::new(path!("/ROOT/MISSING")))
+    );
+}
+
+#[gpui::test]
 async fn test_fake_fs(executor: BackgroundExecutor) {
     let fs = FakeFs::new(executor.clone());
     fs.insert_tree(
