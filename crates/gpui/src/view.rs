@@ -1222,9 +1222,11 @@ mod tests {
             div().size_full().bg(rgb(0x00ff00)).when(self.open, |this| {
                 this.child(deferred(
                     div()
+                        .id("popover")
+                        .occlude()
                         .absolute()
                         .left(px(50.))
-                        .top(px(50.))
+                        .top(px(10.))
                         .size(px(80.))
                         .bg(rgb(0xffff00)),
                 ))
@@ -1314,6 +1316,15 @@ mod tests {
                     .take_root_overlay_scene(left_root, false)
                     .expect("changed set");
                 assert_eq!(owned.quads.len(), 1);
+                // The popover occludes exactly its own bounds; the tooltip-like root has
+                // no hitbox, so clicks pass through it.
+                let regions = window.root_overlay_hit_regions(left_root, true);
+                assert_eq!(regions.len(), 1);
+                assert_eq!(
+                    regions[0].0,
+                    Bounds::new(point(px(50.), px(10.)), size(px(80.), px(80.)))
+                );
+                assert_eq!(regions[0].1, crate::HitboxBehavior::BlockMouse);
             })
             .expect("window");
     }
