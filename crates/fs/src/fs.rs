@@ -141,11 +141,26 @@ pub trait Fs: Send + Sync {
     async fn is_file(&self, path: &Path) -> bool;
     async fn is_dir(&self, path: &Path) -> bool;
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>>;
+    async fn is_executable(&self, path: &Path) -> bool;
     async fn read_link(&self, path: &Path) -> Result<PathBuf>;
     async fn read_dir(
         &self,
         path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>>;
+
+    async fn read_dir_with_metadata(
+        &self,
+        path: &Path,
+    ) -> Result<Vec<(PathBuf, Option<Metadata>)>> {
+        let mut children = self.read_dir(path).await?;
+        let mut result = Vec::new();
+        while let Some(child) = children.next().await {
+            let child = child?;
+            let metadata = self.metadata(&child).await.ok().flatten();
+            result.push((child, metadata));
+        }
+        Ok(result)
+    }
 
     async fn watch(
         &self,
@@ -301,7 +316,6 @@ pub struct Metadata {
     pub is_dir: bool,
     pub len: u64,
     pub is_fifo: bool,
-    pub is_executable: bool,
     pub is_writable: bool,
 }
 
@@ -1101,12 +1115,6 @@ impl Fs for RealFs {
         #[cfg(unix)]
         let is_fifo = metadata.file_type().is_fifo();
 
-        let path_buf = path.to_path_buf();
-        let is_executable = self
-            .executor
-            .spawn(async move { path_buf.is_executable() })
-            .await;
-
         Ok(Some(Metadata {
             inode,
             mtime: MTime(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH)),
@@ -1114,9 +1122,37 @@ impl Fs for RealFs {
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
             is_fifo,
-            is_executable,
             is_writable: !metadata.permissions().readonly(),
         }))
+    }
+
+    async fn is_executable(&self, path: &Path) -> bool {
+        let path = path.to_path_buf();
+        self.executor
+            .spawn(async move { path.is_executable() })
+            .await
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn read_dir_with_metadata(
+        &self,
+        path: &Path,
+    ) -> Result<Vec<(PathBuf, Option<Metadata>)>> {
+        let dir = path.to_path_buf();
+        let entries = self
+            .executor
+            .spawn(async move { read_dir_with_metadata_windows(&dir) })
+            .await?;
+
+        let mut result = Vec::with_capacity(entries.len());
+        for (path, metadata) in entries {
+            let metadata = match metadata {
+                Some(metadata) => Some(metadata),
+                None => self.metadata(&path).await.ok().flatten(),
+            };
+            result.push((path, metadata));
+        }
+        Ok(result)
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
@@ -3265,7 +3301,6 @@ impl Fs for FakeFs {
                     is_dir: false,
                     is_symlink,
                     is_fifo: false,
-                    is_executable: false,
                     is_writable: true,
                 },
                 FakeFsEntry::Dir {
@@ -3277,7 +3312,6 @@ impl Fs for FakeFs {
                     is_dir: true,
                     is_symlink,
                     is_fifo: false,
-                    is_executable: false,
                     is_writable: true,
                 },
                 FakeFsEntry::Symlink { .. } => unreachable!(),
@@ -3285,6 +3319,10 @@ impl Fs for FakeFs {
         } else {
             Ok(None)
         }
+    }
+
+    async fn is_executable(&self, _path: &Path) -> bool {
+        false
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
@@ -3537,6 +3575,114 @@ fn read_recursive<'a>(
         Ok(())
     }
     .boxed()
+}
+
+/// Enumerates `dir`, returning each child's name together with everything [`Metadata`] needs.
+#[cfg(target_os = "windows")]
+fn read_dir_with_metadata_windows(dir: &Path) -> Result<Vec<(PathBuf, Option<Metadata>)>> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{ERROR_NO_MORE_FILES, HANDLE};
+    use windows::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_FLAG_BACKUP_SEMANTICS, FileIdBothDirectoryInfo, GetFileInformationByHandleEx,
+    };
+
+    // Field offsets of `FILE_ID_BOTH_DIR_INFO`.
+    const OFF_NEXT_ENTRY: usize = 0;
+    const OFF_LAST_WRITE_TIME: usize = 24;
+    const OFF_END_OF_FILE: usize = 40;
+    const OFF_FILE_ATTRIBUTES: usize = 56;
+    const OFF_FILE_NAME_LENGTH: usize = 60;
+    const OFF_FILE_ID: usize = 96;
+    const OFF_FILE_NAME: usize = 104;
+    /// 100ns intervals between 1601-01-01 and the Unix epoch.
+    const FILETIME_TO_UNIX: i64 = 116_444_736_000_000_000;
+
+    let directory = {
+        use std::os::windows::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
+            .open(dir)
+            .with_context(|| format!("failed to open directory {dir:?}"))?
+    };
+    let handle = HANDLE(directory.as_raw_handle() as _);
+
+    fn as_bytes(buffer: &[u64]) -> &[u8] {
+        // SAFETY: `u8` has weaker alignment than `u64` and every bit pattern is valid for it.
+        unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast(), size_of_val(buffer)) }
+    }
+
+    // contain `LARGE_INTEGER` fields
+    let mut buffer = vec![0u64; 32 * 1024 / size_of::<u64>()];
+    let byte_len = (buffer.len() * size_of::<u64>()) as u32;
+    let mut entries = Vec::new();
+
+    loop {
+        // SAFETY: `buffer` is owned here, correctly aligned, and its length in bytes is passed
+        // alongside it; `handle` is open for the duration of the call.
+        let more = unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                FileIdBothDirectoryInfo,
+                buffer.as_mut_ptr().cast(),
+                byte_len,
+            )
+        };
+        if let Err(error) = more {
+            if error.code() == ERROR_NO_MORE_FILES.to_hresult() {
+                break;
+            }
+            return Err(anyhow::Error::new(error))
+                .with_context(|| format!("failed to enumerate directory {dir:?}"));
+        }
+
+        let bytes: &[u8] = as_bytes(&buffer);
+        let mut offset = 0usize;
+        loop {
+            let entry = &bytes[offset..];
+            let read_u32 = |at: usize| u32::from_le_bytes(entry[at..at + 4].try_into().unwrap());
+            let read_i64 = |at: usize| i64::from_le_bytes(entry[at..at + 8].try_into().unwrap());
+
+            let name_len = read_u32(OFF_FILE_NAME_LENGTH) as usize / size_of::<u16>();
+            let name: Vec<u16> = entry[OFF_FILE_NAME..OFF_FILE_NAME + name_len * 2]
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
+            let name = String::from_utf16_lossy(&name);
+
+            if name != "." && name != ".." {
+                let attributes = read_u32(OFF_FILE_ATTRIBUTES);
+                let is_symlink = attributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0;
+                let is_dir = attributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0;
+                let metadata = (!is_symlink && !is_dir).then(|| {
+                    let filetime = read_i64(OFF_LAST_WRITE_TIME) - FILETIME_TO_UNIX;
+                    let (secs, nanos) = (
+                        (filetime / 10_000_000).max(0) as u64,
+                        ((filetime % 10_000_000).max(0) * 100) as u32,
+                    );
+                    Metadata {
+                        inode: read_i64(OFF_FILE_ID) as u64,
+                        mtime: MTime::from_seconds_and_nanos(secs, nanos),
+                        len: read_i64(OFF_END_OF_FILE) as u64,
+                        is_dir: false,
+                        is_symlink: false,
+                        is_fifo: false,
+                        is_writable: attributes & FILE_ATTRIBUTE_READONLY.0 == 0,
+                    }
+                });
+                entries.push((dir.join(&name), metadata));
+            }
+
+            let next = read_u32(OFF_NEXT_ENTRY) as usize;
+            if next == 0 {
+                break;
+            }
+            offset += next;
+        }
+    }
+
+    Ok(entries)
 }
 
 // todo(windows)

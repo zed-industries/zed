@@ -8909,7 +8909,7 @@ impl Repository {
                         ..
                     }) => {
                         let executable = match fs.metadata(&abs_path).await {
-                            Ok(Some(meta)) => meta.is_executable,
+                            Ok(Some(_)) => fs.is_executable(&abs_path).await,
                             Ok(None) => false,
                             Err(_err) => false,
                         };

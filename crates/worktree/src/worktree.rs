@@ -5362,34 +5362,20 @@ impl BackgroundScanner {
         let mut root_canonical_path = None;
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
-        let mut child_paths = self
-            .fs
-            .read_dir(&job.abs_path)
-            .await?
-            .filter_map(|entry| async {
-                match entry {
-                    Ok(entry) => Some(entry),
-                    Err(error) => {
-                        log::error!("error processing entry {:?}", error);
-                        None
-                    }
-                }
-            })
-            .collect::<Vec<_>>()
-            .await;
+        let mut child_paths = self.fs.read_dir_with_metadata(&job.abs_path).await?;
 
         // Ensure that .git and .gitignore are processed first.
         swap_to_front(&mut child_paths, GITIGNORE);
         swap_to_front(&mut child_paths, DOT_GIT);
 
-        if let Some(path) = child_paths.first()
+        if let Some((path, _)) = child_paths.first()
             && path.ends_with(DOT_GIT)
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
             ignore_stack.global_ignore_root = Some(job.abs_path.clone());
         }
 
-        for child_abs_path in child_paths {
+        for (child_abs_path, child_listed_metadata) in child_paths {
             let child_abs_path: Arc<Path> = child_abs_path.into();
             let child_name = child_abs_path.file_name().unwrap();
             let Some(child_path) = child_name
@@ -5445,13 +5431,16 @@ impl BackgroundScanner {
                 continue;
             }
 
-            let child_metadata = match self.fs.metadata(&child_abs_path).await {
-                Ok(Some(metadata)) => metadata,
-                Ok(None) => continue,
-                Err(err) => {
-                    log::error!("error processing {:?}: {err:#}", child_abs_path.display());
-                    continue;
-                }
+            let child_metadata = match child_listed_metadata {
+                Some(metadata) => metadata,
+                None => match self.fs.metadata(&child_abs_path).await {
+                    Ok(Some(metadata)) => metadata,
+                    Ok(None) => continue,
+                    Err(err) => {
+                        log::error!("error processing {:?}: {err:#}", child_abs_path.display());
+                        continue;
+                    }
+                },
             };
 
             let mut child_entry = Entry::new(
@@ -6473,10 +6462,10 @@ fn is_beyond_scan_depth(file_scan_depth: Option<u32>, path: &RelPath) -> bool {
     file_scan_depth.is_some_and(|depth| path.components().count() >= depth as usize)
 }
 
-fn swap_to_front(child_paths: &mut Vec<PathBuf>, file: &str) {
+fn swap_to_front(child_paths: &mut Vec<(PathBuf, Option<fs::Metadata>)>, file: &str) {
     let position = child_paths
         .iter()
-        .position(|path| path.file_name().unwrap() == file);
+        .position(|(path, _)| path.file_name().unwrap() == file);
     if let Some(position) = position {
         let temp = child_paths.remove(position);
         child_paths.insert(0, temp);

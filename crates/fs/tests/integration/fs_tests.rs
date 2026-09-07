@@ -682,7 +682,7 @@ async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
     assert!(metadata.is_symlink);
     assert!(!metadata.is_dir);
     assert!(!metadata.is_fifo);
-    assert!(!metadata.is_executable);
+    assert!(!fs.is_executable(&symlink_path).await);
     // don't care about len or mtime on symlinks?
 }
 
@@ -702,7 +702,7 @@ async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
     assert!(metadata.is_symlink);
     assert!(!metadata.is_dir);
     assert!(!metadata.is_fifo);
-    assert!(!metadata.is_executable);
+    assert!(!fs.is_executable(&symlink_path).await);
     // don't care about len or mtime on symlinks?
 }
 
@@ -1228,4 +1228,79 @@ async fn restore_can_be_retried_after_collision(cx: &mut TestAppContext) {
         fs.restore(trash_id).await.unwrap_err(),
         TrashRestoreError::AlreadyRestored
     ));
+}
+
+/// Tests that `read_dir_with_metadata` reports the same metadata as `metadata` does, for every
+/// field and every kind of entry.
+#[gpui::test]
+async fn test_read_dir_with_metadata_matches_metadata(executor: BackgroundExecutor) {
+    executor.allow_parking();
+
+    let tempdir = TempDir::new().unwrap();
+    let root = tempdir.path();
+    let fs = RealFs::new(None, executor);
+
+    std::fs::create_dir(root.join("subdir")).unwrap();
+    std::fs::write(root.join("empty.txt"), b"").unwrap();
+    std::fs::write(root.join("small.txt"), b"hello").unwrap();
+    std::fs::write(root.join("larger.bin"), vec![7u8; 100_000]).unwrap();
+    std::fs::write(root.join("subdir").join("nested.txt"), b"nested").unwrap();
+    std::fs::write(root.join("naïve_λ.txt"), b"unicode name").unwrap();
+
+    let read_only = root.join("readonly.txt");
+    std::fs::write(&read_only, b"locked down").unwrap();
+    let mut permissions = std::fs::metadata(&read_only).unwrap().permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&read_only, permissions).unwrap();
+
+    let listed = fs.read_dir_with_metadata(root).await.unwrap();
+    assert!(
+        listed.len() == 6,
+        "expected every entry to be listed, got {:?}",
+        listed.iter().map(|(p, _)| p).collect::<Vec<_>>()
+    );
+
+    for (path, listed_metadata) in listed {
+        let expected = fs
+            .metadata(&path)
+            .await
+            .unwrap_or_else(|error| panic!("metadata for {path:?} failed: {error}"))
+            .unwrap_or_else(|| panic!("no metadata for {path:?}"));
+        let listed_metadata =
+            listed_metadata.unwrap_or_else(|| panic!("no listed metadata for {path:?}"));
+
+        assert_eq!(listed_metadata.is_dir, expected.is_dir, "is_dir {path:?}");
+        assert_eq!(
+            listed_metadata.is_symlink, expected.is_symlink,
+            "is_symlink {path:?}"
+        );
+        assert_eq!(listed_metadata.inode, expected.inode, "inode {path:?}");
+        assert_eq!(
+            listed_metadata.is_fifo, expected.is_fifo,
+            "is_fifo {path:?}"
+        );
+        assert_eq!(
+            listed_metadata.is_writable, expected.is_writable,
+            "is_writable {path:?}"
+        );
+        assert_eq!(listed_metadata.mtime, expected.mtime, "mtime {path:?}");
+        if !expected.is_dir {
+            assert_eq!(listed_metadata.len, expected.len, "len {path:?}");
+        }
+    }
+
+    let listed = fs.read_dir_with_metadata(root).await.unwrap();
+    let mut inodes = listed
+        .iter()
+        .filter(|(path, _)| path.is_file())
+        .filter_map(|(_, metadata)| metadata.as_ref().map(|metadata| metadata.inode))
+        .collect::<Vec<_>>();
+    let total = inodes.len();
+    inodes.sort_unstable();
+    inodes.dedup();
+    assert_eq!(
+        inodes.len(),
+        total,
+        "file ids must be unique across entries"
+    );
 }
