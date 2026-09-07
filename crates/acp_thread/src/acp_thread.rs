@@ -308,6 +308,31 @@ pub struct Checkpoint {
 }
 
 impl UserMessage {
+    /// Claude Code injects background subagent completions as user-side
+    /// `<task-notification>` blocks over ACP. They are stored as `UserMessage`
+    /// entries (including after session restore) but are not real user prompts.
+    pub fn is_task_notification(&self) -> bool {
+        let mut saw_text = false;
+        for chunk in &self.chunks {
+            match chunk {
+                acp::ContentBlock::Text(text) => {
+                    let trimmed = text.text.trim_start();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if !saw_text {
+                        if !trimmed.starts_with("<task-notification") {
+                            return false;
+                        }
+                        saw_text = true;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        saw_text
+    }
+
     fn to_markdown(&self, cx: &App) -> String {
         let mut markdown = String::new();
         if self

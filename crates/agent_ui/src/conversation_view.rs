@@ -7101,6 +7101,144 @@ pub(crate) mod tests {
         });
     }
 
+    /// Issue #63789: restored ACP history replays Claude Code
+    /// `<task-notification>` blocks as `UserMessage` entries. "Scroll to User
+    /// Message" must skip those and land only on real user prompts.
+    #[gpui::test]
+    async fn test_scroll_to_user_message_skips_task_notifications(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Working on it.".into()),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = conversation_view
+            .read_with(cx, |view, cx| {
+                view.active_thread().map(|r| r.read(cx).thread.clone())
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw(
+                    "Run two sub-agents in parallel in background, one to sleep for 3 seconds, the other for 7.",
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Simulate session/load (or live) replay of background-task completion
+        // notifications, which arrive as agent-injected UserMessageChunks.
+        // Distinct message_ids keep them from merging into one entry.
+        let task_notification = "\
+<task-notification>
+  <task-id>agent-sleep-3s</task-id>
+  <status>completed</status>
+  <summary>Agent \"sleep 3s\" completed</summary>
+</task-notification>";
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::UserMessageChunk(
+                        acp::ContentChunk::new(task_notification.into())
+                            .message_id("task-notif-sleep-3s"),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let second_notification = "\
+<task-notification>
+  <task-id>agent-sleep-7s</task-id>
+  <status>completed</status>
+  <summary>Agent \"sleep 7s\" completed</summary>
+</task-notification>";
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::UserMessageChunk(
+                        acp::ContentChunk::new(second_notification.into())
+                            .message_id("task-notif-sleep-7s"),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let (prompt_ix, first_notification_ix, second_notification_ix) =
+            thread.read_with(cx, |thread, _| {
+                let entries = thread.entries();
+                assert!(
+                    entries.len() >= 4,
+                    "expected user + assistant + 2 notifications, got {}",
+                    entries.len()
+                );
+                let prompt_ix = entries
+                    .iter()
+                    .position(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+                    .expect("user prompt");
+                let notification_indices: Vec<_> = entries
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(ix, entry)| match entry {
+                        AgentThreadEntry::UserMessage(message)
+                            if message.is_task_notification() =>
+                        {
+                            Some(ix)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    notification_indices.len(),
+                    2,
+                    "both task notifications should be recognized as UserMessage entries"
+                );
+                (
+                    prompt_ix,
+                    notification_indices[0],
+                    notification_indices[1],
+                )
+            });
+
+        active_thread(&conversation_view, cx).update(cx, |view, cx| {
+            view.scroll_to_top(cx);
+            view.scroll_to_user_message_index(None, cx);
+            assert_eq!(
+                view.list_state.logical_scroll_top().item_ix,
+                prompt_ix,
+                "fallback scroll must skip task-notification UserMessages"
+            );
+
+            view.scroll_to_top(cx);
+            // Turn-end controls currently bind to the nearest prior UserMessage,
+            // which after restore is often a task-notification.
+            view.scroll_to_user_message_index(Some(second_notification_ix), cx);
+            assert_eq!(
+                view.list_state.logical_scroll_top().item_ix,
+                prompt_ix,
+                "scroll target must walk past task-notification indices to a real prompt"
+            );
+
+            view.scroll_to_top(cx);
+            view.scroll_to_user_message_index(Some(first_notification_ix), cx);
+            assert_eq!(
+                view.list_state.logical_scroll_top().item_ix,
+                prompt_ix,
+                "scroll target must walk past earlier task-notification indices too"
+            );
+        });
+    }
+
     #[gpui::test]
     async fn test_thread_search_finds_matches_across_entries(cx: &mut TestAppContext) {
         init_test(cx);
