@@ -3603,7 +3603,7 @@ Examples:
 
 ### Enable preview from project panel
 
-- Description: Determines whether to open files in preview mode when opened from the project panel with a single click.
+- Description: Determines whether to open files in preview mode when opened from the project panel with a single click or the {#action project_panel::Open} action ({#kb project_panel::Open}).
 - Setting: `enable_preview_from_project_panel`
 - Default: `true`
 
