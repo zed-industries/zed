@@ -1010,6 +1010,9 @@ struct AttachedRoot {
     node: Option<ViewNodeId>,
     /// The generation of that node's output when its scene was last taken.
     taken_generation: Option<u64>,
+    /// The roots that made up the overlay scene when it was last taken, with their
+    /// output generations.
+    overlay_stamp: Option<Vec<(ViewNodeId, u64)>>,
 }
 
 pub(crate) struct Frame {
@@ -1098,6 +1101,8 @@ pub struct Window {
     /// Roots drawn beside `root`, in attachment order. See [`Window::attach_root`].
     attached_roots: Vec<AttachedRoot>,
     next_attached_root_id: u64,
+    /// The node `root` mounted in the last frame drawn.
+    root_view_node: Option<ViewNodeId>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
@@ -1927,6 +1932,7 @@ impl Window {
             root: None,
             attached_roots: Vec::new(),
             next_attached_root_id: 0,
+            root_view_node: None,
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
@@ -3283,7 +3289,9 @@ impl Window {
             .as_mut()
             .unwrap()
             .stretch_auto_size_to_fill(root_layout_id, root_size, scale_factor);
+        let roots_before = self.node_engine.next_root_count();
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
+        self.root_view_node = self.node_engine.next_root(roots_before);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         let inspector_element = self.prepaint_inspector(_inspector_width, cx);
@@ -3391,6 +3399,7 @@ impl Window {
             bounds,
             node: None,
             taken_generation: None,
+            overlay_stamp: None,
         });
         self.invalidator.set_dirty(true);
         id
@@ -3424,11 +3433,12 @@ impl Window {
         }
     }
 
-    /// The scene an attached root painted in the last frame drawn, as a scene of its own:
-    /// the root's recording followed by the deferred draws its subtree attached, in
-    /// priority order, in window coordinates. `None` before the root has been drawn and
-    /// while its recorded output has been reused unchanged since this was last called, so
-    /// an embedder that ships scenes elsewhere ships only the roots that changed.
+    /// The scene an attached root painted in the last frame drawn, as a scene of its own
+    /// in window coordinates: the root's subtree, without the deferred draws it attached
+    /// (those are [`Window::take_root_overlay_scene`]). `None` before the root has been
+    /// drawn and while its recorded output has been reused unchanged since this was last
+    /// called, so an embedder that ships scenes elsewhere ships only the roots that
+    /// changed.
     pub fn take_root_scene(&mut self, root: AttachedRootId) -> Option<Scene> {
         let node = self.attached_root_mut(root)?.node?;
         let generation = self.node_engine.try_node(node)?.output.generation;
@@ -3440,16 +3450,68 @@ impl Window {
 
         let mut scene = Scene::default();
         self.node_engine.replay_scene(node, &mut scene);
-        let mut deferred: Vec<(usize, ViewNodeId)> = self
+        scene.finish();
+        Some(scene)
+    }
+
+    /// What an attached root drew outside its own subtree in the last frame drawn, as a
+    /// scene of its own in window coordinates: the deferred draws its subtree attached
+    /// (popovers, menus), in priority order, and, when `include_unowned`, every root of
+    /// the frame that belongs to no attached root and is not the window's root view —
+    /// tooltips, drag previews, prompts, and deferred draws of the root view — in
+    /// drawing order. An embedder composing surfaces in one window asks for the unowned
+    /// roots from the surface the mouse is in, since that is where they appear.
+    ///
+    /// `None` before the root has been drawn and while the set of those roots and their
+    /// recorded output are unchanged since this was last called; an empty scene once
+    /// they are gone.
+    pub fn take_root_overlay_scene(
+        &mut self,
+        root: AttachedRootId,
+        include_unowned: bool,
+    ) -> Option<Scene> {
+        let node = self.attached_root_mut(root)?.node?;
+        let mut owned: Vec<(usize, ViewNodeId)> = self
             .rendered_frame
             .deferred_draws
             .iter()
             .filter(|draw| self.node_engine.is_within(draw.node, node))
             .map(|draw| (draw.priority, draw.node))
             .collect();
-        deferred.sort_by_key(|(priority, _)| *priority);
-        for (_, draw) in deferred {
-            self.node_engine.replay_scene(draw, &mut scene);
+        owned.sort_by_key(|(priority, _)| *priority);
+        let mut parts: Vec<ViewNodeId> = owned.into_iter().map(|(_, node)| node).collect();
+        if include_unowned {
+            let attached: Vec<ViewNodeId> = self
+                .attached_roots
+                .iter()
+                .filter_map(|attached| attached.node)
+                .collect();
+            for candidate in self.node_engine.rendered_roots() {
+                let candidate = *candidate;
+                if Some(candidate) == self.root_view_node || attached.contains(&candidate) {
+                    continue;
+                }
+                let owned_by_attached = attached
+                    .iter()
+                    .any(|owner| self.node_engine.is_within(candidate, *owner));
+                if !owned_by_attached {
+                    parts.push(candidate);
+                }
+            }
+        }
+        let stamp: Vec<(ViewNodeId, u64)> = parts
+            .iter()
+            .filter_map(|part| Some((*part, self.node_engine.try_node(*part)?.output.generation)))
+            .collect();
+        let attached = self.attached_root_mut(root)?;
+        if attached.overlay_stamp.as_ref() == Some(&stamp) {
+            return None;
+        }
+        attached.overlay_stamp = Some(stamp);
+
+        let mut scene = Scene::default();
+        for part in parts {
+            self.node_engine.replay_scene(part, &mut scene);
         }
         scene.finish();
         Some(scene)
