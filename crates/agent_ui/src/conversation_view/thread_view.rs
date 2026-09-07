@@ -7649,9 +7649,10 @@ impl ThreadView {
                             })
                             .separator()
                         })
+                        .action_disabled_when(!has_selection, "Copy", Box::new(markdown::Copy))
                         .action_disabled_when(
                             !has_selection,
-                            "Copy Selection",
+                            "Copy as Markdown",
                             Box::new(markdown::CopyAsMarkdown),
                         )
                         .item(copy_this_agent_response)
