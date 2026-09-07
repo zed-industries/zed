@@ -7462,19 +7462,39 @@ mod tests {
         let mut cx = TestAppContext::single();
         let window = cx.add_window(|_, _| EmptyView);
         let handle: AnyWindowHandle = window.into();
-        let scale = |cx: &mut TestAppContext| {
-            cx.update_window(handle, |_, window, _| window.scale_factor())
-                .unwrap()
+        let window_state = |cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, _| {
+                (
+                    window.scale_factor(),
+                    window.bounds(),
+                    window.viewport_size(),
+                )
+            })
+            .unwrap()
         };
 
         // Unchanged default: tests render at 2x unless they simulate otherwise.
-        assert_eq!(scale(&mut cx), 2.0);
+        let (scale_factor, mut expected_bounds, _) = window_state(&mut cx);
+        assert_eq!(scale_factor, 2.0);
 
-        cx.simulate_window_scale_factor_change(handle, 1.0);
-        assert_eq!(scale(&mut cx), 1.0);
+        for (scale_factor, resized_size) in [
+            (1.0, size(px(800.), px(600.))),
+            (1.25, size(px(640.), px(480.))),
+            (2.0, size(px(1024.), px(768.))),
+        ] {
+            cx.simulate_window_scale_factor_change(handle, scale_factor);
+            assert_eq!(
+                window_state(&mut cx),
+                (scale_factor, expected_bounds, expected_bounds.size)
+            );
 
-        cx.simulate_window_resize(handle, size(px(800.), px(600.)));
-        assert_eq!(scale(&mut cx), 1.0);
+            cx.simulate_window_resize(handle, resized_size);
+            expected_bounds.size = resized_size;
+            assert_eq!(
+                window_state(&mut cx),
+                (scale_factor, expected_bounds, resized_size)
+            );
+        }
     }
 
     /// Platforms that stop requesting frames for idle windows (currently web)
