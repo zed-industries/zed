@@ -1198,8 +1198,12 @@ mod tests {
             .await
         });
 
-        let [Ok(StreamEvent::OutputTextDelta { delta, .. }), Err(whitespace_error), Err(done_error), Ok(StreamEvent::Completed { response })] =
-            events.as_slice()
+        let [
+            Ok(StreamEvent::OutputTextDelta { delta, .. }),
+            Err(whitespace_error),
+            Err(done_error),
+            Ok(StreamEvent::Completed { response }),
+        ] = events.as_slice()
         else {
             panic!("unexpected events: {events:?}");
         };
@@ -1208,10 +1212,7 @@ mod tests {
             whitespace_error.to_string(),
             "EOF while parsing a value at line 1 column 1"
         );
-        assert_eq!(
-            done_error.to_string(),
-            "expected value at line 1 column 2"
-        );
+        assert_eq!(done_error.to_string(), "expected value at line 1 column 2");
         assert_eq!(response.id.as_deref(), Some("resp_1"));
         let [ResponseOutputItem::Message(message)] = response.output.as_slice() else {
             panic!("unexpected output: {:?}", response.output);
