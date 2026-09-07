@@ -10206,6 +10206,7 @@ impl Editor {
                     self.applicable_language_settings = new_language_settings;
                     cx.notify();
                 }
+                self.apply_soft_wrap_indent(cx);
             }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
             multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),

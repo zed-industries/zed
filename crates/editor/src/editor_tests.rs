@@ -49780,3 +49780,105 @@ async fn test_soft_wrap_indent_updated_when_first_excerpt_changes(cx: &mut gpui:
         })
         .unwrap();
 }
+
+#[gpui::test]
+async fn test_soft_wrap_indent_updated_on_file_move_between_directories(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |settings| {
+        settings.defaults.soft_wrap = Some(language::language_settings::SoftWrap::Bounded);
+        settings.defaults.preferred_line_length = Some(20);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let root = Path::new("/root");
+    fs.insert_tree(
+        root,
+        serde_json::json!({
+            "dir_a": {
+                ".zed": {
+                    "settings.json": "{\n  \"soft_wrap_indent\": \"same\"\n}"
+                },
+                "test.txt": "    let a_long_variable = 123456789;\n"
+            },
+            "dir_b": {
+                ".zed": {
+                    "settings.json": "{\n  \"soft_wrap_indent\": \"none\"\n}"
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [root], cx).await;
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("dir_a/test.txt")), cx)
+        })
+        .await
+        .unwrap();
+
+    let editor = cx.add_window(|window, cx| {
+        build_editor_with_project(
+            project.clone(),
+            MultiBuffer::build_from_buffer(buffer, cx),
+            window,
+            cx,
+        )
+    });
+
+    cx.run_until_parked();
+
+    // In dir_a, soft_wrap_indent is "same", so continuation row has 4 spaces indent
+    editor
+        .update(cx, |editor, _window, cx| {
+            assert_eq!(
+                editor.soft_wrap_indent(cx),
+                language::language_settings::SoftWrapIndent::Same
+            );
+        })
+        .unwrap();
+    let snapshot = editor
+        .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+        .unwrap();
+    assert_eq!(snapshot.soft_wrap_indent(DisplayRow(0)), Some(4));
+
+    // Move test.txt from dir_a to dir_b
+    let entry_id = project
+        .read_with(cx, |project, cx| {
+            project
+                .entry_for_path(&(worktree_id, rel_path("dir_a/test.txt")).into(), cx)
+                .map(|e| e.id)
+        })
+        .unwrap();
+
+    project
+        .update(cx, |project, cx| {
+            project.rename_entry(
+                entry_id,
+                (worktree_id, rel_path("dir_b/test.txt")).into(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    // After moving to dir_b, soft_wrap_indent should update to "none"
+    editor
+        .update(cx, |editor, _window, cx| {
+            assert_eq!(
+                editor.soft_wrap_indent(cx),
+                language::language_settings::SoftWrapIndent::None
+            );
+        })
+        .unwrap();
+    let snapshot = editor
+        .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+        .unwrap();
+    assert_eq!(snapshot.soft_wrap_indent(DisplayRow(0)), Some(0));
+}
