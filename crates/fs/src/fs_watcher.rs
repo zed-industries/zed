@@ -6,7 +6,7 @@ use std::{
     fs,
     ops::DerefMut,
     path::Path,
-    sync::{Arc, LazyLock, OnceLock},
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 use util::{ResultExt, paths::SanitizedPath};
@@ -21,6 +21,7 @@ pub enum WatcherMode {
 }
 
 pub struct FsWatcher {
+    global_watcher: Arc<GlobalWatcher>,
     executor: BackgroundExecutor,
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
@@ -36,11 +37,13 @@ struct FsWatcherRegistration {
 
 impl FsWatcher {
     pub fn new(
+        global_watcher: Arc<GlobalWatcher>,
         executor: BackgroundExecutor,
         tx: async_channel::Sender<()>,
         pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
     ) -> Self {
         Self {
+            global_watcher,
             executor,
             tx,
             pending_path_events,
@@ -57,6 +60,7 @@ impl FsWatcher {
             return Ok(());
         }
         match register_existing_path(
+            &self.global_watcher,
             path.clone(),
             case_insensitive,
             self.tx.clone(),
@@ -83,6 +87,7 @@ impl FsWatcher {
         }
 
         let task = self.executor.spawn(poll_path_until_created(
+            self.global_watcher.clone(),
             self.executor.clone(),
             path.clone(),
             self.tx.clone(),
@@ -104,9 +109,8 @@ impl Drop for FsWatcher {
             std::mem::swap(old.deref_mut(), &mut registrations);
         }
 
-        let global_watcher = global_watcher();
         for (_, registration) in registrations {
-            global_watcher.remove(registration.id);
+            self.global_watcher.remove(registration.id);
         }
     }
 }
@@ -153,7 +157,7 @@ impl Watcher for FsWatcher {
                 .or_else(|| registrations.remove(&WatchKey::folded(sanitized)))
         };
         if let Some(registration) = registration {
-            global_watcher().remove(registration.id);
+            self.global_watcher.remove(registration.id);
         }
         Ok(())
     }
@@ -211,6 +215,7 @@ pub fn requires_poll_watcher(path: &Path) -> bool {
 }
 
 fn register_existing_path(
+    global_watcher: &GlobalWatcher,
     path: Arc<Path>,
     case_insensitive: bool,
     tx: async_channel::Sender<()>,
@@ -229,7 +234,7 @@ fn register_existing_path(
     };
     let root_path = SanitizedPath::new_arc(path.as_ref());
     let path_for_callback = path.clone();
-    let Some(registration_id) = global_watcher().add(
+    let Some(registration_id) = global_watcher.add(
         path,
         mode,
         case_insensitive,
@@ -480,6 +485,7 @@ impl WatchKey {
 }
 
 async fn poll_path_until_created(
+    global_watcher: Arc<GlobalWatcher>,
     executor: BackgroundExecutor,
     path: Arc<Path>,
     tx: async_channel::Sender<()>,
@@ -509,6 +515,7 @@ async fn poll_path_until_created(
         }
 
         match register_existing_path(
+            &global_watcher,
             path.clone(),
             case_insensitive,
             tx.clone(),
@@ -518,7 +525,7 @@ async fn poll_path_until_created(
                 {
                     let mut pending_registrations = pending_registrations.lock();
                     if pending_registrations.remove(path.as_ref()).is_none() {
-                        global_watcher().remove(registration.id);
+                        global_watcher.remove(registration.id);
                         return;
                     }
                     registrations.lock().insert(key, registration);
@@ -817,6 +824,37 @@ pub struct GlobalWatcher {
 }
 
 impl GlobalWatcher {
+    pub fn new() -> Arc<Self> {
+        let (event_tx, event_rx) = async_channel::unbounded::<DispatchEvent>();
+        let global_watcher = Arc::new(Self {
+            state: Mutex::new(WatcherState {
+                watchers: Default::default(),
+                native_path_registrations: Default::default(),
+                poll_path_registrations: Default::default(),
+                cooldown_until: None,
+                last_registration: Default::default(),
+            }),
+            native_watcher: Mutex::new(None),
+            poll_watcher: Mutex::new(None),
+            event_tx,
+        });
+        std::thread::Builder::new()
+            .name("fs-watcher-dispatch".to_owned())
+            .spawn({
+                let global_watcher = Arc::downgrade(&global_watcher);
+                move || {
+                    while let Ok(first) = event_rx.recv_blocking() {
+                        let Some(global_watcher) = global_watcher.upgrade() else {
+                            return;
+                        };
+                        global_watcher.dispatch_batch(first, &event_rx);
+                    }
+                }
+            })
+            .expect("failed to spawn fs watcher dispatch thread");
+        global_watcher
+    }
+
     #[must_use]
     fn add(
         &self,
@@ -873,22 +911,6 @@ impl GlobalWatcher {
             });
 
         Ok(Some(id))
-    }
-
-    fn enqueue(&self, mode: WatcherMode, event: Result<notify::Event, notify::Error>) {
-        if matches!(
-            event,
-            Ok(Event {
-                kind: EventKind::Access(_),
-                ..
-            })
-        ) {
-            return;
-        }
-
-        // A failed send only happens once the dispatch thread has shut down, at
-        // which point there's nothing left to dispatch to.
-        self.event_tx.try_send((mode, event)).ok();
     }
 
     fn dispatch(&self, mode: WatcherMode, event: Result<notify::Event, notify::Error>) {
@@ -1045,7 +1067,7 @@ impl GlobalWatcher {
         }
     }
 
-    fn ensure_native_watcher(&self) -> anyhow::Result<()> {
+    pub(crate) fn ensure_native_watcher(&self) -> anyhow::Result<()> {
         // The lock is held across creation: with a check-then-insert under two
         // separate lock acquisitions, concurrent callers could each create a
         // watcher and the loser's insert would silently drop the winner's
@@ -1058,8 +1080,9 @@ impl GlobalWatcher {
             // risk of queue overflows (and thus full rescans) under read-heavy
             // workloads like grep or language server indexing.
             let config = notify::Config::default().with_event_kinds(notify::EventKindMask::CORE);
+            let event_tx = self.event_tx.clone();
             let watcher = <notify::RecommendedWatcher as notify::Watcher>::new(
-                |event| global_watcher().enqueue(WatcherMode::Native, event),
+                move |event| enqueue(&event_tx, WatcherMode::Native, event),
                 config,
             )?;
             *native_watcher = Some(Box::new(watcher));
@@ -1071,14 +1094,35 @@ impl GlobalWatcher {
         let mut poll_watcher = self.poll_watcher.lock();
         if poll_watcher.is_none() {
             let config = notify::Config::default().with_poll_interval(*POLL_INTERVAL);
+            let event_tx = self.event_tx.clone();
             let watcher = notify::PollWatcher::new(
-                |event| global_watcher().enqueue(WatcherMode::Poll, event),
+                move |event| enqueue(&event_tx, WatcherMode::Poll, event),
                 config,
             )?;
             *poll_watcher = Some(Box::new(watcher));
         }
         Ok(())
     }
+}
+
+fn enqueue(
+    event_tx: &async_channel::Sender<DispatchEvent>,
+    mode: WatcherMode,
+    event: Result<notify::Event, notify::Error>,
+) {
+    if matches!(
+        event,
+        Ok(Event {
+            kind: EventKind::Access(_),
+            ..
+        })
+    ) {
+        return;
+    }
+
+    // A failed send only happens once the dispatch thread has shut down, at
+    // which point there's nothing left to dispatch to.
+    event_tx.try_send((mode, event)).ok();
 }
 
 fn is_max_files_watch_error(error: &anyhow::Error) -> bool {
@@ -1107,34 +1151,6 @@ static NATIVE_WATCH_LIMIT_COOLDOWN: LazyLock<Duration> = LazyLock::new(|| {
 
 pub fn poll_interval() -> Duration {
     *POLL_INTERVAL
-}
-
-static FS_WATCHER_INSTANCE: OnceLock<GlobalWatcher> = OnceLock::new();
-
-fn global_watcher() -> &'static GlobalWatcher {
-    FS_WATCHER_INSTANCE.get_or_init(|| {
-        let (event_tx, event_rx) = async_channel::unbounded::<DispatchEvent>();
-        std::thread::Builder::new()
-            .name("fs-watcher-dispatch".to_owned())
-            .spawn(move || {
-                while let Ok(first) = event_rx.recv_blocking() {
-                    global_watcher().dispatch_batch(first, &event_rx);
-                }
-            })
-            .expect("failed to spawn fs watcher dispatch thread");
-        GlobalWatcher {
-            state: Mutex::new(WatcherState {
-                watchers: Default::default(),
-                native_path_registrations: Default::default(),
-                poll_path_registrations: Default::default(),
-                cooldown_until: None,
-                last_registration: Default::default(),
-            }),
-            native_watcher: Mutex::new(None),
-            poll_watcher: Mutex::new(None),
-            event_tx,
-        }
-    })
 }
 
 #[cfg(test)]
@@ -1263,7 +1279,12 @@ mod tests {
 
         let (tx, rx) = async_channel::unbounded();
         let pending_path_events: Arc<Mutex<Vec<PathEvent>>> = Default::default();
-        let watcher = FsWatcher::new(cx.executor(), tx, pending_path_events.clone());
+        let watcher = FsWatcher::new(
+            GlobalWatcher::new(),
+            cx.executor(),
+            tx,
+            pending_path_events.clone(),
+        );
 
         watcher
             .add(&path)
@@ -1674,10 +1695,4 @@ mod tests {
             );
         }
     }
-}
-
-pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
-    let global_watcher = global_watcher();
-    global_watcher.ensure_native_watcher()?;
-    Ok(f(global_watcher))
 }

@@ -1992,9 +1992,6 @@ async fn test_write_file(cx: &mut TestAppContext) {
     .await
     .unwrap();
 
-    #[cfg(not(target_os = "macos"))]
-    fs::fs_watcher::global(|_| {}).unwrap();
-
     cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
         .await;
     worktree.flush_fs_events(cx).await;

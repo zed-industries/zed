@@ -147,6 +147,12 @@ pub trait Fs: Send + Sync {
         path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>>;
 
+    /// Creates the native file watcher now rather than on the first `watch`, so a
+    /// failure to start it (e.g. inotify instance limits) can be reported at startup.
+    fn start_native_watcher(&self) -> Result<()> {
+        Ok(())
+    }
+
     async fn watch(
         &self,
         path: &Path,
@@ -431,6 +437,7 @@ impl TrashId {
 pub struct RealFs {
     bundled_git_binary_path: Option<PathBuf>,
     executor: BackgroundExecutor,
+    global_watcher: Arc<fs_watcher::GlobalWatcher>,
     next_job_id: Arc<AtomicUsize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     trash: Arc<Mutex<SlotMap<TrashId, TrashedEntry>>>,
@@ -540,6 +547,7 @@ impl RealFs {
         Self {
             bundled_git_binary_path: git_binary_path,
             executor,
+            global_watcher: fs_watcher::GlobalWatcher::new(),
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
             trash: Arc::new(Mutex::new(SlotMap::with_key())),
@@ -1140,6 +1148,10 @@ impl Fs for RealFs {
         Ok(Box::pin(iter(entries)))
     }
 
+    fn start_native_watcher(&self) -> Result<()> {
+        self.global_watcher.ensure_native_watcher()
+    }
+
     async fn watch(
         &self,
         path: &Path,
@@ -1155,6 +1167,7 @@ impl Fs for RealFs {
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
 
         let watcher: Arc<dyn Watcher> = Arc::new(fs_watcher::FsWatcher::new(
+            self.global_watcher.clone(),
             executor.clone(),
             tx.clone(),
             pending_paths.clone(),
