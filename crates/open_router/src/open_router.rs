@@ -3,6 +3,12 @@ use futures::{AsyncReadExt, StreamExt, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
 };
+pub use language_model_core::ReasoningEffort;
+use language_model_core::chat_completion::ResponseStreamResult;
+pub use language_model_core::chat_completion::{
+    ChoiceDelta, FunctionChunk, PromptTokensDetails, ResponseMessageDelta, ResponseStreamEvent,
+    ToolCallChunk, Usage,
+};
 use open_ai::ChatCompletionStreamEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -31,10 +37,6 @@ fn extract_retry_after(headers: &http::HeaderMap) -> Option<std::time::Duration>
         }
     }
     None
-}
-
-fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -81,6 +83,12 @@ pub struct Model {
     pub supports_images: Option<bool>,
     #[serde(default)]
     pub mode: ModelMode,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_efforts: Vec<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<ReasoningEffort>,
+    pub supports_max_tokens: bool,
+    pub mandatory_reasoning: bool,
     pub provider: Option<Provider>,
 }
 
@@ -94,6 +102,9 @@ impl Model {
             Some(false),
             Some(ModelMode::Default),
             None,
+            None,
+            false,
+            None,
         )
     }
 
@@ -104,6 +115,9 @@ impl Model {
         supports_tools: Option<bool>,
         supports_images: Option<bool>,
         mode: Option<ModelMode>,
+        supported_efforts: Option<Vec<ReasoningEffort>>,
+        default_effort: Option<ReasoningEffort>,
+        supports_max_tokens: bool,
         provider: Option<Provider>,
     ) -> Self {
         Self {
@@ -113,6 +127,10 @@ impl Model {
             supports_tools,
             supports_images,
             mode: mode.unwrap_or(ModelMode::Default),
+            supported_efforts: supported_efforts.unwrap_or_default(),
+            default_effort,
+            supports_max_tokens,
+            mandatory_reasoning: false,
             provider,
         }
     }
@@ -138,7 +156,7 @@ impl Model {
     }
 
     pub fn supports_parallel_tool_calls(&self) -> bool {
-        false
+        true
     }
 }
 
@@ -200,7 +218,7 @@ pub struct FunctionDefinition {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Reasoning {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub effort: Option<String>,
+    pub effort: Option<ReasoningEffort>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -380,73 +398,6 @@ pub struct FunctionContent {
     pub thought_signature: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ResponseMessageDelta {
-    pub role: Option<Role>,
-    pub content: Option<String>,
-    pub reasoning: Option<String>,
-    #[serde(default, skip_serializing_if = "is_none_or_empty")]
-    pub tool_calls: Option<Vec<ToolCallChunk>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_details: Option<serde_json::Value>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ToolCallChunk {
-    pub index: usize,
-    pub id: Option<String>,
-    pub function: Option<FunctionChunk>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct FunctionChunk {
-    pub name: Option<String>,
-    pub arguments: Option<String>,
-    #[serde(default)]
-    pub thought_signature: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct PromptTokensDetails {
-    #[serde(default)]
-    pub cached_tokens: u64,
-    #[serde(default)]
-    pub cache_write_tokens: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Usage {
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub total_tokens: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prompt_tokens_details: Option<PromptTokensDetails>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ChoiceDelta {
-    pub index: u32,
-    pub delta: ResponseMessageDelta,
-    pub finish_reason: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ResponseStreamEvent {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    pub created: u32,
-    pub model: String,
-    pub choices: Vec<ChoiceDelta>,
-    pub usage: Option<Usage>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum ResponseStreamResult {
-    Response(ResponseStreamEvent),
-    Error(OpenRouterErrorResponse),
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Response {
     pub id: String,
@@ -481,12 +432,28 @@ pub struct ModelEntry {
     pub supported_parameters: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub architecture: Option<ModelArchitecture>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ModelReasoning>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 pub struct ModelArchitecture {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_modalities: Vec<String>,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub struct ModelReasoning {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mandatory: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_efforts: Vec<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_max_tokens: Option<bool>,
 }
 
 pub async fn stream_completion(
@@ -510,9 +477,9 @@ pub async fn stream_completion(
                     return Some(Err(OpenRouterError::ChatCompletion(error)));
                 }
             };
-            match serde_json::from_value(value) {
-                Ok(ResponseStreamResult::Response(response)) => Some(Ok(response)),
-                Ok(ResponseStreamResult::Error(OpenRouterErrorResponse { error })) => {
+            match serde_json::from_str::<ResponseStreamResult<OpenRouterErrorBody>>(value.get()) {
+                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                Ok(ResponseStreamResult::Err { error }) => {
                     Some(Err(OpenRouterError::ApiError(ApiError {
                         status: None,
                         code: error.code,
@@ -610,12 +577,29 @@ pub async fn list_models(
                     .supported_parameters
                     .contains(&"reasoning".to_string())
                 {
-                    ModelMode::Thinking {
-                        budget_tokens: Some(4_096),
-                    }
+                    ModelMode::Adaptive
                 } else {
                     ModelMode::Default
                 },
+                supported_efforts: entry
+                    .reasoning
+                    .as_ref()
+                    .map(|r| r.supported_efforts.clone())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .rev()
+                    .collect(),
+                default_effort: entry.reasoning.as_ref().and_then(|r| r.default_effort),
+                supports_max_tokens: entry
+                    .reasoning
+                    .as_ref()
+                    .and_then(|r| r.supports_max_tokens)
+                    .unwrap_or(false),
+                mandatory_reasoning: entry
+                    .reasoning
+                    .as_ref()
+                    .and_then(|r| r.mandatory)
+                    .unwrap_or(false),
                 provider: None,
             })
             .collect();
@@ -845,7 +829,7 @@ mod tests {
         });
 
         assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0].model, "vendor/model");
+        assert!(responses[0].choices.is_empty());
         let headers = captured_headers.lock().expect("captured headers lock");
         let headers = headers.as_ref().expect("captured headers");
         assert_eq!(headers["http-referer"], "https://zed.dev");

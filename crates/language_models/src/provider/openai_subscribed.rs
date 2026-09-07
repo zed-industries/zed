@@ -211,8 +211,10 @@ impl Render for ConfigurationView {
 
         let last_auth_error = state.last_auth_error();
         let provider_state = self.state.clone();
+        let cancel_provider_state = self.state.clone();
 
         let is_signing_in = state.is_signing_in();
+        let is_sign_in_cancellable = state.is_sign_in_cancellable();
         let button_label = if is_signing_in {
             "Signing in…"
         } else {
@@ -225,14 +227,29 @@ impl Render for ConfigurationView {
                 this.child(Label::new(SUBSCRIPTION_DESCRIPTION))
             })
             .child(
-                Button::new("sign-in", button_label)
-                    .when(!self.compact, |this| this.full_width())
-                    .style(ButtonStyle::Outlined)
-                    .size(ButtonSize::Medium)
-                    .loading(is_signing_in)
-                    .disabled(is_signing_in)
-                    .on_click(move |_, _window, cx| {
-                        provider_state.update(cx, |state, cx| state.sign_in(cx));
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("sign-in", button_label)
+                            .when(!self.compact, |this| this.full_width())
+                            .style(ButtonStyle::Outlined)
+                            .size(ButtonSize::Medium)
+                            .loading(is_signing_in)
+                            .disabled(is_signing_in)
+                            .on_click(move |_, _window, cx| {
+                                provider_state.update(cx, |state, cx| state.sign_in(cx));
+                            }),
+                    )
+                    .when(is_sign_in_cancellable, |this| {
+                        this.child(
+                            Button::new("cancel-sign-in", "Cancel")
+                                .style(ButtonStyle::Subtle)
+                                .size(ButtonSize::Medium)
+                                .on_click(move |_, _window, cx| {
+                                    cancel_provider_state
+                                        .update(cx, |state, cx| state.cancel_sign_in(cx));
+                                }),
+                        )
                     }),
             )
             .when_some(last_auth_error, |this, error| {
