@@ -1824,7 +1824,6 @@ impl<'a> ElicitationCard<'a> {
         v_flex()
             .min_w_0()
             .flex_1()
-            .whitespace_normal()
             .gap_0p5()
             .child(Label::new(option.label).size(LabelSize::Small))
             .when_some(option.description, |this, description| {
