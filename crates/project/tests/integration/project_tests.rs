@@ -16735,12 +16735,7 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
     git_commit("Initial commit", &repo);
     std::fs::write(&file_path, file_contents).unwrap();
 
-    let project = Project::test(
-        RealFs::new(None, cx.executor()),
-        [root.path()],
-        cx,
-    )
-    .await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -16975,12 +16970,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     std::fs::remove_file(work_dir.join("d.txt")).unwrap();
     std::fs::write(work_dir.join("a.txt"), "aa").unwrap();
 
-    let project = Project::test(
-        RealFs::new(None, cx.executor()),
-        [root.path()],
-        cx,
-    )
-    .await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
@@ -17262,12 +17252,7 @@ async fn test_git_events_after_project_excludes_dot_git(cx: &mut gpui::TestAppCo
     git_commit("Initial commit", &repo);
     git_branch("other-branch", &repo);
 
-    let project = Project::test(
-        RealFs::new(None, cx.executor()),
-        [work_dir.as_path()],
-        cx,
-    )
-    .await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [work_dir.as_path()], cx).await;
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
@@ -17354,12 +17339,7 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
     // `sub` is a nested git repository.
     let _sub = git_init(&work_dir.join("sub"));
 
-    let project = Project::test(
-        RealFs::new(None, cx.executor()),
-        [root.path()],
-        cx,
-    )
-    .await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
@@ -20656,12 +20636,7 @@ async fn test_os_read_only_files_open_as_read_only(cx: &mut gpui::TestAppContext
     permissions.set_readonly(true);
     std::fs::set_permissions(&file_path, permissions).unwrap();
 
-    let project = Project::test(
-        RealFs::new(None, cx.executor()),
-        [root.path()],
-        cx,
-    )
-    .await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
 
     let buffer = project
         .update(cx, |project, cx| {

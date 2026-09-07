@@ -24,11 +24,7 @@ fn extension_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("load");
 
     let mut manifest = manifest();
-    let wasm_bytes = wasm_bytes(
-        &cx,
-        &mut manifest,
-        RealFs::new(None, cx.executor()),
-    );
+    let wasm_bytes = wasm_bytes(&cx, &mut manifest, RealFs::new(None, cx.executor()));
     let manifest = Arc::new(manifest);
     let extensions_dir = TempTree::new(json!({
         "installed": {},
