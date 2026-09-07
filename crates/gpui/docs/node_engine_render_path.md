@@ -49,7 +49,7 @@ The engine (`node_engine.rs`, `NodeEngine`) is owned by the window. It holds:
 // app.rs
 pub fn notify(&mut self, entity_id: EntityId) {
     // ... for each window currently displaying the entity:
-    invalidator.invalidate_view(entity_id, self);   // adds to the window's dirty_views set
+    invalidator.invalidate_view(entity_id, self);   // adds to the invalidator's set of notified entities
 }
 ```
 
@@ -60,7 +60,8 @@ Nothing happens to nodes at notify time. When the window next draws:
 fn invalidate_entities(&mut self) {
     let mut views = self.invalidator.take_views();        // the notified entity ids
     self.node_engine.invalidate_entities(&views);          // -> dirty nodes
-    for entity in views.drain() { self.mark_view_dirty(entity); }  // legacy dirty_views
+    views.clear();
+    self.invalidator.replace_views(views);
 }
 
 // node_engine.rs

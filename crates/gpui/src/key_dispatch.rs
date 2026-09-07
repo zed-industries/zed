@@ -556,16 +556,6 @@ impl DispatchTree {
         focus_path
     }
 
-    pub fn view_path_reversed(&self, view_id: EntityId) -> impl Iterator<Item = EntityId> {
-        let mut current_node_id = self.view_node_ids.get(&view_id).copied();
-
-        std::iter::successors(
-            current_node_id.map(|node_id| self.node(node_id)),
-            |node_id| Some(self.node(node_id.parent?)),
-        )
-        .filter_map(|node| node.view_id)
-    }
-
     pub fn node(&self, node_id: DispatchNodeId) -> &DispatchNode {
         &self.nodes[node_id.0]
     }

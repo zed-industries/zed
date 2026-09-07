@@ -1098,7 +1098,6 @@ pub struct Window {
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
-    pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     focus_lost_path: SmallVec<[FocusId; 8]>,
@@ -1922,7 +1921,6 @@ impl Window {
             next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
-            dirty_views: FxHashSet::default(),
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             focus_lost_path: SmallVec::new(),
@@ -2017,20 +2015,6 @@ impl ContentMask<Pixels> {
 }
 
 impl Window {
-    fn mark_view_dirty(&mut self, view_id: EntityId) {
-        // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
-        // should already be dirty.
-        for view_id in self
-            .rendered_frame
-            .dispatch_tree
-            .view_path_reversed(view_id)
-        {
-            if !self.dirty_views.insert(view_id) {
-                break;
-            }
-        }
-    }
-
     /// Registers a callback to be invoked when the window appearance changes.
     pub fn observe_window_appearance(
         &self,
@@ -3035,7 +3019,6 @@ impl Window {
                 );
             }
         }
-        self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
         for layout in self.node_engine.take_retired_layouts() {
@@ -3130,11 +3113,8 @@ impl Window {
 
     fn invalidate_entities(&mut self) {
         let mut views = self.invalidator.take_views();
-        let node_engine = &mut self.node_engine;
-        node_engine.invalidate_entities(&views);
-        for entity in views.drain() {
-            self.mark_view_dirty(entity);
-        }
+        self.node_engine.invalidate_entities(&views);
+        views.clear();
         self.invalidator.replace_views(views);
     }
 
@@ -3606,9 +3586,7 @@ impl Window {
     }
 
     pub(crate) fn invalidate_component(&mut self, source: EntityId) {
-        self.mark_view_dirty(source);
-        let engine = &mut self.node_engine;
-        engine.invalidate_consumers(source);
+        self.node_engine.invalidate_consumers(source);
     }
 
     /// Mounts the view occurrence under the current node and enters its layout phase.
