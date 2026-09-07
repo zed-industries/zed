@@ -10,7 +10,7 @@ use windows::{
         UI::{
             Controls::*,
             HiDpi::*,
-            Input::{Ime::*, KeyboardAndMouse::*},
+            Input::{Ime::*, KeyboardAndMouse::*, Pointer::*},
             WindowsAndMessaging::*,
         },
     },
@@ -111,6 +111,7 @@ impl WindowsWindowInner {
             WM_DESTROY => self.handle_destroy_msg(handle),
             WM_QUERYENDSESSION => Some(1),
             WM_ENDSESSION => self.handle_end_session_msg(wparam),
+            WM_POINTERDOWN | WM_POINTERUPDATE | WM_POINTERUP => self.handle_pointer_msg(wparam),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(handle, lparam, wparam),
             WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(),
             WM_NCMOUSEMOVE => self.handle_nc_mouse_move_msg(handle, lparam),
@@ -361,6 +362,51 @@ impl WindowsWindowInner {
         Some(0)
     }
 
+    /// Caches the pressure of a pen in contact, so the legacy mouse messages
+    /// that `DefWindowProc` synthesises from the same pointer input can carry
+    /// it. Deliberately never handles the message: the rest of this backend is
+    /// built on those synthesised `WM_MOUSE*` messages, and consuming pointer
+    /// messages here would suppress them.
+    fn handle_pointer_msg(&self, wparam: WPARAM) -> Option<isize> {
+        let pointer_id = wparam.loword() as u32;
+        let mut pointer_type = POINTER_INPUT_TYPE::default();
+        if unsafe { GetPointerType(pointer_id, &mut pointer_type) }.is_err()
+            || pointer_type != PT_PEN
+        {
+            return None;
+        }
+        let mut pen_info = POINTER_PEN_INFO::default();
+        if unsafe { GetPointerPenInfo(pointer_id, &mut pen_info) }.is_err() {
+            return None;
+        }
+        // 0..=1024, and 0 whenever the pen hovers without touching.
+        self.state
+            .pen_pressure
+            .set(pen_info.pressure as f32 / 1024.0);
+        None
+    }
+
+    /// The pressure to report on the mouse message currently being handled:
+    /// the cached pen pressure when the message was synthesised from pen
+    /// input, and full pressure for an ordinary mouse -- or for a hovering
+    /// pen, whose zero reading is indistinguishable from no reading at all.
+    fn current_mouse_pressure(&self) -> f32 {
+        // Mouse messages synthesised from pen or touch input carry this
+        // signature in their extra info (documented under "distinguishing pen
+        // input from mouse and touch"); bit 7 is set for touch, clear for pen.
+        const MI_WP_SIGNATURE: u32 = 0xFF515700;
+        const SIGNATURE_MASK: u32 = 0xFFFFFF00;
+        const TOUCH_FLAG: u32 = 0x80;
+        let extra_info = unsafe { GetMessageExtraInfo() }.0 as u32;
+        if extra_info & SIGNATURE_MASK == MI_WP_SIGNATURE && extra_info & TOUCH_FLAG == 0 {
+            let pressure = self.state.pen_pressure.get();
+            if pressure > 0.0 {
+                return pressure;
+            }
+        }
+        1.0
+    }
+
     fn handle_mouse_move_msg(&self, handle: HWND, lparam: LPARAM, wparam: WPARAM) -> Option<isize> {
         self.start_tracking_mouse(handle, TME_LEAVE);
         self.restore_cursor_after_hide();
@@ -388,6 +434,7 @@ impl WindowsWindowInner {
             position: logical_point(x, y, scale_factor),
             pressed_button,
             modifiers: current_modifiers(),
+            pressure: self.current_mouse_pressure(),
         });
         let handled = !func(input).propagate;
         self.state.callbacks.input.set(Some(func));
@@ -502,6 +549,7 @@ impl WindowsWindowInner {
             modifiers: current_modifiers(),
             click_count,
             first_mouse: false,
+            pressure: self.current_mouse_pressure(),
         });
         let handled = !func(input).propagate;
         self.state.callbacks.input.set(Some(func));
@@ -530,6 +578,7 @@ impl WindowsWindowInner {
             position: logical_point(x, y, scale_factor),
             modifiers: current_modifiers(),
             click_count,
+            pressure: self.current_mouse_pressure(),
         });
         let handled = !func(input).propagate;
         self.state.callbacks.input.set(Some(func));
@@ -1040,6 +1089,8 @@ impl WindowsWindowInner {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             pressed_button: None,
             modifiers: current_modifiers(),
+            // A mouse reports full pressure; tablets override this.
+            pressure: 1.0,
         });
         let handled = !func(input).propagate;
         self.state.callbacks.input.set(Some(func));
@@ -1070,6 +1121,8 @@ impl WindowsWindowInner {
                 modifiers: current_modifiers(),
                 click_count,
                 first_mouse: false,
+                // A mouse reports full pressure; tablets override this.
+                pressure: 1.0,
             });
             let handled = !func(input).propagate;
             self.state.callbacks.input.set(Some(func));
@@ -1114,6 +1167,8 @@ impl WindowsWindowInner {
                 position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 modifiers: current_modifiers(),
                 click_count: 1,
+                // A mouse reports full pressure; tablets override this.
+                pressure: 1.0,
             });
             let handled = !func(input).propagate;
             self.state.callbacks.input.set(Some(func));

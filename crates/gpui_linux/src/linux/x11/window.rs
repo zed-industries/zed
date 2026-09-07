@@ -47,6 +47,7 @@ x11rb::atom_manager! {
         XdndFinished,
         XdndTypeList,
         XdndActionCopy,
+        AbsPressure: b"Abs Pressure",
         TextUriList: b"text/uri-list",
         UTF8_STRING,
         TEXT,

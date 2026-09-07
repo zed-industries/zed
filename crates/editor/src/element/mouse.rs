@@ -1258,6 +1258,7 @@ mod tests {
                     position: mouse_drag_position,
                     modifiers: Modifiers::none(),
                     pressed_button: Some(MouseButton::Left),
+                    pressure: 1.0,
                 },
                 &position_map,
                 window,
