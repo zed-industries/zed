@@ -18,7 +18,7 @@ use language::{Language, LanguageRegistry};
 use log;
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
-use ui::{CommonAnimationExt, Tooltip, prelude::*};
+use ui::{CommonAnimationExt, KeyBinding, Tooltip, prelude::*};
 use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
@@ -43,9 +43,9 @@ use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
 use ui::PopoverMenuHandle;
 use zed_actions::editor::{MoveDown, MoveUp};
 use zed_actions::notebook::{
-    AddCodeBlock, AddMarkdownBlock, ClearOutputs, EnterCommandMode, EnterEditMode, InterruptKernel,
-    MoveCellDown, MoveCellUp, NotebookMoveDown, NotebookMoveUp, OpenNotebook, RestartKernel, Run,
-    RunAll, RunAndAdvance,
+    AddCodeBlock, AddMarkdownBlock, ClearOutputs, DeleteCell, EnterCommandMode, EnterEditMode,
+    InterruptKernel, MoveCellDown, MoveCellUp, NotebookMoveDown, NotebookMoveUp, OpenNotebook,
+    RestartKernel, Run, RunAll, RunAndAdvance,
 };
 
 /// Whether the notebook is in command mode (navigating cells) or edit mode (editing a cell).
@@ -68,6 +68,8 @@ pub(crate) const LARGE_SPACING_SIZE: f32 = 16.0;
 pub(crate) const GUTTER_WIDTH: f32 = 19.0;
 pub(crate) const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
 pub(crate) const CONTROL_SIZE: f32 = 20.0;
+
+const NOTEBOOK_EXTENSION: &str = "ipynb";
 
 pub fn init(cx: &mut App) {
     if cx.has_flag::<NotebookFeatureFlag>() || std::env::var("LOCAL_NOTEBOOK_DEV").is_ok() {
@@ -107,6 +109,11 @@ pub struct NotebookEditor {
     kernel_picker_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
 }
 
+enum SaveDestination {
+    CurrentPath,
+    NewPath(ProjectPath),
+}
+
 impl NotebookEditor {
     pub fn new(
         project: Entity<Project>,
@@ -138,9 +145,15 @@ impl NotebookEditor {
             match &cell_entity {
                 Cell::Code(code_cell) => {
                     let cell_id_for_focus = cell_id.clone();
-                    cx.subscribe(code_cell, move |this, _cell, event, cx| match event {
-                        CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), cx),
-                        CellEvent::FocusedIn(_) => this.select_cell_by_id(&cell_id_for_focus, cx),
+                    cx.subscribe_in(code_cell, window, move |this, _cell, event, window, cx| {
+                        match event {
+                            CellEvent::Run(cell_id) => {
+                                this.execute_cell(cell_id.clone(), window, cx)
+                            }
+                            CellEvent::FocusedIn(_) => {
+                                this.select_cell_by_id(&cell_id_for_focus, cx)
+                            }
+                        }
                     })
                     .detach();
 
@@ -329,6 +342,56 @@ impl NotebookEditor {
         cx.notify();
     }
 
+    fn save_impl(
+        &mut self,
+        destination: SaveDestination,
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let notebook = self.to_notebook(cx);
+        let project_path = self.notebook_item.read(cx).project_path.clone();
+
+        self.mark_as_saved(cx);
+
+        cx.spawn(async move |this, cx| {
+            let json =
+                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
+            let buffer = project
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                .await?;
+            buffer.update(cx, |buffer, cx| buffer.set_text(json, cx));
+
+            match destination {
+                SaveDestination::CurrentPath => {
+                    project
+                        .update(cx, |project, cx| project.save_buffer(buffer, cx))
+                        .await
+                }
+                SaveDestination::NewPath(new_path) => {
+                    project
+                        .update(cx, |project, cx| {
+                            project.save_buffer_as(buffer, new_path.clone(), cx)
+                        })
+                        .await?;
+
+                    // The buffer now lives at the new path, so the notebook has
+                    // to follow it or the next save writes to the old file.
+                    let entry_id = project.read_with(cx, |project, cx| {
+                        project.entry_for_path(&new_path, cx).map(|entry| entry.id)
+                    });
+                    this.update(cx, |this, cx| {
+                        this.notebook_item.update(cx, |notebook_item, _| {
+                            notebook_item.project_path = new_path;
+                            if let Some(entry_id) = entry_id {
+                                notebook_item.id = entry_id;
+                            }
+                        })
+                    })
+                }
+            }
+        })
+    }
+
     fn launch_kernel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let spec = self.kernel_specification.clone().or_else(|| {
             ReplStore::global(cx)
@@ -509,7 +572,7 @@ impl NotebookEditor {
         }
     }
 
-    fn execute_cell(&mut self, cell_id: CellId, cx: &mut Context<Self>) {
+    fn execute_cell(&mut self, cell_id: CellId, window: &mut Window, cx: &mut Context<Self>) {
         let code = if let Some(Cell::Code(cell)) = self.cell_map.get(&cell_id) {
             let editor = cell.read(cx).editor().clone();
             let buffer = editor.read(cx).buffer().read(cx);
@@ -521,16 +584,6 @@ impl NotebookEditor {
             return;
         };
 
-        if let Some(Cell::Code(cell)) = self.cell_map.get(&cell_id) {
-            cell.update(cx, |cell, cx| {
-                if cell.has_outputs() {
-                    cell.clear_outputs();
-                }
-                cell.start_execution();
-                cx.notify();
-            });
-        }
-
         let request = ExecuteRequest {
             code,
             ..Default::default()
@@ -538,10 +591,35 @@ impl NotebookEditor {
         let message: JupyterMessage = request.into();
         let msg_id = message.header.msg_id.clone();
 
-        self.execution_requests.insert(msg_id, cell_id.clone());
+        let send_result = match &mut self.kernel {
+            Kernel::RunningKernel(kernel) => kernel
+                .request_tx()
+                .try_send(message)
+                .map_err(|err| format!("failed to send execute request to kernel (the kernel process may have died): {err}")),
+            Kernel::StartingKernel(_) => Err("the kernel is still starting".to_string()),
+            Kernel::ErroredLaunch(error) => Err(format!("the kernel failed to launch: {error}")),
+            Kernel::ShuttingDown | Kernel::Shutdown => Err("the kernel is shut down".to_string()),
+            Kernel::Restarting => Err("the kernel is restarting".to_string()),
+        };
 
-        if let Kernel::RunningKernel(kernel) = &mut self.kernel {
-            kernel.request_tx().try_send(message).ok();
+        if let Some(Cell::Code(cell)) = self.cell_map.get(&cell_id) {
+            cell.update(cx, |cell, cx| {
+                if cell.has_outputs() {
+                    cell.clear_outputs();
+                }
+                if let Err(error) = &send_result {
+                    cell.show_kernel_error(error, window, cx);
+                } else {
+                    cell.start_execution();
+                }
+                cx.notify();
+            });
+        }
+
+        if let Err(error) = send_result {
+            log::error!("notebook: cannot execute cell: {error}");
+        } else {
+            self.execution_requests.insert(msg_id, cell_id.clone());
         }
     }
 
@@ -575,7 +653,7 @@ impl NotebookEditor {
 
     fn run_cells(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for cell_id in self.cell_order.clone() {
-            self.execute_cell(cell_id, cx);
+            self.execute_cell(cell_id, window, cx);
         }
     }
 
@@ -588,7 +666,7 @@ impl NotebookEditor {
         };
         match cell {
             Cell::Code(_) => {
-                self.execute_cell(cell_id, cx);
+                self.execute_cell(cell_id, window, cx);
             }
             Cell::Markdown(markdown_cell) => {
                 // for markdown, finish editing and move to next cell
@@ -609,7 +687,7 @@ impl NotebookEditor {
             if let Some(cell) = self.cell_map.get(&cell_id) {
                 match cell {
                     Cell::Code(_) => {
-                        self.execute_cell(cell_id, cx);
+                        self.execute_cell(cell_id, window, cx);
                     }
                     Cell::Markdown(markdown_cell) => {
                         if markdown_cell.read(cx).is_editing() {
@@ -739,6 +817,27 @@ impl NotebookEditor {
         }
     }
 
+    fn delete_cell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.cell_order.is_empty() {
+            return;
+        }
+        let index = self.selected_cell_index.min(self.cell_order.len() - 1);
+        let cell_id = self.cell_order.remove(index);
+        self.cell_map.remove(&cell_id);
+        self.cell_list.splice(index..index + 1, 0);
+
+        if self.cell_order.is_empty() {
+            self.selected_cell_index = 0;
+        } else {
+            self.selected_cell_index = index.min(self.cell_order.len() - 1);
+            self.cell_list
+                .scroll_to_reveal_item(self.selected_cell_index);
+        }
+        self.notebook_mode = NotebookMode::Command;
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
     fn insert_cell_at_current_position(&mut self, cell_id: CellId, cell: Cell) {
         let insert_index = if self.cell_order.is_empty() {
             0
@@ -820,10 +919,14 @@ impl NotebookEditor {
         });
 
         let cell_id_for_run = new_cell_id.clone();
-        cx.subscribe(&code_cell, move |this, _cell, event, cx| match event {
-            CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), cx),
-            CellEvent::FocusedIn(_) => this.select_cell_by_id(&cell_id_for_run, cx),
-        })
+        cx.subscribe_in(
+            &code_cell,
+            window,
+            move |this, _cell, event, window, cx| match event {
+                CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), window, cx),
+                CellEvent::FocusedIn(_) => this.select_cell_by_id(&cell_id_for_run, cx),
+            },
+        )
         .detach();
 
         let cell_id_for_editor = new_cell_id.clone();
@@ -1090,6 +1193,23 @@ impl NotebookEditor {
                                     window.dispatch_action(Box::new(AddCodeBlock), cx);
                                 }),
                             ),
+                    )
+                    .child(
+                        Self::button_group(window, cx).child(
+                            Self::render_notebook_control(
+                                "delete-cell",
+                                IconName::Trash,
+                                window,
+                                cx,
+                            )
+                            .disabled(self.cell_order.is_empty())
+                            .tooltip(move |window, cx| {
+                                Tooltip::for_action("Delete cell", &DeleteCell, cx)
+                            })
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(DeleteCell), cx);
+                            }),
+                        ),
                     ),
             )
             .child(
@@ -1251,6 +1371,44 @@ impl NotebookEditor {
         .size_full()
     }
 
+    fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .child(Label::new("This notebook is empty.").color(Color::Muted))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("empty-state-add-code", "Add code cell")
+                            .start_icon(Icon::new(IconName::Code))
+                            .key_binding(KeyBinding::for_action_in(
+                                &AddCodeBlock,
+                                &self.focus_handle,
+                                cx,
+                            ))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.add_code_block(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("empty-state-add-markdown", "Add markdown cell")
+                            .style(ButtonStyle::Subtle)
+                            .start_icon(Icon::new(IconName::FileMarkdown))
+                            .key_binding(KeyBinding::for_action_in(
+                                &AddMarkdownBlock,
+                                &self.focus_handle,
+                                cx,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.add_markdown_block(window, cx)
+                            })),
+                    ),
+            )
+    }
+
     fn cell_position(&self, index: usize) -> CellPosition {
         match index {
             0 => CellPosition::First,
@@ -1337,6 +1495,7 @@ impl Render for NotebookEditor {
             .on_action(
                 cx.listener(|this, _: &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
             )
+            .on_action(cx.listener(|this, _: &DeleteCell, window, cx| this.delete_cell(window, cx)))
             .on_action(
                 cx.listener(|this, action, window, cx| this.enter_edit_mode(action, window, cx)),
             )
@@ -1450,7 +1609,16 @@ impl Render for NotebookEditor {
                     .w_full()
                     .h_full()
                     .gap_2()
-                    .child(div().flex_1().h_full().child(self.cell_list(window, cx)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .child(if self.cell_order.is_empty() {
+                                self.render_empty_state(cx).into_any_element()
+                            } else {
+                                self.cell_list(window, cx).into_any_element()
+                            }),
+                    )
                     .child(self.render_notebook_controls(window, cx)),
             )
             .child(self.render_kernel_status_bar(window, cx))
@@ -1465,7 +1633,6 @@ impl Focusable for NotebookEditor {
 
 // Intended to be a NotebookBuffer
 pub struct NotebookItem {
-    path: PathBuf,
     project_path: ProjectPath,
     languages: Arc<LanguageRegistry>,
     // Raw notebook data
@@ -1482,15 +1649,19 @@ impl project::ProjectItem for NotebookItem {
     ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
         let path = path.clone();
         let project = project.clone();
-        let fs = project.read(cx).fs().clone();
         let languages = project.read(cx).languages().clone();
 
-        if path.path.extension().unwrap_or_default() == "ipynb" {
-            Some(cx.spawn(async move |cx| {
-                let abs_path = project
-                    .read_with(cx, |project, cx| project.absolute_path(&path, cx))
-                    .with_context(|| format!("finding the absolute path of {path:?}"))?;
+        // For single-file worktrees the relative path is empty, so fall back
+        // to the absolute path to detect notebooks opened directly.
+        let abs_path = project.read(cx).absolute_path(&path, cx);
+        let is_notebook = path.path.extension().unwrap_or_default() == NOTEBOOK_EXTENSION
+            || abs_path
+                .as_ref()
+                .and_then(|abs_path| abs_path.extension())
+                .is_some_and(|extension| extension == NOTEBOOK_EXTENSION);
 
+        if is_notebook {
+            Some(cx.spawn(async move |cx| {
                 // todo: watch for changes to the file
                 let buffer = project
                     .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
@@ -1547,7 +1718,6 @@ impl project::ProjectItem for NotebookItem {
                     .context("Entry not found")?;
 
                 Ok(cx.new(|_| NotebookItem {
-                    path: abs_path,
                     project_path: path,
                     languages,
                     notebook,
@@ -1741,18 +1911,7 @@ impl Item for NotebookEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let notebook = self.to_notebook(cx);
-        let path = self.notebook_item.read(cx).path.clone();
-        let fs = project.read(cx).fs().clone();
-
-        self.mark_as_saved(cx);
-
-        cx.spawn(async move |_this, _cx| {
-            let json =
-                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
-            fs.atomic_write(path, json).await?;
-            Ok(())
-        })
+        self.save_impl(SaveDestination::CurrentPath, project, cx)
     }
 
     fn save_as(
@@ -1762,20 +1921,7 @@ impl Item for NotebookEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let notebook = self.to_notebook(cx);
-        let fs = project.read(cx).fs().clone();
-
-        let abs_path = project.read(cx).absolute_path(&path, cx);
-
-        self.mark_as_saved(cx);
-
-        cx.spawn(async move |_this, _cx| {
-            let abs_path = abs_path.context("Failed to get absolute path")?;
-            let json =
-                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
-            fs.atomic_write(abs_path, json).await?;
-            Ok(())
-        })
+        self.save_impl(SaveDestination::NewPath(path), project, cx)
     }
 
     fn reload(
@@ -1902,5 +2048,320 @@ impl KernelSession for NotebookEditor {
     fn kernel_errored(&mut self, error_message: String, cx: &mut Context<Self>) {
         self.kernel = Kernel::ErroredLaunch(error_message);
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use project::{FakeFs, Project, ProjectItem as _};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+    use util::rel_path::rel_path;
+
+    const NOTEBOOK_WITH_ONE_CODE_CELL: &str = r#"{
+        "metadata": {
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3"
+            },
+            "language_info": {
+                "name": "python"
+            }
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5,
+        "cells": [
+            {
+                "cell_type": "code",
+                "id": "cell-one",
+                "metadata": {},
+                "execution_count": null,
+                "outputs": [],
+                "source": ["print('hello')"]
+            }
+        ]
+    }"#;
+
+    /// When the configured interpreter doesn't exist (e.g. Python isn't installed),
+    /// running a cell must not leave it stuck in the executing state. It should
+    /// instead surface the kernel launch error as an error output on the cell.
+    #[gpui::test]
+    async fn test_run_cell_with_missing_interpreter_shows_error(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/notebooks"),
+            json!({ "test.ipynb": NOTEBOOK_WITH_ONE_CODE_CELL }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/notebooks").as_ref()], cx).await;
+        cx.update(|cx| ReplStore::init(fs.clone(), cx));
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        // Select a kernel whose interpreter doesn't exist, simulating a machine
+        // where Python isn't installed properly. This is the same path the
+        // kernel picker uses.
+        let missing_interpreter = path!("/nonexistent/python3");
+        let broken_spec = KernelSpecification::Jupyter(LocalKernelSpecification {
+            name: "python3".to_string(),
+            path: PathBuf::from(missing_interpreter),
+            kernelspec: JupyterKernelspec {
+                argv: vec![
+                    missing_interpreter.to_string(),
+                    "-m".to_string(),
+                    "ipykernel_launcher".to_string(),
+                    "-f".to_string(),
+                    "{connection_file}".to_string(),
+                ],
+                display_name: "Python 3".to_string(),
+                language: "python".to_string(),
+                interrupt_mode: None,
+                metadata: None,
+                env: None,
+            },
+        });
+        cx.update(|cx| {
+            ReplStore::global(cx).update(cx, |store, cx| {
+                store.set_active_kernelspec(worktree_id, broken_spec, cx);
+            })
+        });
+
+        let notebook_item = cx
+            .update(|cx| {
+                NotebookItem::try_open(
+                    &project,
+                    &ProjectPath {
+                        worktree_id,
+                        path: rel_path("test.ipynb").into(),
+                    },
+                    cx,
+                )
+                .expect("ipynb files should be openable as notebooks")
+            })
+            .await
+            .expect("notebook should parse");
+
+        // Don't render the notebook UI itself: its animated kernel status icon
+        // schedules a new frame on every render, which makes `run_until_parked`
+        // spin forever in tests. The editor entity is created inside an empty
+        // window instead; we are testing execution behavior, not rendering.
+        let cx = cx.add_empty_window();
+
+        // Launching a kernel probes real TCP ports on localhost, which the
+        // deterministic test scheduler cannot drive.
+        cx.executor().allow_parking();
+
+        let editor = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+
+        // Creating the editor launches the kernel. Wait for the actual launch
+        // task, which fails because the interpreter cannot be spawned.
+        let pending_kernel = editor.read_with(cx, |editor, _| match &editor.kernel {
+            Kernel::StartingKernel(task) => task.clone(),
+            _ => panic!("kernel should be starting right after the editor is created"),
+        });
+        pending_kernel.await;
+
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                matches!(editor.kernel, Kernel::ErroredLaunch(_)),
+                "kernel launch should fail, instead status is: {}",
+                editor.kernel.status().to_string()
+            );
+        });
+
+        // Run the (only) cell via the production action handler.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.run_current_cell(&Run, window, cx);
+        });
+
+        editor.read_with(cx, |editor, cx| {
+            let cell_id = editor.cell_order.first().expect("notebook has one cell");
+            let Some(Cell::Code(cell)) = editor.cell_map.get(cell_id) else {
+                panic!("expected a code cell");
+            };
+            let cell = cell.read(cx);
+
+            assert!(
+                !cell.is_executing(),
+                "cell must not be stuck in the executing state when the kernel is not running"
+            );
+
+            let nbformat::v4::Cell::Code { outputs, .. } = cell.to_nbformat_cell(cx) else {
+                panic!("expected a code cell");
+            };
+            match outputs.as_slice() {
+                [nbformat::v4::Output::Error(error)] => {
+                    assert_eq!(error.ename, "Kernel Error");
+                    let traceback = error.traceback.join("\n");
+                    assert!(
+                        traceback.contains("the kernel failed to launch"),
+                        "error output should explain why the cell could not run, got: {traceback}"
+                    );
+                }
+                other => panic!("expected a single error output, got: {other:?}"),
+            }
+        });
+    }
+
+    /// Opening a notebook as a single file (its own worktree) leaves the
+    /// worktree-relative path empty, so only the absolute path carries the
+    /// `.ipynb` extension. `try_open` must still recognize it as a notebook.
+    #[gpui::test]
+    async fn test_open_single_file_notebook(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/notebooks"),
+            json!({ "single.ipynb": NOTEBOOK_WITH_ONE_CODE_CELL }),
+        )
+        .await;
+
+        let project =
+            Project::test(fs.clone(), [path!("/notebooks/single.ipynb").as_ref()], cx).await;
+        cx.update(|cx| ReplStore::init(fs.clone(), cx));
+
+        let project_path = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            let worktree = worktree.read(cx);
+            assert!(
+                worktree.is_single_file(),
+                "opening a bare .ipynb should create a single-file worktree"
+            );
+            ProjectPath {
+                worktree_id: worktree.id(),
+                path: worktree.root_entry().unwrap().path.clone(),
+            }
+        });
+
+        assert!(
+            project_path.path.extension().is_none(),
+            "single-file worktree relative path should have no extension"
+        );
+
+        let notebook_item = cx
+            .update(|cx| {
+                NotebookItem::try_open(&project, &project_path, cx)
+                    .expect("single-file .ipynb should open as a notebook")
+            })
+            .await
+            .expect("notebook should parse");
+
+        notebook_item.read_with(cx, |item, _| {
+            assert_eq!(item.notebook.cells.len(), 1);
+        });
+    }
+
+    /// Notebooks must be saved through the project rather than through the
+    /// client's own filesystem, otherwise a remote notebook's path is resolved
+    /// against the local machine and the save fails.
+    #[gpui::test]
+    async fn test_save_goes_through_the_project(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/notebooks"),
+            json!({ "test.ipynb": NOTEBOOK_WITH_ONE_CODE_CELL }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/notebooks").as_ref()], cx).await;
+        cx.update(|cx| ReplStore::init(fs.clone(), cx));
+
+        let project_path = project.read_with(cx, |project, cx| ProjectPath {
+            worktree_id: project.worktrees(cx).next().unwrap().read(cx).id(),
+            path: rel_path("test.ipynb").into(),
+        });
+
+        let notebook_item = cx
+            .update(|cx| {
+                NotebookItem::try_open(&project, &project_path, cx)
+                    .expect("ipynb files should be openable as notebooks")
+            })
+            .await
+            .expect("notebook should parse");
+
+        // Held across the save: a save that bypasses the project writes the file
+        // behind this buffer's back, leaving it stale.
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(project_path.clone(), cx)
+            })
+            .await
+            .expect("notebook buffer should open");
+
+        // Rendering the notebook animates the kernel status icon, which makes
+        // `run_until_parked` spin forever; only the editor entity is needed here.
+        let cx = cx.add_empty_window();
+        let notebook_editor = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+
+        let cell_editor = notebook_editor.read_with(cx, |notebook_editor, cx| {
+            let cell_id = notebook_editor
+                .cell_order
+                .first()
+                .expect("notebook has one cell");
+            let Some(Cell::Code(cell)) = notebook_editor.cell_map.get(cell_id) else {
+                panic!("expected a code cell");
+            };
+            cell.read(cx).editor().clone()
+        });
+        cell_editor.update_in(cx, |cell_editor, window, cx| {
+            cell_editor.set_text("print('goodbye')", window, cx);
+        });
+
+        notebook_editor
+            .update_in(cx, |notebook_editor, window, cx| {
+                notebook_editor.save(SaveOptions::default(), project.clone(), window, cx)
+            })
+            .await
+            .expect("saving the notebook should succeed");
+
+        let saved = String::from_utf8(
+            fs.read_file_sync(path!("/notebooks/test.ipynb"))
+                .expect("notebook should still exist"),
+        )
+        .expect("notebook should be valid UTF-8");
+        assert!(
+            saved.contains("print('goodbye')"),
+            "the edited cell should be written to the notebook, got: {saved}"
+        );
+
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(
+                buffer.text(),
+                saved,
+                "the project's buffer should hold the saved notebook"
+            );
+            assert!(!buffer.is_dirty(), "saving should leave the buffer clean");
+        });
     }
 }

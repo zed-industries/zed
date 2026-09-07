@@ -134,7 +134,12 @@ impl Component for Banner {
         ComponentScope::DataDisplay
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A non-blocking, severity-aware message strip used to surface informative, \
+        success, warning, or error messages without interrupting the user."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         let severity_examples = vec![
             single_example(
                 "Default",
@@ -179,10 +184,8 @@ impl Component for Banner {
             ),
         ];
 
-        Some(
-            example_group(severity_examples)
-                .vertical()
-                .into_any_element(),
-        )
+        example_group(severity_examples)
+            .vertical()
+            .into_any_element()
     }
 }

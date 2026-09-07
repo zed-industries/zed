@@ -171,17 +171,16 @@ impl Editor {
             target_top = target_point.row().as_f64();
             target_bottom = target_top + 1.;
         } else {
-            let selections = self.selections.all::<Point>(&display_map);
-
-            target_point = selections
-                .first()
-                .unwrap()
+            // Autoscroll only needs the first, last, and newest selections.
+            target_point = self
+                .selections
+                .first::<Point>(&display_map)
                 .head()
                 .to_display_point(&display_map);
             target_top = target_point.row().as_f64();
-            target_bottom = selections
-                .last()
-                .unwrap()
+            target_bottom = self
+                .selections
+                .last::<Point>(&display_map)
                 .head()
                 .to_display_point(&display_map)
                 .row()
@@ -195,10 +194,9 @@ impl Editor {
             ) || (matches!(autoscroll, Autoscroll::Strategy(AutoscrollStrategy::Fit, _))
                 && !selections_fit)
             {
-                target_point = selections
-                    .iter()
-                    .max_by_key(|s| s.id)
-                    .unwrap()
+                target_point = self
+                    .selections
+                    .newest::<Point>(&display_map)
                     .head()
                     .to_display_point(&display_map);
                 target_top = target_point.row().as_f64();
@@ -361,7 +359,18 @@ impl Editor {
         let scroll_width = ScrollOffset::from(scroll_width);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self.selections.all::<Point>(&display_map);
+        // Horizontal autoscroll only needs selections whose head is visible.
+        let visible_end_row = DisplayRow(start_row.0 + layouts.len() as u32);
+        let visible_range = display_map
+            .buffer_snapshot()
+            .anchor_before(DisplayPoint::new(start_row, 0).to_offset(&display_map, Bias::Left))
+            ..display_map.buffer_snapshot().anchor_after(
+                DisplayPoint::new(visible_end_row, 0).to_offset(&display_map, Bias::Right),
+            );
+        let mut selections = self
+            .selections
+            .disjoint_in_range::<Point>(visible_range, &display_map);
+        selections.extend(self.selections.pending::<Point>(&display_map));
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map, cx);
 
         let mut target_left;
@@ -378,19 +387,49 @@ impl Editor {
                 if head.row() >= start_row
                     && head.row() < DisplayRow(start_row.0 + layouts.len() as u32)
                 {
-                    let start_column = head.column();
-                    let end_column = cmp::min(display_map.line_len(head.row()), head.column());
-                    target_left = target_left.min(ScrollOffset::from(
-                        layouts[head.row().minus(start_row) as usize]
-                            .x_for_index(start_column as usize)
-                            + self.gutter_dimensions.margin,
-                    ));
-                    target_right = target_right.max(
-                        ScrollOffset::from(
-                            layouts[head.row().minus(start_row) as usize]
-                                .x_for_index(end_column as usize),
-                        ) + em_advance,
+                    let row_line_len = display_map.line_len(head.row());
+                    let start_dp = selection.start.to_display_point(&display_map);
+                    let end_dp = selection.end.to_display_point(&display_map);
+
+                    let start_column = if start_dp.row() == head.row() {
+                        start_dp.column()
+                    } else {
+                        0
+                    };
+                    let end_column = cmp::min(
+                        row_line_len,
+                        if end_dp.row() == head.row() {
+                            end_dp.column()
+                        } else {
+                            row_line_len
+                        },
                     );
+
+                    let layout = &layouts[head.row().minus(start_row) as usize];
+
+                    let mut candidate_left = ScrollOffset::from(
+                        layout.x_for_index(start_column as usize) + self.gutter_dimensions.margin,
+                    );
+                    let mut candidate_right =
+                        ScrollOffset::from(layout.x_for_index(end_column as usize)) + em_advance;
+
+                    // If the full selection span (with the same padding used below) doesn't
+                    // fit in the viewport, fall back to just tracking the cursor (head)
+                    // instead of the whole selection, otherwise autoscroll gives up entirely.
+                    if candidate_right - candidate_left > viewport_width {
+                        let head_column = head.column();
+                        let head_column_clamped = cmp::min(row_line_len, head_column);
+                        candidate_left = ScrollOffset::from(
+                            layout.x_for_index(head_column as usize)
+                                + self.gutter_dimensions.margin,
+                        );
+                        candidate_right =
+                            ScrollOffset::from(layout.x_for_index(head_column_clamped as usize))
+                                + em_advance;
+                    }
+
+                    target_left = target_left.min(candidate_left);
+                    target_right = target_right.max(candidate_right);
                 }
             }
         } else {

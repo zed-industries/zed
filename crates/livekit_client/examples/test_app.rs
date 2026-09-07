@@ -350,7 +350,7 @@ impl Render for LivekitWindow {
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .flex_grow()
+                    .flex_grow_1()
                     .children(self.remote_participants.iter().map(|(identity, state)| {
                         div()
                             .h(px(1080.0))
@@ -360,9 +360,9 @@ impl Render for LivekitWindow {
                             .px_2()
                             .bg(rgb(0x8888ff))
                             .child(SharedString::from(if state.speaking {
-                                format!("{} (speaking)", &identity.0)
+                                format!("{} (speaking)", identity.0)
                             } else if state.muted {
-                                format!("{} (muted)", &identity.0)
+                                format!("{} (muted)", identity.0)
                             } else {
                                 identity.0.clone()
                             }))

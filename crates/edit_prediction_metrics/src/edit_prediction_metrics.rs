@@ -1,11 +1,18 @@
+mod jumps;
 mod kept_rate;
+mod patch;
 mod patch_metrics;
 mod prediction_score;
 mod reversal;
 mod summary;
 mod tokenize;
+#[cfg(feature = "tree-sitter")]
 mod tree_sitter;
 
+pub use jumps::{
+    EditableContextCoverage, Excerpt, LineFileClassification, PatchLocationMatch,
+    editable_context_coverage, patch_location_match,
+};
 pub use kept_rate::AnnotatedToken;
 pub use kept_rate::KeptRateResult;
 pub use kept_rate::TokenAnnotation;
@@ -30,4 +37,5 @@ pub use prediction_score::{
 };
 pub use reversal::compute_prediction_reversal_ratio_from_history;
 pub use summary::{PredictionSummaryInput, QaSummaryData, SummaryJson, compute_summary};
+#[cfg(feature = "tree-sitter")]
 pub use tree_sitter::count_tree_sitter_errors;

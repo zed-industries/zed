@@ -1,6 +1,6 @@
 use crate::{
     NewFile, Open, OpenMode, PathList, RecentWorkspace, SerializedWorkspaceLocation,
-    ToggleWorkspaceSidebar, Workspace,
+    ToggleWorkspaceSidebar, Workspace, WorkspaceSettings,
     item::{Item, ItemEvent},
     persistence::WorkspaceDb,
 };
@@ -15,7 +15,7 @@ use menu::{SelectNext, SelectPrevious};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{DefaultOpenBehavior, Settings};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use util::ResultExt;
 use zed_actions::{
@@ -118,7 +118,7 @@ impl RenderOnce for SectionButton {
                     )
                     .child(
                         KeyBinding::for_action_in(action_ref, &self.focus_handle, cx)
-                            .size(rems_from_px(12.)),
+                            .size(rems_from_px(12_f32)),
                     ),
             )
             .on_click(move |_, window, cx| {
@@ -307,10 +307,14 @@ impl WelcomePage {
 
                 if is_local {
                     let paths = workspace.paths.paths().to_vec();
+                    let open_mode = match WorkspaceSettings::get_global(cx).default_open_behavior {
+                        DefaultOpenBehavior::ExistingWindow => OpenMode::Activate,
+                        DefaultOpenBehavior::NewWindow => OpenMode::NewWindow,
+                    };
                     self.workspace
                         .update(cx, |workspace, cx| {
                             workspace
-                                .open_workspace_for_paths(OpenMode::Activate, paths, window, cx)
+                                .open_workspace_for_paths(open_mode, paths, window, cx)
                                 .detach_and_log_err(cx);
                         })
                         .log_err();
@@ -362,7 +366,7 @@ impl WelcomePage {
                     .style(ButtonStyle::Outlined)
                     .key_binding(
                         KeyBinding::for_action_in(&ToggleFocus, &self.focus_handle, cx)
-                            .size(rems_from_px(12.)),
+                            .size(rems_from_px(12_f32)),
                     )
                     .on_click(move |_, window, cx| {
                         focus.dispatch_action(&ToggleWorkspaceSidebar, window, cx);
@@ -473,7 +477,7 @@ impl Render for WelcomePage {
                             .justify_center()
                             .mb_4()
                             .gap_4()
-                            .child(Vector::square(VectorName::ZedLogo, rems_from_px(45.)))
+                            .child(Vector::square(VectorName::ZedLogo, rems_from_px(45_f32)))
                             .child(
                                 v_flex().child(Headline::new(welcome_label)).child(
                                     Label::new("The editor for what's next")
@@ -581,7 +585,6 @@ impl crate::SerializableItem for WelcomePage {
         workspace: &mut Workspace,
         item_id: crate::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;

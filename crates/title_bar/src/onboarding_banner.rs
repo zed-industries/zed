@@ -1,5 +1,6 @@
 // This module provides infrastructure for showing onboarding banners in the title bar.
-// It's currently not in use but is kept for future feature announcements.
+// Currently used by the "Skills have replaced Rules" announcement; older usages
+// (Claude Agent, ACP) lived here previously and were removed.
 #![allow(dead_code)]
 
 use gpui::{Action, Entity, Global, Render, SharedString, TaskExt};

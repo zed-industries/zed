@@ -276,7 +276,7 @@ impl Database {
 
             if !update.updated_entries.is_empty() {
                 worktree_entry::Entity::insert_many(update.updated_entries.iter().map(|entry| {
-                    let mtime = entry.mtime.clone().unwrap_or_default();
+                    let mtime = entry.mtime.unwrap_or_default();
                     worktree_entry::ActiveModel {
                         project_id: ActiveValue::set(project_id),
                         worktree_id: ActiveValue::set(worktree_id),
@@ -294,6 +294,7 @@ impl Database {
                         is_hidden: ActiveValue::set(entry.is_hidden),
                         scan_id: ActiveValue::set(update.scan_id as i64),
                         is_fifo: ActiveValue::set(entry.is_fifo),
+                        is_unloaded: ActiveValue::set(entry.is_unloaded),
                     }
                 }))
                 .on_conflict(
@@ -312,6 +313,7 @@ impl Database {
                         worktree_entry::Column::IsIgnored,
                         worktree_entry::Column::IsHidden,
                         worktree_entry::Column::ScanId,
+                        worktree_entry::Column::IsUnloaded,
                     ])
                     .to_owned(),
                 )
@@ -586,6 +588,7 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(server.id as i64),
                 name: ActiveValue::set(server.name.clone()),
+                language_name: ActiveValue::set(server.language_name.clone()),
                 worktree_id: ActiveValue::set(server.worktree_id.map(|id| id as i64)),
                 capabilities: ActiveValue::set(update.capabilities.clone()),
             })
@@ -596,6 +599,7 @@ impl Database {
                 ])
                 .update_columns([
                     language_server::Column::Name,
+                    language_server::Column::LanguageName,
                     language_server::Column::Capabilities,
                     language_server::Column::WorktreeId,
                 ])
@@ -618,7 +622,8 @@ impl Database {
     ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
         let project_id = ProjectId::from_proto(update.project_id);
         let kind = match update.kind {
-            Some(kind) => proto::LocalSettingsKind::from_i32(kind)
+            Some(kind) => proto::LocalSettingsKind::try_from(kind)
+                .ok()
                 .with_context(|| format!("unknown worktree settings kind: {kind}"))?,
             None => proto::LocalSettingsKind::Settings,
         };
@@ -807,6 +812,7 @@ impl Database {
                         // on number of files only. That shouldn't be a huge deal in practice.
                         size: None,
                         is_fifo: db_entry.is_fifo,
+                        is_unloaded: db_entry.is_unloaded,
                     });
                 }
             }
@@ -891,6 +897,7 @@ impl Database {
                         branch_summary,
                         head_commit_details,
                         branch_list: Vec::new(),
+                        branch_list_error: None,
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
                         merge_message: db_repository_entry.merge_message,
@@ -958,7 +965,7 @@ impl Database {
         let path_style = if project.windows_paths {
             PathStyle::Windows
         } else {
-            PathStyle::Posix
+            PathStyle::Unix
         };
         let features: Vec<String> = serde_json::from_str(&project.features).unwrap_or_default();
 
@@ -985,6 +992,7 @@ impl Database {
                         id: language_server.id as u64,
                         name: language_server.name,
                         worktree_id: language_server.worktree_id.map(|id| id as u64),
+                        language_name: language_server.language_name,
                     },
                     capabilities: language_server.capabilities,
                 })

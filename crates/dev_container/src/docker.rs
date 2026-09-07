@@ -5,7 +5,8 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use util::command::Command;
 
 use crate::{
-    command_json::evaluate_json_command, devcontainer_api::DevContainerError,
+    command_json::{evaluate_json_command, evaluate_yaml_command},
+    devcontainer_api::DevContainerError,
     devcontainer_json::MountDefinition,
 };
 
@@ -20,6 +21,8 @@ pub(crate) struct DockerPs {
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct DockerState {
     pub(crate) running: bool,
+    #[serde(default)]
+    pub(crate) started_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
@@ -126,6 +129,7 @@ where
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
 pub(crate) struct DockerComposeService {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) image: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) entrypoint: Option<Vec<String>>,
@@ -143,7 +147,13 @@ pub(crate) struct DockerComposeService {
     pub(crate) build: Option<DockerComposeServiceBuild>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) privileged: Option<bool>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) init: Option<bool>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "deserialize_compose_volumes"
+    )]
     pub(crate) volumes: Vec<MountDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) env_file: Option<Vec<String>>,
@@ -157,11 +167,18 @@ pub(crate) struct DockerComposeService {
         deserialize_with = "deserialize_nullable_vec"
     )]
     pub(crate) command: Vec<String>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "deserialize_environment"
+    )]
+    pub(crate) environment: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
 pub(crate) struct DockerComposeVolume {
-    pub(crate) name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
@@ -169,7 +186,7 @@ pub(crate) struct DockerComposeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
     pub(crate) services: HashMap<String, DockerComposeService>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_compose_top_level_volumes")]
     pub(crate) volumes: HashMap<String, DockerComposeVolume>,
 }
 
@@ -185,9 +202,18 @@ impl DockerInspect {
 }
 
 impl Docker {
-    pub(crate) async fn new(docker_cli: &str) -> Self {
+    pub(crate) async fn new(docker_cli: &str, use_buildkit: Option<bool>) -> Self {
         let has_buildx = if docker_cli == "podman" {
             false
+        } else if let Some(use_buildkit) = use_buildkit {
+            // Honor the explicit `dev_container_use_buildkit` setting. Setting it
+            // to `false` forces the classic Docker builder for Docker-compatible
+            // engines that lack an integrated BuildKit (e.g. Apple Container via
+            // a Docker-API bridge), where BuildKit builds cannot resolve
+            // locally-built images. The classic builder builds the feature
+            // content as an image and references it with an ordinary
+            // multi-stage `FROM`.
+            use_buildkit
         } else {
             let output = Command::new(docker_cli)
                 .args(["buildx", "version"])
@@ -197,7 +223,7 @@ impl Docker {
         };
         if !has_buildx && docker_cli != "podman" {
             log::info!(
-                "docker buildx not found; dev container builds will use the scratch-image fallback"
+                "Using the classic Docker builder for dev container builds (BuildKit unavailable or disabled)"
             );
         }
         Self {
@@ -251,7 +277,7 @@ impl Docker {
         for file_path in config_files {
             command.args(&["-f", &file_path.display().to_string()]);
         }
-        command.args(&["config", "--format", "json"]);
+        command.arg("config");
         command
     }
 }
@@ -259,11 +285,17 @@ impl Docker {
 #[async_trait]
 impl DockerClient for Docker {
     async fn inspect(&self, id: &String) -> Result<DockerInspect, DevContainerError> {
-        // Try to pull the image, continue on failure; Image may be local only, id a reference to a running container
+        // Always try inspect first — avoid pulling unless necessary.
+        let command = self.create_docker_inspect(id);
+        match evaluate_json_command::<DockerInspect>(command).await {
+            Ok(Some(docker_inspect)) => return Ok(docker_inspect),
+            Ok(None) | Err(_) => {}
+        }
+
+        // Inspect failed — try pulling and retry.
         self.pull_image(id).await.ok();
 
         let command = self.create_docker_inspect(id);
-
         let Some(docker_inspect): Option<DockerInspect> = evaluate_json_command(command).await?
         else {
             log::error!("Docker inspect produced no deserializable output");
@@ -277,23 +309,35 @@ impl DockerClient for Docker {
         config_files: &Vec<PathBuf>,
     ) -> Result<Option<DockerComposeConfig>, DevContainerError> {
         let command = self.create_docker_compose_config_command(config_files);
-        evaluate_json_command(command).await
+        evaluate_yaml_command(command).await
     }
 
     async fn docker_compose_build(
         &self,
         config_files: &Vec<PathBuf>,
         project_name: &str,
+        services: Option<&Vec<String>>,
     ) -> Result<(), DevContainerError> {
         let mut command = Command::new(&self.docker_cli);
         if !self.is_podman() {
-            command.env("DOCKER_BUILDKIT", "1");
+            if self.has_buildx {
+                command.env("DOCKER_BUILDKIT", "1");
+            } else {
+                // Without a usable BuildKit, build through the classic builder so
+                // multi-stage `FROM` of locally-built images (the feature content
+                // image) resolves from the daemon's image store.
+                command.env("DOCKER_BUILDKIT", "0");
+                command.env("COMPOSE_DOCKER_CLI_BUILD", "0");
+            }
         }
         command.args(&["compose", "--project-name", project_name]);
         for docker_compose_file in config_files {
             command.args(&["-f", &docker_compose_file.display().to_string()]);
         }
         command.arg("build");
+        if let Some(services) = services {
+            command.args(services);
+        }
 
         let output = command.output().await.map_err(|e| {
             log::error!("Error running docker compose up: {e}");
@@ -345,12 +389,13 @@ impl DockerClient for Docker {
             log::error!("Error running command {e} in container exec");
             DevContainerError::ContainerNotValid(container_id.to_string())
         })?;
+        let std_out = String::from_utf8_lossy(&output.stdout);
+        log::debug!("Command output:\n {std_out}");
         if !output.status.success() {
             let std_err = String::from_utf8_lossy(&output.stderr);
             log::error!("Command produced a non-successful output. StdErr: {std_err}");
+            return Err(DevContainerError::DevContainerScriptsFailed);
         }
-        let std_out = String::from_utf8_lossy(&output.stdout);
-        log::debug!("Command output:\n {std_out}");
 
         Ok(())
     }
@@ -450,6 +495,7 @@ pub(crate) trait DockerClient {
         &self,
         config_files: &Vec<PathBuf>,
         project_name: &str,
+        services: Option<&Vec<String>>,
     ) -> Result<(), DevContainerError>;
     async fn run_docker_exec(
         &self,
@@ -468,6 +514,41 @@ pub(crate) trait DockerClient {
     /// This operates as an escape hatch for more custom uses of the docker API.
     /// See DevContainerManifest::create_docker_build as an example
     fn docker_cli(&self) -> String;
+}
+
+fn deserialize_environment<'de, D>(
+    deserializer: D,
+) -> Result<Option<HashMap<String, String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<serde_json_lenient::Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+
+    match value {
+        serde_json_lenient::Value::Object(object) => Ok(Some(
+            object
+                .into_iter()
+                .filter_map(|(key, value)| match value {
+                    serde_json_lenient::Value::Null => None,
+                    serde_json_lenient::Value::String(value) => Some((key, value)),
+                    other => Some((key, other.to_string())),
+                })
+                .collect(),
+        )),
+        serde_json_lenient::Value::Array(values) => Ok(Some(
+            values
+                .into_iter()
+                .filter_map(|value| {
+                    let value = value.as_str()?;
+                    let (key, value) = value.split_once('=').unwrap_or((value, ""));
+                    Some((key.to_string(), value.to_string()))
+                })
+                .collect(),
+        )),
+        _ => Ok(None),
+    }
 }
 
 fn deserialize_labels<'de, D>(deserializer: D) -> Result<Option<HashMap<String, String>>, D::Error>
@@ -526,6 +607,106 @@ where
     deserializer.deserialize_any(LabelsVisitor)
 }
 
+fn deserialize_compose_volumes<'de, D>(deserializer: D) -> Result<Vec<MountDefinition>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum VolumeItem {
+        Object(MountDefinition),
+        String(String),
+    }
+
+    let items = Vec::<VolumeItem>::deserialize(deserializer)?;
+    items
+        .into_iter()
+        .map(|item| match item {
+            VolumeItem::Object(mount) => Ok(mount),
+            VolumeItem::String(s) => parse_compose_volume_string(&s)
+                .ok_or_else(|| de::Error::custom(format!("invalid volume string: {s}"))),
+        })
+        .collect()
+}
+
+/// Parses Docker Compose short volume syntax: `[SOURCE:]TARGET[:MODE]`.
+/// A leading drive letter (e.g. `C:`) on the source is treated as part of the
+/// path rather than as a source/target separator.
+fn parse_compose_volume_string(s: &str) -> Option<MountDefinition> {
+    let bytes = s.as_bytes();
+
+    // Find the colon that separates source from target, skipping a possible
+    // Windows drive-letter prefix (single ASCII letter followed by `:`).
+    let separator_start = if bytes.len() >= 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && bytes.get(2).map_or(false, |&b| b == b'/' || b == b'\\')
+    {
+        // Skip past the drive letter prefix (e.g. "C:\")
+        3
+    } else {
+        0
+    };
+
+    if let Some(colon_pos) = s[separator_start..].find(':') {
+        let colon_pos = colon_pos + separator_start;
+        let source = &s[..colon_pos];
+
+        let rest = &s[colon_pos + 1..];
+
+        // `rest` may itself start with a Windows drive letter, so skip past
+        // that before looking for a second colon that would delimit the mode.
+        let mode_search_start = if rest.len() >= 2
+            && rest.as_bytes()[0].is_ascii_alphabetic()
+            && rest.as_bytes()[1] == b':'
+        {
+            2
+        } else {
+            0
+        };
+
+        let (target, _mode) = if let Some(pos) = rest[mode_search_start..].find(':') {
+            let pos = pos + mode_search_start;
+            (&rest[..pos], Some(&rest[pos + 1..]))
+        } else {
+            (rest, None)
+        };
+
+        if target.is_empty() {
+            return None;
+        }
+
+        Some(MountDefinition {
+            source: Some(source.to_string()),
+            target: target.to_string(),
+            mount_type: None,
+        })
+    } else {
+        // No colon at all — anonymous volume with only a target path
+        if s.is_empty() {
+            return None;
+        }
+        Some(MountDefinition {
+            source: None,
+            target: s.to_string(),
+            mount_type: None,
+        })
+    }
+}
+
+fn deserialize_compose_top_level_volumes<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<String, DockerComposeVolume>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let map: HashMap<String, Option<DockerComposeVolume>> = HashMap::deserialize(deserializer)?;
+    Ok(map
+        .into_iter()
+        .map(|(key, value)| (key, value.unwrap_or_default()))
+        .collect())
+}
+
 fn deserialize_nullable_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
     D: Deserializer<'de>,
@@ -582,10 +763,34 @@ mod test {
         devcontainer_api::DevContainerError,
         devcontainer_json::MountDefinition,
         docker::{
-            Docker, DockerComposeConfig, DockerComposeService, DockerComposeServicePort,
-            DockerComposeVolume, DockerInspect, DockerPs, parse_find_process_output,
+            Docker, DockerClient, DockerComposeConfig, DockerComposeService,
+            DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
+            parse_find_process_output,
         },
     };
+    #[cfg(not(target_os = "windows"))]
+    use util::command::Command;
+
+    #[test]
+    fn use_buildkit_setting_overrides_buildx_detection() {
+        // `Some(_)` short-circuits the `buildx version` probe, so these run
+        // without invoking docker.
+        let forced_off = futures::executor::block_on(Docker::new("docker", Some(false)));
+        assert!(
+            !forced_off.supports_compose_buildkit(),
+            "use_buildkit=false must force the classic builder"
+        );
+
+        let forced_on = futures::executor::block_on(Docker::new("docker", Some(true)));
+        assert!(
+            forced_on.supports_compose_buildkit(),
+            "use_buildkit=true must enable BuildKit"
+        );
+
+        // podman never supports the BuildKit/buildx path, regardless of the setting.
+        let podman = futures::executor::block_on(Docker::new("podman", Some(true)));
+        assert!(!podman.supports_compose_buildkit());
+    }
 
     #[test]
     fn should_parse_simple_env_var() {
@@ -683,6 +888,28 @@ mod test {
                 OsStr::new(given_id)
             ]
         )
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn docker_exec_returns_error_on_nonzero_exit() {
+        let docker = Docker {
+            docker_cli: "false".to_string(),
+            has_buildx: false,
+        };
+
+        let result = gpui::block_on(docker.run_docker_exec(
+            "container",
+            "/workspace",
+            "root",
+            &HashMap::new(),
+            Command::new("true"),
+        ));
+
+        assert!(matches!(
+            result,
+            Err(DevContainerError::DevContainerScriptsFailed)
+        ));
     }
 
     #[test]
@@ -947,6 +1174,13 @@ mod test {
                                 name: Some("custom port".to_string()),
                             },
                         ],
+                        environment: Some(HashMap::from([
+                            ("POSTGRES_DB".to_string(), "postgres".to_string()),
+                            ("POSTGRES_HOSTNAME".to_string(), "localhost".to_string()),
+                            ("POSTGRES_PASSWORD".to_string(), "postgres".to_string()),
+                            ("POSTGRES_PORT".to_string(), "5432".to_string()),
+                            ("POSTGRES_USER".to_string(), "postgres".to_string()),
+                        ])),
                         ..Default::default()
                     },
                 ),
@@ -959,6 +1193,13 @@ mod test {
                             source: Some("postgres-data".to_string()),
                             target: "/var/lib/postgresql/data".to_string(),
                         }],
+                        environment: Some(HashMap::from([
+                            ("POSTGRES_DB".to_string(), "postgres".to_string()),
+                            ("POSTGRES_HOSTNAME".to_string(), "localhost".to_string()),
+                            ("POSTGRES_PASSWORD".to_string(), "postgres".to_string()),
+                            ("POSTGRES_PORT".to_string(), "5432".to_string()),
+                            ("POSTGRES_USER".to_string(), "postgres".to_string()),
+                        ])),
                         ..Default::default()
                     },
                 ),
@@ -966,7 +1207,7 @@ mod test {
             volumes: HashMap::from([(
                 "postgres-data".to_string(),
                 DockerComposeVolume {
-                    name: "devcontainer_postgres-data".to_string(),
+                    name: Some("devcontainer_postgres-data".to_string()),
                 },
             )]),
         };
@@ -1025,6 +1266,44 @@ mod test {
             service.labels,
             Some(HashMap::from([(
                 "com.example.test".to_string(),
+                "value".to_string()
+            )]))
+        );
+    }
+
+    #[test]
+    fn should_deserialize_compose_environment_key_only_entries() {
+        let given_config = r#"
+        {
+            "name": "devcontainer",
+            "services": {
+                "array": {
+                    "image": "node:22-alpine",
+                    "environment": ["USER_INPUT", "DEFINED=value"]
+                },
+                "map": {
+                    "image": "node:22-alpine",
+                    "environment": {
+                        "USER_INPUT": null,
+                        "DEFINED": "value"
+                    }
+                }
+            }
+        }
+        "#;
+
+        let config: DockerComposeConfig = serde_json_lenient::from_str(given_config).unwrap();
+        assert_eq!(
+            config.services.get("array").unwrap().environment,
+            Some(HashMap::from([
+                ("DEFINED".to_string(), "value".to_string()),
+                ("USER_INPUT".to_string(), "".to_string()),
+            ]))
+        );
+        assert_eq!(
+            config.services.get("map").unwrap().environment,
+            Some(HashMap::from([(
+                "DEFINED".to_string(),
                 "value".to_string()
             )]))
         );
@@ -1091,6 +1370,73 @@ mod test {
         assert_eq!(service.volumes[0].source, None);
         assert_eq!(service.volumes[0].target, "/tmp");
         assert_eq!(service.volumes[0].mount_type, Some("tmpfs".to_string()));
+    }
+
+    #[test]
+    fn should_deserialize_compose_inline_volume_strings() {
+        let given_yaml = indoc::indoc! {r#"
+            name: devcontainer
+            services:
+              app:
+                image: node:18
+                volumes:
+                  - postgres-data:/var/lib/postgresql/data
+                  - /host/path:/container/path
+                  - /anonymous/volume
+                  - type: bind
+                    source: /explicit
+                    target: /mnt/explicit
+            volumes:
+              postgres-data:
+                name: devcontainer_postgres-data
+        "#};
+
+        let config: DockerComposeConfig = serde_yaml::from_str(given_yaml).unwrap();
+        let service = config.services.get("app").unwrap();
+        assert_eq!(service.volumes.len(), 4);
+
+        assert_eq!(service.volumes[0].source, Some("postgres-data".to_string()));
+        assert_eq!(service.volumes[0].target, "/var/lib/postgresql/data");
+        assert_eq!(service.volumes[0].mount_type, None);
+
+        assert_eq!(service.volumes[1].source, Some("/host/path".to_string()));
+        assert_eq!(service.volumes[1].target, "/container/path");
+
+        assert_eq!(service.volumes[2].source, None);
+        assert_eq!(service.volumes[2].target, "/anonymous/volume");
+
+        assert_eq!(service.volumes[3].source, Some("/explicit".to_string()));
+        assert_eq!(service.volumes[3].target, "/mnt/explicit");
+        assert_eq!(service.volumes[3].mount_type, Some("bind".to_string()));
+    }
+
+    #[test]
+    fn should_deserialize_compose_top_level_volumes_with_null_value() {
+        let given_yaml = indoc::indoc! {r#"
+            name: devcontainer
+            services:
+              app:
+                image: node:18
+            volumes:
+              postgres-data:
+              named-vol:
+                name: custom-name
+        "#};
+
+        let config: DockerComposeConfig = serde_yaml::from_str(given_yaml).unwrap();
+        assert_eq!(config.volumes.len(), 2);
+
+        let bare = config
+            .volumes
+            .get("postgres-data")
+            .expect("bare volume should exist");
+        assert_eq!(bare.name, None);
+
+        let named = config
+            .volumes
+            .get("named-vol")
+            .expect("named volume should exist");
+        assert_eq!(named.name, Some("custom-name".to_string()));
     }
 
     #[test]

@@ -3,6 +3,8 @@
 
 use std::{
     env,
+    ffi::OsStr,
+    fmt,
     ops::AddAssign,
     panic::Location,
     pin::Pin,
@@ -12,6 +14,141 @@ use std::{
 };
 
 pub mod arc_cow;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000_u32;
+
+#[cfg(target_os = "windows")]
+pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+
+    let mut command = std::process::Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
+    std::process::Command::new(program)
+}
+
+#[cfg(target_os = "windows")]
+pub fn get_powershell() -> Option<String> {
+    use std::path::PathBuf;
+
+    fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
+        #[cfg(target_pointer_width = "64")]
+        let env_var = if find_alternate {
+            "ProgramFiles(x86)"
+        } else {
+            "ProgramFiles"
+        };
+
+        #[cfg(target_pointer_width = "32")]
+        let env_var = if find_alternate {
+            "ProgramW6432"
+        } else {
+            "ProgramFiles"
+        };
+
+        let install_base_dir = PathBuf::from(std::env::var_os(env_var)?).join("PowerShell");
+        install_base_dir
+            .read_dir()
+            .ok()?
+            .filter_map(Result::ok)
+            .filter(|entry| matches!(entry.file_type(), Ok(ft) if ft.is_dir()))
+            .filter_map(|entry| {
+                let dir_name = entry.file_name();
+                let dir_name = dir_name.to_string_lossy();
+
+                let version = if find_preview {
+                    let dash_index = dir_name.find('-')?;
+                    if &dir_name[dash_index + 1..] != "preview" {
+                        return None;
+                    };
+                    dir_name[..dash_index].parse::<u32>().ok()?
+                } else {
+                    dir_name.parse::<u32>().ok()?
+                };
+
+                let exe_path = entry.path().join("pwsh.exe");
+                if exe_path.is_file() {
+                    Some((version, exe_path))
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|(version, _)| *version)
+            .map(|(_, path)| path)
+    }
+
+    fn find_pwsh_in_msix(find_preview: bool) -> Option<PathBuf> {
+        let msix_app_dir =
+            PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Microsoft\\WindowsApps");
+        let package_family_name = if find_preview {
+            "Microsoft.PowerShellPreview_8wekyb3d8bbwe"
+        } else {
+            "Microsoft.PowerShell_8wekyb3d8bbwe"
+        };
+        let pwsh_exe = msix_app_dir.join(package_family_name).join("pwsh.exe");
+        pwsh_exe.exists().then_some(pwsh_exe)
+    }
+
+    fn find_pwsh_in_scoop() -> Option<PathBuf> {
+        let pwsh_exe =
+            PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\pwsh.exe");
+        pwsh_exe.is_file().then_some(pwsh_exe)
+    }
+
+    fn find_pwsh_in_dotnet_tools() -> Option<PathBuf> {
+        let pwsh_exe =
+            PathBuf::from(std::env::var_os("USERPROFILE")?).join(".dotnet\\tools\\pwsh.exe");
+        pwsh_exe.is_file().then_some(pwsh_exe)
+    }
+
+    fn find_windows_powershell() -> Option<PathBuf> {
+        let system_root = PathBuf::from(std::env::var_os("SystemRoot")?);
+        let powershell = system_root.join("System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+        powershell.is_file().then_some(powershell)
+    }
+
+    static POWERSHELL: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
+        let locations = [
+            || find_pwsh_in_programfiles(false, false),
+            || find_pwsh_in_programfiles(true, false),
+            || find_pwsh_in_msix(false),
+            || find_pwsh_in_programfiles(false, true),
+            || find_pwsh_in_msix(true),
+            || find_pwsh_in_programfiles(true, true),
+            || find_pwsh_in_scoop(),
+            || find_pwsh_in_dotnet_tools(),
+            || which::which_global("pwsh.exe").ok(),
+            || which::which_global("powershell.exe").ok(),
+            || find_windows_powershell(),
+        ];
+
+        locations
+            .into_iter()
+            .find_map(|f| f())
+            .map(|p| p.to_string_lossy().trim().to_owned())
+            .inspect(|shell| log::info!("Found powershell in: {}", shell))
+    });
+
+    (*POWERSHELL).clone()
+}
+
+#[cfg(target_os = "windows")]
+pub fn get_windows_system_shell() -> String {
+    static CMD: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        log::warn!("Powershell not found, falling back to `cmd`");
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        std::path::PathBuf::from(system_root)
+            .join("System32\\cmd.exe")
+            .to_string_lossy()
+            .into_owned()
+    });
+    get_powershell().unwrap_or_else(|| (*CMD).clone())
+}
 
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
     let prev = *value;
@@ -115,7 +252,7 @@ where
             Err(error) => {
                 log_error_with_caller(
                     *Location::caller(),
-                    DebugAsDisplay(&error),
+                    format_args!("{:#}", DebugAsDisplay(&error)),
                     log::Level::Error,
                 );
                 None
@@ -141,7 +278,7 @@ where
         match self {
             Ok(value) => Some(value),
             Err(error) => {
-                log_error_with_caller(*Location::caller(), error, level);
+                log_error_with_caller(*Location::caller(), format_args!("{error:#}"), level);
                 None
             }
         }
@@ -155,10 +292,12 @@ where
     }
 }
 
-fn log_error_with_caller<E>(caller: core::panic::Location<'_>, error: E, level: log::Level)
-where
-    E: std::fmt::Display,
-{
+#[inline(never)]
+fn log_error_with_caller(
+    caller: core::panic::Location<'_>,
+    arguments: fmt::Arguments<'_>,
+    level: log::Level,
+) {
     #[cfg(not(windows))]
     let file = caller.file();
     #[cfg(windows)]
@@ -180,7 +319,7 @@ where
         &log::Record::builder()
             .target(module_path.as_deref().unwrap_or(""))
             .module_path(file.as_deref())
-            .args(format_args!("{:#}", error))
+            .args(arguments)
             .file(Some(caller.file()))
             .line(Some(caller.line()))
             .level(level)
@@ -188,8 +327,13 @@ where
     );
 }
 
+#[track_caller]
 pub fn log_err<E: std::fmt::Display>(error: &E) {
-    log_error_with_caller(*Location::caller(), error, log::Level::Error);
+    log_error_with_caller(
+        *Location::caller(),
+        format_args!("{error:#}"),
+        log::Level::Error,
+    );
 }
 
 // Forces `{:?}` formatting through a `Display`-bounded logging helper so `anyhow::Error` emits a
@@ -315,7 +459,7 @@ where
             Poll::Ready(output) => Poll::Ready(match output {
                 Ok(output) => Some(output),
                 Err(error) => {
-                    log_error_with_caller(location, error, level);
+                    log_error_with_caller(location, format_args!("{error:#}"), level);
                     None
                 }
             }),
@@ -342,7 +486,11 @@ where
             Poll::Ready(output) => Poll::Ready(match output {
                 Ok(output) => Some(output),
                 Err(error) => {
-                    log_error_with_caller(location, DebugAsDisplay(&error), level);
+                    log_error_with_caller(
+                        location,
+                        format_args!("{:#}", DebugAsDisplay(&error)),
+                        level,
+                    );
                     None
                 }
             }),
@@ -390,4 +538,146 @@ impl<F: FnOnce()> Drop for Deferred<F> {
 #[must_use]
 pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
     Deferred(Some(f))
+}
+
+#[derive(Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TypeIdHashBuilder;
+
+impl std::hash::BuildHasher for TypeIdHashBuilder {
+    type Hasher = TypeIdHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        TypeIdHasher::default()
+    }
+}
+
+#[derive(Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TypeIdHasher {
+    value: u64,
+}
+
+impl std::hash::Hasher for TypeIdHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        // TypeId should only hash its first 8 bytes
+        if let Some(bytes) = bytes.get(..8) {
+            bytes
+                .as_array()
+                .map(|&array| self.value = u64::from_ne_bytes(array))
+                .unwrap_or_else(|| unreachable!("slice was sliced to 8 bytes"));
+        } else {
+            debug_panic!(
+                "expected a 64-bit value, did you use this hasher with something other than a TypeId?"
+            );
+        }
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.value
+    }
+}
+
+#[test]
+fn type_id_hasher() {
+    use core::any::TypeId;
+    use core::hash::{Hash, Hasher};
+    fn verify_hashing_with(type_id: TypeId) {
+        let mut hasher = TypeIdHasher::default();
+        type_id.hash(&mut hasher);
+        assert_ne!(hasher.finish(), 0);
+    }
+    // Pick a variety of types, just to demonstrate it’s all sane. Normal, zero-sized, unsized, &c.
+    verify_hashing_with(TypeId::of::<usize>());
+    verify_hashing_with(TypeId::of::<()>());
+    verify_hashing_with(TypeId::of::<str>());
+    verify_hashing_with(TypeId::of::<&str>());
+    verify_hashing_with(TypeId::of::<Vec<u8>>());
+}
+
+pub fn truncate_to_bottom_n_sorted_by<T, F>(items: &mut Vec<T>, limit: usize, compare: &F)
+where
+    F: Fn(&T, &T) -> std::cmp::Ordering,
+{
+    if limit == 0 {
+        items.clear();
+    }
+    if items.len() <= limit {
+        items.sort_by(compare);
+        return;
+    }
+    // When limit is near to items.len() it may be more efficient to sort the whole list and
+    // truncate, rather than always doing selection first as is done below. It's hard to analyze
+    // where the threshold for this should be since the quickselect style algorithm used by
+    // `select_nth_unstable_by` makes the prefix partially sorted, and so its work is not wasted -
+    // the expected number of comparisons needed by `sort_by` is less than it is for some arbitrary
+    // unsorted input.
+    items.select_nth_unstable_by(limit, compare);
+    items.truncate(limit);
+    items.sort_by(compare);
+}
+
+#[cfg(test)]
+mod logging_tests {
+    use super::{ResultExt, TryFutureExt, TryFutureExtBacktrace};
+    use log::{Level, Log, Metadata, Record};
+    use std::{
+        cell::RefCell,
+        future::ready,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+
+    #[test]
+    fn logging_preserves_diagnostics_and_callers() {
+        log::set_logger(&TestLogger).expect("failed to install test logger");
+        let error = anyhow::anyhow!("root failure")
+            .context("inner context")
+            .context("outer context");
+        let display = "outer context: inner context: root failure";
+        let debug = format!("{error:?}");
+        let line = line!() + 1;
+        assert_eq!(Err::<(), _>(&error).log_err(), None);
+        assert_logged(line, display);
+        let line = line!() + 1;
+        assert_eq!(Err::<(), _>(&error).log_err_with_backtrace(), None);
+        assert_logged(line, &debug);
+        let mut context = Context::from_waker(Waker::noop());
+        let line = line!() + 1;
+        let mut future = pin!(ready(Err::<(), _>(&error)).log_err());
+        assert_eq!(future.as_mut().poll(&mut context), Poll::Ready(None));
+        assert_logged(line, display);
+        let line = line!() + 1;
+        let mut future = pin!(ready(Err::<(), _>(&error)).log_err_with_backtrace());
+        assert_eq!(future.as_mut().poll(&mut context), Poll::Ready(None));
+        assert_logged(line, &debug);
+    }
+
+    thread_local! {
+        static RECORDS: RefCell<Vec<(Option<u32>, String)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    struct TestLogger;
+
+    impl Log for TestLogger {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, record: &Record<'_>) {
+            assert_eq!(record.target(), "gpui_util::lib");
+            assert_eq!(record.module_path(), Some("crates/gpui_util/src/lib.rs"));
+            assert_eq!(record.file(), Some(file!()));
+            assert_eq!(record.level(), Level::Error);
+            RECORDS.with_borrow_mut(|records| {
+                records.push((record.line(), record.args().to_string()));
+            });
+        }
+
+        fn flush(&self) {}
+    }
+
+    fn assert_logged(line: u32, message: &str) {
+        assert_eq!(RECORDS.take(), [(Some(line), message.to_owned())]);
+    }
 }

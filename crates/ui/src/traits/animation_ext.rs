@@ -33,7 +33,7 @@ pub trait CommonAnimationExt: AnimationExt {
     {
         self.with_animation(
             id,
-            Animation::new(Duration::from_secs(duration)).repeat(),
+            Animation::new(Duration::from_secs(duration)).repeat_synced(),
             |component, delta| component.transform(Transformation::rotate(percentage(delta))),
         )
     }

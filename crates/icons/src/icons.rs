@@ -10,17 +10,20 @@ use strum::{EnumIter, EnumString, IntoStaticStr};
 pub enum IconName {
     AcpRegistry,
     AiAnthropic,
+    AiAnthropicCompat,
     AiBedrock,
     AiClaude,
     AiDeepSeek,
     AiEdit,
     AiGemini,
     AiGoogle,
+    AiLlamaCpp,
     AiLmStudio,
     AiMistral,
     AiOllama,
     AiOpenAi,
     AiOpenAiCompat,
+    AiOpenAiGptSub,
     AiOpenCode,
     AiOpenRouter,
     AiVercel,
@@ -46,6 +49,7 @@ pub enum IconName {
     BellOff,
     BellRing,
     Binary,
+    Bitbucket,
     Blocks,
     Bookmark,
     BoltFilled,
@@ -70,7 +74,9 @@ pub enum IconName {
     Close,
     CloudDownload,
     Code,
+    Codeberg,
     Command,
+    Compact,
     Control,
     Copilot,
     CopilotDisabled,
@@ -85,6 +91,7 @@ pub enum IconName {
     Debug,
     DebugBreakpoint,
     DebugContinue,
+    DebugContinueThread,
     DebugDetach,
     DebugDisabledBreakpoint,
     DebugDisabledLogBreakpoint,
@@ -120,39 +127,51 @@ pub enum IconName {
     FastForwardOff,
     File,
     FileCode,
+    FileCodeOff,
     FileDiff,
     FileDoc,
     FileGeneric,
     FileGit,
+    FileIgnored,
     FileLock,
     FileMarkdown,
+    FileMultiple,
     FileRust,
     FileTextFilled,
     FileTextOutlined,
     FileToml,
     FileTree,
     Filter,
+    FilterFunnel,
     Flame,
+    FoldVertical,
     Folder,
+    FolderAdd,
+    FolderInclude,
     FolderOpen,
-    FolderOpenAdd,
     FolderSearch,
+    FolderShare,
+    FolderShared,
     Font,
     FontSize,
     FontWeight,
+    Forgejo,
     ForwardArrow,
     ForwardArrowUp,
     GenericClose,
     GenericMaximize,
     GenericMinimize,
     GenericRestore,
+    Gerrit,
     GitBranch,
     GitBranchPlus,
     GitCommit,
     GitGraph,
     GitMergeConflict,
     GitWorktree,
+    Gitea,
     Github,
+    Gitlab,
     Hash,
     HistoryRerun,
     Image,
@@ -161,29 +180,26 @@ pub enum IconName {
     Info,
     Json,
     Keyboard,
-    Library,
     LineHeight,
     Link,
     Linux,
     ListCollapse,
-    ListFilter,
     ListTodo,
     ListTree,
     ListX,
     LoadCircle,
     LocationEdit,
-    LockOutlined,
+    Lock,
+    LockOff,
     MagnifyingGlass,
     Maximize,
     MaximizeAlt,
     Menu,
-    MenuAltTemp,
     Mic,
     MicMute,
     Minimize,
-    NewThread,
     Notepad,
-    OpenFolder,
+    OnCall,
     Option,
     PageDown,
     PageUp,
@@ -218,12 +234,13 @@ pub enum IconName {
     Send,
     Server,
     Settings,
+    Share,
     Shift,
     SignalHigh,
     SignalLow,
     SignalMedium,
     Slash,
-    Sliders,
+    Sourcehut,
     Space,
     Sparkle,
     Split,
@@ -235,11 +252,15 @@ pub enum IconName {
     StarFilled,
     Stop,
     Tab,
+    Table,
     Terminal,
     TerminalAlt,
     TextSnippet,
+    TextWrap,
+    TextUnwrap,
     ThinkingMode,
     ThinkingModeOff,
+    ThisWindow,
     Thread,
     ThreadFromSummary,
     ThreadsSidebarLeftClosed,
@@ -254,7 +275,6 @@ pub enum IconName {
     ToolCopy,
     ToolDeleteFile,
     ToolDiagnostics,
-    ToolFolder,
     ToolHammer,
     ToolNotification,
     ToolPencil,
@@ -267,6 +287,7 @@ pub enum IconName {
     TriangleRight,
     Undo,
     Unpin,
+    UserArrowUp,
     UserCheck,
     UserGroup,
     UserRoundPen,
@@ -291,5 +312,47 @@ impl IconName {
     pub fn path(&self) -> Arc<str> {
         let file_stem: &'static str = self.into();
         format!("icons/{file_stem}.svg").into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use strum::{IntoEnumIterator as _, ParseError};
+
+    use crate::IconName;
+
+    #[test]
+    fn test_all_icons_exist() {
+        let asset_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+
+        for icon in IconName::iter() {
+            let icon_path = asset_path.join(&*icon.path());
+            assert!(
+                icon_path.exists(),
+                "Icon {icon:?} does not exist at {icon_path:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_no_dangling_icons() -> Result<(), ParseError> {
+        let icons_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons");
+
+        for entry in std::fs::read_dir(&icons_dir).expect("failed to read icons directory") {
+            let path = entry.expect("failed to read icons directory entry").path();
+            if path.extension().is_none_or(|extension| extension != "svg") {
+                continue;
+            }
+            let file_stem = path
+                .file_stem()
+                .and_then(|file_stem| file_stem.to_str())
+                .expect("icon file name is not valid UTF-8");
+
+            file_stem.parse::<IconName>()?;
+        }
+
+        Ok(())
     }
 }

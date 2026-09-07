@@ -38,6 +38,7 @@
   libxfixes,
   libxkbcommon,
   libxrandr,
+  lld,
   libx11,
   libxcb,
   nodejs_22,
@@ -66,6 +67,7 @@ let
       relPath = lib.removePrefix root path;
       topLevelIncludes = [
         "crates"
+        "corgi-patches"
         "assets"
         "extensions"
         "script"
@@ -78,6 +80,10 @@ let
     in
     builtins.elem firstComp topLevelIncludes;
 
+  corgiPatches = builtins.path {
+    path = ../corgi-patches;
+    name = "corgi-patches";
+  };
   craneLib = crane.overrideToolchain rustToolchain;
   gpu-lib = if withGLES then libglvnd else vulkan-loader;
   commonArgs =
@@ -137,6 +143,8 @@ let
       ]
       ++ lib.optionals stdenv'.hostPlatform.isLinux [ makeWrapper ]
       ++ lib.optionals stdenv'.hostPlatform.isDarwin [
+        # Provides `ld64.lld` for clang's `-fuse-ld=lld`.
+        lld
         (cargo-bundle.overrideAttrs (
           new: old: {
             version = "0.6.1-zed";
@@ -246,6 +254,11 @@ let
         }";
 
         NIX_OUTPATH_USED_AS_RANDOM_SEED = "norebuilds";
+      }
+      // lib.optionalAttrs stdenv'.hostPlatform.isDarwin {
+        # Link with lld on Darwin. nixpkgs' classic open-source ld64 fails to insert
+        # ARM64 branch thunks for this binary, producing `b(l) ARM64 branch out of range`.
+        NIX_CFLAGS_LINK = "-fuse-ld=lld";
       };
 
       # prevent nix from removing the "unused" wayland/gpu-lib rpaths
@@ -297,11 +310,31 @@ let
             drv;
       };
     };
-  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+  cargoArtifacts = craneLib.buildDepsOnly (
+    builtins.removeAttrs commonArgs [ "src" ]
+    // {
+      dummySrc = craneLib.mkDummySrc {
+        inherit (commonArgs) src cargoLock;
+        # `scratch` is a local dependency of `cxx-build`, so its API is needed
+        # while Crane builds third-party dependencies.
+        extraDummyScript = ''
+          rm -rf $out/corgi-patches
+          cp --recursive ${corgiPatches} $out/corgi-patches
+        '';
+      };
+    }
+  );
 in
 craneLib.buildPackage (
   lib.recursiveUpdate commonArgs {
     inherit cargoArtifacts;
+
+    # Expose the crane builder and shared arguments so other derivations (e.g.
+    # the docs preprocessor in the devshell) can build sibling workspace crates
+    # without duplicating all of the build inputs and environment setup.
+    passthru = {
+      inherit craneLib commonArgs cargoArtifacts;
+    };
 
     dontUseCmakeConfigure = true;
 

@@ -30,7 +30,6 @@ gpui.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
-prost.workspace = true
 release_channel.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
 schemars.workspace = true
@@ -39,6 +38,7 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
+telemetry.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 urlencoding.workspace = true

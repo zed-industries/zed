@@ -9,6 +9,11 @@ cbuffer GlobalParams: register(b0) {
     uint3 global_pad;
 };
 
+cbuffer BatchParams: register(b1) {
+    uint batch_start_index;
+    uint3 batch_pad;
+};
+
 Texture2D<float4> t_sprite: register(t0);
 SamplerState s_sprite: register(s0);
 
@@ -525,8 +530,9 @@ struct QuadFragmentInput {
 
 StructuredBuffer<Quad> quads: register(t1);
 
-QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint quad_id: SV_InstanceID) {
+QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    uint quad_id = batch_start_index + instance_id;
     Quad quad = quads[quad_id];
     float4 device_position = to_device_position(unit_vertex, quad.bounds);
 
@@ -854,6 +860,10 @@ struct Shadow {
     Corners corner_radii;
     Bounds content_mask;
     Hsla color;
+    Bounds element_bounds;
+    Corners element_corner_radii;
+    uint inset;
+    uint pad; // align to 8 bytes
 };
 
 struct ShadowVertexOutput {
@@ -871,14 +881,21 @@ struct ShadowFragmentInput {
 
 StructuredBuffer<Shadow> shadows: register(t1);
 
-ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint shadow_id: SV_InstanceID) {
+ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    uint shadow_id = batch_start_index + instance_id;
     Shadow shadow = shadows[shadow_id];
 
-    float margin = 3.0 * shadow.blur_radius;
-    Bounds bounds = shadow.bounds;
-    bounds.origin -= margin;
-    bounds.size += 2.0 * margin;
+    Bounds bounds;
+    if (shadow.inset != 0u) {
+        bounds = shadow.element_bounds;
+    } else {
+        // Leave room for the gaussian tail outside the shadow rect.
+        float margin = 3.0 * shadow.blur_radius;
+        bounds = shadow.bounds;
+        bounds.origin -= margin;
+        bounds.size += 2.0 * margin;
+    }
 
     float4 device_position = to_device_position(unit_vertex, bounds);
     float4 clip_distance = distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask);
@@ -901,21 +918,36 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
     float2 point0 = input.position.xy - center;
     float corner_radius = pick_corner_radius(point0, shadow.corner_radii);
 
-    // The signal is only non-zero in a limited range, so don't waste samples
-    float low = point0.y - half_size.y;
-    float high = point0.y + half_size.y;
-    float start = clamp(-3. * shadow.blur_radius, low, high);
-    float end = clamp(3. * shadow.blur_radius, low, high);
+    float alpha;
+    if (shadow.blur_radius == 0.) {
+        float distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
+        alpha = saturate(0.5 - distance);
+    } else {
+        // The signal is only non-zero in a limited range, so don't waste samples
+        float low = point0.y - half_size.y;
+        float high = point0.y + half_size.y;
+        float start = clamp(-3. * shadow.blur_radius, low, high);
+        float end = clamp(3. * shadow.blur_radius, low, high);
 
-    // Accumulate samples (we can get away with surprisingly few samples)
-    float step = (end - start) / 4.;
-    float y = start + step * 0.5;
-    float alpha = 0.;
-    for (int i = 0; i < 4; i++) {
-        alpha += blur_along_x(point0.x, point0.y - y, shadow.blur_radius,
-                            corner_radius, half_size) *
-                gaussian(y, shadow.blur_radius) * step;
-        y += step;
+        // Accumulate samples (we can get away with surprisingly few samples)
+        float step = (end - start) / 4.;
+        float y = start + step * 0.5;
+        alpha = 0.;
+        for (int i = 0; i < 4; i++) {
+            alpha += blur_along_x(point0.x, point0.y - y, shadow.blur_radius,
+                                corner_radius, half_size) *
+                    gaussian(y, shadow.blur_radius) * step;
+            y += step;
+        }
+    }
+
+    if (shadow.inset != 0u) {
+        // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
+        // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
+        alpha = 1.0 - alpha;
+        float element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
+                                          shadow.element_corner_radii);
+        alpha *= saturate(0.5 - element_distance);
     }
 
     return input.color * float4(1., 1., 1., alpha);
@@ -1055,8 +1087,9 @@ struct UnderlineFragmentInput {
 
 StructuredBuffer<Underline> underlines: register(t1);
 
-UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint underline_id: SV_InstanceID) {
+UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    uint underline_id = batch_start_index + instance_id;
     Underline underline = underlines[underline_id];
     float4 device_position = to_device_position(unit_vertex, underline.bounds);
     float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds,
@@ -1130,8 +1163,9 @@ struct MonochromeSpriteFragmentInput {
 
 StructuredBuffer<MonochromeSprite> mono_sprites: register(t1);
 
-MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
+MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    uint sprite_id = batch_start_index + instance_id;
     MonochromeSprite sprite = mono_sprites[sprite_id];
     float4 device_position =
         to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
@@ -1153,8 +1187,8 @@ float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Targe
     return float4(input.color.rgb, input.color.a * alpha_corrected);
 }
 
-MonochromeSpriteVertexOutput subpixel_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
-    return monochrome_sprite_vertex(vertex_id, sprite_id);
+MonochromeSpriteVertexOutput subpixel_sprite_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
+    return monochrome_sprite_vertex(vertex_id, instance_id);
 }
 
 SubpixelSpriteFragmentOutput subpixel_sprite_fragment(MonochromeSpriteFragmentInput input) {
@@ -1202,8 +1236,9 @@ struct PolychromeSpriteFragmentInput {
 
 StructuredBuffer<PolychromeSprite> poly_sprites: register(t1);
 
-PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
+PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    uint sprite_id = batch_start_index + instance_id;
     PolychromeSprite sprite = poly_sprites[sprite_id];
     float4 device_position = to_device_position(unit_vertex, sprite.bounds);
     float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds,
@@ -1224,7 +1259,7 @@ float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Targe
     float distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
 
     float4 color = sample;
-    if ((sprite.grayscale & 0xFFu) != 0u) {
+    if (sprite.grayscale != 0u) {
         float3 grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = float4(grayscale, sample.a);
     }

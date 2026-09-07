@@ -4,9 +4,9 @@ use std::{
     mem::ManuallyDrop,
 };
 
-use ::util::{ResultExt, maybe};
 use anyhow::{Context, Result};
 use collections::HashMap;
+use gpui_util::{ResultExt, maybe};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use windows::{
     Win32::{
@@ -608,7 +608,7 @@ impl DirectWriteState {
             }
 
             let mut runs = Vec::new();
-            let renderer_context = RendererContext {
+            let mut renderer_context = RendererContext {
                 text_system: self,
                 components,
                 index_converter: StringIndexConverter::new(text),
@@ -616,7 +616,7 @@ impl DirectWriteState {
                 width: 0.0,
             };
             text_layout.Draw(
-                Some((&raw const renderer_context).cast::<c_void>()),
+                Some((&raw mut renderer_context).cast::<c_void>().cast_const()),
                 &components.text_renderer.0,
                 0.0,
                 0.0,
@@ -881,6 +881,10 @@ impl DirectWriteState {
         params: &RenderGlyphParams,
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
+        // INVARIANT: the code below drives the *shared* D3D11 immediate context
+        // (`Map`/`Unmap`/`Draw`/`CopyResource`), which `DirectXRenderer` and `DirectXAtlas` also
+        // touch. An immediate `ID3D11DeviceContext` is not thread-safe, so this must only run on
+        // the main UI thread (which it always is; text rasterization never leaves that thread).
         let bitmap_size = glyph_bounds.size;
         let subpixel_shift = params
             .subpixel_variant
@@ -994,24 +998,6 @@ impl DirectWriteState {
         }
 
         let gpu_state = &self.gpu_state;
-        let params_buffer = {
-            let desc = D3D11_BUFFER_DESC {
-                ByteWidth: std::mem::size_of::<GlyphLayerTextureParams>() as u32,
-                Usage: D3D11_USAGE_DYNAMIC,
-                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
-                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-                MiscFlags: 0,
-                StructureByteStride: 0,
-            };
-
-            let mut buffer = None;
-            unsafe {
-                gpu_state
-                    .device
-                    .CreateBuffer(&desc, None, Some(&mut buffer))
-            }?;
-            buffer
-        };
 
         let render_target_texture = {
             let mut texture = None;
@@ -1057,6 +1043,41 @@ impl DirectWriteState {
             rtv
         };
 
+        Self::composite_color_layers(
+            gpu_state,
+            &glyph_layers,
+            bitmap_size,
+            &render_target_texture,
+            &render_target_view,
+        )
+    }
+
+    fn composite_color_layers(
+        gpu_state: &GPUState,
+        glyph_layers: &[GlyphLayerTexture],
+        bitmap_size: Size<DevicePixels>,
+        render_target_texture: &ID3D11Texture2D,
+        render_target_view: &Option<ID3D11RenderTargetView>,
+    ) -> Result<Vec<u8>> {
+        let params_buffer = {
+            let desc = D3D11_BUFFER_DESC {
+                ByteWidth: std::mem::size_of::<GlyphLayerTextureParams>() as u32,
+                Usage: D3D11_USAGE_DYNAMIC,
+                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                MiscFlags: 0,
+                StructureByteStride: 0,
+            };
+
+            let mut buffer = None;
+            unsafe {
+                gpu_state
+                    .device
+                    .CreateBuffer(&desc, None, Some(&mut buffer))
+            }?;
+            buffer
+        };
+
         let staging_texture = {
             let mut texture = None;
             let desc = D3D11_TEXTURE2D_DESC {
@@ -1093,8 +1114,13 @@ impl DirectWriteState {
             device_context.PSSetConstantBuffers(0, Some(std::slice::from_ref(&params_buffer)))
         };
         unsafe {
-            device_context.OMSetRenderTargets(Some(std::slice::from_ref(&render_target_view)), None)
+            device_context.OMSetRenderTargets(Some(std::slice::from_ref(render_target_view)), None)
         };
+        unsafe {
+            if let Some(render_target_view) = render_target_view.as_ref() {
+                device_context.ClearRenderTargetView(render_target_view, &[0.0, 0.0, 0.0, 0.0]);
+            }
+        }
         unsafe { device_context.PSSetSamplers(0, Some(std::slice::from_ref(&gpu_state.sampler))) };
         unsafe { device_context.OMSetBlendState(&gpu_state.blend_state, None, 0xffffffff) };
 
@@ -1127,7 +1153,7 @@ impl DirectWriteState {
                     .Unmap(params_buffer.as_ref().unwrap(), 0);
             };
 
-            let texture = [Some(layer.texture_view)];
+            let texture = [Some(layer.texture_view.clone())];
             unsafe { device_context.PSSetShaderResources(0, Some(&texture)) };
 
             let viewport = [D3D11_VIEWPORT {
@@ -1143,7 +1169,7 @@ impl DirectWriteState {
             unsafe { device_context.Draw(4, 0) };
         }
 
-        unsafe { device_context.CopyResource(&staging_texture, &render_target_texture) };
+        unsafe { device_context.CopyResource(&staging_texture, render_target_texture) };
 
         let mapped_data = {
             let mut mapped_data = D3D11_MAPPED_SUBRESOURCE::default();
@@ -1173,6 +1199,10 @@ impl DirectWriteState {
                 )
             };
         }
+
+        // Release the mapping now that the rows have been copied out; leaving `staging_texture`
+        // mapped would leak the mapping and keep the resource pinned for later reuse.
+        unsafe { device_context.Unmap(&staging_texture, 0) };
 
         // Convert from premultiplied to straight alpha
         for chunk in rasterized.chunks_exact_mut(4) {
@@ -1519,13 +1549,34 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
 
         let color_font = unsafe { font_face.IsColorFont().as_bool() };
 
-        let glyph_ids = unsafe { std::slice::from_raw_parts(glyphrun.glyphIndices, glyph_count) };
-        let glyph_advances =
-            unsafe { std::slice::from_raw_parts(glyphrun.glyphAdvances, glyph_count) };
-        let glyph_offsets =
-            unsafe { std::slice::from_raw_parts(glyphrun.glyphOffsets, glyph_count) };
-        let cluster_map =
-            unsafe { std::slice::from_raw_parts(desc.clusterMap, desc.stringLength as usize) };
+        let glyph_ids = unsafe {
+            slice_from_nullable(
+                glyphrun.glyphIndices,
+                glyph_count,
+                "DirectWrite returned a null glyph indices array",
+            )?
+        };
+        let glyph_advances = unsafe {
+            slice_from_nullable(
+                glyphrun.glyphAdvances,
+                glyph_count,
+                "DirectWrite returned a null glyph advances array",
+            )?
+        };
+        let glyph_offsets = unsafe {
+            slice_from_nullable(
+                glyphrun.glyphOffsets,
+                glyph_count,
+                "DirectWrite returned a null glyph offsets array",
+            )?
+        };
+        let cluster_map = unsafe {
+            slice_from_nullable(
+                desc.clusterMap,
+                desc.stringLength as usize,
+                "DirectWrite returned a null cluster map",
+            )?
+        };
 
         let cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
         let mut utf16_idx = desc.textPosition as usize;
@@ -1602,6 +1653,29 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             E_NOTIMPL,
             "DrawInlineObject unimplemented",
         ))
+    }
+}
+
+/// Interprets an optional DirectWrite array pointer as a slice, treating a
+/// null pointer with a zero length as an empty slice. A null pointer with a
+/// nonzero length fails with `null_error_message`.
+///
+/// # Safety
+///
+/// When `ptr` is non-null, the caller must guarantee that it points to a valid
+/// array of at least `len` elements that outlives the returned slice.
+unsafe fn slice_from_nullable<'a, T>(
+    ptr: *const T,
+    len: usize,
+    null_error_message: &str,
+) -> windows::core::Result<&'a [T]> {
+    if ptr.is_null() {
+        if len != 0 {
+            return Err(Error::new(E_INVALIDARG, null_error_message));
+        }
+        Ok(&[])
+    } else {
+        Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
     }
 }
 
@@ -1879,7 +1953,20 @@ const DEFAULT_LOCALE_NAME: PCWSTR = windows::core::w!("en-US");
 
 #[cfg(test)]
 mod tests {
+    use super::{DirectWriteState, DirectWriteTextSystem, GPUState, GlyphLayerTexture};
     use crate::direct_write::ClusterAnalyzer;
+    use crate::directx_devices::DirectXDevices;
+    use anyhow::Result;
+    use gpui::{
+        DevicePixels, Font, PlatformTextSystem, RenderGlyphParams, Rgba, bounds, point, px, size,
+    };
+    use std::ffi::c_void;
+    use windows::Win32::Graphics::Direct3D11::{
+        D3D11_BIND_RENDER_TARGET, D3D11_RENDER_TARGET_VIEW_DESC, D3D11_RENDER_TARGET_VIEW_DESC_0,
+        D3D11_RTV_DIMENSION_TEXTURE2D, D3D11_SUBRESOURCE_DATA, D3D11_TEX2D_RTV,
+        D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+    };
+    use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
 
     #[test]
     fn test_cluster_map() {
@@ -1916,5 +2003,159 @@ mod tests {
         assert_eq!(next, Some((5, 1)));
         let next = analyzer.next();
         assert_eq!(next, None);
+    }
+
+    #[test]
+    fn color_emoji_rasterization_is_stable_across_batches() -> Result<()> {
+        let devices = DirectXDevices::new()?;
+        let text_system = DirectWriteTextSystem::new(&devices)?;
+
+        let font = Font {
+            family: "Segoe UI Emoji".into(),
+            ..Default::default()
+        };
+        let font_id = text_system.font_id(&font)?;
+
+        let mut params_list = Vec::new();
+        for ch in ['🫠', '🥹', '🧗', '🏋', '🚀', '🥺'] {
+            let Some(glyph_id) = text_system.glyph_for_char(font_id, ch) else {
+                log::info!("no glyph found for {ch}");
+                continue;
+            };
+            let params = RenderGlyphParams {
+                font_id,
+                glyph_id,
+                font_size: px(48.0),
+                subpixel_variant: point(0u8, 0u8),
+                scale_factor: 1.0,
+                is_emoji: true,
+                subpixel_rendering: false,
+                dilation: 0,
+            };
+            let raster_bounds = text_system.glyph_raster_bounds(&params)?;
+            if raster_bounds.size.width.0 == 0 || raster_bounds.size.height.0 == 0 {
+                log::info!("raster bounds are empty for {ch}");
+                continue;
+            }
+            params_list.push((params, raster_bounds));
+        }
+        assert!(!params_list.is_empty());
+
+        let first: Vec<_> = params_list
+            .iter()
+            .map(|(params, bounds)| text_system.rasterize_glyph(params, *bounds))
+            .collect::<Result<_>>()?;
+
+        // Churn the texture heap with further rasterization passes. If the color
+        // compositing leaks leftover texture data (the render target is not cleared),
+        // the second batch can pick up different contents and differ from the first.
+        // With an explicit clear both batches are deterministic and identical.
+        for _ in 0..3 {
+            for (params, bounds) in &params_list {
+                text_system.rasterize_glyph(params, *bounds)?;
+            }
+        }
+        let second: Vec<_> = params_list
+            .iter()
+            .map(|(params, bounds)| text_system.rasterize_glyph(params, *bounds))
+            .collect::<Result<_>>()?;
+
+        assert_eq!(
+            first, second,
+            "color glyph rasterization changed between batches; \
+             render target contents are leaking into the glyph bitmaps"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn color_emoji_composites_over_cleared_texture() -> Result<()> {
+        let devices = DirectXDevices::new()?;
+        let gpu_state = GPUState::new(&devices)?;
+
+        const SIZE: u32 = 32;
+        // Seed the render target with solid red so that any texel which the
+        // compositing pass fails to clear/overwrite remains identifiable after
+        // the readback.
+        let poison = {
+            let mut v = vec![0u8; (SIZE * SIZE * 4) as usize];
+            for pixel in v.chunks_exact_mut(4) {
+                pixel[2] = 255;
+                pixel[3] = 255;
+            }
+            v
+        };
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: SIZE,
+            Height: SIZE,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+        };
+        let initial_data = D3D11_SUBRESOURCE_DATA {
+            pSysMem: poison.as_ptr() as *const c_void,
+            SysMemPitch: SIZE * 4,
+            SysMemSlicePitch: 0,
+        };
+        let texture = unsafe {
+            let mut texture = None;
+            gpu_state
+                .device
+                .CreateTexture2D(&desc, Some(&initial_data), Some(&mut texture))?;
+            texture.unwrap()
+        };
+        let render_target_view = unsafe {
+            let desc = D3D11_RENDER_TARGET_VIEW_DESC {
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2D,
+                Anonymous: D3D11_RENDER_TARGET_VIEW_DESC_0 {
+                    Texture2D: D3D11_TEX2D_RTV { MipSlice: 0 },
+                },
+            };
+            let mut rtv = None;
+            gpu_state
+                .device
+                .CreateRenderTargetView(&texture, Some(&desc), Some(&mut rtv))?;
+            rtv.unwrap()
+        };
+
+        // A single opaque layer in the top-left corner; the bottom-right corner
+        // of the texture is covered by no layer at all.
+        let layer_alpha = vec![255u8; 4 * 4];
+        let layer = GlyphLayerTexture::new(
+            &gpu_state,
+            Rgba {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            },
+            bounds(point(0, 0), size(4, 4)),
+            &layer_alpha,
+        )?;
+
+        let rasterized = DirectWriteState::composite_color_layers(
+            &gpu_state,
+            std::slice::from_ref(&layer),
+            size(DevicePixels(SIZE as i32), DevicePixels(SIZE as i32)),
+            &texture,
+            &Some(render_target_view),
+        )?;
+
+        let corner = (SIZE as usize - 1 + (SIZE as usize - 1) * SIZE as usize) * 4;
+        assert_eq!(
+            &rasterized[corner..corner + 4],
+            &[0, 0, 0, 0],
+            "uncovered texel retained the poison from the uninitialized render target"
+        );
+        Ok(())
     }
 }

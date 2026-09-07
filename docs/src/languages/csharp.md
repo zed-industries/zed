@@ -10,15 +10,16 @@ C# support is available through the [C# extension](https://github.com/zed-extens
 - Tree-sitter: [tree-sitter/tree-sitter-c-sharp](https://github.com/tree-sitter/tree-sitter-c-sharp)
 - Language Servers:
   - [roslyn-language-server](https://www.nuget.org/packages/roslyn-language-server#readme)
+  - [csharp-ls](https://github.com/razzmatazz/csharp-language-server)
   - [OmniSharp/omnisharp-roslyn](https://github.com/OmniSharp/omnisharp-roslyn)
 
-Roslyn is enabled by default. To switch back to OmniSharp, add the following to your Zed settings file:
+Roslyn is enabled by default. To switch to csharp-ls or OmniSharp, add the following to your Zed settings file:
 
 ```json [settings]
 {
   "languages": {
     "CSharp": {
-      "language_servers": ["omnisharp", "!roslyn", "..."]
+      "language_servers": ["csharp-ls", "!roslyn", "!omnisharp", "..."]
     }
   }
 }
@@ -108,6 +109,37 @@ Roslyn can be configured with the following language server settings:
       "binary": {
         "path": "/path/to/roslyn-language-server",
         "arguments": ["--stdio", "--autoLoadProjects" /* add extra arguments */]
+      }
+    }
+  }
+}
+```
+
+csharp-ls can be configured in a Zed settings file with:
+
+```json [settings]
+{
+  "lsp": {
+    "csharp-ls": {
+      "binary": {
+        "path": "/path/to/csharp-ls",
+        "arguments": [
+          /* add extra arguments */
+        ]
+      },
+      "settings": {
+        // Default values are shown below.
+        "logLevel": "information",
+        "applyFormattingOptions": false,
+        "analyzersEnabled": false,
+        "useMetadataUris": true,
+        "razorSupport": false,
+        "solutionPathOverride": null,
+        "locale": null,
+        "debug": {
+          "debugMode": false,
+          "solutionLoadDelay": null
+        }
       }
     }
   }

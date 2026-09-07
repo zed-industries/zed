@@ -2,20 +2,20 @@ use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 
-use async_channel::bounded;
 use futures::{FutureExt, future::Shared};
 use itertools::Itertools as _;
 use language::LanguageName;
-use remote::RemoteClient;
+use remote::{Interactive, RemoteClient};
 use settings::{Settings, SettingsLocation};
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
-    TaskState, TaskStatus, Terminal, TerminalBuilder, insert_zed_terminal_env,
+    Terminal, TerminalBuilder, TerminalMode, insert_zed_terminal_env,
     terminal_settings::TerminalSettings,
 };
 use util::{
@@ -92,14 +92,9 @@ impl Project {
         let settings = TerminalSettings::get(settings_location, cx).clone();
         let detect_venv = settings.detect_venv.as_option().is_some();
 
-        let (completion_tx, completion_rx) = bounded(1);
+        let terminal_mode = TerminalMode::task(spawn_task.clone());
 
         let local_path = if is_via_remote { None } else { path.clone() };
-        let task_state = Some(TaskState {
-            spawned_task: spawn_task.clone(),
-            status: TaskStatus::Running,
-            completion_rx,
-        });
         let remote_client = self.remote_client.clone();
         let shell = match &remote_client {
             Some(remote_client) => remote_client
@@ -115,19 +110,23 @@ impl Project {
         let env_task =
             self.resolve_directory_environment(&shell, path.clone(), remote_client.clone(), cx);
 
-        let project_path_contexts = self
-            .active_entry()
-            .and_then(|entry_id| self.path_for_entry(entry_id, cx))
+        // Scope the toolchain lookup to the worktree the terminal is being
+        // spawned in. Previously this iterated the active editor's worktree
+        // and then every visible worktree, so a Python toolchain persisted
+        // for worktree A would leak into a terminal opened in worktree B and
+        // inject (e.g.) `conda activate base` into a shell that has no
+        // business with conda.
+        let project_path_contexts: Vec<ProjectPath> = path
+            .as_ref()
+            .and_then(|p| self.find_worktree(p, cx))
+            .map(|(worktree, relative_path)| ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: relative_path,
+            })
             .into_iter()
-            .chain(
-                self.visible_worktrees(cx)
-                    .map(|wt| wt.read(cx).id())
-                    .map(|worktree_id| ProjectPath {
-                        worktree_id,
-                        path: Arc::from(RelPath::empty()),
-                    }),
-            );
+            .collect();
         let toolchains = project_path_contexts
+            .into_iter()
             .filter(|_| detect_venv)
             .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();
@@ -240,17 +239,16 @@ impl Project {
                     };
                     anyhow::Ok(TerminalBuilder::new(
                         local_path.map(|path| path.to_path_buf()),
-                        task_state,
+                        terminal_mode,
                         shell,
                         env,
                         settings.cursor_shape,
                         settings.alternate_scroll,
                         settings.max_scroll_history_lines,
                         settings.path_hyperlink_regexes,
-                        settings.path_hyperlink_timeout_ms,
+                        Duration::from_millis(settings.path_hyperlink_timeout_ms),
                         is_via_remote,
                         cx.entity_id().as_u64(),
-                        Some(completion_tx),
                         cx,
                         activation_script,
                         path_style,
@@ -333,19 +331,20 @@ impl Project {
         let detect_venv = settings.detect_venv.as_option().is_some();
         let local_path = if is_via_remote { None } else { path.clone() };
 
-        let project_path_contexts = self
-            .active_entry()
-            .and_then(|entry_id| self.path_for_entry(entry_id, cx))
+        // See create_terminal_task: scope the toolchain lookup to the
+        // worktree the terminal is opened in, not the active editor's
+        // worktree or other visible worktrees.
+        let project_path_contexts: Vec<ProjectPath> = path
+            .as_ref()
+            .and_then(|p| self.find_worktree(p, cx))
+            .map(|(worktree, relative_path)| ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: relative_path,
+            })
             .into_iter()
-            .chain(
-                self.visible_worktrees(cx)
-                    .map(|wt| wt.read(cx).id())
-                    .map(|worktree_id| ProjectPath {
-                        worktree_id,
-                        path: RelPath::empty().into(),
-                    }),
-            );
+            .collect();
         let toolchains = project_path_contexts
+            .into_iter()
             .filter(|_| detect_venv)
             .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();
@@ -409,17 +408,16 @@ impl Project {
                     };
                     anyhow::Ok(TerminalBuilder::new(
                         local_path.map(|path| path.to_path_buf()),
-                        None,
+                        TerminalMode::interactive(),
                         shell,
                         env,
                         settings.cursor_shape,
                         settings.alternate_scroll,
                         settings.max_scroll_history_lines,
                         settings.path_hyperlink_regexes,
-                        settings.path_hyperlink_timeout_ms,
+                        Duration::from_millis(settings.path_hyperlink_timeout_ms),
                         is_via_remote,
                         cx.entity_id().as_u64(),
-                        None,
                         cx,
                         activation_script,
                         path_style,
@@ -553,6 +551,7 @@ impl Project {
                             &env,
                             None,
                             None,
+                            Interactive::Yes,
                         )?;
                         let mut command = new_std_command(command_template.program);
                         command.args(command_template.args);
@@ -626,6 +625,7 @@ fn create_remote_shell(
         &env,
         working_directory.map(|path| path.display().to_string()),
         None,
+        Interactive::Yes,
     )?;
 
     log::debug!("Connecting to a remote server: {:?}", command.program);

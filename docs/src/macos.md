@@ -104,6 +104,32 @@ If the `zed` command isn't available after installation:
 2. Try reinstalling the CLI via {#action cli::InstallCliBinary} in the command palette
 3. Open a new terminal window to reload your PATH
 
+### Can't install CLI {#cant-install-cli}
+
+{#action cli::InstallCliBinary} writes a `zed` symlink to `/usr/local/bin`, which requires administrator privileges. If your macOS account isn't in the `admin` group, Zed can't create that symlink and will report that it can't install the CLI automatically.
+
+Instead, you can add an alias pointing to the `cli` binary bundled inside the app. The path depends on where Zed is installed:
+
+```sh
+# Default install (Zed in /Applications)
+alias zed="/Applications/Zed.app/Contents/MacOS/cli"
+
+# User install (Zed in ~/Applications)
+alias zed="$HOME/Applications/Zed.app/Contents/MacOS/cli"
+
+# Preview build (Zed Preview in ~/Applications)
+alias zed="$HOME/Applications/Zed Preview.app/Contents/MacOS/cli"
+```
+
+Add the line that matches your install to your shell configuration file. Use `~/.zshrc` for Zsh (the default on modern macOS) or `~/.bashrc` for Bash.
+
+After you restart your shell, you will be able to use `zed` from your terminal:
+
+```sh
+zed .              # Open current folder
+zed file.txt       # Open a file
+```
+
 ### GPU or rendering issues
 
 Zed uses Metal for rendering. If you experience graphical glitches:

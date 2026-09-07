@@ -6,6 +6,7 @@ use gpui::{
     Window,
 };
 use project::search::SearchQuery;
+use settings::SeedQuerySetting;
 
 use crate::{
     ItemHandle,
@@ -118,7 +119,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
     );
     fn query_suggestion(
         &mut self,
-        ignore_settings: bool,
+        seed_query_override: Option<SeedQuerySetting>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String;
@@ -226,7 +227,12 @@ pub trait SearchableItemHandle: ItemHandle {
         window: &mut Window,
         cx: &mut App,
     );
-    fn query_suggestion(&self, ignore_settings: bool, window: &mut Window, cx: &mut App) -> String;
+    fn query_suggestion(
+        &self,
+        seed_query_override: Option<SeedQuerySetting>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> String;
     fn activate_match(
         &self,
         index: usize,
@@ -340,9 +346,14 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
             this.update_matches(matches.as_slice(), active_match_index, token, window, cx)
         });
     }
-    fn query_suggestion(&self, ignore_settings: bool, window: &mut Window, cx: &mut App) -> String {
+    fn query_suggestion(
+        &self,
+        seed_query_override: Option<SeedQuerySetting>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> String {
         self.update(cx, |this, cx| {
-            this.query_suggestion(ignore_settings, window, cx)
+            this.query_suggestion(seed_query_override, window, cx)
         })
     }
     fn activate_match(

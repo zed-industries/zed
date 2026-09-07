@@ -1,0 +1,10 @@
+You are compacting this conversation into a handoff for another agent that will resume the work.
+
+Include:
+- Goal: what the user is ultimately trying to achieve
+- State: progress so far, current blockers, and decisions made
+- Context: constraints, preferences, and critical data/examples/references needed to continue
+- Next: the specific steps that remain
+- Pitfalls: anything tried that didn't work
+
+Write it so the next agent can act without re-asking the user. Be concise and well-structured.

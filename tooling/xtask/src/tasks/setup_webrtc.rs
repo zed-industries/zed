@@ -219,31 +219,47 @@ fn update_cargo_config(webrtc_path: &Path) -> Result<()> {
         .or_else(|| std::env::var_os("USERPROFILE"))
         .context("could not determine home directory")?;
     let config_path = PathBuf::from(home).join(".cargo").join("config.toml");
-    if config_path.exists() {
-        bail!(
-            "{} already exists; refusing to modify it. \
-             Add `[env]\\n{ENV_VAR} = \"{}\"` yourself, \
-             or re-run with --no-cargo-config.",
-            config_path.display(),
-            webrtc_path.display(),
-        );
-    }
 
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
 
-    let mut doc = DocumentMut::new();
-    let mut env_table = Table::new();
-    env_table.set_implicit(false);
-    let path_str = webrtc_path
-        .to_str()
-        .context("webrtc path is not valid UTF-8")?;
-    env_table.insert(ENV_VAR, value(path_str));
-    doc.insert("env", Item::Table(env_table));
+    let existing_content = if config_path.exists() {
+        fs::read_to_string(&config_path)
+            .with_context(|| format!("reading {}", config_path.display()))?
+    } else {
+        String::new()
+    };
+
+    let mut doc = existing_content
+        .parse::<DocumentMut>()
+        .with_context(|| format!("parsing existing {}", config_path.display()))?;
+
+    let env_table = doc
+        .entry("env")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_mut()
+        .context("`env` entry is not a table")?;
+
+    let cleaned_path = clean_webrtc_path(webrtc_path)?;
+    env_table.insert(ENV_VAR, value(cleaned_path.clone()));
 
     fs::write(&config_path, doc.to_string())
         .with_context(|| format!("writing {}", config_path.display()))?;
-    eprintln!("Wrote {} with {ENV_VAR}={path_str}", config_path.display());
+
+    eprintln!(
+        "Updated {} with {ENV_VAR}={cleaned_path}",
+        config_path.display()
+    );
     Ok(())
+}
+
+fn clean_webrtc_path(path: &Path) -> Result<String> {
+    let path_str = path.to_str().context("webrtc path is not valid UTF-8")?;
+    let mut cleaned = path_str.to_string();
+    if cleaned.starts_with(r"\\?\") {
+        cleaned = cleaned[4..].to_string();
+    }
+    cleaned = cleaned.replace('\\', "/");
+    Ok(cleaned)
 }

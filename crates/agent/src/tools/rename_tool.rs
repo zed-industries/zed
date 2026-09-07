@@ -1,7 +1,8 @@
 use std::fmt::Write;
 use std::sync::Arc;
 
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
+use collections::HashSet;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
@@ -80,6 +81,7 @@ impl AgentTool for RenameTool {
                     resolved.buffer.clone(),
                     resolved.position,
                     input.new_name.clone(),
+                    None,
                     cx,
                 )
             });
@@ -94,6 +96,12 @@ impl AgentTool for RenameTool {
                     input.symbol.symbol_name
                 ));
             }
+
+            let buffers = transaction.0.keys().cloned().collect::<HashSet<_>>();
+            project
+                .update(cx, |project, cx| project.save_buffers(buffers, cx))
+                .await
+                .map_err(|e| format!("Rename succeeded, but failed to save renamed files: {e}"))?;
 
             let mut output = format!(
                 "Renamed `{}` to `{}` in {} file(s):\n",

@@ -146,6 +146,8 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, _: &HelixDelete, window, cx| {
         vim.record_current_action(cx);
+        let original_selections =
+            vim.update_editor(cx, |_, editor, _| editor.selections.disjoint_anchors_arc());
         vim.update_editor(cx, |_, editor, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
@@ -155,7 +157,18 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 })
             })
         });
-        vim.visual_delete(false, window, cx);
+        let transaction_id = vim.visual_delete(false, window, cx);
+        if let (Some(original_selections), Some(transaction_id)) =
+            (original_selections, transaction_id)
+            && !original_selections.is_empty()
+        {
+            let updated = vim.update_editor(cx, |_, editor, _| {
+                editor.modify_transaction_selection_history(transaction_id, |selections| {
+                    selections.undo = original_selections;
+                })
+            });
+            debug_assert_ne!(updated, Some(false));
+        }
         vim.switch_mode(Mode::HelixNormal, true, window, cx);
     });
 
@@ -755,7 +768,7 @@ impl Vim {
                     editor.edit(plain_edits, cx);
                 }
                 if !auto_indent_edits.is_empty() {
-                    editor.edit_with_autoindent(auto_indent_edits, cx);
+                    editor.edit_before_with_autoindent(auto_indent_edits, cx);
                 }
 
                 editor.change_selections(Default::default(), window, cx, |s| {
@@ -1709,6 +1722,37 @@ mod test {
                 }"},
             Mode::Insert,
         );
+        cx.assert_binding(
+            "shift-o",
+            indoc! {"
+                fn test() {
+                    println!();
+                ˇ}"},
+            Mode::Normal,
+            indoc! {"
+                fn test() {
+                    println!();
+                    ˇ
+                }"},
+            Mode::Insert,
+        );
+
+        // Inserting a line above should auto-indent the newly added line and leave the previous
+        // line unchanged
+        cx.assert_binding(
+            "shift-o",
+            indoc! {"
+                fn test() {
+                        println!(ˇ);
+                }"},
+            Mode::Normal,
+            indoc! {"
+                fn test() {
+                    ˇ
+                        println!();
+                }"},
+            Mode::Insert,
+        );
     }
 
     #[gpui::test]
@@ -2130,6 +2174,10 @@ mod test {
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n");
         cx.simulate_shared_keystrokes("x escape shift-o").await;
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n// x\n");
+
+        cx.set_state("/*\n * helloˇ\n */\n", Mode::Normal);
+        cx.simulate_keystrokes("o");
+        cx.assert_state("/*\n * hello\n * ˇ\n */\n", Mode::Insert);
     }
 
     #[gpui::test]
@@ -2186,6 +2234,11 @@ mod test {
         cx.set_state("    let xˇ = 1;", Mode::Normal);
         cx.simulate_keystrokes("shift-o");
         cx.assert_state("    ˇ\n    let x = 1;", Mode::Insert);
+
+        // O on an unindented line: the new line gets no indentation
+        cx.set_state("fn test() {\n    println!(\"\");\nˇ}", Mode::Normal);
+        cx.simulate_keystrokes("shift-o");
+        cx.assert_state("fn test() {\n    println!(\"\");\nˇ\n}", Mode::Insert);
     }
 
     #[gpui::test]

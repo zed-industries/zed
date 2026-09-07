@@ -36,9 +36,18 @@ pub(crate) struct DevContainerFeatureJson {
     #[serde(default)]
     pub(crate) options: HashMap<String, FeatureOptionDefinition>,
     pub(crate) mounts: Option<Vec<MountDefinition>>,
+    pub(crate) init: Option<bool>,
     pub(crate) privileged: Option<bool>,
     pub(crate) entrypoint: Option<String>,
     pub(crate) container_env: Option<HashMap<String, String>>,
+    pub(crate) cap_add: Option<Vec<String>>,
+    pub(crate) security_opt: Option<Vec<String>>,
+    pub(crate) customizations: Option<Value>,
+    pub(crate) on_create_command: Option<Value>,
+    pub(crate) update_content_command: Option<Value>,
+    pub(crate) post_create_command: Option<Value>,
+    pub(crate) post_start_command: Option<Value>,
+    pub(crate) post_attach_command: Option<Value>,
 }
 
 /// A single option definition inside `devcontainer-feature.json`.
@@ -62,6 +71,7 @@ impl FeatureOptionDefinition {
 #[derive(Debug, Eq, PartialEq, Default)]
 pub(crate) struct FeatureManifest {
     consecutive_id: String,
+    user_feature_id: String,
     file_path: PathBuf,
     feature_json: DevContainerFeatureJson,
 }
@@ -69,11 +79,13 @@ pub(crate) struct FeatureManifest {
 impl FeatureManifest {
     pub(crate) fn new(
         consecutive_id: String,
+        user_feature_id: String,
         file_path: PathBuf,
         feature_json: DevContainerFeatureJson,
     ) -> Self {
         Self {
             consecutive_id,
+            user_feature_id,
             file_path,
             feature_json,
         }
@@ -188,6 +200,10 @@ RUN chmod -R 0755 {full_dest} \
         }
     }
 
+    pub(crate) fn init(&self) -> bool {
+        self.feature_json.init.unwrap_or(false)
+    }
+
     pub(crate) fn privileged(&self) -> bool {
         self.feature_json.privileged.unwrap_or(false)
     }
@@ -196,8 +212,87 @@ RUN chmod -R 0755 {full_dest} \
         self.feature_json.entrypoint.clone()
     }
 
+    pub(crate) fn cap_add(&self) -> Vec<String> {
+        self.feature_json.cap_add.clone().unwrap_or_default()
+    }
+
+    pub(crate) fn security_opt(&self) -> Vec<String> {
+        self.feature_json.security_opt.clone().unwrap_or_default()
+    }
+
     pub(crate) fn file_path(&self) -> PathBuf {
         self.file_path.clone()
+    }
+
+    pub(crate) fn build_metadata_entry(
+        &self,
+    ) -> serde_json_lenient::Map<String, serde_json_lenient::Value> {
+        use serde_json_lenient::Value;
+        let mut entry = serde_json_lenient::Map::new();
+        entry.insert(
+            "id".to_string(),
+            Value::String(self.user_feature_id.clone()),
+        );
+        if let Some(true) = self.feature_json.init {
+            entry.insert("init".to_string(), Value::Bool(true));
+        }
+        if let Some(true) = self.feature_json.privileged {
+            entry.insert("privileged".to_string(), Value::Bool(true));
+        }
+        if let Some(caps) = &self.feature_json.cap_add {
+            if !caps.is_empty() {
+                entry.insert(
+                    "capAdd".to_string(),
+                    Value::Array(caps.iter().map(|s| Value::String(s.clone())).collect()),
+                );
+            }
+        }
+        if let Some(opts) = &self.feature_json.security_opt {
+            if !opts.is_empty() {
+                entry.insert(
+                    "securityOpt".to_string(),
+                    Value::Array(opts.iter().map(|s| Value::String(s.clone())).collect()),
+                );
+            }
+        }
+        if let Some(ep) = &self.feature_json.entrypoint {
+            entry.insert("entrypoint".to_string(), Value::String(ep.clone()));
+        }
+        if let Some(mounts) = &self.feature_json.mounts {
+            if !mounts.is_empty() {
+                entry.insert(
+                    "mounts".to_string(),
+                    Value::Array(
+                        mounts
+                            .iter()
+                            .filter_map(|mount| serde_json_lenient::to_value(mount).ok())
+                            .collect(),
+                    ),
+                );
+            }
+        }
+        if let Some(customizations) = &self.feature_json.customizations {
+            if !customizations.is_null() {
+                entry.insert("customizations".to_string(), customizations.clone());
+            }
+        }
+        for (key, value) in [
+            ("onCreateCommand", &self.feature_json.on_create_command),
+            (
+                "updateContentCommand",
+                &self.feature_json.update_content_command,
+            ),
+            ("postCreateCommand", &self.feature_json.post_create_command),
+            ("postStartCommand", &self.feature_json.post_start_command),
+            ("postAttachCommand", &self.feature_json.post_attach_command),
+        ] {
+            if let Some(value) = value {
+                if !value.is_null() {
+                    entry.insert(key.to_string(), value.clone());
+                }
+            }
+        }
+        entry
     }
 }
 

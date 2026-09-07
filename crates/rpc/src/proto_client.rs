@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use collections::HashMap;
+use collections::{HashMap, TypeIdHashMap};
 use futures::{
     Future, FutureExt as _, Stream, StreamExt as _,
     channel::oneshot,
@@ -88,11 +88,11 @@ pub trait ProtoClient: Send + Sync {
 
 #[derive(Default)]
 pub struct ProtoMessageHandlerSet {
-    pub entity_types_by_message_type: HashMap<TypeId, TypeId>,
+    pub entity_types_by_message_type: TypeIdHashMap<TypeId>,
     pub entities_by_type_and_remote_id: HashMap<(TypeId, u64), EntityMessageSubscriber>,
-    pub entity_id_extractors: HashMap<TypeId, fn(&dyn AnyTypedEnvelope) -> u64>,
-    pub entities_by_message_type: HashMap<TypeId, AnyWeakEntity>,
-    pub message_handlers: HashMap<TypeId, ProtoMessageHandler>,
+    pub entity_id_extractors: TypeIdHashMap<fn(&dyn AnyTypedEnvelope) -> u64>,
+    pub entities_by_message_type: TypeIdHashMap<AnyWeakEntity>,
+    pub message_handlers: TypeIdHashMap<ProtoMessageHandler>,
 }
 
 pub type ProtoMessageHandler = Arc<
@@ -339,11 +339,13 @@ impl AnyProtoClient {
     pub fn send_lsp_response<T: LspRequestMessage>(
         &self,
         project_id: u64,
+        peer_id: proto::PeerId,
         lsp_request_id: LspRequestId,
         server_responses: HashMap<u64, T::Response>,
     ) -> Result<()> {
         self.send(proto::LspQueryResponse {
             project_id,
+            peer_id: Some(peer_id),
             lsp_request_id: lsp_request_id.0,
             responses: server_responses
                 .into_iter()
@@ -396,10 +398,16 @@ impl AnyProtoClient {
                             Response::GetDefinitionResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
+                            Response::GetEditPredictionDefinitionResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
                             Response::GetDeclarationResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetTypeDefinitionResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetEditPredictionTypeDefinitionResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetImplementationResponse(response) => {
@@ -415,6 +423,18 @@ impl AnyProtoClient {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetDocumentSymbolsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetDocumentLinksResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::PrepareCallHierarchyResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetIncomingCallsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetOutgoingCallsResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                         };

@@ -40,34 +40,12 @@ impl DiagnosticRenderer {
             let mut markdown = Self::markdown(&entry.diagnostic);
             if entry.diagnostic.is_primary {
                 let diagnostic = &primary.diagnostic;
-                if diagnostic.source.is_some() || diagnostic.code.is_some() {
-                    markdown.push_str(" (");
-                }
-                if let Some(source) = diagnostic.source.as_ref() {
-                    markdown.push_str(&Markdown::escape(source));
-                }
-                if diagnostic.source.is_some() && diagnostic.code.is_some() {
-                    markdown.push(' ');
-                }
-                if let Some(code) = diagnostic.code.as_ref() {
-                    if let Some(description) = diagnostic.code_description.as_ref() {
-                        markdown.push('[');
-                        markdown.push_str(&Markdown::escape(&code.to_string()));
-                        markdown.push_str("](");
-                        markdown.push_str(&Markdown::escape(description.as_ref()));
-                        markdown.push(')');
-                    } else {
-                        markdown.push_str(&Markdown::escape(&code.to_string()));
-                    }
-                }
-                if diagnostic.source.is_some() || diagnostic.code.is_some() {
-                    markdown.push(')');
-                }
+                append_source_and_code(&mut markdown, diagnostic);
 
                 for (ix, entry) in diagnostic_group.iter().enumerate() {
                     if entry.range.start.row.abs_diff(primary.range.start.row) >= 5 {
                         markdown.push_str("\n- hint: [");
-                        markdown.push_str(&Markdown::escape(&entry.diagnostic.message));
+                        markdown.push_str(&Markdown::escape(entry.diagnostic.message.as_str()));
                         markdown.push_str(&format!(
                             "](file://#diagnostic-{buffer_id}-{group_id}-{ix})\n",
                         ))
@@ -78,12 +56,14 @@ impl DiagnosticRenderer {
                     initial_range: primary.range.clone(),
                     severity: primary.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
-                    copy_message: primary.diagnostic.message.clone().into(),
+                    copy_message: primary.diagnostic.message.as_shared_string().clone(),
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
                 });
             } else {
+                append_source_and_code(&mut markdown, entry.diagnostic);
+
                 if entry.range.start.row.abs_diff(primary.range.start.row) >= 5 {
                     markdown.push_str(&format!(
                         " ([back](file://#diagnostic-{buffer_id}-{group_id}-{primary_ix}))"
@@ -93,7 +73,7 @@ impl DiagnosticRenderer {
                     initial_range: entry.range.clone(),
                     severity: entry.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
-                    copy_message: entry.diagnostic.message.clone().into(),
+                    copy_message: entry.diagnostic.message.as_shared_string().clone(),
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
@@ -107,13 +87,46 @@ impl DiagnosticRenderer {
     fn markdown(diagnostic: &Diagnostic) -> String {
         let mut markdown = String::new();
 
-        if let Some(md) = &diagnostic.markdown {
-            markdown.push_str(md);
+        if let Some(message_markdown) = diagnostic.message.markdown() {
+            markdown.push_str(message_markdown);
         } else {
-            markdown.push_str(&Markdown::escape(&diagnostic.message));
+            markdown.push_str(&Markdown::escape(diagnostic.message.as_str()));
         };
         markdown
     }
+}
+
+fn append_source_and_code(markdown: &mut String, diagnostic: &Diagnostic) {
+    if diagnostic.source.is_none() && diagnostic.code.is_none() {
+        return;
+    }
+    let is_lsp_markdown = diagnostic
+        .message
+        .lsp_markup()
+        .is_some_and(|(kind, _)| kind == &lsp::MarkupKind::Markdown);
+    if is_lsp_markdown {
+        markdown.push_str("\n\n(");
+    } else {
+        markdown.push_str(" (");
+    }
+    if let Some(source) = diagnostic.source.as_ref() {
+        markdown.push_str(&Markdown::escape(source));
+    }
+    if diagnostic.source.is_some() && diagnostic.code.is_some() {
+        markdown.push(' ');
+    }
+    if let Some(code) = diagnostic.code.as_ref() {
+        if let Some(description) = diagnostic.code_description.as_ref() {
+            markdown.push('[');
+            markdown.push_str(&Markdown::escape(&code.to_string()));
+            markdown.push_str("](");
+            markdown.push_str(&Markdown::escape(description.as_ref()));
+            markdown.push(')');
+        } else {
+            markdown.push_str(&Markdown::escape(&code.to_string()));
+        }
+    }
+    markdown.push(')');
 }
 
 impl editor::DiagnosticRenderer for DiagnosticRenderer {
@@ -240,6 +253,7 @@ impl DiagnosticBlock {
                     )
                     .code_block_renderer(markdown::CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                         border: false,
                     })
                     .on_url_click({
@@ -268,7 +282,8 @@ impl DiagnosticBlock {
         cx: &mut Context<Editor>,
     ) {
         let Some(diagnostic_link) = link.strip_prefix("file://#diagnostic-") else {
-            editor::hover_popover::open_markdown_url(link, window, cx);
+            let workspace = editor.workspace();
+            editor::hover_popover::open_markdown_url(workspace, link, window, cx);
             return;
         };
         let Some((buffer_id, group_id, ix)) = maybe!({
@@ -321,5 +336,33 @@ impl DiagnosticBlock {
             s.select_ranges([range.start..range.start]);
         });
         window.focus(&editor.focus_handle(cx), cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language::DiagnosticMessage;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_adapter_markdown_keeps_source_and_code_inline() {
+        let diagnostic = Diagnostic {
+            message: DiagnosticMessage::plain_with_adapter_markdown(
+                "mismatched types\nexpected `usize`, found `char`",
+                Some("mismatched types\n\nexpected `usize`, found `char`".into()),
+            ),
+            source: Some("rust-analyzer".to_string()),
+            code: Some(lsp::NumberOrString::String("E0308".to_string())),
+            ..Diagnostic::default()
+        };
+
+        let mut markdown = DiagnosticRenderer::markdown(&diagnostic);
+        append_source_and_code(&mut markdown, &diagnostic);
+
+        assert_eq!(
+            markdown,
+            "mismatched types\n\nexpected `usize`, found `char` (rust\\-analyzer E0308)"
+        );
     }
 }

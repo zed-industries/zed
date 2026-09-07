@@ -1,4 +1,4 @@
-import { danger, message, warn, fail } from "danger";
+import { danger, message, warn, fail, schedule } from "danger";
 const { prHygiene } = require("danger-plugin-pr-hygiene");
 
 prHygiene({
@@ -61,6 +61,46 @@ if (includesIssueUrl) {
   );
 }
 
+const SELF_REVIEW_MARKER = "Remove this line to confirm you've reviewed this PR before submitting.";
+
+const readmeModified =
+  danger.git.modified_files.includes("README.md") || danger.git.created_files.includes("README.md");
+if (readmeModified) {
+  schedule(async () => {
+    const readmeDiff = await danger.git.diffForFile("README.md");
+    if (readmeDiff && readmeDiff.added.includes(SELF_REVIEW_MARKER)) {
+      fail(
+        "Please self-review your PR before submitting — README.md contains a line that asks to be removed which you should have spotted.",
+      );
+    }
+  });
+}
+
+if (danger.git.deleted_files.includes(".rules")) {
+  fail(
+    [
+      "This PR deletes `.rules`, which contains the mandatory agent self-review rule (the `> [!IMPORTANT]` README marker rule).",
+      "If the deletion is intentional, move that rule to another rules file in the same PR.",
+    ].join("\n"),
+  );
+} else if (danger.git.modified_files.includes(".rules")) {
+  schedule(async () => {
+    const rulesDiff = await danger.git.diffForFile(".rules");
+    if (rulesDiff && rulesDiff.removed.includes(SELF_REVIEW_MARKER) && !rulesDiff.added.includes(SELF_REVIEW_MARKER)) {
+      fail(
+        [
+          "This PR removes the mandatory agent self-review rule from `.rules` (the `> [!IMPORTANT]` README marker rule).",
+          "It has been dropped by accident before and had to be restored in https://github.com/zed-industries/zed/pull/63384.",
+          "If changing it is intentional, keep an equivalent rule containing the same marker text in `.rules`.",
+        ].join("\n"),
+      );
+    }
+  });
+}
+
+const SCHEMA_CHANGE_ATTESTATION =
+  "The corresponding database schema migration has been created in the Cloud repo and applied to the production database.";
+
 const MIGRATION_SCHEMA_FILES = [
   "crates/collab/migrations/20251208000000_test_schema.sql",
   "crates/collab/migrations.sqlite/20221109000000_test_schema.sql",
@@ -71,13 +111,24 @@ const modifiedSchemaFiles = danger.git.modified_files.filter((file) =>
 );
 
 if (modifiedSchemaFiles.length > 0) {
-  warn(
-    [
-      "This PR modifies database schema files.",
-      "",
-      "If you are making database changes, a migration needs to be added in the Cloud repository.",
-    ].join("\n"),
-  );
+  if (body.includes(SCHEMA_CHANGE_ATTESTATION)) {
+    message(
+      [
+        "This PR modifies database schema files.",
+        "",
+        `The author has attested that ${SCHEMA_CHANGE_ATTESTATION.substring(0, 1).toLowerCase() + SCHEMA_CHANGE_ATTESTATION.substring(1)}`,
+      ].join("\n"),
+    );
+  } else {
+    const modifiedSchemaFilesStr = modifiedSchemaFiles.map((path) => "`" + path + "`").join(", ");
+    fail(
+      [
+        `This PR modifies database schema files (${modifiedSchemaFilesStr}), which requires creating a schema migration in the Cloud repository.`,
+        "Once the schema migration has been created and applied, please add the following attestation to your PR description: ",
+        `"${SCHEMA_CHANGE_ATTESTATION}"`,
+      ].join("\n\n"),
+    );
+  }
 }
 
 const FIXTURE_CHANGE_ATTESTATION = "Changes to test fixtures are intentional and necessary.";

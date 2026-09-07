@@ -67,7 +67,7 @@ If this script is insufficient for your use case, you run into problems running 
 
 ### macOS
 
-Zed supports the follow macOS releases:
+Zed supports the following macOS releases:
 
 | Version       | Codename | Apple Status   | Zed Status          |
 | ------------- | -------- | -------------- | ------------------- |

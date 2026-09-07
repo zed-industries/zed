@@ -284,7 +284,7 @@ pub(crate) fn get_sources() -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCapture
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 unsafe fn build_classes() {
     let mut decl = ClassDecl::new("GPUIStreamDelegate", class!(NSObject)).unwrap();
     unsafe {
