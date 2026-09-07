@@ -1484,6 +1484,10 @@ impl Window {
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
         let appearance = platform_window.appearance();
+        // `Arc` is the type `Window::text_system` has always handed out. The line layout
+        // cache inside is single-threaded, so the handle is not `Send` and the compiler
+        // rejects any attempt to move it off the window's thread.
+        #[allow(clippy::arc_with_non_send_sync)]
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let invalidator = WindowInvalidator::new(handle.window_id());
         let active = Rc::new(Cell::new(platform_window.is_active()));
