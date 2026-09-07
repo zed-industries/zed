@@ -290,7 +290,6 @@
   "async"
   "debugger"
   "declare"
-  "default"
   "delete"
   "extends"
   "get"
@@ -342,6 +341,7 @@
   "case"
   "catch"
   "continue"
+  "default"
   "do"
   "else"
   "finally"
@@ -354,9 +354,6 @@
   "while"
   "yield"
 ] @keyword.control
-
-(switch_default
-  "default" @keyword.control)
 
 (template_substitution
   "${" @punctuation.special
