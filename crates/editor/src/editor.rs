@@ -10122,6 +10122,7 @@ impl Editor {
                 self.colorize_brackets(false, cx);
                 self.refresh_selected_text_highlights(&self.display_snapshot(cx), true, window, cx);
                 self.semantic_token_state.invalidate_buffer(&buffer_id);
+                self.apply_soft_wrap_indent(cx);
                 cx.emit(EditorEvent::BufferRangesUpdated {
                     buffer: buffer.clone(),
                     ranges: ranges.clone(),
@@ -10152,6 +10153,7 @@ impl Editor {
                     display_map.unfold_buffers(removed_buffer_ids.iter().copied(), cx);
                 });
 
+                self.apply_soft_wrap_indent(cx);
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::BuffersRemoved {
                     removed_buffer_ids: removed_buffer_ids.clone(),

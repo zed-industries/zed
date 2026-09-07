@@ -49709,3 +49709,74 @@ async fn test_soft_wrap_indent_updated_on_language_changed(cx: &mut gpui::TestAp
         );
     });
 }
+
+#[gpui::test]
+async fn test_soft_wrap_indent_updated_when_first_excerpt_changes(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.soft_wrap = Some(language::language_settings::SoftWrap::Bounded);
+        settings.defaults.soft_wrap_indent =
+            Some(language::language_settings::SoftWrapIndent::Same);
+        settings.defaults.preferred_line_length = Some(20);
+        settings.languages.0.insert(
+            "Rust".into(),
+            LanguageSettingsContent {
+                soft_wrap_indent: Some(language::language_settings::SoftWrapIndent::None),
+                ..Default::default()
+            },
+        );
+    });
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(language::Capability::ReadWrite));
+    let editor = cx.add_window(|window, cx| build_editor(multibuffer.clone(), window, cx));
+
+    // Initially empty multibuffer uses global defaults (Same)
+    editor
+        .update(cx, |editor, _window, cx| {
+            assert_eq!(
+                editor.soft_wrap_indent(cx),
+                language::language_settings::SoftWrapIndent::Same
+            );
+        })
+        .unwrap();
+
+    let buffer = cx.new(|cx| {
+        language::Buffer::local("    let a_long_variable = 123456789;\n", cx)
+            .with_language(rust_lang(), cx)
+    });
+    let (buffer_id, max_point) =
+        buffer.read_with(cx, |buffer, _cx| (buffer.remote_id(), buffer.max_point()));
+
+    multibuffer.update(cx, |mb, cx| {
+        mb.set_excerpts_for_buffer(buffer, [Point::new(0, 0)..max_point], 0, cx);
+    });
+
+    // Adding the Rust excerpt should update the editor's soft_wrap_indent to None
+    editor
+        .update(cx, |editor, _window, cx| {
+            assert_eq!(
+                editor.soft_wrap_indent(cx),
+                language::language_settings::SoftWrapIndent::None
+            );
+        })
+        .unwrap();
+
+    // Continuation line has 0 indent instead of inheriting the 4 spaces from the start of the line
+    let snapshot = editor
+        .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+        .unwrap();
+    assert_eq!(snapshot.soft_wrap_indent(DisplayRow(0)), Some(0));
+
+    // Removing the excerpt returns the editor to global defaults (Same)
+    multibuffer.update(cx, |mb, cx| {
+        mb.remove_excerpts_for_buffer(buffer_id, cx);
+    });
+
+    editor
+        .update(cx, |editor, _window, cx| {
+            assert_eq!(
+                editor.soft_wrap_indent(cx),
+                language::language_settings::SoftWrapIndent::Same
+            );
+        })
+        .unwrap();
+}
