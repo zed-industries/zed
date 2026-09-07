@@ -47,7 +47,7 @@ use git::{
     TrashUntrackedFiles, UnstageAll, ViewFile, parse_git_remote_url,
 };
 use gpui::{
-    AbsoluteLength, Action, Anchor, AnyElement, AsyncApp, AsyncWindowContext, ClickEvent,
+    AbsoluteLength, Action, Anchor, AnyElement, AnyView, AsyncApp, AsyncWindowContext, ClickEvent,
     ClipboardItem, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
     MouseButton, MouseDownEvent, Pixels, Point, PromptLevel, ScrollStrategy, Subscription, Task,
     TaskExt, TextStyle, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
@@ -8018,16 +8018,24 @@ impl GitPanel {
         })
     }
 
-    fn format_display_path(&self, repo: &Repository, path: &RepoPath) -> String {
-        let abs_path = repo.work_directory_abs_path.join(path.as_std_path());
-        if let Ok(relative_to_home) = abs_path.strip_prefix(util::paths::home_dir()) {
-            Path::new("~")
-                .join(relative_to_home)
-                .to_string_lossy()
-                .to_string()
-        } else {
-            abs_path.to_string_lossy().into_owned()
-        }
+    fn format_display_path(
+        work_dir: Arc<Path>,
+        repo_path: RepoPath,
+    ) -> Box<dyn Fn(&mut Window, &mut App) -> AnyView> {
+        Box::new(move |_window: &mut Window, cx: &mut App| {
+            let abs_path = work_dir.join(repo_path.as_std_path());
+            let display_path =
+                if let Ok(relative_to_home) = abs_path.strip_prefix(util::paths::home_dir()) {
+                    Path::new("~")
+                        .join(relative_to_home)
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    abs_path.to_string_lossy().into_owned()
+                };
+
+            Tooltip::simple(display_path, cx)
+        })
     }
 
     fn deploy_entry_context_menu(
@@ -8347,8 +8355,6 @@ impl GitPanel {
 
         let id_for_diff_stat = id.clone();
 
-        let path = self.format_display_path(repo, &entry.repo_path);
-
         h_flex()
             .id(id)
             .h(self.list_item_height())
@@ -8365,7 +8371,10 @@ impl GitPanel {
             .hover(|s| s.bg(hover_bg))
             .active(|s| s.bg(active_bg))
             .tooltip_show_delay(Duration::from_millis(1500))
-            .tooltip(Tooltip::text(path))
+            .tooltip(Self::format_display_path(
+                repo.work_directory_abs_path.clone(),
+                entry.repo_path.clone(),
+            ))
             .child(name_row)
             .when(GitPanelSettings::get_global(cx).diff_stats, |el| {
                 el.when_some(entry.diff_stat, move |this, stat| {
@@ -8529,16 +8538,23 @@ impl GitPanel {
             IconName::Folder
         };
 
-        let (stage_status, path) = if let Some(repo) = &self.active_repository {
+        let (stage_status, tool_tip) = if let Some(repo) = &self.active_repository {
             (
                 self.stage_status_for_directory(entry, repo.read(cx)),
-                self.format_display_path(repo.read(cx), &entry.key.path),
+                Self::format_display_path(
+                    repo.read(cx).work_directory_abs_path.clone(),
+                    entry.key.path.clone(),
+                ),
             )
         } else {
             util::debug_panic!(
                 "Won't have entries to render without an active repository in Git Panel"
             );
-            (StageStatus::PartiallyStaged, String::new())
+            (
+                StageStatus::PartiallyStaged,
+                Box::new(|_window: &mut Window, cx: &mut App| Tooltip::simple(String::new(), cx))
+                    as Box<dyn Fn(&mut Window, &mut App) -> AnyView>,
+            )
         };
 
         let stage_intent = StageIntent::for_section(entry.key.section);
@@ -8594,7 +8610,7 @@ impl GitPanel {
                 el.border_color(cx.theme().colors().panel_focused_border)
             })
             .tooltip_show_delay(Duration::from_millis(1500))
-            .tooltip(Tooltip::text(path))
+            .tooltip(tool_tip)
             .bg(base_bg)
             .hover(|s| s.bg(hover_bg))
             .active(|s| s.bg(active_bg))
