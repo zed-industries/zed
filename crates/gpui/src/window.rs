@@ -1081,6 +1081,9 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
+    /// `element_id_hashes[i]` is the hash of `element_id_stack[..=i]`, so the hash of the
+    /// current element path is the last entry and never needs a walk.
+    element_id_hashes: SmallVec<[u64; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -1908,6 +1911,7 @@ impl Window {
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
             element_id_stack: SmallVec::default(),
+            element_id_hashes: SmallVec::default(),
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -2754,10 +2758,44 @@ impl Window {
         element_id: impl Into<ElementId>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        self.element_id_stack.push(element_id.into());
+        self.push_element_id(element_id.into());
         let result = f(self);
-        self.element_id_stack.pop();
+        self.pop_element_id();
         result
+    }
+
+    pub(crate) fn push_element_id(&mut self, element_id: ElementId) {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = collections::FxHasher::default();
+        hasher.write_u64(self.element_path_hash());
+        element_id.hash(&mut hasher);
+        self.element_id_hashes.push(hasher.finish());
+        self.element_id_stack.push(element_id);
+    }
+
+    pub(crate) fn pop_element_id(&mut self) {
+        self.element_id_stack.pop();
+        self.element_id_hashes.pop();
+    }
+
+    /// The running hash of the element ids in scope, maintained as they are pushed.
+    pub(crate) fn element_path_hash(&self) -> u64 {
+        debug_assert_eq!(self.element_id_stack.len(), self.element_id_hashes.len());
+        self.element_id_hashes.last().copied().unwrap_or(0)
+    }
+
+    /// Replaces the element-id scope with `ids`, as when drawing a deferred root in the
+    /// scope it was attached from.
+    fn set_element_id_stack(&mut self, ids: &[ElementId]) {
+        self.clear_element_id_stack();
+        for id in ids {
+            self.push_element_id(id.clone());
+        }
+    }
+
+    fn clear_element_id_stack(&mut self) {
+        self.element_id_stack.clear();
+        self.element_id_hashes.clear();
     }
 
     /// Executes the provided function with the specified rem size.
@@ -3456,8 +3494,9 @@ impl Window {
                 let mut accessed_entities = mem::take(&mut fresh.accessed_entities);
                 let (current_view, rem_size, absolute_offset) =
                     (fresh.current_view, fresh.rem_size, fresh.absolute_offset);
-                self.element_id_stack.clone_from(&fresh.element_id_stack);
+                let element_ids = fresh.element_id_stack.clone();
                 self.text_style_stack.clone_from(&fresh.text_style_stack);
+                self.set_element_id_stack(&element_ids);
                 self.next_frame.dispatch_tree.set_active_node(parent_node);
 
                 self.restart_node_render(node);
@@ -3481,7 +3520,7 @@ impl Window {
                 fresh.accessed_entities = accessed_entities;
             }
 
-            self.element_id_stack.clear();
+            self.clear_element_id_stack();
             self.text_style_stack.clear();
             round_start = round_end;
         }
@@ -3511,7 +3550,7 @@ impl Window {
                 self.node_engine.store_graft();
                 continue;
             };
-            self.element_id_stack.clone_from(&fresh.element_id_stack);
+            let element_ids = fresh.element_id_stack.clone();
             let content_mask = fresh.content_mask;
             let (current_view, rem_size) = (fresh.current_view, fresh.rem_size);
             let Some(element) = &mut fresh.element else {
@@ -3520,6 +3559,7 @@ impl Window {
             };
             let accessed_entities = &mut fresh.accessed_entities;
 
+            self.set_element_id_stack(&element_ids);
             self.enter_node_paint(node);
             self.begin_view_node_paint(node);
             cx.track_reads(accessed_entities, |cx| {
@@ -3538,7 +3578,7 @@ impl Window {
             self.store_node_render(node, cache_key, accessed_entities);
         }
         self.next_frame.deferred_draws = deferred_draws;
-        self.element_id_stack.clear();
+        self.clear_element_id_stack();
     }
 
     fn deferred_draw_traversal_order(&mut self) -> SmallVec<[usize; 8]> {
@@ -3600,7 +3640,10 @@ impl Window {
         element: GlobalElementId,
         cache_key: &ViewNodeCacheKey,
     ) -> ViewNodeId {
-        let node_id = self.node_engine.begin_occurrence(element, cache_key);
+        let path_hash = self.element_path_hash();
+        let node_id = self
+            .node_engine
+            .begin_occurrence(element, path_hash, cache_key);
         self.text_system.begin_text_use();
         node_id
     }
@@ -3944,9 +3987,9 @@ impl Window {
         element_id: impl Into<ElementId>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        self.element_id_stack.push(element_id.into());
+        self.push_element_id(element_id.into());
         let result = f(self);
-        self.element_id_stack.pop();
+        self.pop_element_id();
         result
     }
 
@@ -4133,6 +4176,7 @@ impl Window {
         let cache_key = self.view_node_key(Bounds::default());
         let node = self.node_engine.mount_root(
             GlobalElementId(Arc::from(&*self.element_id_stack)),
+            self.element_path_hash(),
             &cache_key,
         );
         self.node_engine.push(OutputItem::Root(node, priority));

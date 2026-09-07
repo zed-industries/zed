@@ -948,6 +948,9 @@ impl VisualTestContext {
                 GlobalElementId(std::sync::Arc::from([ElementId::Name(
                     "VisualTestContext::draw".into(),
                 )])),
+                // A path of its own, hashed by nothing else: no real path is drawn from
+                // an empty scope with this hash.
+                u64::MAX,
                 &cache_key,
             );
             window.restart_node_render(root);

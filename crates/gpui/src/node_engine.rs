@@ -26,11 +26,36 @@ slotmap::new_key_type! {
     pub(crate) struct ViewNodeId;
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+/// Where a view was mounted: its element path, under which node, and which repeat of
+/// that path within the node. Hashing uses the path's running hash, which the window
+/// maintains as ids are pushed, so finding a node again costs no walk of the path; the
+/// path itself is compared only on a hash match, to rule out a collision.
+#[derive(Clone)]
 pub(crate) struct ViewOccurrence {
     element: GlobalElementId,
+    path_hash: u64,
     parent: Option<ViewNodeId>,
     index: usize,
+}
+
+impl PartialEq for ViewOccurrence {
+    fn eq(&self, other: &Self) -> bool {
+        self.path_hash == other.path_hash
+            && self.parent == other.parent
+            && self.index == other.index
+            && (std::sync::Arc::ptr_eq(&self.element.0, &other.element.0)
+                || self.element.0 == other.element.0)
+    }
+}
+
+impl Eq for ViewOccurrence {}
+
+impl std::hash::Hash for ViewOccurrence {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.path_hash.hash(state);
+        self.parent.hash(state);
+        self.index.hash(state);
+    }
 }
 
 /// Work performed by the node engine in its last completed frame.
@@ -682,21 +707,28 @@ impl NodeEngine {
         }
     }
 
-    fn next_occurrence(&self, element: GlobalElementId) -> ViewOccurrence {
+    /// The occurrence the view at `element` mounts as, with its node if it has one.
+    fn next_occurrence(
+        &self,
+        element: GlobalElementId,
+        path_hash: u64,
+    ) -> (ViewOccurrence, Option<ViewNodeId>) {
         let mut occurrence = ViewOccurrence {
             element,
+            path_hash,
             parent: self.current_node(),
             index: 0,
         };
         // Element IDs can repeat when one view is mounted twice in the same scope.
-        while self
-            .occurrences
-            .get(&occurrence)
-            .is_some_and(|node| self.nodes[*node].mounted_frame == self.frame)
-        {
-            occurrence.index += 1;
+        loop {
+            let node_id = self.occurrences.get(&occurrence).copied();
+            match node_id {
+                Some(node_id) if self.nodes[node_id].mounted_frame == self.frame => {
+                    occurrence.index += 1;
+                }
+                _ => return (occurrence, node_id),
+            }
         }
-        occurrence
     }
 
     /// Mounts the view occurrence under the current traversal parent (creating its node on
@@ -705,11 +737,12 @@ impl NodeEngine {
     pub(crate) fn begin_occurrence(
         &mut self,
         element: GlobalElementId,
+        path_hash: u64,
         cache_key: &ViewNodeCacheKey,
     ) -> ViewNodeId {
-        let occurrence = self.next_occurrence(element);
+        let (occurrence, node_id) = self.next_occurrence(element, path_hash);
         let parent = occurrence.parent;
-        let node_id = if let Some(node_id) = self.occurrences.get(&occurrence).copied() {
+        let node_id = if let Some(node_id) = node_id {
             node_id
         } else {
             let node_id = self.nodes.insert(ViewNode {
@@ -754,10 +787,11 @@ impl NodeEngine {
     pub(crate) fn mount_root(
         &mut self,
         element: GlobalElementId,
+        path_hash: u64,
         cache_key: &ViewNodeCacheKey,
     ) -> ViewNodeId {
-        let occurrence = self.next_occurrence(element);
-        let node_id = if let Some(node_id) = self.occurrences.get(&occurrence).copied() {
+        let (occurrence, node_id) = self.next_occurrence(element, path_hash);
+        let node_id = if let Some(node_id) = node_id {
             node_id
         } else {
             let node_id = self.nodes.insert(ViewNode {
