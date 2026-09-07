@@ -967,9 +967,7 @@ impl VisualTestContext {
             window.finish_view_node_paint(root);
             window.finish_node_phase(root, true);
             let accessed_entities = window.node_engine.take_dependency_set();
-            window
-                .node_engine
-                .store_render(root, cache_key, accessed_entities);
+            window.store_node_render(root, cache_key, accessed_entities);
 
             window.set_draw_phase(DrawPhase::None);
             window.refresh();

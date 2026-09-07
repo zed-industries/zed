@@ -3034,9 +3034,10 @@ impl Window {
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
-        let engine = &self.node_engine;
-        let roots = engine.retained_layouts();
-        self.layout_engine.as_mut().unwrap().retain(roots);
+        for layout in self.node_engine.take_retired_layouts() {
+            self.layout_engine.as_mut().unwrap().remove_subtree(layout);
+        }
+        self.layout_engine.as_mut().unwrap().finish_frame();
         self.text_system().finish_frame();
         self.next_frame.finish();
 
@@ -3543,11 +3544,9 @@ impl Window {
             });
             self.finish_view_node_paint(node);
             self.finish_node_phase(node, true);
-            self.node_engine.store_render(
-                node,
-                fresh.cache_key.clone(),
-                mem::take(&mut fresh.accessed_entities),
-            );
+            let cache_key = fresh.cache_key.clone();
+            let accessed_entities = mem::take(&mut fresh.accessed_entities);
+            self.store_node_render(node, cache_key, accessed_entities);
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
@@ -4874,12 +4873,47 @@ impl Window {
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
 
-        self.layout_engine.as_mut().unwrap().request_layout(
+        let layout = self.layout_engine.as_mut().unwrap().request_layout(
             style,
             rem_size,
             scale_factor,
             &cx.layout_id_buffer,
-        )
+        );
+        self.retain_layout_with_current_node(layout);
+        layout
+    }
+
+    /// A layout requested inside a node is retained with it; one requested outside every
+    /// node lasts for the frame.
+    fn retain_layout_with_current_node(&mut self, layout: LayoutId) {
+        if self.node_engine.current_node().is_none() {
+            self.layout_engine.as_mut().unwrap().mark_frame_node(layout);
+        }
+    }
+
+    /// Drops the layout tree a node no longer refers to.
+    pub(crate) fn retire_layout(&mut self, layout: Option<LayoutId>) {
+        if let Some(layout) = layout {
+            self.layout_engine.as_mut().unwrap().remove_subtree(layout);
+        }
+    }
+
+    /// Stores what a node's render produced, and the layout its root ended up with, so a
+    /// later frame can tell whether the box moved.
+    pub(crate) fn store_node_render(
+        &mut self,
+        node_id: ViewNodeId,
+        cache_key: ViewNodeCacheKey,
+        accessed_entities: FxHashSet<EntityId>,
+    ) {
+        if let Some(layout) = self.node_engine.node(node_id).layout {
+            self.layout_engine
+                .as_mut()
+                .unwrap()
+                .record_root_layout(layout);
+        }
+        self.node_engine
+            .store_render(node_id, cache_key, accessed_entities);
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
@@ -4927,17 +4961,20 @@ impl Window {
                 }
                 size
             };
-        self.layout_engine
+        let layout = self
+            .layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+            .request_measured_layout(style, rem_size, scale_factor, measure);
+        self.retain_layout_with_current_node(layout);
+        layout
     }
 
     pub(crate) fn retained_layout_unchanged(&mut self, layout: LayoutId) -> bool {
         self.layout_engine
-            .as_mut()
+            .as_ref()
             .expect("layout engine available outside measurement")
-            .layout_unchanged(layout)
+            .root_layout_unchanged(layout)
     }
 
     pub(crate) fn replace_retained_layout(

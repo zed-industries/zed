@@ -67,6 +67,8 @@ pub(crate) struct NodeEngine {
     mounted_this_frame: FxHashSet<ViewNodeId>,
     dirty_nodes: FxHashSet<ViewNodeId>,
     frame_bound_nodes: FxHashSet<ViewNodeId>,
+    /// Layout roots of nodes removed this frame, dropped from the layout tree at its end.
+    retired_layouts: Vec<LayoutId>,
     /// The nodes being drawn, innermost last, each with the phase it is in.
     traversal_stack: Vec<(ViewNodeId, MetadataPhase)>,
     /// A frame is its roots, in drawing order: the window's root view, then the roots
@@ -101,6 +103,7 @@ impl NodeEngine {
             mounted_this_frame: FxHashSet::default(),
             dirty_nodes: FxHashSet::default(),
             frame_bound_nodes: FxHashSet::default(),
+            retired_layouts: Vec::new(),
             traversal_stack: Vec::new(),
             roots: Vec::new(),
             next_roots: Vec::new(),
@@ -470,11 +473,8 @@ impl NodeEngine {
     }
 
     pub(crate) fn discard_dirty_layouts(&mut self) -> bool {
-        if !self
-            .nodes
-            .keys()
-            .all(|node_id| self.dirty_nodes.contains(&node_id))
-        {
+        // `dirty_nodes` only ever holds live nodes, so equal sizes means every node is dirty.
+        if self.dirty_nodes.len() < self.nodes.len() {
             return false;
         }
         for node in self.nodes.values_mut() {
@@ -766,17 +766,32 @@ impl NodeEngine {
         }
     }
 
-    pub(crate) fn store_layout(&mut self, node_id: ViewNodeId, layout: LayoutId) {
-        if let Some(node) = self.nodes.get_mut(node_id) {
-            node.layout = Some(layout);
-        }
+    /// Records the node's new layout root and returns the previous one, which the caller
+    /// drops from the layout tree: its live children have been re-attached under the new
+    /// root by the render that produced it.
+    pub(crate) fn store_layout(
+        &mut self,
+        node_id: ViewNodeId,
+        layout: LayoutId,
+    ) -> Option<LayoutId> {
+        let node = self.nodes.get_mut(node_id)?;
+        let previous = node.layout.replace(layout);
+        previous.filter(|previous| *previous != layout)
     }
 
-    pub(crate) fn retained_layouts(&self) -> impl Iterator<Item = LayoutId> + '_ {
-        self.nodes
-            .iter()
-            .filter(|(node_id, _)| !self.frame_bound_nodes.contains(node_id))
-            .filter_map(|(_, node)| node.layout)
+    /// Layout roots that stop being retained when this frame ends: those of removed nodes
+    /// (collected as they were removed) and of frame-bound nodes, whose measurement closures
+    /// may capture the frame arena and so must not outlive it.
+    pub(crate) fn take_retired_layouts(&mut self) -> Vec<LayoutId> {
+        let mut retired = std::mem::take(&mut self.retired_layouts);
+        for node_id in &self.frame_bound_nodes {
+            if let Some(node) = self.nodes.get_mut(*node_id)
+                && let Some(layout) = node.layout.take()
+            {
+                retired.push(layout);
+            }
+        }
+        retired
     }
 
     /// Prevents the current node and its ancestors from reusing this frame's output. Used when
@@ -952,6 +967,7 @@ impl NodeEngine {
         let Some(node) = self.nodes.remove(node_id) else {
             return;
         };
+        self.retired_layouts.extend(node.layout);
         for source in &node.accessed_entities {
             Self::remove_dependency(&mut self.consumers, node_id, *source);
         }

@@ -450,7 +450,8 @@ impl<V: View> Element for ViewElement<V> {
                             (layout, element)
                         })
                     });
-                    window.node_engine.store_layout(node_id, layout);
+                    let previous = window.node_engine.store_layout(node_id, layout);
+                    window.retire_layout(previous);
                     window.finish_node_phase(node_id, true);
                     self.node_layout = Some(NodeViewLayout {
                         layout,
@@ -530,7 +531,8 @@ impl<V: View> Element for ViewElement<V> {
                         let mut element = view.render(window, cx).into_any_element();
                         let new_layout = element.request_layout(window, cx);
                         window.replace_retained_layout(layout, new_layout, cx);
-                        window.node_engine.store_layout(node_id, new_layout);
+                        let previous = window.node_engine.store_layout(node_id, new_layout);
+                        window.retire_layout(previous);
                         element.prepaint(window, cx);
                         element
                     }
@@ -590,9 +592,7 @@ impl<V: View> Element for ViewElement<V> {
                             cx.track_reads(&mut accessed_entities, |cx| element.paint(window, cx));
                         }
                         window.finish_view_node_paint(node_id);
-                        window
-                            .node_engine
-                            .store_render(node_id, cache_key, accessed_entities);
+                        window.store_node_render(node_id, cache_key, accessed_entities);
                     }
                 });
             }
