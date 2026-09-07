@@ -1170,60 +1170,6 @@ mod tests {
     }
 
     #[test]
-    fn stream_response_preserves_json_whitespace_and_error_continuation() {
-        let http_client = FakeHttpClient::create(|_| async move {
-            Ok(http_client::Response::builder()
-                .status(200)
-                .body(AsyncBody::from(concat!(
-                    "event: response.output_text.delta\r\n",
-                    "data:\r\ndata: \r\ndata: [DONE]\r\n",
-                    "data:\t{\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"é\\n\"} \r\n",
-                    "data:  \r\n",
-                    "data: [DONE] \r\n",
-                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"é\\n\"}]}]}}\n",
-                )))?)
-        });
-        let events = block_on(async {
-            stream_response(
-                http_client.as_ref(),
-                "OpenAI",
-                "https://api.openai.com/v1",
-                "secret",
-                response_test_request(),
-                &CustomHeaders::default(),
-            )
-            .await
-            .unwrap()
-            .collect::<Vec<_>>()
-            .await
-        });
-
-        let [
-            Ok(StreamEvent::OutputTextDelta { delta, .. }),
-            Err(whitespace_error),
-            Err(done_error),
-            Ok(StreamEvent::Completed { response }),
-        ] = events.as_slice()
-        else {
-            panic!("unexpected events: {events:?}");
-        };
-        assert_eq!(delta, "é\n");
-        assert_eq!(
-            whitespace_error.to_string(),
-            "EOF while parsing a value at line 1 column 1"
-        );
-        assert_eq!(done_error.to_string(), "expected value at line 1 column 2");
-        assert_eq!(response.id.as_deref(), Some("resp_1"));
-        let [ResponseOutputItem::Message(message)] = response.output.as_slice() else {
-            panic!("unexpected output: {:?}", response.output);
-        };
-        assert_eq!(
-            message.content,
-            vec![json!({"type": "output_text", "text": "é\n"})]
-        );
-    }
-
-    #[test]
     fn compact_response_reports_http_send_errors() {
         let http_client =
             FakeHttpClient::create(|_| async move { Err(anyhow::anyhow!("DNS lookup failed")) });

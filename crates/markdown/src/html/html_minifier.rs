@@ -38,7 +38,7 @@ where
     ///
     /// Will return `Err` if unable to write to the output writer.
     #[inline]
-    pub fn minify<R: io::Read>(&mut self, reader: &mut R) -> io::Result<()> {
+    pub fn minify(&mut self, reader: &mut dyn io::Read) -> io::Result<()> {
         let dom = super::parse_html(reader)?;
 
         if !self.options.omit_doctype {
