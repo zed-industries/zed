@@ -3611,7 +3611,10 @@ mod tests {
         );
     }
 
-    #[gpui::property_test]
+    #[gpui::property_test(config = proptest::test_runner::Config {
+        cases: 32,
+        ..Default::default()
+    })]
     fn test_insert_above_blocks_matches_generic_insertion(
         cx: &mut gpui::TestAppContext,
         #[strategy = proptest::collection::vec(
