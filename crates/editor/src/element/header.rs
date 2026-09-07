@@ -9,7 +9,7 @@ use gpui::{
     CursorStyle, DefiniteLength, Entity, Focusable as _, Hitbox, HitboxBehavior, Hsla, IntoElement,
     Length, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels,
     ShapedLine, SharedString, Styled, TextAlign, Window, WindowBackgroundAppearance, div, fill,
-    linear_color_stop, linear_gradient, point, px, size,
+    point, px, size,
 };
 use language::language_settings::ShowWhitespaceSetting;
 use multi_buffer::{Anchor, ExcerptBoundaryInfo, MultiBuffer};
@@ -169,14 +169,13 @@ impl EditorElement {
             .w_full()
             .relative()
             .child(
+                // Opaque rather than a gradient: this backs the padding around the header
+                // bar, and is all that masks the excerpt scrolling underneath. A
+                // translucent edge leaks that text through the padding strip.
                 div()
                     .w(available_width)
                     .h(FILE_HEADER_HEIGHT as f32 * line_height)
-                    .bg(linear_gradient(
-                        0.,
-                        linear_color_stop(editor_bg_color.opacity(0.), 0.),
-                        linear_color_stop(editor_bg_color, 0.6),
-                    ))
+                    .bg(editor_bg_color)
                     .absolute()
                     .top_0(),
             )
@@ -708,6 +707,7 @@ pub(crate) fn render_buffer_header(
         .p(BUFFER_HEADER_PADDING)
         .w_full()
         .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
+        .when(is_sticky, |header| header.block_mouse_except_scroll())
         .child(
             h_flex()
                 .group("buffer-header-group")
