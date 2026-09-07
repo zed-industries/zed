@@ -126,6 +126,11 @@ impl NodeEngine {
         self.next_roots.get(index).copied()
     }
 
+    /// The roots of the frame drawn last, in drawing order.
+    pub(crate) fn rendered_roots(&self) -> &[ViewNodeId] {
+        &self.roots
+    }
+
     /// Whether `node` is `ancestor` or below it through `parent` links, which for a
     /// deferred root lead to its owner.
     pub(crate) fn is_within(&self, mut node: ViewNodeId, ancestor: ViewNodeId) -> bool {

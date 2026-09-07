@@ -931,7 +931,7 @@ mod tests {
 
     use crate::{
         Bounds, Component, Context, Entity, Modifiers, Render, ScaledPixels, StyleRefinement,
-        TestAppContext, VisualTestContext, Window, div, point, prelude::*, px, rgb, size,
+        TestAppContext, VisualTestContext, Window, deferred, div, point, prelude::*, px, rgb, size,
     };
     use std::{cell::Cell, rc::Rc};
 
@@ -1204,6 +1204,111 @@ mod tests {
         visual.simulate_click(point(px(50.), px(50.)), Modifiers::default());
         visual.run_until_parked();
         assert_eq!((left_clicks.get(), right_clicks.get()), (1, 1));
+    }
+
+    struct PopoverRoot {
+        open: bool,
+    }
+
+    impl Render for PopoverRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().bg(rgb(0x00ff00)).when(self.open, |this| {
+                this.child(deferred(
+                    div()
+                        .absolute()
+                        .left(px(50.))
+                        .top(px(50.))
+                        .size(px(80.))
+                        .bg(rgb(0xffff00)),
+                ))
+            })
+        }
+    }
+
+    struct TooltipRoot;
+
+    impl Render for TooltipRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            // A deferred draw of the window's root view: owned by no attached root.
+            div().child(deferred(
+                div()
+                    .absolute()
+                    .left(px(0.))
+                    .top(px(0.))
+                    .size(px(10.))
+                    .bg(rgb(0xff00ff)),
+            ))
+        }
+    }
+
+    #[gpui::test]
+    fn attached_roots_ship_their_deferred_draws_and_unowned_roots_as_overlays(
+        cx: &mut TestAppContext,
+    ) {
+        let window = cx.open_window(size(px(400.), px(100.)), |_, _| TooltipRoot);
+        let left = cx.new(|_| PopoverRoot { open: false });
+        let left_bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), px(100.)));
+        let left_root = window
+            .update(cx, |_, window, _| {
+                window.attach_root(left.clone(), left_bounds)
+            })
+            .expect("window");
+        cx.run_until_parked();
+
+        window
+            .update(cx, |_, window, _| {
+                assert_eq!(
+                    window
+                        .take_root_scene(left_root)
+                        .expect("drawn")
+                        .quads
+                        .len(),
+                    1
+                );
+                // Nothing deferred yet; the root view's deferred draw is unowned.
+                let owned = window
+                    .take_root_overlay_scene(left_root, false)
+                    .expect("first take");
+                assert!(owned.quads.is_empty());
+                let all = window
+                    .take_root_overlay_scene(left_root, true)
+                    .expect("unowned added");
+                assert_eq!(all.quads.len(), 1);
+                assert!(window.take_root_overlay_scene(left_root, true).is_none());
+            })
+            .expect("window");
+
+        left.update(cx, |root, cx| {
+            root.open = true;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |_, window, _| {
+                // The popover is not part of the root's own scene...
+                assert_eq!(
+                    window
+                        .take_root_scene(left_root)
+                        .expect("redrawn")
+                        .quads
+                        .len(),
+                    1
+                );
+                // ...but of its overlay, ahead of the unowned root.
+                let scale = window.scale_factor();
+                let overlay = window
+                    .take_root_overlay_scene(left_root, true)
+                    .expect("popover");
+                assert_eq!(overlay.quads.len(), 2);
+                assert_eq!(overlay.quads[0].bounds.origin.x, px(50.).scale(scale));
+                assert!(window.take_root_overlay_scene(left_root, true).is_none());
+                // Dropping the unowned roots changes the overlay again.
+                let owned = window
+                    .take_root_overlay_scene(left_root, false)
+                    .expect("changed set");
+                assert_eq!(owned.quads.len(), 1);
+            })
+            .expect("window");
     }
 
     #[gpui::test]
