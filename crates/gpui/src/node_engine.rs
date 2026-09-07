@@ -71,6 +71,9 @@ pub(crate) struct NodeEngine {
     retired_layouts: Vec<LayoutId>,
     /// The nodes being drawn, innermost last, each with the phase it is in.
     traversal_stack: Vec<(ViewNodeId, MetadataPhase)>,
+    /// Scratch for `snapshot_dispatch_nodes`: whether each open dispatch push is being
+    /// dropped, so its pop is dropped with it.
+    elided_dispatch_pushes: Vec<bool>,
     /// A frame is its roots, in drawing order: the window's root view, then the roots
     /// attached by `defer_draw` in priority order, then the prompt, drag overlay or
     /// tooltip. Walking them in order reproduces the frame. `roots` is the frame drawn
@@ -108,6 +111,7 @@ impl NodeEngine {
             frame_bound_nodes: FxHashSet::default(),
             retired_layouts: Vec::new(),
             traversal_stack: Vec::new(),
+            elided_dispatch_pushes: Vec::new(),
             roots: Vec::new(),
             next_roots: Vec::new(),
             full_refresh: true,
@@ -385,7 +389,9 @@ impl NodeEngine {
 
     /// Copies the dispatch nodes a node pushed while prepainting out of the frame's dispatch
     /// tree, now that painting has added their listeners and contexts. Existing slots are
-    /// cloned into so their listener buffers are reused.
+    /// cloned into so their listener buffers are reused. Most elements' nodes turn out
+    /// empty; their push and pop are dropped from the recording, since a replay without
+    /// them dispatches identically and does less.
     pub(crate) fn snapshot_dispatch_nodes(
         &mut self,
         node_id: ViewNodeId,
@@ -395,18 +401,38 @@ impl NodeEngine {
             return;
         };
         let output = node.output.phase_mut(MetadataPhase::Prepaint);
-        for item in &output.items {
-            if let OutputItem::DispatchPush(live, index) = item {
-                let recorded = dispatch_tree.node(*live);
-                match output.dispatch_nodes.get_mut(*index as usize) {
-                    Some(slot) => slot.clone_from(recorded),
-                    None => output.dispatch_nodes.push(recorded.clone()),
+        let items = &mut output.items;
+        let elided = &mut self.elided_dispatch_pushes;
+        elided.clear();
+        let mut kept_pushes = 0u32;
+        let mut write = 0;
+        for read in 0..items.len() {
+            let keep = match &mut items[read] {
+                OutputItem::DispatchPush(live, index) => {
+                    let recorded = dispatch_tree.node(*live);
+                    let keep = !recorded.is_empty();
+                    elided.push(!keep);
+                    if keep {
+                        match output.dispatch_nodes.get_mut(kept_pushes as usize) {
+                            Some(slot) => slot.clone_from(recorded),
+                            None => output.dispatch_nodes.push(recorded.clone()),
+                        }
+                        *index = kept_pushes;
+                        kept_pushes += 1;
+                    }
+                    keep
                 }
+                OutputItem::DispatchPop => !elided.pop().unwrap_or(false),
+                _ => true,
+            };
+            if keep {
+                items.swap(write, read);
+                write += 1;
             }
         }
-        output
-            .dispatch_nodes
-            .truncate(output.dispatch_pushes as usize);
+        items.truncate(write);
+        output.dispatch_pushes = kept_pushes;
+        output.dispatch_nodes.truncate(kept_pushes as usize);
     }
 
     /// The recorded copy of a dispatch node a reused view pushed.

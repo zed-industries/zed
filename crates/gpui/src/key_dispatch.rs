@@ -89,6 +89,18 @@ pub(crate) struct DispatchNode {
 }
 
 impl DispatchNode {
+    /// Whether the node contributes nothing to dispatch: no listeners, context, focus or
+    /// view. Such a node is transparent to every walk of the tree, which only reads those
+    /// fields along parent links, so a reused recording can leave it out.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.key_listeners.is_empty()
+            && self.action_listeners.is_empty()
+            && self.modifiers_changed_listeners.is_empty()
+            && self.context.is_none()
+            && self.focus_id.is_none()
+            && self.view_id.is_none()
+    }
+
     pub(crate) fn retained_bytes(&self) -> usize {
         self.key_listeners.capacity() * size_of::<KeyListener>()
             + self.action_listeners.capacity() * size_of::<DispatchActionListener>()
