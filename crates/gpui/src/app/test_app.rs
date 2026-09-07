@@ -484,13 +484,18 @@ impl<V: 'static + Render> TestAppWindow<V> {
     /// Simulate the window moving to a display with a different scale factor.
     pub fn simulate_scale_factor_change(&mut self, scale_factor: f32) {
         let window_id = self.handle.window_id();
-        let mut app = self.app.borrow_mut();
-        if let Some(Some(window)) = app.windows.get_mut(window_id) {
-            if let Some(test_window) = window.platform_window.as_test() {
-                test_window.simulate_scale_factor_change(scale_factor);
-            }
+        let test_window = {
+            let mut app = self.app.borrow_mut();
+            app.windows
+                .get_mut(window_id)
+                .and_then(|window| window.as_mut())
+                .and_then(|window| window.platform_window.as_test())
+                .cloned()
+        };
+        // The resize callback needs to borrow the app again synchronously.
+        if let Some(mut test_window) = test_window {
+            test_window.simulate_scale_factor_change(scale_factor);
         }
-        drop(app);
         self.background_executor.run_until_parked();
     }
 
@@ -564,6 +569,26 @@ mod tests {
 
         window.read(|counter, _| {
             assert_eq!(counter.count, 1);
+        });
+
+        drop(window);
+        app.update(|cx| cx.shutdown());
+    }
+
+    #[test]
+    fn test_simulate_scale_factor_change() {
+        let mut app = TestApp::new();
+        let mut window = app.open_window(|_, _| crate::EmptyView);
+        let viewport_size = window.update(|_, window, _| {
+            assert_eq!(window.scale_factor(), 2.0);
+            window.viewport_size()
+        });
+
+        window.simulate_scale_factor_change(1.0);
+
+        window.update(|_, window, _| {
+            assert_eq!(window.scale_factor(), 1.0);
+            assert_eq!(window.viewport_size(), viewport_size);
         });
 
         drop(window);
