@@ -49617,6 +49617,63 @@ async fn test_display_row_for_inline_code_action(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_display_row_for_inline_code_action_with_block_above(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.soft_wrap = Some(language::language_settings::SoftWrap::Bounded);
+        settings.defaults.soft_wrap_indent =
+            Some(language::language_settings::SoftWrapIndent::ExtraOne);
+        settings.defaults.preferred_line_length = Some(25);
+    });
+
+    let text = "1234567890123456789012345678";
+    let editor = cx.add_window(|window, cx| {
+        build_editor(
+            multi_buffer::MultiBuffer::build_simple(text, cx),
+            window,
+            cx,
+        )
+    });
+
+    _ = editor.update(cx, |editor, _window, cx| {
+        let buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
+        editor.insert_blocks(
+            [BlockProperties {
+                style: BlockStyle::Fixed,
+                placement: BlockPlacement::Above(buffer_snapshot.anchor_before(Point::new(0, 0))),
+                height: Some(1),
+                render: Arc::new(|_| div().into_any()),
+                priority: 0,
+            }],
+            None,
+            cx,
+        );
+    });
+
+    let snapshot = editor
+        .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+        .unwrap();
+
+    // DisplayRow 0 is the block, DisplayRow 1 is the first text row.
+    // The text wraps at column 25 with ExtraOne (4 spaces continuation).
+    // Cursor at column 5 is on the first text row (DisplayRow 1), not a
+    // continuation. The line has 0 indent (< 4) and the cursor is not on a
+    // wrapped continuation, so no valid row exists in this single-line buffer.
+    assert_eq!(
+        snapshot.display_row_for_inline_code_action(Point::new(0, 5)),
+        None
+    );
+
+    // Cursor at column 26 is on the soft-wrapped continuation row (DisplayRow 2).
+    // It has 4 spaces of continuation indent (>= 4), so the code action is placed here.
+    assert_eq!(
+        snapshot.display_row_for_inline_code_action(Point::new(0, 26)),
+        Some(DisplayRow(2))
+    );
+}
+
+#[gpui::test]
 async fn test_soft_wrap_indent_updated_on_language_changed(cx: &mut gpui::TestAppContext) {
     // Configure Rust to have a different continuation indent behavior than the default.
     init_test(cx, |settings| {
