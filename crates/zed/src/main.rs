@@ -961,12 +961,15 @@ fn main() {
             let db = workspace::WorkspaceDb::global(cx);
             let fs = app_state.fs.clone();
             let restore_finished = restore_finished.clone();
+            let delete_inaccessible_projects =
+                WorkspaceSettings::get_global(cx).delete_inaccessible_projects;
             async move |_cx| {
                 restore_finished.await;
                 db.garbage_collect_workspaces(
                     fs.as_ref(),
                     &current_session_id,
                     last_session_id.as_deref(),
+                    delete_inaccessible_projects,
                 )
                 .await
             }
