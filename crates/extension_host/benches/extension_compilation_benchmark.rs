@@ -27,7 +27,7 @@ fn extension_benchmarks(c: &mut Criterion) {
     let wasm_bytes = wasm_bytes(
         &cx,
         &mut manifest,
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
     );
     let manifest = Arc::new(manifest);
     let extensions_dir = TempTree::new(json!({
@@ -105,7 +105,7 @@ fn wasm_host(cx: &TestAppContext, extensions_dir: &TempTree) -> Arc<WasmHost> {
     });
     let extensions_dir = extensions_dir.path().canonicalize().unwrap();
     let work_dir = extensions_dir.join("work");
-    let fs = Arc::new(RealFs::new(None, cx.executor()));
+    let fs = RealFs::new(None, cx.executor());
 
     cx.update(|cx| {
         WasmHost::new(

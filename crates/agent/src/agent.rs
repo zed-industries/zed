@@ -3898,7 +3898,7 @@ mod internal_tests {
         });
 
         let temp_dir = tempfile::tempdir().expect("create terminal working directory");
-        let fs = Arc::new(fs::RealFs::new(None, cx.executor()));
+        let fs = fs::RealFs::new(None, cx.executor());
         let project = Project::test(fs.clone(), [temp_dir.path()], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));

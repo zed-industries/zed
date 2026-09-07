@@ -221,7 +221,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     .unwrap();
 
     let project = Project::test(
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         [root_link_path.as_ref()],
         cx,
     )
@@ -8607,7 +8607,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         }
     }));
 
-    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [dir.path()], cx).await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [dir.path()], cx).await;
 
     let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
         let buffer = project.update(cx, |p, cx| p.open_local_buffer(dir.path().join(path), cx));
@@ -8761,7 +8761,7 @@ async fn test_recreated_directory_receives_child_events(cx: &mut gpui::TestAppCo
     cx.executor().allow_parking();
 
     let dir = TempTree::new(json!({}));
-    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [dir.path()], cx).await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [dir.path()], cx).await;
     let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
 
     tree.flush_fs_events(cx).await;
@@ -16736,7 +16736,7 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
     std::fs::write(&file_path, file_contents).unwrap();
 
     let project = Project::test(
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         [root.path()],
         cx,
     )
@@ -16976,7 +16976,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     std::fs::write(work_dir.join("a.txt"), "aa").unwrap();
 
     let project = Project::test(
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         [root.path()],
         cx,
     )
@@ -17263,7 +17263,7 @@ async fn test_git_events_after_project_excludes_dot_git(cx: &mut gpui::TestAppCo
     git_branch("other-branch", &repo);
 
     let project = Project::test(
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         [work_dir.as_path()],
         cx,
     )
@@ -17355,7 +17355,7 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
     let _sub = git_init(&work_dir.join("sub"));
 
     let project = Project::test(
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         [root.path()],
         cx,
     )
@@ -18210,7 +18210,7 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
     git_add("a.txt", &repo);
     git_commit("init", &repo);
 
-    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [root_path], cx).await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root_path], cx).await;
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
@@ -18366,7 +18366,7 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
     git_commit("init", &repo);
     std::fs::write(root_path.join("projects/project1/a"), "aa").unwrap();
 
-    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [root_path], cx).await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root_path], cx).await;
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
@@ -18481,7 +18481,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     git_add(DOTGITIGNORE, &repo);
     git_commit("Initial commit", &repo);
 
-    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [root_path], cx).await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root_path], cx).await;
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
@@ -18764,7 +18764,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     git_add(".gitignore", &repo);
     git_commit("Initial commit", &repo);
 
-    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [root_path], cx).await;
+    let project = Project::test(RealFs::new(None, cx.executor()), [root_path], cx).await;
     let repository_updates = Arc::new(Mutex::new(Vec::new()));
     let project_events = Arc::new(Mutex::new(Vec::new()));
     project.update(cx, |project, cx| {
@@ -20657,7 +20657,7 @@ async fn test_os_read_only_files_open_as_read_only(cx: &mut gpui::TestAppContext
     std::fs::set_permissions(&file_path, permissions).unwrap();
 
     let project = Project::test(
-        Arc::new(RealFs::new(None, cx.executor())),
+        RealFs::new(None, cx.executor()),
         [root.path()],
         cx,
     )
