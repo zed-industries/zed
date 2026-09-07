@@ -767,6 +767,7 @@ impl VsCodeSettings {
                 _ => None,
             }),
             file_icons: self.read_bool("workbench.editor.showIcons"),
+            tab_indices: None,
             activate_on_close: self
                 .read_bool("workbench.editor.focusRecentEditorAfterClose")
                 .map(|b| {
