@@ -63,14 +63,16 @@ pub(crate) struct NodeEngine {
     /// Cleared dependency sets awaiting reuse as the accumulator for a rebuilding node.
     spare_dependency_sets: Vec<FxHashSet<EntityId>>,
     occurrences: FxHashMap<ViewOccurrence, ViewNodeId>,
-    /// Nodes mounted so far this frame, so a repeated element id gets the next occurrence.
-    mounted_this_frame: FxHashSet<ViewNodeId>,
-    dirty_nodes: FxHashSet<ViewNodeId>,
-    frame_bound_nodes: FxHashSet<ViewNodeId>,
+    /// How many live nodes are `dirty`, so "is every node dirty" is a comparison.
+    dirty_count: usize,
+    /// How many live nodes are `frame_bound`.
+    frame_bound_count: usize,
     /// Layout roots of nodes removed this frame, dropped from the layout tree at its end.
     retired_layouts: Vec<LayoutId>,
     /// The nodes being drawn, innermost last, each with the phase it is in.
     traversal_stack: Vec<(ViewNodeId, MetadataPhase)>,
+    /// Scratch for `invalidate_consumers`, which cannot walk `consumers` while setting flags.
+    invalidation_scratch: Vec<ViewNodeId>,
     /// Scratch for `snapshot_dispatch_nodes`: whether each open dispatch push is being
     /// dropped, so its pop is dropped with it.
     elided_dispatch_pushes: Vec<bool>,
@@ -106,12 +108,12 @@ impl NodeEngine {
             consumers: FxHashMap::default(),
             spare_dependency_sets: Vec::new(),
             occurrences: FxHashMap::default(),
-            mounted_this_frame: FxHashSet::default(),
-            dirty_nodes: FxHashSet::default(),
-            frame_bound_nodes: FxHashSet::default(),
+            dirty_count: 0,
+            frame_bound_count: 0,
             retired_layouts: Vec::new(),
             traversal_stack: Vec::new(),
             elided_dispatch_pushes: Vec::new(),
+            invalidation_scratch: Vec::new(),
             roots: Vec::new(),
             next_roots: Vec::new(),
             full_refresh: true,
@@ -153,10 +155,47 @@ impl NodeEngine {
                 .map(|set| set.capacity() * size_of::<EntityId>())
                 .sum::<usize>()
             + self.occurrences.capacity() * size_of::<(ViewOccurrence, ViewNodeId)>()
-            + (self.mounted_this_frame.capacity()
-                + self.dirty_nodes.capacity()
-                + self.frame_bound_nodes.capacity())
-                * size_of::<ViewNodeId>()
+    }
+
+    fn set_dirty(&mut self, node_id: ViewNodeId) -> bool {
+        match self.nodes.get_mut(node_id) {
+            Some(node) if !node.dirty => {
+                node.dirty = true;
+                self.dirty_count += 1;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn clear_dirty(node: &mut ViewNode, dirty_count: &mut usize) {
+        if node.dirty {
+            node.dirty = false;
+            *dirty_count -= 1;
+        }
+    }
+
+    fn set_frame_bound(&mut self, node_id: ViewNodeId) {
+        if let Some(node) = self.nodes.get_mut(node_id)
+            && !node.frame_bound
+        {
+            node.frame_bound = true;
+            self.frame_bound_count += 1;
+        }
+    }
+
+    fn clear_frame_bound(node: &mut ViewNode, frame_bound_count: &mut usize) {
+        if node.frame_bound {
+            node.frame_bound = false;
+            *frame_bound_count -= 1;
+        }
+    }
+
+    fn mark_all_dirty(&mut self) {
+        for node in self.nodes.values_mut() {
+            node.dirty = true;
+        }
+        self.dirty_count = self.nodes.len();
     }
 
     /// Takes the node's recorded scene so painting can record into it again.
@@ -503,8 +542,7 @@ impl NodeEngine {
     }
 
     pub(crate) fn discard_dirty_layouts(&mut self) -> bool {
-        // `dirty_nodes` only ever holds live nodes, so equal sizes means every node is dirty.
-        if self.dirty_nodes.len() < self.nodes.len() {
+        if self.dirty_count < self.nodes.len() {
             return false;
         }
         for node in self.nodes.values_mut() {
@@ -530,9 +568,8 @@ impl NodeEngine {
         self.changed_bounds = None;
         // `next_roots` is not cleared: a root drawn between frames (a test's `draw`) is
         // part of the frame that follows it, ahead of the window root.
-        self.mounted_this_frame.clear();
         if self.full_refresh {
-            self.dirty_nodes.extend(self.nodes.keys());
+            self.mark_all_dirty();
         }
     }
 
@@ -544,7 +581,7 @@ impl NodeEngine {
             if !self.consumers.contains_key(source) {
                 // Nothing recorded a read of this entity, so nothing says which output
                 // depends on it. Rebuild everything rather than reuse stale output.
-                self.dirty_nodes.extend(self.nodes.keys());
+                self.mark_all_dirty();
                 return;
             }
         }
@@ -564,16 +601,19 @@ impl NodeEngine {
         let Some(consumers) = self.consumers.get(&source) else {
             return;
         };
-        for consumer in consumers {
-            let mut node_id = Some(*consumer);
-            // A parent's output contains its children's. Stop at the first node that is
-            // already dirty, since its ancestors were dirtied with it.
+        // A parent's output contains its children's. Stop at the first node that is
+        // already dirty, since its ancestors were dirtied with it.
+        let mut pending = std::mem::take(&mut self.invalidation_scratch);
+        pending.extend(consumers.iter().copied());
+        while let Some(consumer) = pending.pop() {
+            let mut node_id = Some(consumer);
             while let Some(id) = node_id
-                && self.dirty_nodes.insert(id)
+                && self.set_dirty(id)
             {
                 node_id = self.nodes.get(id).and_then(|node| node.parent);
             }
         }
+        self.invalidation_scratch = pending;
     }
 
     fn replace_dependencies(
@@ -616,7 +656,7 @@ impl NodeEngine {
         while self
             .occurrences
             .get(&occurrence)
-            .is_some_and(|node| self.mounted_this_frame.contains(node))
+            .is_some_and(|node| self.nodes[*node].mounted_frame == self.frame)
         {
             occurrence.index += 1;
         }
@@ -649,12 +689,15 @@ impl NodeEngine {
                 previous_bounds: cache_key.bounds,
                 accessed_entities: FxHashSet::default(),
                 painted: false,
+                dirty: true,
+                frame_bound: false,
+                mounted_frame: 0,
             });
+            self.dirty_count += 1;
             self.occurrences.insert(occurrence, node_id);
-            self.dirty_nodes.insert(node_id);
             node_id
         };
-        self.mounted_this_frame.insert(node_id);
+        self.nodes[node_id].mounted_frame = self.frame;
 
         if let Some(parent_id) = parent
             && let Some(parent_node) = self.nodes.get_mut(parent_id)
@@ -694,12 +737,15 @@ impl NodeEngine {
                 previous_bounds: cache_key.bounds,
                 accessed_entities: FxHashSet::default(),
                 painted: false,
+                dirty: true,
+                frame_bound: false,
+                mounted_frame: 0,
             });
+            self.dirty_count += 1;
             self.occurrences.insert(occurrence, node_id);
-            self.dirty_nodes.insert(node_id);
             node_id
         };
-        self.mounted_this_frame.insert(node_id);
+        self.nodes[node_id].mounted_frame = self.frame;
         node_id
     }
 
@@ -772,8 +818,8 @@ impl NodeEngine {
         let node = &self.nodes[node_id];
         if !self.full_refresh
             && node.painted
-            && !self.dirty_nodes.contains(&node_id)
-            && !self.frame_bound_nodes.contains(&node_id)
+            && !node.dirty
+            && !node.frame_bound
             && node.cache_key.matches(cache_key, true)
         {
             node.layout
@@ -803,8 +849,8 @@ impl NodeEngine {
     }
 
     pub(crate) fn restart_render(&mut self, node_id: ViewNodeId) {
-        self.frame_bound_nodes.remove(&node_id);
         if let Some(node) = self.nodes.get_mut(node_id) {
+            Self::clear_frame_bound(node, &mut self.frame_bound_count);
             node.next_children.clear();
             node.output.reset();
         }
@@ -828,11 +874,13 @@ impl NodeEngine {
     /// may capture the frame arena and so must not outlive it.
     pub(crate) fn take_retired_layouts(&mut self) -> Vec<LayoutId> {
         let mut retired = std::mem::take(&mut self.retired_layouts);
-        for node_id in &self.frame_bound_nodes {
-            if let Some(node) = self.nodes.get_mut(*node_id)
-                && let Some(layout) = node.layout.take()
-            {
-                retired.push(layout);
+        if self.frame_bound_count > 0 {
+            for node in self.nodes.values_mut() {
+                if node.frame_bound
+                    && let Some(layout) = node.layout.take()
+                {
+                    retired.push(layout);
+                }
             }
         }
         retired
@@ -844,11 +892,13 @@ impl NodeEngine {
     /// traversal stack: a root attached with `defer_draw` is drawn with only itself on the
     /// stack, and its measurement closures live in its owner's retained layout.
     pub(crate) fn mark_frame_bound(&mut self) {
-        self.frame_bound_nodes
-            .extend(self.traversal_stack.iter().map(|(node_id, _)| *node_id));
+        for index in 0..self.traversal_stack.len() {
+            let (node_id, _) = self.traversal_stack[index];
+            self.set_frame_bound(node_id);
+        }
         let mut node_id = self.current_node();
         while let Some(id) = node_id {
-            self.frame_bound_nodes.insert(id);
+            self.set_frame_bound(id);
             node_id = self.nodes.get(id).and_then(|node| node.parent);
         }
     }
@@ -925,7 +975,9 @@ impl NodeEngine {
         );
         self.recycle_dependency_set(previous_accesses);
 
-        self.dirty_nodes.remove(&node_id);
+        if let Some(node) = self.nodes.get_mut(node_id) {
+            Self::clear_dirty(node, &mut self.dirty_count);
+        }
         self.frame_stats.rebuilt_scopes += 1;
         self.include_changed_bounds(old_bounds);
         self.include_changed_bounds(new_bounds);
@@ -947,7 +999,7 @@ impl NodeEngine {
         self.next_roots = stale_roots;
         self.full_refresh = false;
         self.frame_stats.live_nodes = self.nodes.len();
-        self.frame_stats.frame_bound_scopes = self.frame_bound_nodes.len();
+        self.frame_stats.frame_bound_scopes = self.frame_bound_count;
         self.last_frame_stats = self.frame_stats;
         self.changed_bounds.take()
     }
@@ -957,9 +1009,8 @@ impl NodeEngine {
         self.nodes.clear();
         self.consumers.clear();
         self.occurrences.clear();
-        self.mounted_this_frame.clear();
-        self.dirty_nodes.clear();
-        self.frame_bound_nodes.clear();
+        self.dirty_count = 0;
+        self.frame_bound_count = 0;
         self.traversal_stack.clear();
         self.roots.clear();
         self.next_roots.clear();
@@ -1009,9 +1060,11 @@ impl NodeEngine {
     }
 
     fn remove_subtree(&mut self, node_id: ViewNodeId) {
-        let Some(node) = self.nodes.remove(node_id) else {
+        let Some(mut node) = self.nodes.remove(node_id) else {
             return;
         };
+        Self::clear_dirty(&mut node, &mut self.dirty_count);
+        Self::clear_frame_bound(&mut node, &mut self.frame_bound_count);
         self.retired_layouts.extend(node.layout);
         for source in &node.accessed_entities {
             Self::remove_dependency(&mut self.consumers, node_id, *source);
@@ -1022,9 +1075,6 @@ impl NodeEngine {
             self.remove_subtree(child_id);
         }
         self.occurrences.remove(&node.occurrence);
-        self.frame_bound_nodes.remove(&node_id);
-        self.dirty_nodes.remove(&node_id);
-        self.mounted_this_frame.remove(&node_id);
     }
 }
 

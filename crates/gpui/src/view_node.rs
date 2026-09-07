@@ -251,6 +251,17 @@ pub(crate) struct ViewNode {
     pub(crate) accessed_entities: FxHashSet<EntityId>,
     /// Whether the node has painted since it was mounted, so its output is complete.
     pub(crate) painted: bool,
+    /// Whether the node's recorded output is stale and must be rendered again. Set on
+    /// mount, on a notification of something it read, and on every node under a full
+    /// refresh; cleared when the node stores a render. The engine counts dirty nodes.
+    pub(crate) dirty: bool,
+    /// Whether the node's output cannot be reused past this frame: it produced something a
+    /// recording cannot hold, such as a measurement closure that may capture the frame
+    /// arena. Cleared when the node next renders.
+    pub(crate) frame_bound: bool,
+    /// The engine frame the node was last mounted in, so a repeated element id in one
+    /// frame gets the next occurrence rather than this node.
+    pub(crate) mounted_frame: u64,
 }
 
 #[cfg(test)]
