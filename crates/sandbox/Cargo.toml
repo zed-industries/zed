@@ -65,9 +65,15 @@ seccompiler.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 tempfile.workspace = true
+# For the `#[gpui::property_test]` in the writable-grant normalization tests.
+# `proptest` comes transitively via `gpui::proptest`.
+gpui = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tempfile.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 smol.workspace = true
+# Structural WSL-installed check (registered distros under HKCU\...\Lxss)
+# without spawning `wsl.exe`.
+windows-registry.workspace = true

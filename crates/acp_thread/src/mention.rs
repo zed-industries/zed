@@ -709,7 +709,7 @@ fn normalize_path_mention(
 /// traverses. Invalid sequences and non-UTF-8 results leave the input
 /// unchanged. Returns `Cow::Owned` iff decoding changed the input
 /// (`parse_hyperlink_literal` relies on this).
-fn decode_path_escapes(input: &str) -> Cow<'_, str> {
+pub fn decode_path_escapes(input: &str) -> Cow<'_, str> {
     fn hex_digit(byte: u8) -> Option<u8> {
         match byte {
             b'0'..=b'9' => Some(byte - b'0'),

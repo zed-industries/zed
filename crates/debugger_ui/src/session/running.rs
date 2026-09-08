@@ -1107,7 +1107,7 @@ impl RunningState {
 
             let request_type = match dap_registry
                 .adapter(&adapter)
-                .with_context(|| format!("{}: is not a valid adapter name", &adapter)) {
+                .with_context(|| format!("{adapter}: is not a valid adapter name")) {
                     Ok(adapter) => adapter.request_kind(&config).await,
                     Err(e) => Err(e)
                 };
@@ -1257,7 +1257,7 @@ impl RunningState {
 
                 let scenario = dap_registry
                     .adapter(&adapter)
-                    .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))?.config_from_zed_format(zed_config)
+                    .with_context(|| anyhow!("{adapter}: is not a valid adapter name"))?.config_from_zed_format(zed_config)
                     .await?;
                 config = scenario.config;
                 util::merge_non_null_json_value_into(extra_config, &mut config);
@@ -1744,6 +1744,16 @@ impl RunningState {
 
         self.stack_frame_list
             .update(cx, |list, cx| list.schedule_refresh(true, window, cx));
+    }
+
+    pub fn continue_program(&mut self, cx: &mut Context<Self>) {
+        let Some(thread_id) = self.thread_id else {
+            return;
+        };
+
+        self.session().update(cx, |state, cx| {
+            state.continue_program(thread_id, cx);
+        });
     }
 
     pub fn continue_thread(&mut self, cx: &mut Context<Self>) {

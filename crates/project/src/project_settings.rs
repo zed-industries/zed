@@ -8,9 +8,9 @@ use git::repository::DEFAULT_WORKTREE_DIRECTORY;
 use gpui::{AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
 use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT_SECS, LanguageServerName};
 use paths::{
-    EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
-    local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
-    local_vscode_tasks_file_relative_path, task_file_name,
+    EDITORCONFIG_NAME, debug_task_file_name, local_debug_file_relative_path,
+    local_settings_file_relative_path, local_tasks_file_relative_path,
+    local_vscode_launch_file_relative_path, local_vscode_tasks_file_relative_path, task_file_name,
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -133,6 +133,10 @@ pub struct GlobalLspSettings {
     ///
     /// Default: `120`
     pub request_timeout: u64,
+    /// The maximum line length a buffer may contain before language server features are disabled for the entire buffer.
+    ///
+    /// Default: `20000`
+    pub max_buffer_line_length: u32,
     pub notifications: LspNotificationSettings,
 
     /// Rules for highlighting semantic tokens.
@@ -144,6 +148,7 @@ impl Default for GlobalLspSettings {
         Self {
             button: true,
             request_timeout: DEFAULT_LSP_REQUEST_TIMEOUT_SECS,
+            max_buffer_line_length: 20_000,
             notifications: LspNotificationSettings::default(),
             semantic_token_rules: SemanticTokenRules::default(),
         }
@@ -479,6 +484,10 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: settings::GitHunkStyleSetting,
+    /// Which base git features diff against.
+    ///
+    /// Default: head
+    pub diff_base: settings::GitDiffBaseSetting,
     /// How file paths are displayed in the git gutter.
     ///
     /// Default: file_name_first
@@ -703,6 +712,7 @@ impl Settings for ProjectSettings {
                 }
             },
             hunk_style: git.hunk_style.unwrap(),
+            diff_base: git.diff_base.unwrap_or_default(),
             path_style: git.path_style.unwrap().into(),
             show_stage_restore_buttons: git.show_stage_restore_buttons.unwrap_or(true),
             worktree_directory: git
@@ -736,6 +746,12 @@ impl Settings for ProjectSettings {
                     .as_ref()
                     .unwrap()
                     .request_timeout
+                    .unwrap(),
+                max_buffer_line_length: content
+                    .global_lsp_settings
+                    .as_ref()
+                    .unwrap()
+                    .max_buffer_line_length
                     .unwrap(),
                 notifications: LspNotificationSettings {
                     dismiss_timeout_ms: content
@@ -798,6 +814,8 @@ pub enum SettingsObserverEvent {
     LocalSettingsUpdated(Result<PathBuf, InvalidSettingsError>),
     LocalTasksUpdated(Result<PathBuf, InvalidSettingsError>),
     LocalDebugScenariosUpdated(Result<PathBuf, InvalidSettingsError>),
+    GlobalTasksUpdated(Result<PathBuf, InvalidSettingsError>),
+    GlobalDebugScenariosUpdated(Result<PathBuf, InvalidSettingsError>),
 }
 
 impl EventEmitter<SettingsObserverEvent> for SettingsObserver {}
@@ -1063,7 +1081,8 @@ impl SettingsObserver {
         mut cx: AsyncApp,
     ) -> anyhow::Result<()> {
         let kind = match envelope.payload.kind {
-            Some(kind) => proto::LocalSettingsKind::from_i32(kind)
+            Some(kind) => proto::LocalSettingsKind::try_from(kind)
+                .ok()
                 .with_context(|| format!("unknown kind {kind}"))?,
             None => proto::LocalSettingsKind::Settings,
         };
@@ -1409,17 +1428,17 @@ impl SettingsObserver {
                             log::error!(
                                 "Failed to set local debug scenarios in {path:?}: {message:?}"
                             );
-                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Err(
+                            cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(Err(
                                 InvalidSettingsError::Debug { path, message },
                             )));
                         }
                         Err(e) => {
-                            log::error!("Failed to set local tasks: {e}");
+                            log::error!("Failed to set local debug scenarios: {e}");
                         }
                         Ok(()) => {
-                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(directory
-                                .as_std_path()
-                                .join(task_file_name()))));
+                            cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(Ok(
+                                directory.as_std_path().join(debug_task_file_name()),
+                            )));
                         }
                     }
                 }
@@ -1468,20 +1487,9 @@ impl SettingsObserver {
             }) else {
                 return;
             };
-            if let Some(user_tasks_content) = user_tasks_content {
-                task_store
-                    .update(cx, |task_store, cx| {
-                        task_store
-                            .update_user_tasks(
-                                TaskSettingsLocation::Global(&file_path),
-                                Some(&user_tasks_content),
-                                cx,
-                            )
-                            .log_err();
-                    })
-                    .ok();
-            }
-            while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
+            let mut user_tasks_contents =
+                futures::stream::iter(user_tasks_content).chain(user_tasks_file_rx);
+            while let Some(user_tasks_content) = user_tasks_contents.next().await {
                 let Ok(result) = task_store.update(cx, |task_store, cx| {
                     task_store.update_user_tasks(
                         TaskSettingsLocation::Global(&file_path),
@@ -1494,20 +1502,16 @@ impl SettingsObserver {
 
                 settings_observer
                     .update(cx, |_, cx| match result {
-                        Ok(()) => cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(
+                        Ok(()) => cx.emit(SettingsObserverEvent::GlobalTasksUpdated(Ok(
                             file_path.clone()
                         ))),
-                        Err(err) => cx.emit(SettingsObserverEvent::LocalTasksUpdated(Err(
-                            InvalidSettingsError::Tasks {
-                                path: file_path.clone(),
-                                message: err.to_string(),
-                            },
-                        ))),
+                        Err(err) => cx.emit(SettingsObserverEvent::GlobalTasksUpdated(Err(err))),
                     })
                     .ok();
             }
         })
     }
+
     fn subscribe_to_global_debug_scenarios_changes(
         fs: Arc<dyn Fs>,
         file_path: PathBuf,
@@ -1523,20 +1527,9 @@ impl SettingsObserver {
             }) else {
                 return;
             };
-            if let Some(user_tasks_content) = user_tasks_content {
-                task_store
-                    .update(cx, |task_store, cx| {
-                        task_store
-                            .update_user_debug_scenarios(
-                                TaskSettingsLocation::Global(&file_path),
-                                Some(&user_tasks_content),
-                                cx,
-                            )
-                            .log_err();
-                    })
-                    .ok();
-            }
-            while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
+            let mut user_tasks_contents =
+                futures::stream::iter(user_tasks_content).chain(user_tasks_file_rx);
+            while let Some(user_tasks_content) = user_tasks_contents.next().await {
                 let Ok(result) = task_store.update(cx, |task_store, cx| {
                     task_store.update_user_debug_scenarios(
                         TaskSettingsLocation::Global(&file_path),
@@ -1549,15 +1542,12 @@ impl SettingsObserver {
 
                 settings_observer
                     .update(cx, |_, cx| match result {
-                        Ok(()) => cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(Ok(
+                        Ok(()) => cx.emit(SettingsObserverEvent::GlobalDebugScenariosUpdated(Ok(
                             file_path.clone(),
                         ))),
-                        Err(err) => cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(
-                            Err(InvalidSettingsError::Tasks {
-                                path: file_path.clone(),
-                                message: err.to_string(),
-                            }),
-                        )),
+                        Err(err) => {
+                            cx.emit(SettingsObserverEvent::GlobalDebugScenariosUpdated(Err(err)))
+                        }
                     })
                     .ok();
             }

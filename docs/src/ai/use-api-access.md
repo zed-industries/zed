@@ -349,7 +349,10 @@ Use OpenCode API access when you have an OpenCode API key. OpenCode Zen and Go a
 Zed does not sign in to OpenCode with OAuth or detect your OpenCode subscription; it uses an OpenCode API key saved in the system keychain or `OPENCODE_API_KEY`.
 
 1. Visit [OpenCode Console](https://opencode.ai/auth) and create an account.
-2. Free models are available without payment. To use Zen or Go models, make sure you have enough credits or an active subscription.
+2. To use Zen or Go models, make sure you have enough credits or an active
+   subscription. OpenCode Free models are not available when using OpenCode as a
+   provider in Zed's Agent. You can use them in Zed by running OpenCode as an
+   [external agent through ACP](https://zed.dev/acp/agent/opencode).
 3. Generate an API key from the API Keys section in the OpenCode Console.
 4. Open Agent Settings with {#action agent::OpenSettings} and go to the OpenCode section.
 5. Enter your OpenCode API key.
@@ -362,19 +365,16 @@ By default, models from all OpenCode subscription types are shown. You can hide 
 {
   "language_models": {
     "opencode": {
-      "show_zen_models": true,
-      "show_go_models": false,
-      "show_free_models": false
+      "show_zen_models": false,
+      "show_go_models": true
     }
   }
 }
 ```
 
-**Note:** Zed only bundles configuration for long-term OpenCode Free models. Free models that are available for a limited time are not included in Zed. To use those models, add a custom OpenCode model with configuration from [the OpenCode website](https://opencode.ai/docs/zen#pricing) and [models.dev](https://github.com/anomalyco/models.dev/tree/dev/providers/opencode/models).
-
 #### Custom OpenCode Models {#opencode-custom-models}
 
-The Zed Agent comes preconfigured with OpenCode models. Add custom OpenCode models when you need newer models, limited-time Free models, or models with custom endpoints.
+The Zed Agent comes preconfigured with OpenCode models. Add custom OpenCode models when you need newer models or models with custom endpoints.
 
 Add custom models in your settings file:
 
@@ -409,7 +409,7 @@ The available configuration options for custom OpenCode models are:
 - `protocol` (optional, default `"openai_chat"`): model API protocol, one of `"anthropic"`, `"openai_responses"`, `"openai_chat"`, or `"google"`
 - `reasoning_effort_levels` (optional): list of supported reasoning effort levels, such as `["none", "low", "medium", "high", "xhigh", "max"]`. The last value in the list is used as the default
 - `interleaved_reasoning` (optional, default `false`): whether thinking tokens are sent as a dedicated `reasoning_content` field. Applies only when using the `openai_chat` protocol
-- `subscription` (optional): `"zen"`, `"go"`, or `"free"`; defaults to `"zen"`
+- `subscription` (optional): `"zen"` or `"go"`; defaults to `"zen"`
 - `custom_model_api_url` (optional): custom API base URL to use instead of the default OpenCode API
 
 Custom OpenCode models are listed in the model dropdown in the Agent Panel.

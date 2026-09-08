@@ -32,12 +32,12 @@ use util::{
 use crate::editorconfig_store::EditorconfigStore;
 
 use crate::{
-    ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
+    ActiveSettingsProfileName, FileTypeMap, FontFamilyName, IconThemeName, LanguageSettingsContent,
     LanguageToSettingsMap, LspSettings, LspSettingsMap, SemanticTokenRules, ThemeName,
     UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
-        ExtensionsSettingsContent, ProfileBase, ProjectSettingsContent, RootUserSettings,
-        SettingsContent, UserSettingsContent, merge_from::MergeFrom,
+        ExtendingSet, ExtensionsSettingsContent, ProfileBase, ProjectSettingsContent,
+        RootUserSettings, SettingsContent, UserSettingsContent, merge_from::MergeFrom,
     },
 };
 
@@ -559,7 +559,7 @@ impl SettingsStore {
     fn update_settings_file_inner(
         &self,
         fs: Arc<dyn Fs>,
-        update: impl 'static + Send + FnOnce(String, AsyncApp) -> Result<String>,
+        update: Box<dyn Send + FnOnce(String, AsyncApp) -> Result<String>>,
     ) -> oneshot::Receiver<Result<()>> {
         let (tx, rx) = oneshot::channel::<Result<()>>();
         self.setting_file_updates_tx
@@ -626,11 +626,17 @@ impl SettingsStore {
         fs: Arc<dyn Fs>,
         update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
     ) -> oneshot::Receiver<Result<()>> {
-        self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
-            cx.read_global(|store: &SettingsStore, cx| {
-                store.new_text_for_update(old_text, |content| update(content, cx))
-            })
-        })
+        let mut update = Some(update);
+        self.update_settings_file_inner(
+            fs,
+            Box::new(move |old_text: String, cx: AsyncApp| {
+                cx.read_global(|store: &SettingsStore, cx| {
+                    store.new_text_for_update_inner(old_text, &mut |content| {
+                        (update.take().expect("called once"))(content, cx)
+                    })
+                })
+            }),
+        )
     }
 
     pub fn import_vscode_settings(
@@ -638,11 +644,14 @@ impl SettingsStore {
         fs: Arc<dyn Fs>,
         vscode_settings: VsCodeSettings,
     ) -> oneshot::Receiver<Result<()>> {
-        self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
-            cx.read_global(|store: &SettingsStore, _cx| {
-                store.get_vscode_edits(old_text, &vscode_settings)
-            })
-        })
+        self.update_settings_file_inner(
+            fs,
+            Box::new(move |old_text: String, cx: AsyncApp| {
+                cx.read_global(|store: &SettingsStore, _cx| {
+                    store.get_vscode_edits(old_text, &vscode_settings)
+                })
+            }),
+        )
     }
 
     pub fn get_all_files(&self) -> Vec<SettingsFile> {
@@ -833,7 +842,18 @@ impl SettingsStore {
         old_text: String,
         update: impl FnOnce(&mut SettingsContent),
     ) -> Result<String> {
-        let edits = self.edits_for_update(&old_text, update)?;
+        let mut update = Some(update);
+        self.new_text_for_update_inner(old_text, &mut |content| {
+            (update.take().expect("called once"))(content)
+        })
+    }
+
+    fn new_text_for_update_inner(
+        &self,
+        old_text: String,
+        update: &mut dyn FnMut(&mut SettingsContent),
+    ) -> Result<String> {
+        let edits = self.edits_for_update_inner(&old_text, update)?;
         let mut new_text = old_text;
         for (range, replacement) in edits.into_iter() {
             new_text.replace_range(range, &replacement);
@@ -853,6 +873,17 @@ impl SettingsStore {
         &self,
         text: &str,
         update: impl FnOnce(&mut SettingsContent),
+    ) -> Result<Vec<(Range<usize>, String)>> {
+        let mut update = Some(update);
+        self.edits_for_update_inner(text, &mut |content| {
+            (update.take().expect("called once"))(content)
+        })
+    }
+
+    fn edits_for_update_inner(
+        &self,
+        text: &str,
+        update: &mut dyn FnMut(&mut SettingsContent),
     ) -> Result<Vec<(Range<usize>, String)>> {
         let old_content = if text.trim().is_empty() {
             UserSettingsContent::default()
@@ -1199,6 +1230,17 @@ impl SettingsStore {
                     "type": "object",
                     "errorMessage": "No language with this name is installed.",
                     "properties": params.language_names.iter().map(|name| (name.clone(), language_settings_content_ref.clone())).collect::<serde_json::Map<_, _>>()
+                })
+            });
+
+            let file_type_patterns_ref =
+                generator.subschema_for::<ExtendingSet<String>>().to_value();
+            replace_subschema::<FileTypeMap>(generator, || {
+                json_schema!({
+                    "type": "object",
+                    "errorMessage": "No language with this name is installed.",
+                    "properties": params.language_names.iter().map(|name| (name.clone(), file_type_patterns_ref.clone())).collect::<serde_json::Map<_, _>>(),
+                    "additionalProperties": file_type_patterns_ref.clone()
                 })
             });
         }
@@ -2605,6 +2647,77 @@ mod tests {
             .unindent(),
             cx,
         );
+
+        // re-importing a file association that is already present should be
+        // idempotent rather than appending a duplicate extension (#56536)
+        check_vscode_import(
+            &mut store,
+            r#"{
+              "file_types": {
+                "c": ["*.keymap"]
+              }
+            }
+            "#
+            .unindent(),
+            r#"{ "files.associations": { "*.keymap": "c" } }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "file_types": {
+                "c": ["*.keymap"]
+              }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "window.title": "${activeEditorShort}${separator}${rootName}${separator}${appName}",
+              "window.titleSeparator": " - "
+            }"#
+            .unindent(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "window_title_separator": " - ",
+              "window_title_format": "${fileName}${separator}${projectName}${separator}${appName}"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "window.title": "${unsupportedVariable}"
+            }"#
+            .unindent(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
     }
 
     #[track_caller]
@@ -3164,6 +3277,42 @@ mod tests {
             settings_ref,
             "zed://schemas/settings/lsp/rust-analyzer/settings"
         );
+    }
+
+    #[gpui::test]
+    fn test_file_types_schema_generation(cx: &mut App) {
+        SettingsStore::test(cx);
+
+        let schema = SettingsStore::json_schema(&SettingsJsonSchemaParams {
+            language_names: &["Rust".to_string(), "TypeScript".to_string()],
+            font_names: &["Zed Mono".to_string()],
+            theme_names: &["One Dark".into()],
+            icon_theme_names: &["Zed Icons".into()],
+            lsp_adapter_names: &[],
+            action_names: &[],
+            action_documentation: &HashMap::default(),
+            deprecations: &HashMap::default(),
+            deprecation_messages: &HashMap::default(),
+        });
+
+        let file_type_map = schema
+            .pointer("/$defs/FileTypeMap")
+            .expect("schema should have a FileTypeMap definition");
+        let properties = file_type_map
+            .pointer("/properties")
+            .expect("FileTypeMap should have properties")
+            .as_object()
+            .expect("FileTypeMap properties should be an object");
+
+        let mut language_names = properties.keys().collect::<Vec<_>>();
+        language_names.sort();
+        assert_eq!(language_names, ["Rust", "TypeScript"]);
+
+        let patterns_schema = file_type_map
+            .pointer("/additionalProperties")
+            .expect("FileTypeMap should validate values of unknown language names");
+        assert_eq!(properties.get("Rust"), Some(patterns_schema));
+        assert_eq!(properties.get("TypeScript"), Some(patterns_schema));
     }
 
     #[gpui::test]

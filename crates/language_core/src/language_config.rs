@@ -39,7 +39,7 @@ pub struct LanguageConfig {
     pub grammar: Option<Arc<str>>,
     /// The criteria for matching this language to a given file.
     #[serde(flatten)]
-    pub matcher: LanguageMatcher,
+    pub matcher: Arc<LanguageMatcher>,
     /// List of bracket types in a language.
     #[serde(default)]
     pub brackets: BracketPairConfig,
@@ -150,9 +150,14 @@ pub struct LanguageConfig {
 impl LanguageConfig {
     pub const FILE_NAME: &str = "config.toml";
 
+    #[inline(never)]
+    pub fn from_toml(config: &str) -> Result<Self, toml::de::Error> {
+        toml::from_str::<Self>(config)
+    }
+
     pub fn load(config_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let config = std::fs::read_to_string(config_path.as_ref())?;
-        toml::from_str(&config).map_err(Into::into)
+        Self::from_toml(&config).map_err(anyhow::Error::from)
     }
 }
 
@@ -163,7 +168,7 @@ impl Default for LanguageConfig {
             code_fence_block_name: None,
             kernel_language_names: Default::default(),
             grammar: None,
-            matcher: LanguageMatcher::default(),
+            matcher: Arc::default(),
             brackets: Default::default(),
             auto_indent_using_last_non_empty_line: default_true(),
             auto_indent_on_paste: None,
@@ -223,7 +228,7 @@ pub struct TaskListConfig {
     pub continuation: Arc<str>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, Default, JsonSchema)]
 pub struct LanguageMatcher {
     /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
     #[serde(default)]

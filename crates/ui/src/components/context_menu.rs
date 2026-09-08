@@ -5,7 +5,7 @@ use crate::{
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Role,
-    Size, Subscription, TaskExt, anchored, canvas, prelude::*, px,
+    Size, Subscription, TaskExt, anchored, canvas, prelude::*, px, relative,
 };
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
 use std::{
@@ -14,6 +14,7 @@ use std::{
     rc::Rc,
     time::{Duration, Instant},
 };
+use theme::BufferLineHeight;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum SubmenuOpenTrigger {
@@ -233,6 +234,11 @@ pub struct ContextMenu {
     submenu_trigger_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     submenu_trigger_mouse_down: bool,
     ignore_blur_until: Option<Instant>,
+    /// When set to true, the next on_focus_in callback will not automatically
+    /// select an item. This prevents a visual flash where a submenu close in
+    /// on_hover(false) returns focus to the main menu and on_focus_in
+    /// re-selects the first item before the next on_hover(true) clears it.
+    suppress_focus_selection: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -303,9 +309,10 @@ impl ContextMenu {
         // menus we prefer the currently-checked item. We only do this when
         // nothing is selected yet so we don't override an existing selection.
         cx.on_focus_in(&focus_handle, window, |this, window, cx| {
-            if this.selected_index.is_none() {
+            if this.selected_index.is_none() && !this.suppress_focus_selection {
                 this.select_toggled_or_first(window, cx);
             }
+            this.suppress_focus_selection = false;
         })
         .detach();
 
@@ -333,6 +340,7 @@ impl ContextMenu {
                 submenu_trigger_bounds: Rc::new(Cell::new(None)),
                 submenu_trigger_mouse_down: false,
                 ignore_blur_until: None,
+                suppress_focus_selection: false,
             },
             window,
             cx,
@@ -419,6 +427,7 @@ impl ContextMenu {
                     submenu_trigger_bounds: Rc::new(Cell::new(None)),
                     submenu_trigger_mouse_down: false,
                     ignore_blur_until: None,
+                    suppress_focus_selection: false,
                 },
                 window,
                 cx,
@@ -488,6 +497,7 @@ impl ContextMenu {
                 submenu_trigger_bounds: Rc::new(Cell::new(None)),
                 submenu_trigger_mouse_down: false,
                 ignore_blur_until: None,
+                suppress_focus_selection: false,
             },
             window,
             cx,
@@ -1324,6 +1334,7 @@ impl ContextMenu {
                 submenu_trigger_bounds: Rc::new(Cell::new(None)),
                 submenu_trigger_mouse_down: false,
                 ignore_blur_until: None,
+                suppress_focus_selection: false,
             };
 
             menu = (builder)(menu, window, cx);
@@ -1649,6 +1660,7 @@ impl ContextMenu {
 
                         if *hovered {
                             this.clear_selected();
+                            this.suppress_focus_selection = true;
                             window.focus(&this.focus_handle.clone(), cx);
                             this.hover_target = HoverTarget::MainMenu;
                             this.submenu_safety_threshold_x = Some(mouse_pos.x - px(50.0));
@@ -1686,6 +1698,7 @@ impl ContextMenu {
                             {
                                 this.close_submenu(false, cx);
                                 this.clear_selected();
+                                this.suppress_focus_selection = true;
                                 window.focus(&this.focus_handle.clone(), cx);
                                 cx.notify();
                             }
@@ -1973,6 +1986,7 @@ impl ContextMenu {
                         item.on_hover(cx.listener(move |this, hovered, window, cx| {
                             if *hovered {
                                 this.clear_selected();
+                                this.suppress_focus_selection = true;
                                 window.focus(&this.focus_handle.clone(), cx);
 
                                 if let SubmenuState::Open(open_submenu) = &this.submenu_state {
@@ -2178,10 +2192,16 @@ impl ContextMenuItem {
 
 impl Render for ContextMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font_size = theme::theme_settings(cx).ui_font_size(cx);
+        let theme_settings = theme::theme_settings(cx);
+        let ui_font_size = theme_settings.ui_font_size(cx);
+        let ui_font_family = theme_settings.ui_font(cx).family.clone();
+        // Menus can be deferred from inside elements that override the text
+        // style (e.g. the editor with a custom `buffer_line_height`), so always
+        // apply the default line height to render the same everywhere.
+        let line_height = relative(BufferLineHeight::Comfortable.value());
         let window_size = window.viewport_size();
         let rem_size = window.rem_size();
-        let is_wide_window = window_size.width / rem_size > rems_from_px(800.).0;
+        let is_wide_window = window_size.width / rem_size > rems_from_px(800_f32).0;
 
         let mut focus_submenu: Option<FocusHandle> = None;
 
@@ -2228,6 +2248,8 @@ impl Render for ContextMenu {
         let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
             WithRemSize::new(ui_font_size)
                 .occlude()
+                .font_family(ui_font_family.clone())
+                .line_height(line_height)
                 .elevation_2(cx)
                 .w_full()
                 .p_2()
@@ -2254,6 +2276,8 @@ impl Render for ContextMenu {
 
             WithRemSize::new(ui_font_size)
                 .occlude()
+                .font_family(ui_font_family.clone())
+                .line_height(line_height)
                 .elevation_2(cx)
                 .flex()
                 .flex_row()

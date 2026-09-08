@@ -23,6 +23,7 @@ mod document_links;
 mod document_symbols;
 mod editor_settings;
 mod element;
+mod emmet_ext;
 mod fold;
 mod folding_ranges;
 mod git;
@@ -31,6 +32,7 @@ pub mod hover_links;
 pub mod hover_popover;
 mod indent_guides;
 mod inlays;
+mod inline_input;
 pub mod items;
 mod jsx_tag_auto_close;
 mod linked_editing_ranges;
@@ -63,6 +65,7 @@ mod clipboard;
 mod code_actions;
 mod completions;
 mod config;
+mod cursor_animation;
 mod diagnostics;
 mod edit_prediction;
 mod input;
@@ -106,19 +109,18 @@ pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     file_status_label_color, render_breadcrumb_text,
 };
-pub use git::blame::BlameRenderer;
+pub use git::blame::{BlameRenderer, GitBlame};
 pub use git::{
-    DiffHunkDelegate, ResolvedDiffHunk, ResolvedDiffHunks, RestoreOnlyDiffHunkDelegate,
-    RestoreOnlyUnstagedDiffHunkDelegate, UncommittedDiffHunkDelegate, render_diff_hunk_controls,
-    set_blame_renderer,
+    DefaultDiffHunkRenderer, DiffHunkRenderer, HiddenDiffHunkRenderer,
+    HiddenUnstagedDiffHunkRenderer, render_diff_hunk_controls, set_blame_renderer,
 };
 pub(crate) use git::{DiffHunkKey, StoredReviewComment};
-use git::{
-    DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover, update_uncommitted_diff_for_buffer,
-};
+use git::{DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover};
 pub(crate) use git::{DisplayDiffHunk, PhantomDiffReviewIndicator};
 pub use hover_popover::hover_markdown_style;
 pub use inlays::Inlay;
+pub use inline_input::InlineInputState;
+pub(crate) use inline_input::{InlineInputHistoryDirection, InlineInputPreview};
 pub use items::MAX_TAB_TITLE_LEN;
 pub use linked_editing_ranges::LinkedEdits;
 pub use lsp::CompletionContext;
@@ -145,6 +147,7 @@ use code_context_menus::{
 use code_lens::CodeLensState;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
+use cursor_animation::CursorAnimationStates;
 use dap::TelemetrySpawnLocation;
 use display_map::*;
 use document_colors::LspColorData;
@@ -160,12 +163,12 @@ use futures::{
     future::{self, Shared},
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
-use git::blame::{GitBlame, GlobalBlameRenderer};
+use git::blame::GlobalBlameRenderer;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityId, EntityInputHandler, EventEmitter, FocusHandle,
-    FocusOutEvent, Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla,
+    FocusOutEvent, Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, IsZero,
     KeyContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled,
     Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
@@ -188,8 +191,9 @@ use language::{
         self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
         WordsCompletionMode, all_language_settings,
     },
-    point_from_lsp, point_to_lsp, text_diff_with_options,
+    point_to_lsp, text_diff_with_options,
 };
+use language_detection::detect_language;
 use linked_editing_ranges::refresh_linked_ranges;
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
@@ -220,14 +224,14 @@ use project::{
     git_store::GitStoreEvent,
     lsp_store::{
         BufferSemanticTokens, CacheInlayHints, CompletionDocumentation, FormatTrigger,
-        LspFormatTarget, OpenLspBufferHandle, RefreshForServer,
+        LspFormatTarget, OpenLspBufferHandle,
     },
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
 use rand::seq::SliceRandom;
 use regex::Regex;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
-use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, SharedScrollAnchor};
+use scroll::{Autoscroll, ScrollAnchor, ScrollManager, SharedScrollAnchor};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -275,6 +279,7 @@ pub use zed_actions::editor::RevealInFileManager;
 use zed_actions::editor::{MoveDown, MoveUp};
 
 use crate::{
+    bookmarks::BookmarksTabState,
     code_context_menus::CompletionsMenuSource,
     editor_settings::MultiCursorModifier,
     hover_links::{find_url, find_url_from_range},
@@ -282,7 +287,7 @@ use crate::{
         InlineValueCache,
         inlay_hints::{LspInlayHintData, inlay_hint_settings},
     },
-    runnables::{ResolvedTasks, RunnableData, RunnableTasks},
+    runnables::{ResolvedTasks, RunnableData, RunnableTaskStatus, RunnableTasks},
     scroll::{ScrollOffset, ScrollPixelOffset},
     selections_collection::resolve_selections_wrapping_blocks,
     semantic_tokens::SemanticTokenState,
@@ -296,6 +301,8 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
+const MIN_LANGUAGE_DETECTION_LEN: usize = 20;
+const LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(200);
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
@@ -394,9 +401,8 @@ pub fn init(cx: &mut App) {
         .detach_and_log_err(cx);
     });
     _ = ui_input::ERASED_EDITOR_FACTORY.set(|window, cx| {
-        Arc::new(ErasedEditorImpl(
-            cx.new(|cx| Editor::single_line(window, cx)),
-        )) as Arc<dyn ErasedEditor>
+        cx.new(|cx| Editor::single_line(window, cx))
+            .update(cx, |editor, cx| editor.erased(cx))
     });
     _ = multi_buffer::EXCERPT_CONTEXT_LINES.set(multibuffer_context_lines);
 }
@@ -918,6 +924,27 @@ struct ActionFetchReady {
     actions: Rc<[AvailableCodeAction]>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SearchResultsStatus {
+    pub pending: bool,
+    pub results_stale: bool,
+    pub query_confirmed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SearchResultsHold {
+    pub status: SearchResultsStatus,
+    pub min_line_number_digits: usize,
+    settled_scroll_range: Option<SettledScrollRange>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SettledScrollRange {
+    range: Size<Pixels>,
+    editor_width: Pixels,
+    editor_bounds_size: Size<Pixels>,
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -966,6 +993,7 @@ pub struct Editor {
     completion_provider: Option<Rc<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Entity<BlinkManager>,
+    cursor_animations: CursorAnimationStates,
     show_cursor_names: bool,
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
@@ -983,6 +1011,7 @@ pub struct Editor {
     enable_runnables: bool,
     enable_code_lens: bool,
     enable_mouse_wheel_zoom: bool,
+    search_results_hold: Option<SearchResultsHold>,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -1023,6 +1052,7 @@ pub struct Editor {
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
     pending_rename: Option<RenameState>,
+    pending_inline_input: Option<InlineInputState>,
     searchable: bool,
     cursor_shape: CursorShape,
     /// Whether the cursor is offset one character to the left when something is
@@ -1109,6 +1139,8 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,
     bookmark_store: Option<Entity<BookmarkStore>>,
+    bookmarks_tab_state: Option<Entity<BookmarksTabState>>,
+    bookmarks_tab_subscription: Option<Subscription>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_hover_button: (Option<GutterHoverButton>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
@@ -1131,8 +1163,10 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: TypeIdHashMap<Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
+    language_detection_task: Task<()>,
     load_diff_task: Option<Shared<Task<()>>>,
-    diff_hunk_delegate: Option<Arc<dyn DiffHunkDelegate>>,
+    diff_hunk_renderer: Option<Arc<dyn DiffHunkRenderer>>,
+    diff_hunk_action_target: Option<WeakEntity<Editor>>,
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
@@ -1158,7 +1192,7 @@ pub struct Editor {
     on_local_selections_changed:
         Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
     suppress_selection_callback: bool,
-    applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
+    applicable_language_settings: HashMap<Option<LanguageName>, Arc<LanguageSettings>>,
     accent_data: Option<AccentData>,
     bracket_fetched_tree_sitter_chunks: HashMap<Range<text::Anchor>, HashSet<Range<BufferRow>>>,
     semantic_token_state: SemanticTokenState,
@@ -1210,6 +1244,7 @@ pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
     offset_content: bool,
+    sticky_line_number_digits: usize,
     show_line_numbers: Option<bool>,
     number_deleted_lines: bool,
     show_git_diff_gutter: Option<bool>,
@@ -1222,7 +1257,6 @@ pub struct EditorSnapshot {
     pub placeholder_display_snapshot: Option<DisplaySnapshot>,
     is_focused: bool,
     scroll_anchor: SharedScrollAnchor,
-    ongoing_scroll: OngoingScroll,
     current_line_highlight: CurrentLineHighlight,
     gutter_hovered: bool,
     semantic_tokens_enabled: bool,
@@ -1538,11 +1572,17 @@ struct SnippetState {
     choices: Vec<Option<Vec<String>>>,
 }
 
+pub struct RenameTarget {
+    range: Range<text::Anchor>,
+    language_server_id: Option<LanguageServerId>,
+}
+
 #[doc(hidden)]
 pub struct RenameState {
     pub range: Range<Anchor>,
     pub old_name: Arc<str>,
     pub editor: Entity<Editor>,
+    language_server_id: Option<LanguageServerId>,
     block_id: CustomBlockId,
 }
 
@@ -1733,6 +1773,10 @@ impl Editor {
         Self::new(EditorMode::SingleLine, buffer, None, window, cx)
     }
 
+    pub fn erased(&self, cx: &Context<Self>) -> Arc<dyn ErasedEditor> {
+        Arc::new(ErasedEditorImpl(cx.entity()))
+    }
+
     pub fn multi_line(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
@@ -1829,6 +1873,9 @@ impl Editor {
         clone.needs_initial_data_update = self.enable_lsp_data;
         clone.enable_runnables = self.enable_runnables;
         clone.enable_code_lens = self.enable_code_lens;
+        if let Some(bookmarks_tab_state) = self.bookmarks_tab_state.clone() {
+            clone.set_bookmarks_tab_state(bookmarks_tab_state, cx);
+        }
         clone
     }
 
@@ -2003,33 +2050,31 @@ impl Editor {
                 project,
                 window,
                 |editor, _, event, window, cx| match event {
-                    project::Event::RefreshCodeLens => {
+                    project::Event::RefreshCodeLens { .. } => {
                         editor.refresh_code_lenses(None, window, cx);
                     }
-                    project::Event::RefreshInlayHints {
-                        server_id,
-                        request_id,
-                    } => {
+                    project::Event::RefreshDocumentColors { .. } => {
+                        editor.refresh_document_colors(None, window, cx);
+                    }
+                    project::Event::RefreshDocumentLinks { .. } => {
+                        editor.refresh_document_links(None, cx);
+                    }
+                    project::Event::RefreshFoldingRanges { .. } => {
+                        editor.refresh_folding_ranges(None, window, cx);
+                    }
+                    project::Event::RefreshDocumentSymbols { .. } => {
+                        editor.refresh_document_symbols(None, cx);
+                    }
+                    project::Event::RefreshInlayHints { server_id } => {
                         editor.refresh_inlay_hints(
                             InlayHintRefreshReason::RefreshRequested {
                                 server_id: *server_id,
-                                request_id: *request_id,
                             },
                             cx,
                         );
                     }
-                    project::Event::RefreshSemanticTokens {
-                        server_id,
-                        request_id,
-                    } => {
-                        editor.refresh_semantic_tokens(
-                            None,
-                            Some(RefreshForServer {
-                                server_id: *server_id,
-                                request_id: *request_id,
-                            }),
-                            cx,
-                        );
+                    project::Event::RefreshSemanticTokens { .. } => {
+                        editor.refresh_semantic_tokens(None, true, cx);
                     }
                     project::Event::LanguageServerRemoved(_) => {
                         editor.registered_buffers.clear();
@@ -2066,15 +2111,24 @@ impl Editor {
                         if editor.buffer().read(cx).buffer(buffer_id).is_some() {
                             editor.register_buffer(buffer_id, cx);
                             editor.refresh_runnables(Some(buffer_id), window, cx);
+                            editor.invalidate_semantic_tokens(Some(buffer_id));
                             editor.update_lsp_data(Some(buffer_id), window, cx);
-                            editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                            editor.refresh_inlay_hints(
+                                InlayHintRefreshReason::LanguageServerRegistered,
+                                cx,
+                            );
                             refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions_for_selection(window, cx);
                             editor.refresh_document_highlights(cx);
                         }
                     }
 
-                    project::Event::EntryRenamed(transaction, project_path, abs_path) => {
+                    project::Event::EntryRenamed {
+                        transaction,
+                        new_project_path,
+                        new_abs_path,
+                        ..
+                    } => {
                         let Some(workspace) = editor.workspace() else {
                             return;
                         };
@@ -2093,8 +2147,8 @@ impl Editor {
                                         p.update(cx, |pane, _| {
                                             pane.nav_history_mut().rename_item(
                                                 entity_id,
-                                                project_path.clone(),
-                                                abs_path.clone().into(),
+                                                new_project_path.clone(),
+                                                new_abs_path.clone().into(),
                                             );
                                         })
                                     });
@@ -2167,22 +2221,49 @@ impl Editor {
                     _ => {}
                 },
             ));
+            project_subscriptions.push(cx.observe(
+                &project.read(cx).bookmark_store(),
+                |_, _, cx| {
+                    cx.notify();
+                },
+            ));
             let git_store = project.read(cx).git_store().clone();
             let project = project.clone();
-            project_subscriptions.push(cx.subscribe(&git_store, move |this, _, event, cx| {
-                if let GitStoreEvent::RepositoryAdded = event {
-                    this.load_diff_task = Some(
-                        update_uncommitted_diff_for_buffer(
-                            cx.entity(),
-                            &project,
-                            this.buffer.read(cx).all_buffers(),
-                            this.buffer.clone(),
-                            cx,
-                        )
-                        .shared(),
-                    );
-                }
-            }));
+            project_subscriptions.push(cx.subscribe(
+                &git_store,
+                move |this, git_store, event, cx| {
+                    let buffers = match event {
+                        GitStoreEvent::RepositoryAdded | GitStoreEvent::DiffBaseChanged(None) => {
+                            this.buffer.read(cx).all_buffers()
+                        }
+                        GitStoreEvent::DiffBaseChanged(Some(repo_id)) => this
+                            .buffer
+                            .read(cx)
+                            .all_buffers()
+                            .into_iter()
+                            .filter(|buffer| {
+                                git_store
+                                    .read(cx)
+                                    .repository_and_path_for_buffer_id(
+                                        buffer.read(cx).remote_id(),
+                                        cx,
+                                    )
+                                    .is_some_and(|(repo, _)| repo.read(cx).id == *repo_id)
+                            })
+                            .collect(),
+                        _ => return,
+                    };
+                    if buffers.is_empty() {
+                        return;
+                    }
+                    let task = this.update_uncommitted_diff_for_buffer(&project, buffers, cx);
+                    if matches!(event, GitStoreEvent::DiffBaseChanged(Some(_))) {
+                        task.detach();
+                    } else {
+                        this.load_diff_task = Some(task.shared());
+                    }
+                },
+            ));
         }
 
         let buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
@@ -2221,18 +2302,7 @@ impl Editor {
         };
 
         let mut code_action_providers = Vec::new();
-        let mut load_uncommitted_diff = None;
         if let Some(project) = project.clone() {
-            load_uncommitted_diff = Some(
-                update_uncommitted_diff_for_buffer(
-                    cx.entity(),
-                    &project,
-                    multi_buffer.read(cx).all_buffers(),
-                    multi_buffer.clone(),
-                    cx,
-                )
-                .shared(),
-            );
             code_action_providers.push(Rc::new(project) as Rc<_>);
         }
 
@@ -2270,6 +2340,7 @@ impl Editor {
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
             blink_manager: blink_manager.clone(),
+            cursor_animations: CursorAnimationStates::default(),
             show_local_selections: true,
             show_scrollbars: ScrollbarAxes {
                 horizontal: full_mode,
@@ -2279,6 +2350,7 @@ impl Editor {
             offset_content: !matches!(mode, EditorMode::SingleLine),
             breadcrumbs_visibility: BreadcrumbsVisibility::from_settings(cx),
             show_gutter: full_mode,
+            search_results_hold: None,
             show_line_numbers: (!full_mode).then_some(false),
             use_relative_line_numbers: None,
             disable_expand_excerpt_buttons: !full_mode,
@@ -2328,6 +2400,7 @@ impl Editor {
             document_highlights_task: None,
             linked_editing_range_task: None,
             pending_rename: None,
+            pending_inline_input: None,
             searchable: !is_minimap,
             cursor_shape: EditorSettings::get_global(cx)
                 .cursor_shape
@@ -2400,6 +2473,8 @@ impl Editor {
             pending_blame_hover_observation: None,
 
             bookmark_store,
+            bookmarks_tab_state: None,
+            bookmarks_tab_subscription: None,
             breakpoint_store,
             gutter_hover_button: (None, None),
             gutter_diff_review_indicator: (None, None),
@@ -2440,14 +2515,16 @@ impl Editor {
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: Default::default(),
             registered_buffers: HashMap::default(),
+            language_detection_task: Task::ready(()),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
             serialize_selections: Task::ready(()),
             serialize_folds: Task::ready(()),
             text_style_refinement: None,
-            load_diff_task: load_uncommitted_diff,
-            diff_hunk_delegate: None,
+            load_diff_task: None,
+            diff_hunk_renderer: None,
+            diff_hunk_action_target: None,
             minimap: None,
             change_list: ChangeList::new(),
             mode,
@@ -2472,6 +2549,18 @@ impl Editor {
             sticky_headers: None,
             colorize_brackets_task: Task::ready(()),
         };
+
+        if let Some(project) = editor.project.clone() {
+            editor.load_diff_task = Some(
+                editor
+                    .update_uncommitted_diff_for_buffer(
+                        &project,
+                        multi_buffer.read(cx).all_buffers(),
+                        cx,
+                    )
+                    .shared(),
+            );
+        }
 
         if is_minimap {
             return editor;
@@ -2661,6 +2750,9 @@ impl Editor {
         if self.pending_rename.is_some() {
             key_context.add("renaming");
         }
+        if self.pending_inline_input.is_some() {
+            key_context.add("inline_input");
+        }
 
         if let Some(snippet_stack) = self.snippet_stack.last() {
             key_context.add("in_snippet");
@@ -2737,6 +2829,9 @@ impl Editor {
         }
 
         let disjoint = self.selections.disjoint_anchors();
+        if disjoint.len() > 1 {
+            key_context.add("multiple_selections");
+        }
         if matches!(
             &self.mode,
             EditorMode::SingleLine | EditorMode::AutoHeight { .. }
@@ -2758,6 +2853,14 @@ impl Editor {
 
         if self.has_any_expanded_diff_hunks(cx) {
             key_context.add("diffs_expanded");
+        }
+
+        if self
+            .nav_history
+            .as_ref()
+            .is_some_and(ItemNavHistory::is_preview_item)
+        {
+            key_context.add("in_preview");
         }
 
         key_context
@@ -2850,6 +2953,9 @@ impl Editor {
 
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
+            buffer.update(cx, |buffer, _| {
+                buffer.set_content_language_detection_enabled(true);
+            });
             workspace.update_in(cx, |workspace, window, cx| {
                 let editor =
                     cx.new(|cx| Editor::for_buffer(buffer, Some(project.clone()), window, cx));
@@ -2897,6 +3003,9 @@ impl Editor {
 
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
+            buffer.update(cx, |buffer, _| {
+                buffer.set_content_language_detection_enabled(true);
+            });
             workspace.update_in(cx, move |workspace, window, cx| {
                 workspace.split_item(
                     direction,
@@ -2986,6 +3095,9 @@ impl Editor {
             mode: self.mode.clone(),
             show_gutter: self.show_gutter,
             offset_content: self.offset_content,
+            sticky_line_number_digits: self
+                .search_results_hold
+                .map_or(0, |hold| hold.min_line_number_digits),
             show_line_numbers: self.show_line_numbers,
             number_deleted_lines: self.number_deleted_lines,
             show_git_diff_gutter: self.show_git_diff_gutter,
@@ -3001,7 +3113,6 @@ impl Editor {
                 .placeholder_display_map
                 .as_ref()
                 .map(|display_map| display_map.update(cx, |map, cx| map.snapshot(cx))),
-            ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             is_focused: self.focus_handle.is_focused(window),
             current_line_highlight: self
                 .current_line_highlight
@@ -3044,6 +3155,76 @@ impl Editor {
 
     pub fn set_in_project_search(&mut self, in_project_search: bool) {
         self.in_project_search = in_project_search;
+    }
+
+    pub fn set_search_results_status(
+        &mut self,
+        status: SearchResultsStatus,
+        cx: &mut Context<Self>,
+    ) {
+        let hold = self.search_results_hold.get_or_insert_default();
+        let previous = mem::replace(&mut hold.status, status);
+        let results_became_current = previous.results_stale && !status.results_stale;
+        let search_settled = previous.pending && !status.pending;
+        let allow_shrink = !status.results_stale
+            && (self.buffer.read(cx).read(cx).is_empty()
+                || status.query_confirmed && (results_became_current || search_settled));
+        self.fit_gutter_line_number_width(allow_shrink, cx);
+        if previous != status {
+            cx.notify();
+        }
+    }
+
+    /// Shrinks the sticky gutter width down to fit the current content and keeps latching from
+    /// there, so a settled search snaps to its real width instead of staying stuck at the widest
+    /// line number seen mid-typing.
+    fn fit_gutter_line_number_width(&mut self, allow_shrink: bool, cx: &mut Context<Self>) {
+        let Some(hold) = &mut self.search_results_hold else {
+            return;
+        };
+        let digits = {
+            let snapshot = self.buffer.read(cx).read(cx);
+            if snapshot.is_empty() {
+                0
+            } else {
+                (snapshot.widest_line_number().max(1).ilog10() + 1) as usize
+            }
+        };
+        if hold.min_line_number_digits < digits
+            || allow_shrink && hold.min_line_number_digits != digits
+        {
+            hold.min_line_number_digits = digits;
+            cx.notify();
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn search_results_hold(&self) -> Option<SearchResultsHold> {
+        self.search_results_hold
+    }
+
+    fn frozen_scroll_range(
+        &mut self,
+        is_rewrapping: bool,
+        current_range: Size<Pixels>,
+        current_editor_width: Pixels,
+        current_editor_bounds_size: Size<Pixels>,
+    ) -> Option<SettledScrollRange> {
+        let hold = self.search_results_hold.as_mut()?;
+        let current = SettledScrollRange {
+            range: current_range,
+            editor_width: current_editor_width,
+            editor_bounds_size: current_editor_bounds_size,
+        };
+        if !hold.status.pending && !is_rewrapping {
+            hold.settled_scroll_range = Some(current);
+            return None;
+        }
+        let settled = hold.settled_scroll_range.get_or_insert(current);
+        if settled.editor_bounds_size != current_editor_bounds_size {
+            *settled = current;
+        }
+        Some(*settled)
     }
 
     pub fn set_custom_context_menu(
@@ -3252,6 +3433,21 @@ impl Editor {
         });
     }
 
+    pub fn edit_before_with_autoindent<I, S, T>(&mut self, edits: I, cx: &mut Context<Self>)
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        if self.read_only(cx) {
+            return;
+        }
+
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.edit_before(edits, self.autoindent_mode.clone(), cx)
+        });
+    }
+
     pub fn edit_with_block_indent<I, S, T>(
         &mut self,
         edits: I,
@@ -3289,7 +3485,12 @@ impl Editor {
             cx.notify();
             return;
         }
-        if self.show_git_blame_gutter {
+        if self.show_git_blame_gutter
+            && !self
+                .blame
+                .as_ref()
+                .is_some_and(|blame| blame.read(cx).is_static())
+        {
             self.show_git_blame_gutter = false;
             cx.notify();
             return;
@@ -3314,6 +3515,7 @@ impl Editor {
         let mut dismissed = false;
 
         dismissed |= self.take_rename(false, window, cx).is_some();
+        dismissed |= self.take_inline_input(window, cx).is_some();
         dismissed |= self.hide_blame_popover(true, cx);
         dismissed |= hide_hover(self, cx);
         dismissed |= self.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
@@ -3489,7 +3691,7 @@ impl Editor {
 
         let provider = self.semantics_provider.clone()?;
         let buffer = self.buffer.read(cx);
-        let newest_selection = self.selections.newest_anchor().clone();
+        let newest_selection = *self.selections.newest_anchor();
         let cursor_position = newest_selection.head();
         let (cursor_buffer, cursor_buffer_position) =
             buffer.text_anchor_for_position(cursor_position, cx)?;
@@ -4151,6 +4353,7 @@ impl Editor {
     fn gutter_context_menu(
         &self,
         anchor: Anchor,
+        display_row: DisplayRow,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
@@ -4213,6 +4416,15 @@ impl Editor {
         };
         let has_bookmark = bookmark.as_ref().is_some();
 
+        let clear_runnable_task_status = self
+            .runnable_task_key_for_display_row(display_row, window, cx)
+            .filter(|(buffer_id, buffer_row)| {
+                matches!(
+                    self.runnable_task_status(*buffer_id, *buffer_row),
+                    Some(RunnableTaskStatus::Passed | RunnableTaskStatus::Failed)
+                )
+            });
+
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
         let toggle_state_entry: Option<(&str, Box<dyn Action>)> =
@@ -4231,6 +4443,22 @@ impl Editor {
         ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
+                .when_some(
+                    clear_runnable_task_status,
+                    |this, (buffer_id, buffer_row)| {
+                        this.entry("Clear Run Status", None, {
+                            let weak_editor = weak_editor.clone();
+                            move |_window, cx| {
+                                weak_editor
+                                    .update(cx, |this, cx| {
+                                        this.clear_runnable_task_status(buffer_id, buffer_row, cx);
+                                    })
+                                    .log_err();
+                            }
+                        })
+                        .separator()
+                    },
+                )
                 .when(run_to_cursor, |this| {
                     let weak_editor = weak_editor.clone();
                     this.entry(
@@ -4693,6 +4921,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        self.insert_snippet_with_autoindent(
+            insertion_ranges,
+            snippet,
+            Some(AutoindentMode::Block {
+                original_indent_columns: Vec::new(),
+            }),
+            window,
+            cx,
+        )
+    }
+
+    pub(crate) fn insert_snippet_with_autoindent(
+        &mut self,
+        insertion_ranges: &[Range<MultiBufferOffset>],
+        snippet: Snippet,
+        autoindent_mode: Option<AutoindentMode>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         struct Tabstop<T> {
             is_end_tabstop: bool,
             ranges: Vec<Range<T>>,
@@ -4705,10 +4952,7 @@ impl Editor {
                 .iter()
                 .cloned()
                 .map(|range| (range, snippet_text.clone()));
-            let autoindent_mode = AutoindentMode::Block {
-                original_indent_columns: Vec::new(),
-            };
-            buffer.edit(edits, Some(autoindent_mode), cx);
+            buffer.edit(edits, autoindent_mode, cx);
 
             let snapshot = &*buffer.read(cx);
             let snippet = &snippet;
@@ -5546,20 +5790,21 @@ impl Editor {
                             .collect::<String>();
 
                         if !line_text_after_indent.is_empty() {
-                            let block_prefix = language_scope
+                            let block_prefixes = language_scope
                                 .block_comment()
-                                .map(|c| c.prefix.as_ref())
-                                .filter(|p| !p.is_empty());
-                            let doc_prefix = language_scope
-                                .documentation_comment()
-                                .map(|c| c.prefix.as_ref())
-                                .filter(|p| !p.is_empty());
+                                .into_iter()
+                                .chain(language_scope.documentation_comment())
+                                .filter(|comment| {
+                                    language_scope.override_name() == Some("comment")
+                                        && !comment.prefix.is_empty()
+                                        && !line_text_after_indent.starts_with(comment.end.as_ref())
+                                })
+                                .map(|comment| comment.prefix.as_ref());
                             let comment_prefixes = language_scope
                                 .line_comment_prefixes()
                                 .iter()
                                 .map(|p| p.as_ref())
-                                .chain(block_prefix)
-                                .chain(doc_prefix)
+                                .chain(block_prefixes)
                                 .map(|prefix| (prefix, false));
                             let all_prefixes = comment_prefixes.chain(
                                 language_scope
@@ -5831,13 +6076,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let source = self
-            .buffer
-            .read(cx)
-            .snapshot(cx)
-            .anchor_before(Point::new(display_row.0, 0u32));
+        let display_snapshot = self.display_snapshot(cx);
+        let display_point = display_row.as_display_point();
+        let source = display_snapshot.display_point_to_anchor(display_point, Bias::Left);
+        let anchor = position.unwrap_or(source);
 
-        let context_menu = self.gutter_context_menu(position.unwrap_or(source), window, cx);
+        // Every entry in this menu either requires a worktree-file-backed buffer
+        // (breakpoints, bookmarks, run to cursor) or is meaningless without one
+        // (git blame), so don't open it for e.g. untitled buffers.
+        if !display_snapshot
+            .buffer_snapshot()
+            .anchor_to_buffer_anchor(anchor)
+            .is_some_and(|(_, buffer_snapshot)| {
+                project::File::from_dyn(buffer_snapshot.file()).is_some()
+            })
+        {
+            return;
+        }
+
+        let context_menu = self.gutter_context_menu(anchor, display_row, window, cx);
 
         self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
             self,
@@ -6170,10 +6427,33 @@ impl Editor {
         }
 
         let display_snapshot = self.display_snapshot(cx);
+        let text_layout_details = self.text_layout_details(window, cx);
+
+        let font_id = text_layout_details
+            .text_system
+            .resolve_font(&text_layout_details.editor_style.text.font());
+        let font_size = text_layout_details
+            .editor_style
+            .text
+            .font_size
+            .to_pixels(text_layout_details.rem_size);
+        let Ok(space_width) = text_layout_details
+            .text_system
+            .advance(font_id, font_size, ' ')
+            .map(|advance| advance.width)
+        else {
+            return;
+        };
+        if space_width <= px(0.) {
+            return;
+        }
+        let buffer_snapshot = display_snapshot.buffer_snapshot();
+        let tab_size = display_snapshot.tab_snapshot().tab_size.get();
 
         struct CursorData {
             anchor: Anchor,
-            point: Point,
+            row: u32,
+            x: Pixels,
         }
         let cursor_data: Vec<CursorData> = self
             .selections
@@ -6185,29 +6465,50 @@ impl Editor {
                 } else {
                     selection.tail()
                 };
+                let point = anchor.to_point(buffer_snapshot);
+                let mut prefix = String::new();
+                let mut column = 0;
+                for chunk in buffer_snapshot.text_for_range(Point::new(point.row, 0)..point) {
+                    for ch in chunk.chars() {
+                        if ch == '\t' {
+                            let tab_len = tab_size - column % tab_size;
+                            prefix.extend(iter::repeat_n(' ', tab_len as usize));
+                            column += tab_len;
+                        } else {
+                            prefix.push(ch);
+                            column += 1;
+                        }
+                    }
+                }
+                let run = text_layout_details.editor_style.text.to_run(prefix.len());
+                let x = text_layout_details
+                    .text_system
+                    .layout_line(&prefix, font_size, &[run], None)
+                    .width;
                 CursorData {
-                    anchor: anchor,
-                    point: anchor.to_point(&display_snapshot.buffer_snapshot()),
+                    anchor,
+                    row: point.row,
+                    x,
                 }
             })
             .collect();
 
         let rows_anchors_count: Vec<usize> = cursor_data
             .iter()
-            .map(|cursor| cursor.point.row)
+            .map(|cursor| cursor.row)
             .chunk_by(|&row| row)
             .into_iter()
             .map(|(_, group)| group.count())
             .collect();
         let max_columns = rows_anchors_count.iter().max().copied().unwrap_or(0);
-        let mut rows_column_offset = vec![0; rows_anchors_count.len()];
+        let mut rows_x_offset = vec![px(0.); rows_anchors_count.len()];
         let mut edits = Vec::new();
 
         for column_idx in 0..max_columns {
             let mut cursor_index = 0;
 
-            // Calculate target_column => position that the selections will go
-            let mut target_column = 0;
+            // Calculate target_x => position that the selections will go
+            let mut target_x = px(0.);
             for (row_idx, cursor_count) in rows_anchors_count.iter().enumerate() {
                 // Skip rows that don't have this column
                 if column_idx >= *cursor_count {
@@ -6215,10 +6516,9 @@ impl Editor {
                     continue;
                 }
 
-                let point = &cursor_data[cursor_index + column_idx].point;
-                let adjusted_column = point.column + rows_column_offset[row_idx];
-                if adjusted_column > target_column {
-                    target_column = adjusted_column;
+                let adjusted_x = cursor_data[cursor_index + column_idx].x + rows_x_offset[row_idx];
+                if adjusted_x > target_x {
+                    target_x = adjusted_x;
                 }
                 cursor_index += cursor_count;
             }
@@ -6232,15 +6532,15 @@ impl Editor {
                     continue;
                 }
 
-                let point = &cursor_data[cursor_index + column_idx].point;
-                let spaces_needed = target_column - point.column - rows_column_offset[row_idx];
+                let cursor = &cursor_data[cursor_index + column_idx];
+                let spaces_needed = ((target_x - cursor.x - rows_x_offset[row_idx]) / space_width)
+                    .round()
+                    .max(0.) as u32;
                 if spaces_needed > 0 {
-                    let anchor = cursor_data[cursor_index + column_idx]
-                        .anchor
-                        .bias_left(&display_snapshot);
+                    let anchor = cursor.anchor.bias_left(&display_snapshot);
                     edits.push((anchor..anchor, " ".repeat(spaces_needed as usize)));
                 }
-                rows_column_offset[row_idx] += spaces_needed;
+                rows_x_offset[row_idx] += space_width * spaces_needed as f32;
 
                 cursor_index += *cursor_count;
             }
@@ -6526,13 +6826,14 @@ impl Editor {
                     .map(|(i, &row)| (row, i))
                     .collect();
 
-                // Compute new line start offsets after rotation (handles CRLF)
-                let newline_len = line_ranges[1].start.0 - line_ranges[0].end.0;
-                let first_line_start = line_ranges[0].start.0;
-                let mut new_line_starts: Vec<usize> = vec![first_line_start];
-                for text in line_texts.iter().take(num_rows - 1) {
-                    let prev_start = *new_line_starts.last().unwrap();
-                    new_line_starts.push(prev_start + text.len() + newline_len);
+                let mut old_line_end = 0;
+                let mut new_line_end = 0;
+                let mut new_line_starts = Vec::new();
+                for (range, text) in line_ranges.iter().zip(&line_texts) {
+                    let line_start = new_line_end + (range.start.0 - old_line_end);
+                    new_line_starts.push(line_start);
+                    old_line_end = range.end.0;
+                    new_line_end = line_start + text.len();
                 }
 
                 let new_selections = selections
@@ -6966,7 +7267,7 @@ impl Editor {
     }
 
     fn convert_text_case(text: &str, case: Case) -> String {
-        text.lines()
+        text.split('\n')
             .map(|line| {
                 let trimmed_start = line.trim_start();
                 let leading = &line[..line.len() - trimmed_start.len()];
@@ -7708,7 +8009,7 @@ impl Editor {
             return None;
         }
         let provider = self.semantics_provider.clone()?;
-        let selection = self.selections.newest_anchor().clone();
+        let selection = *self.selections.newest_anchor();
         let cursor = self.rename_target_anchor(&selection, cx);
         let (cursor_buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
@@ -7732,8 +8033,12 @@ impl Editor {
         drop(snapshot);
 
         Some(cx.spawn_in(window, async move |this, cx| {
-            let rename_range = prepare_rename.await?;
-            if let Some(rename_range) = rename_range {
+            let rename_target = prepare_rename.await?;
+            if let Some(RenameTarget {
+                range: rename_range,
+                language_server_id,
+            }) = rename_target
+            {
                 this.update_in(cx, |this, window, cx| {
                     let snapshot = cursor_buffer.read(cx).snapshot();
                     let rename_buffer_range = rename_range.to_offset(&snapshot);
@@ -7885,6 +8190,7 @@ impl Editor {
                         range,
                         old_name,
                         editor: rename_editor,
+                        language_server_id,
                         block_id,
                     });
                 })?;
@@ -7904,6 +8210,11 @@ impl Editor {
             return None;
         }
         let rename = self.take_rename(false, window, cx)?;
+        let new_name = rename.editor.read(cx).text(cx);
+        if new_name.trim().is_empty() {
+            return Some(Task::ready(Ok(())));
+        }
+
         let workspace = self.workspace()?.downgrade();
         let (buffer, start) = self
             .buffer
@@ -7918,12 +8229,12 @@ impl Editor {
         }
 
         let old_name = rename.old_name;
-        let new_name = rename.editor.read(cx).text(cx);
 
         let rename = self.semantics_provider.as_ref()?.perform_rename(
             &buffer,
             start,
             new_name.clone(),
+            rename.language_server_id,
             cx,
         )?;
 
@@ -8079,8 +8390,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if self.read_only(cx) {
+            return Task::ready(Ok(()));
+        }
         let buffer = self.buffer.clone();
-        let (buffers, target) = match target {
+        let (mut buffers, target) = match target {
             FormatTarget::Buffers(buffers) => (buffers, LspFormatTarget::Buffers),
             FormatTarget::Ranges(selection_ranges) => {
                 let multi_buffer = buffer.read(cx);
@@ -8105,6 +8419,8 @@ impl Editor {
                 (buffers, LspFormatTarget::Ranges(buffer_id_to_ranges))
             }
         };
+
+        buffers.retain(|buffer| !buffer.read(cx).read_only());
 
         let transaction_id_prev = buffer.read(cx).last_transaction_id(cx);
         let selections_prev = transaction_id_prev
@@ -8642,7 +8958,7 @@ impl Editor {
     ) {
         if let Some(file_stem) = self.active_buffer(cx).and_then(|buffer| {
             let file = buffer.read(cx).file()?;
-            file.path().file_stem()
+            Path::new(file.file_name(cx)).file_stem()?.to_str()
         }) {
             cx.write_to_clipboard(ClipboardItem::new_string(file_stem.to_string()));
         }
@@ -8922,7 +9238,7 @@ impl Editor {
     ) -> impl 'a + Iterator<Item = (Range<Anchor>, Hsla)> {
         self.highlighted_rows
             .get(&TypeId::of::<T>())
-            .map_or(&[] as &[_], |vec| vec.as_slice())
+            .map_or(&[] as &[_], |highlights| highlights.as_slice())
             .iter()
             .map(|highlight| (highlight.range.clone(), (highlight.color)(cx)))
     }
@@ -8936,22 +9252,95 @@ impl Editor {
         cx: &mut App,
     ) -> BTreeMap<DisplayRow, LineHighlight> {
         let snapshot = self.snapshot(window, cx);
+        let max_row = snapshot.max_point().row();
+        self.highlighted_display_rows_in_range(
+            Anchor::Min..Anchor::Max,
+            DisplayRow(0)..max_row.next_row(),
+            &snapshot.display_snapshot,
+            cx,
+        )
+    }
+
+    pub fn highlighted_display_rows_in_range(
+        &self,
+        anchor_range: Range<Anchor>,
+        display_row_range: Range<DisplayRow>,
+        snapshot: &DisplaySnapshot,
+        cx: &App,
+    ) -> BTreeMap<DisplayRow, LineHighlight> {
+        if display_row_range.is_empty() {
+            return BTreeMap::default();
+        }
+
+        let buffer_snapshot = snapshot.buffer_snapshot();
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
             .values()
-            .flat_map(|highlighted_rows| highlighted_rows.iter())
+            .flat_map(|highlighted_rows| {
+                let start_index = highlighted_rows.partition_point(|highlight| {
+                    highlight
+                        .range
+                        .end
+                        .cmp(&anchor_range.start, buffer_snapshot)
+                        .is_lt()
+                });
+                let end_index = highlighted_rows.partition_point(|highlight| {
+                    highlight
+                        .range
+                        .start
+                        .cmp(&anchor_range.end, buffer_snapshot)
+                        .is_le()
+                });
+                highlighted_rows[start_index..end_index]
+                    .iter()
+                    .filter(|highlight| {
+                        highlight
+                            .range
+                            .end
+                            .cmp(&anchor_range.start, buffer_snapshot)
+                            .is_ge()
+                            && highlight
+                                .range
+                                .start
+                                .cmp(&anchor_range.end, buffer_snapshot)
+                                .is_le()
+                    })
+            })
             .fold(
                 BTreeMap::<DisplayRow, LineHighlight>::new(),
                 |mut unique_rows, highlight| {
-                    let start = highlight.range.start.to_display_point(&snapshot);
-                    let end = highlight.range.end.to_display_point(&snapshot);
-                    let start_row = start.row().0;
-                    let end_row = if !highlight.range.end.is_max() && end.column() == 0 {
+                    let start = highlight.range.start.to_display_point(snapshot);
+                    let end = highlight.range.end.to_display_point(snapshot);
+                    let start_row = start.row().0.max(display_row_range.start.0);
+                    let mut end_row = if !highlight.range.end.is_max() && end.column() == 0 {
                         end.row().0.saturating_sub(1)
                     } else {
                         end.row().0
                     };
+                    end_row = end_row.min(display_row_range.end.0.saturating_sub(1));
+                    if start_row > end_row {
+                        return unique_rows;
+                    }
+                    let mut header_rows = snapshot
+                        .blocks_in_range(
+                            DisplayRow(start_row)..DisplayRow(end_row.saturating_add(1)),
+                        )
+                        .filter(|(_, block)| block.is_header())
+                        .map(|(block_row, block)| {
+                            block_row.0..block_row.0.saturating_add(block.height())
+                        })
+                        .peekable();
                     for row in start_row..=end_row {
+                        while header_rows
+                            .next_if(|header_range| header_range.end <= row)
+                            .is_some()
+                        {}
+                        if header_rows
+                            .peek()
+                            .is_some_and(|header_range| header_range.contains(&row))
+                        {
+                            continue;
+                        }
                         let used_index =
                             used_highlight_orders.entry(row).or_insert(highlight.index);
                         if highlight.index >= *used_index {
@@ -9537,6 +9926,7 @@ impl Editor {
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
+                self.fit_gutter_line_number_width(false, cx);
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions_for_selection(window, cx);
                 self.refresh_single_line_folds(window, cx);
@@ -9556,8 +9946,9 @@ impl Editor {
                         cx.emit(EditorEvent::TitleChanged);
                     }
 
+                    let buffer_id = buffer.read(cx).remote_id();
+
                     if self.project.is_some() {
-                        let buffer_id = buffer.read(cx).remote_id();
                         self.register_buffer(buffer_id, cx);
                         self.update_lsp_data(Some(buffer_id), window, cx);
                         self.refresh_inlay_hints(
@@ -9565,6 +9956,8 @@ impl Editor {
                             cx,
                         );
                     }
+
+                    self.detect_buffer_language(buffer_id, cx);
                 }
 
                 cx.emit(EditorEvent::BufferEdited);
@@ -9590,16 +9983,10 @@ impl Editor {
                 self.refresh_document_highlights(cx);
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none()
-                    && let Some(project) = &self.project
+                    && let Some(project) = self.project.clone()
                 {
-                    update_uncommitted_diff_for_buffer(
-                        cx.entity(),
-                        project,
-                        [buffer.clone()],
-                        self.buffer.clone(),
-                        cx,
-                    )
-                    .detach();
+                    self.update_uncommitted_diff_for_buffer(&project, [buffer.clone()], cx)
+                        .detach();
                 }
                 self.register_visible_buffers(cx);
                 self.update_lsp_data(Some(buffer_id), window, cx);
@@ -9668,16 +10055,38 @@ impl Editor {
                 if !is_fresh_language {
                     self.registered_buffers.remove(&buffer_id);
                 }
+                // No event exists for a buffer detaching from a language server: a switch
+                // to a language with no server emits neither LanguageServerRemoved nor
+                // LanguageServerBufferRegistered, so the language change itself is the only
+                // signal that this buffer's server set changed. Run the same LSP data sweep
+                // as those events do, or hints and colors from the old server stay visible.
+                if self.project.is_some() {
+                    self.register_buffer(*buffer_id, cx);
+                    self.invalidate_semantic_tokens(Some(*buffer_id));
+                    self.update_lsp_data(Some(*buffer_id), window, cx);
+                    self.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
+                }
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
                 self.update_edit_prediction_settings(cx);
                 cx.notify();
+            }
+            multi_buffer::Event::SettingsChanged => {
+                let new_language_settings = self.fetch_applicable_language_settings(cx);
+                if new_language_settings != self.applicable_language_settings {
+                    self.applicable_language_settings = new_language_settings;
+                    cx.notify();
+                }
             }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
             multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
             multi_buffer::Event::FileHandleChanged => {
                 cx.emit(EditorEvent::TitleChanged);
                 cx.emit(EditorEvent::FileHandleChanged);
+            }
+            multi_buffer::Event::CapabilityChanged => {
+                cx.emit(EditorEvent::CapabilityChanged);
+                cx.notify();
             }
             multi_buffer::Event::Reloaded | multi_buffer::Event::BufferDiffChanged => {
                 cx.emit(EditorEvent::TitleChanged)
@@ -9728,7 +10137,8 @@ impl Editor {
                     .into_iter()
                     .flatten(),
             )
-            .flat_map(|accent| accent.0.clone().map(SharedString::from))
+            .flat_map(|accent| accent.0.as_ref().map(|c| c.to_string()))
+            .map(SharedString::from)
             .collect();
 
         Some(AccentData {
@@ -9740,7 +10150,7 @@ impl Editor {
     fn fetch_applicable_language_settings(
         &self,
         cx: &App,
-    ) -> HashMap<Option<LanguageName>, LanguageSettings> {
+    ) -> HashMap<Option<LanguageName>, Arc<LanguageSettings>> {
         if !self.mode.is_full() {
             return HashMap::default();
         }
@@ -9751,7 +10161,7 @@ impl Editor {
                 let buffer = buffer.read(cx);
                 let language = buffer.language().map(|language| language.name());
                 if let hash_map::Entry::Vacant(v) = acc.entry(language) {
-                    v.insert(LanguageSettings::for_buffer(&buffer, cx).into_owned());
+                    v.insert(LanguageSettings::for_buffer(buffer, cx));
                 }
                 acc
             },
@@ -9853,6 +10263,7 @@ impl Editor {
             if language_settings_changed {
                 self.clear_disabled_lsp_folding_ranges(window, cx);
                 self.refresh_document_symbols(None, cx);
+                self.refresh_outline_symbols_at_cursor(cx);
             }
 
             if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
@@ -9900,7 +10311,7 @@ impl Editor {
                 .update_rules(new_semantic_token_rules);
             if language_settings_changed || semantic_token_rules_changed {
                 self.invalidate_semantic_tokens(None);
-                self.refresh_semantic_tokens(None, None, cx);
+                self.refresh_semantic_tokens(None, false, cx);
             }
         }
 
@@ -9919,7 +10330,7 @@ impl Editor {
         }
 
         self.invalidate_semantic_tokens(None);
-        self.refresh_semantic_tokens(None, None, cx);
+        self.refresh_semantic_tokens(None, false, cx);
         self.refresh_outline_symbols_at_cursor(cx);
     }
 
@@ -10140,7 +10551,7 @@ impl Editor {
                                 let allow_new_preview = PreviewTabsSettings::get_global(cx)
                                     .enable_preview_from_multibuffer;
                                 workspace.open_project_item::<Self>(
-                                    pane.clone(),
+                                    split.then_some(pane.clone()),
                                     buffer,
                                     true,
                                     true,
@@ -10386,6 +10797,7 @@ impl Editor {
     }
 
     fn handle_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cursor_animations.clear();
         cx.emit(EditorEvent::Focused);
 
         if let Some(descendant) = self
@@ -10450,6 +10862,7 @@ impl Editor {
     }
 
     pub fn handle_blur(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cursor_animations.clear();
         self.blink_manager.update(cx, BlinkManager::disable);
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
@@ -10492,14 +10905,25 @@ impl Editor {
         &mut self,
         listener: impl Fn(&A, &mut Window, &mut App) + 'static,
     ) -> Subscription {
+        self.register_action_erased(
+            TypeId::of::<A>(),
+            Arc::new(move |action, window, cx| {
+                listener(action.downcast_ref().unwrap(), window, cx)
+            }),
+        )
+    }
+
+    fn register_action_erased(
+        &mut self,
+        action_type: TypeId,
+        listener: Arc<dyn Fn(&dyn Any, &mut Window, &mut App)>,
+    ) -> Subscription {
         let id = self.next_editor_action_id.post_inc();
-        let listener = Arc::new(listener);
         self.editor_actions.borrow_mut().insert(
             id,
             Box::new(move |_, window, _| {
                 let listener = listener.clone();
-                window.on_action(TypeId::of::<A>(), move |action, phase, window, cx| {
-                    let action = action.downcast_ref().unwrap();
+                window.on_action(action_type, move |action, phase, window, cx| {
                     if phase == DispatchPhase::Bubble {
                         listener(action, window, cx)
                     }
@@ -10566,10 +10990,14 @@ impl Editor {
     ) -> Option<gpui::Point<Pixels>> {
         let line_height = self.style(cx).text.line_height_in_pixels(window.rem_size());
         let text_layout_details = self.text_layout_details(window, cx);
-        let scroll_top = text_layout_details
+        let mut scroll_top = text_layout_details
             .scroll_anchor
             .scroll_position(editor_snapshot)
             .y;
+        if !line_height.is_zero() {
+            scroll_top =
+                window.pixel_snap_f64(scroll_top * f64::from(line_height)) / f64::from(line_height);
+        }
 
         if source.row().as_f64() < scroll_top.floor() {
             return None;
@@ -10793,7 +11221,7 @@ impl Editor {
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
 
-    fn lsp_data_enabled(&self) -> bool {
+    pub(crate) fn lsp_data_enabled(&self) -> bool {
         self.enable_lsp_data && self.mode().is_full()
     }
 
@@ -10810,12 +11238,61 @@ impl Editor {
         if let Some(buffer_id) = for_buffer {
             self.pull_diagnostics(buffer_id, window, cx);
         }
-        self.refresh_semantic_tokens(for_buffer, None, cx);
+        self.refresh_semantic_tokens(for_buffer, false, cx);
         self.refresh_document_colors(for_buffer, window, cx);
         self.refresh_document_links(for_buffer, cx);
         self.refresh_folding_ranges(for_buffer, window, cx);
         self.refresh_code_lenses(for_buffer, window, cx);
         self.refresh_document_symbols(for_buffer, cx);
+    }
+
+    fn is_eligible_for_language_detection(buffer: &Buffer) -> bool {
+        buffer.file().is_none()
+            && buffer.content_language_detection_enabled()
+            && buffer.len() >= MIN_LANGUAGE_DETECTION_LEN
+    }
+
+    fn detect_buffer_language(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        self.language_detection_task = Task::ready(());
+        if !EditorSettings::get_global(cx).language_detection {
+            return;
+        }
+        let Some(buffer_entity) = self.buffer().read(cx).buffer(buffer_id) else {
+            return;
+        };
+        let buffer = buffer_entity.read(cx);
+        if !Self::is_eligible_for_language_detection(buffer) {
+            return;
+        }
+        self.language_detection_task = cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .timer(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT)
+                .await;
+            let Some((buffer_snapshot, language_registry)) =
+                buffer_entity.read_with(cx, |buffer, cx| {
+                    if !EditorSettings::get_global(cx).language_detection
+                        || !Self::is_eligible_for_language_detection(buffer)
+                    {
+                        return None;
+                    }
+                    Some((buffer.snapshot(), buffer.language_registry()?))
+                })
+            else {
+                return;
+            };
+            let buffer_version = buffer_snapshot.version().clone();
+            let detected_language =
+                cx.update(|cx| detect_language(buffer_snapshot, language_registry, cx));
+            if let Some(detected_language) = detected_language.await {
+                buffer_entity.update(cx, |buffer, cx| {
+                    if !buffer.version().changed_since(&buffer_version)
+                        && Self::is_eligible_for_language_detection(buffer)
+                    {
+                        buffer.set_language(Some(detected_language), cx);
+                    }
+                });
+            }
+        });
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
@@ -10905,16 +11382,12 @@ impl Editor {
     }
 
     fn breadcrumbs_inner(&self, cx: &App) -> Option<Vec<HighlightedText>> {
-        let multibuffer = self.buffer().read(cx);
-        let is_singleton = multibuffer.is_singleton();
-        let (buffer_id, symbols) = self.outline_symbols_at_cursor.as_ref()?;
-        let buffer = multibuffer.buffer(*buffer_id)?;
-
-        let buffer = buffer.read(cx);
+        let multi_buffer = self.buffer().read(cx);
         // In a multi-buffer layout, we don't want to include the filename in the breadcrumbs
-        let mut breadcrumbs = if is_singleton {
+        let mut breadcrumbs = if let Some(buffer) = multi_buffer.as_singleton() {
             let text = self.breadcrumb_header.clone().unwrap_or_else(|| {
                 buffer
+                    .read(cx)
                     .snapshot()
                     .resolve_file_path(
                         self.project
@@ -10923,27 +11396,30 @@ impl Editor {
                             .unwrap_or_default(),
                         cx,
                     )
-                    .unwrap_or_else(|| {
-                        if multibuffer.is_singleton() {
-                            multibuffer.title(cx).to_string()
-                        } else {
-                            MultiBuffer::DEFAULT_TITLE.to_string()
-                        }
-                    })
+                    .unwrap_or_else(|| multi_buffer.title(cx).to_string())
             });
             vec![HighlightedText {
                 text: text.into(),
                 highlights: vec![],
             }]
         } else {
-            vec![]
+            Vec::new()
         };
 
-        breadcrumbs.extend(symbols.iter().map(|symbol| HighlightedText {
-            text: symbol.text.clone(),
-            highlights: symbol.highlight_ranges.clone(),
-        }));
-        Some(breadcrumbs)
+        if let Some((buffer_id, symbols)) = self.outline_symbols_at_cursor.as_ref()
+            && multi_buffer.buffer(*buffer_id).is_some()
+        {
+            breadcrumbs.extend(symbols.iter().map(|symbol| HighlightedText {
+                text: symbol.text.clone(),
+                highlights: symbol.highlight_ranges.clone(),
+            }));
+        }
+
+        if breadcrumbs.is_empty() {
+            None
+        } else {
+            Some(breadcrumbs)
+        }
     }
 
     fn disable_lsp_data(&mut self) {
@@ -11226,7 +11702,6 @@ pub trait SemanticsProvider {
     fn semantic_tokens(
         &self,
         buffer: Entity<Buffer>,
-        refresh: Option<RefreshForServer>,
         cx: &mut App,
     ) -> Option<Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>>;
 
@@ -11254,13 +11729,14 @@ pub trait SemanticsProvider {
         buffer: &Entity<Buffer>,
         position: text::Anchor,
         cx: &mut App,
-    ) -> Task<Result<Option<Range<text::Anchor>>>>;
+    ) -> Task<Result<Option<RenameTarget>>>;
 
     fn perform_rename(
         &self,
         buffer: &Entity<Buffer>,
         position: text::Anchor,
         new_name: String,
+        language_server_id: Option<LanguageServerId>,
         cx: &mut App,
     ) -> Option<Task<Result<ProjectTransaction>>>;
 }
@@ -11386,13 +11862,11 @@ impl SemanticsProvider for WeakEntity<Project> {
     fn semantic_tokens(
         &self,
         buffer: Entity<Buffer>,
-        refresh: Option<RefreshForServer>,
         cx: &mut App,
     ) -> Option<Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>> {
         self.update(cx, |this, cx| {
-            this.lsp_store().update(cx, |lsp_store, cx| {
-                lsp_store.semantic_tokens(buffer, refresh, cx)
-            })
+            this.lsp_store()
+                .update(cx, |lsp_store, cx| lsp_store.semantic_tokens(buffer, cx))
         })
         .ok()
     }
@@ -11402,7 +11876,7 @@ impl SemanticsProvider for WeakEntity<Project> {
         buffer: &Entity<Buffer>,
         position: text::Anchor,
         cx: &mut App,
-    ) -> Task<Result<Option<Range<text::Anchor>>>> {
+    ) -> Task<Result<Option<RenameTarget>>> {
         let Some(this) = self.upgrade() else {
             return Task::ready(Ok(None));
         };
@@ -11412,7 +11886,13 @@ impl SemanticsProvider for WeakEntity<Project> {
             let task = project.prepare_rename(buffer.clone(), position, cx);
             cx.spawn(async move |_, cx| {
                 Ok(match task.await? {
-                    PrepareRenameResponse::Success(range) => Some(range),
+                    PrepareRenameResponse::Success {
+                        range,
+                        language_server_id,
+                    } => Some(RenameTarget {
+                        range,
+                        language_server_id,
+                    }),
                     PrepareRenameResponse::InvalidPosition => None,
                     PrepareRenameResponse::OnlyUnpreparedRenameSupported => {
                         // Fallback on using TreeSitter info to determine identifier range
@@ -11422,10 +11902,11 @@ impl SemanticsProvider for WeakEntity<Project> {
                             if kind != Some(CharKind::Word) {
                                 return None;
                             }
-                            Some(
-                                snapshot.anchor_before(range.start)
+                            Some(RenameTarget {
+                                range: snapshot.anchor_before(range.start)
                                     ..snapshot.anchor_after(range.end),
-                            )
+                                language_server_id: None,
+                            })
                         })
                     }
                 })
@@ -11438,10 +11919,11 @@ impl SemanticsProvider for WeakEntity<Project> {
         buffer: &Entity<Buffer>,
         position: text::Anchor,
         new_name: String,
+        language_server_id: Option<LanguageServerId>,
         cx: &mut App,
     ) -> Option<Task<Result<ProjectTransaction>>> {
         self.update(cx, |project, cx| {
-            project.perform_rename(buffer.clone(), position, new_name, cx)
+            project.perform_rename(buffer.clone(), position, new_name, language_server_id, cx)
         })
         .ok()
     }
@@ -11453,14 +11935,14 @@ fn consume_contiguous_rows(
     display_map: &DisplaySnapshot,
     selections: &mut Peekable<std::slice::Iter<Selection<Point>>>,
 ) -> (MultiBufferRow, MultiBufferRow) {
-    contiguous_row_selections.push(selection.clone());
+    contiguous_row_selections.push(*selection);
     let start_row = starting_row(selection, display_map);
     let mut end_row = ending_row(selection, display_map);
 
     while let Some(next_selection) = selections.peek() {
         if next_selection.start.row <= end_row.0 {
             end_row = ending_row(next_selection, display_map);
-            contiguous_row_selections.push(selections.next().unwrap().clone());
+            contiguous_row_selections.push(*selections.next().unwrap());
         } else {
             break;
         }
@@ -11582,8 +12064,10 @@ impl EditorSnapshot {
             let line_gutter_width = if show_line_numbers {
                 // Avoid flicker-like gutter resizes when the line number gains another digit by
                 // only resizing the gutter on files with > 10**min_line_number_digits lines.
-                let min_width_for_number_on_gutter =
-                    ch_advance * gutter_settings.min_line_number_digits as f32;
+                let min_digits = gutter_settings
+                    .min_line_number_digits
+                    .max(self.sticky_line_number_digits);
+                let min_width_for_number_on_gutter = ch_advance * min_digits as f32;
                 self.max_line_number_width(style, window)
                     .max(min_width_for_number_on_gutter)
             } else {
@@ -11820,6 +12304,7 @@ pub enum EditorEvent {
     Blurred,
     DirtyChanged,
     Saved,
+    CapabilityChanged,
     TitleChanged,
     FileHandleChanged,
     SelectionsChanged {

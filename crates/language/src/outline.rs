@@ -1,7 +1,9 @@
-use crate::{BufferSnapshot, Point, ToPoint, ToTreeSitterPoint};
+use crate::{BufferSnapshot, Language, Point, ToPoint, ToTreeSitterPoint};
 use fuzzy_nucleo::{Case, LengthPenalty, StringMatch, StringMatchCandidate};
 use gpui::{BackgroundExecutor, HighlightStyle, SharedString};
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
+use text::Rope;
+use theme::SyntaxTheme;
 
 /// An outline of all the symbols contained in a buffer.
 #[derive(Debug)]
@@ -262,6 +264,16 @@ impl<T> Outline<T> {
     }
 }
 
+pub fn highlight_ranges_from_text(
+    text: &str,
+    language: &Arc<Language>,
+    syntax_theme: &SyntaxTheme,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let rope = Rope::from(text);
+    let runs = language.highlight_text(&rope, 0..text.len());
+    syntax_theme.resolve_runs(&runs).collect()
+}
+
 /// Interleaves synthetic [`OutlineSearchEntry::Ancestor`] rows before each match so callers
 /// can render the parent chain as tree context above the match.
 ///
@@ -413,5 +425,39 @@ mod tests {
         );
         assert_eq!(outline.find_most_similar("struct User"), None);
         assert_eq!(outline.find_most_similar("struct"), None);
+    }
+
+    #[test]
+    fn test_highlight_ranges_from_text() {
+        let language = rust_lang();
+        let keyword = HighlightStyle::color(gpui::Hsla::from(gpui::rgba(0x100000ff)));
+        let type_style = HighlightStyle::color(gpui::Hsla::from(gpui::rgba(0x200000ff)));
+        let theme = SyntaxTheme::new([
+            ("keyword".to_string(), keyword),
+            ("type".to_string(), type_style),
+        ]);
+        language.set_theme(&theme);
+
+        let text = "impl LspCommand for GetIncomingCalls";
+        assert_eq!(
+            highlight_ranges_from_text(text, &language, &theme),
+            vec![
+                (0..4, keyword),
+                (5..15, type_style),
+                (16..19, keyword),
+                (20..36, type_style),
+            ]
+        );
+
+        let text = "pub struct OutlineItem";
+        assert_eq!(
+            highlight_ranges_from_text(text, &language, &theme),
+            vec![(0..3, keyword), (4..10, keyword), (11..22, type_style)]
+        );
+
+        assert_eq!(
+            highlight_ranges_from_text("", &language, &theme),
+            Vec::new()
+        );
     }
 }

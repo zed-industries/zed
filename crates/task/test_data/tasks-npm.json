@@ -1,0 +1,38 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "With env",
+      "type": "npm",
+      "script": "build",
+      "options": {
+        "env": {
+          "NODE_ENV": "production"
+        }
+      }
+    },
+    {
+      "label": "With path",
+      "type": "npm",
+      "script": "build",
+      "path": "packages/components"
+    },
+    {
+      "label": "With cwd",
+      "type": "npm",
+      "script": "build",
+      "options": {
+        "cwd": "${workspaceFolder}/packages/app"
+      }
+    },
+    {
+      "label": "With path and cwd",
+      "type": "npm",
+      "script": "build",
+      "path": "packages/components",
+      "options": {
+        "cwd": "${workspaceFolder}/packages/app"
+      }
+    }
+  ]
+}

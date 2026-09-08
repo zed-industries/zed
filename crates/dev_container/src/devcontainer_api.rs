@@ -58,6 +58,8 @@ pub(crate) struct DevContainerUp {
     pub(crate) extension_ids: Vec<String>,
     #[serde(default)]
     pub(crate) remote_env: HashMap<String, String>,
+    #[serde(default)]
+    pub(crate) started_at: Option<String>,
 }
 
 #[derive(Debug)]

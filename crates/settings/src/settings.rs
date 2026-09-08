@@ -2,6 +2,7 @@ mod base_keymap_setting;
 mod content_into_gpui;
 mod editable_setting_control;
 mod editorconfig_store;
+mod granted_write_path;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
@@ -25,7 +26,6 @@ pub mod private {
 
 use gpui::{App, Global};
 
-use rust_embed::RustEmbed;
 use std::env;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
@@ -37,6 +37,7 @@ pub use editable_setting_control::*;
 pub use editorconfig_store::{
     Editorconfig, EditorconfigEvent, EditorconfigProperties, EditorconfigStore,
 };
+pub use granted_write_path::GrantedWritePath;
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
@@ -115,12 +116,15 @@ impl fmt::Display for WorktreeId {
     }
 }
 
-#[derive(RustEmbed)]
-#[folder = "../../assets"]
-#[include = "settings/*"]
-#[include = "keymaps/*"]
-#[exclude = "*.DS_Store"]
-pub struct SettingsAssets;
+// Dev builds read the checkout's files at runtime instead of embedding them;
+// see the `assets` crate for the rationale.
+util::fs_embed! {
+    pub struct SettingsAssets,
+    crate_relative = "../../assets",
+    root_relative = "assets",
+    include = ["settings/*", "keymaps/*"],
+    exclude = ["*.DS_Store"],
+}
 
 pub fn init(cx: &mut App) {
     let settings = SettingsStore::new(cx, &default_settings());

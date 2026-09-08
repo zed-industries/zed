@@ -61,12 +61,12 @@ For reference content:
 Use `sh` code blocks for terminal commands, not plain backticks:
 
 ```sh
-brew install zed-editor/zed/zed
+brew install --cask zed
 ```
 
 Not:
 ```
-brew install zed-editor/zed/zed
+brew install --cask zed
 ```
 
 For single inline commands in prose, backticks are fine: `zed .`

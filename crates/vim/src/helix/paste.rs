@@ -93,7 +93,7 @@ impl Vim {
                     // Pasting before means pasting before the whole selection.
                     let display_point = if line_mode {
                         if action.before {
-                            movement::line_beginning(&display_map, sel.start, false)
+                            movement::line_beginning(&display_map, sel.start)
                         } else {
                             if sel.start == sel.end {
                                 movement::right(

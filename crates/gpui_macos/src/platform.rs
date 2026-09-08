@@ -7,9 +7,10 @@ use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-        NSControl as _, NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel,
-        NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSAppearanceNameVibrantDark, NSAppearanceNameVibrantLight, NSApplication,
+        NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular, NSControl as _,
+        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSSavePanel,
+        NSVisualEffectState, NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -43,6 +44,7 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
+use objc2::MainThreadMarker;
 use parking_lot::Mutex;
 use ptr::null_mut;
 use semver::Version;
@@ -162,7 +164,7 @@ unsafe fn build_classes() {
     }
 }
 
-pub struct MacPlatform(Mutex<MacPlatformState>);
+pub struct MacPlatform(Mutex<MacPlatformState>, MainThreadMarker);
 
 pub(crate) struct MacPlatformState {
     background_executor: BackgroundExecutor,
@@ -177,7 +179,7 @@ pub(crate) struct MacPlatformState {
     on_thermal_state_change: Option<Box<dyn FnMut()>>,
     on_system_wake: Option<Box<dyn FnMut()>>,
     system_wake_observer_registered: bool,
-    quit: Option<Box<dyn FnMut()>>,
+    quit: Option<Box<dyn FnMut() -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
@@ -194,6 +196,7 @@ pub(crate) struct MacPlatformState {
 
 impl MacPlatform {
     pub fn new(headless: bool) -> Self {
+        let marker = MainThreadMarker::new().expect("Mac platform not created on main thread");
         let dispatcher = Arc::new(MacDispatcher::new());
 
         #[cfg(feature = "font-kit")]
@@ -212,7 +215,7 @@ impl MacPlatform {
         let keyboard_layout = MacKeyboardLayout::new();
         let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
 
-        Self(Mutex::new(MacPlatformState {
+        let state = Mutex::new(MacPlatformState {
             headless,
             text_system,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
@@ -237,7 +240,8 @@ impl MacPlatform {
             keyboard_mapper,
             cursor_visible: Arc::new(AtomicBool::new(true)),
             system_notifications: crate::system_notifications::SystemNotificationState::new(),
-        }))
+        });
+        Self(state, marker)
     }
 
     unsafe fn create_menu_bar(
@@ -536,7 +540,7 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn restart(&self, binary_path: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
         use std::os::unix::process::CommandExt as _;
 
         let app_pid = std::process::id().to_string();
@@ -556,7 +560,13 @@ impl Platform for MacPlatform {
             while kill -0 $0 2> /dev/null; do
                 sleep 0.1
             done
-            open "$1"
+            app_path="$1"
+            shift
+            if (($# > 0)); then
+                open "$app_path" --args "$@"
+            else
+                open "$app_path"
+            fi
         "#;
 
         #[allow(
@@ -568,6 +578,7 @@ impl Platform for MacPlatform {
             .arg(script)
             .arg(app_pid)
             .arg(app_path)
+            .args(arguments)
             .process_group(0)
             .spawn();
 
@@ -666,6 +677,7 @@ impl Platform for MacPlatform {
             foreground_executor,
             background_executor,
             renderer_context,
+            self.1,
         )))
     }
 
@@ -674,6 +686,29 @@ impl Platform for MacPlatform {
             let app = NSApplication::sharedApplication(nil);
             let appearance: id = msg_send![app, effectiveAppearance];
             crate::window_appearance::window_appearance_from_native(appearance)
+        }
+    }
+
+    fn set_window_appearance(&self, appearance: Option<WindowAppearance>) {
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            // `None` clears the override by setting a nil appearance, so the app
+            // falls back to tracking the system-wide light/dark setting.
+            let ns_appearance: id = match appearance {
+                None => nil,
+                Some(appearance) => {
+                    let name: id = match appearance {
+                        WindowAppearance::Light => crate::window_appearance::NSAppearanceNameAqua,
+                        WindowAppearance::Dark => {
+                            crate::window_appearance::NSAppearanceNameDarkAqua
+                        }
+                        WindowAppearance::VibrantLight => NSAppearanceNameVibrantLight,
+                        WindowAppearance::VibrantDark => NSAppearanceNameVibrantDark,
+                    };
+                    msg_send![class!(NSAppearance), appearanceNamed: name]
+                }
+            };
+            let _: () = msg_send![app, setAppearance: ns_appearance];
         }
     }
 
@@ -909,7 +944,7 @@ impl Platform for MacPlatform {
             .detach();
     }
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>) {
         self.0.lock().quit = Some(callback);
     }
 
