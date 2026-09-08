@@ -1198,6 +1198,7 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                 let Some(server_entry) = self.state.servers.get(*server) else {
                     return;
                 };
+                cx.emit(DismissEvent);
                 match server_entry {
                     RemoteEntry::Project {
                         connection, index, ..

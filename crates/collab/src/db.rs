@@ -746,7 +746,6 @@ fn proto_status_to_db(
 
     let (status_kind, first_status, second_status) = status_entry
         .status
-        .clone()
         .and_then(|status| status.variant)
         .map_or(
             (StatusKind::Untracked, None, None),
