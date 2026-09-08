@@ -1091,7 +1091,15 @@ pub(super) fn keystroke_from_xkb(
         _ => {
             let name = xkb::keysym_get_name(key_sym).to_lowercase();
             if key_sym.is_keypad_key() {
-                name.replace("kp_", "")
+                if let Some(digit) = name
+                    .strip_prefix("kp_")
+                    .and_then(|number| number.parse::<u8>().ok())
+                    .filter(|&digit| digit <= 9)
+                {
+                    format!("kp{digit}")
+                } else {
+                    name.replace("kp_", "")
+                }
             } else if let Some(key) = key_utf8.chars().next()
                 && key_utf8.len() == 1
                 && key.is_ascii()
