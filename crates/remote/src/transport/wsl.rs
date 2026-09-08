@@ -568,6 +568,13 @@ impl RemoteConnection for WslRemoteConnection {
         let (command, args) =
             ShellBuilder::new(&Shell::Program(self.shell.clone()), false).build(Some(exec), &[]);
 
+        // `--exec` runs the command without a WSL default shell wrapping the
+        // argv. Passing `--` instead would make wsl.exe join the argv back into
+        // a single command line using Windows quoting rules and hand it to the
+        // distro's default shell for re-interpretation. That extra shell layer
+        // strips single quotes of their literal meaning, so any `$VAR` inside
+        // single quotes (including quotes the layers above already added) gets
+        // expanded despite POSIX quoting.
         let mut wsl_args = if let Some(user) = &self.connection_options.user {
             vec![
                 "--distribution".to_string(),
@@ -576,7 +583,7 @@ impl RemoteConnection for WslRemoteConnection {
                 user.clone(),
                 "--cd".to_string(),
                 working_dir,
-                "--".to_string(),
+                "--exec".to_string(),
                 command,
             ]
         } else {
@@ -585,7 +592,7 @@ impl RemoteConnection for WslRemoteConnection {
                 self.connection_options.distro_name.clone(),
                 "--cd".to_string(),
                 working_dir,
-                "--".to_string(),
+                "--exec".to_string(),
                 command,
             ]
         };
