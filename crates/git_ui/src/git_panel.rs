@@ -2267,12 +2267,17 @@ impl GitPanel {
         let Some(selected_ix) = self.selected_entry else {
             return;
         };
-        let entries = if self.entries[selected_ix].directory_entry().is_some() {
+
+        let Some(list_entry) = self.entries.get(selected_ix) else {
+            return;
+        };
+
+        let entries = if list_entry.directory_entry().is_some() {
             self.directory_descendants(selected_ix)
                 .map(|entries| entries.to_vec())
                 .unwrap_or_default()
         } else {
-            let Some(entry) = self.entries[selected_ix].status_entry() else {
+            let Some(entry) = list_entry.status_entry() else {
                 return;
             };
             vec![entry.clone()]
@@ -2281,35 +2286,45 @@ impl GitPanel {
         self.revert_entries(entries.iter().collect(), action, window, cx);
     }
 
+    /// Returns the repo path and whether it represents a directory for the
+    /// currently selected entry, provided the entry can be added to an ignore
+    /// file.
+    ///
+    /// A file is eligible when its status reports it as newly created. A
+    /// directory is eligible only when all of its descendants are newly created.
+    fn selected_ignorable_path(&self) -> Option<(RepoPath, bool)> {
+        let selected_index = self.selected_entry?;
+        let list_entry = self.entries.get(selected_index)?;
+
+        if let Some(directory) = list_entry.directory_entry() {
+            self.directory_descendants(selected_index)?
+                .iter()
+                .all(|entry| entry.status.is_created())
+                .then(|| (directory.key.path.clone(), true))
+        } else {
+            let entry = list_entry.status_entry()?;
+            entry
+                .status
+                .is_created()
+                .then(|| (entry.repo_path.clone(), false))
+        }
+    }
+
     fn add_to_gitignore(
         &mut self,
         _: &git::AddToGitignore,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(selected_ix) = self.selected_entry else {
+        let Some((repo_path, is_dir)) = self.selected_ignorable_path() else {
             return;
         };
-        let Some(list_entry) = self.entries.get(selected_ix).cloned() else {
-            return;
-        };
+
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
+
         let workspace = self.workspace.clone();
-
-        let (repo_path, is_dir) = if let Some(dir_entry) = list_entry.directory_entry() {
-            (dir_entry.key.path.clone(), true)
-        } else {
-            let Some(entry) = list_entry.status_entry() else {
-                return;
-            };
-            if !entry.status.is_created() {
-                return;
-            }
-            (entry.repo_path.clone(), false)
-        };
-
         let receiver =
             active_repository.update(cx, |repo, _| repo.add_path_to_gitignore(&repo_path, is_dir));
 
@@ -2332,29 +2347,15 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(selected_ix) = self.selected_entry else {
+        let Some((repo_path, is_dir)) = self.selected_ignorable_path() else {
             return;
         };
-        let Some(list_entry) = self.entries.get(selected_ix).cloned() else {
-            return;
-        };
+
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
+
         let workspace = self.workspace.clone();
-
-        let (repo_path, is_dir) = if let Some(dir_entry) = list_entry.directory_entry() {
-            (dir_entry.key.path.clone(), true)
-        } else {
-            let Some(entry) = list_entry.status_entry() else {
-                return;
-            };
-            if !entry.status.is_created() {
-                return;
-            }
-            (entry.repo_path.clone(), false)
-        };
-
         let receiver = active_repository.update(cx, |repo, _| {
             repo.add_path_to_git_info_exclude(&repo_path, is_dir)
         });
@@ -2416,28 +2417,33 @@ impl GitPanel {
                                 .repo_path
                                 .file_name()
                                 .unwrap_or(entry.repo_path.display(path_style).as_ref())
-                        ),
+                        )
                     ),
                     None,
                     &[confirm_text, "Cancel"],
                     cx,
                 ))
             } else {
-                let count = tracked.len() + untracked.len();
+                let (message, confirm_text) = match (tracked.len(), untracked.len()) {
+                    (0, 0) => return Some(()),
+                    (tracked_count, 0) => (
+                        format!("Discard changes to {tracked_count} files?"),
+                        "Discard",
+                    ),
+                    (0, untracked_count) => (format!("Trash {untracked_count} files?"), "Trash"),
+                    (tracked_count, untracked_count) => (
+                        format!(
+                            "Discard changes to {tracked_count} files and trash {untracked_count} files?"
+                        ),
+                        "Discard and Trash",
+                    ),
+                };
 
                 Some(window.prompt(
                     PromptLevel::Warning,
-                    &format!(
-                        "{} {} files?",
-                        if untracked.is_empty() {
-                            "Discard changes to"
-                        } else {
-                            "Discard"
-                        },
-                        count,
-                    ),
+                    &message,
                     None,
-                    &["Discard", "Cancel"],
+                    &[confirm_text, "Cancel"],
                     cx,
                 ))
             };
@@ -7840,17 +7846,14 @@ impl GitPanel {
         else {
             return;
         };
+
         let Some(entries) = self.directory_descendants(ix) else {
             return;
         };
-        // Check whether we need to do the same `resolve_with` call as found in
-        // `deploy_entry_context_menu` as I suspect that, not doing it, means we
-        // can get a wrong label if we have a process that is still staging or
-        // unstaging the folder.
-        let stage_status = if let Some(repo) = &self.active_repository {
-            self.stage_status_for_directory(&entry, repo.read(cx))
-        } else {
-            StageStatus::Unstaged
+
+        let stage_status = match &self.active_repository {
+            Some(repo) => self.stage_status_for_directory(&entry, repo.read(cx)),
+            None => StageStatus::Unstaged,
         };
 
         let all_staged = stage_status.is_fully_staged();
@@ -9508,6 +9511,14 @@ mod tests {
             entry
                 .status_entry()
                 .is_some_and(|entry| &entry.repo_path == repo_path)
+        })
+    }
+
+    fn directory_index_for_repo_path(panel: &GitPanel, repo_path: &RepoPath) -> Option<usize> {
+        panel.entries.iter().position(|entry| {
+            entry
+                .directory_entry()
+                .is_some_and(|entry| &entry.key.path == repo_path)
         })
     }
 
@@ -13798,5 +13809,255 @@ mod tests {
                 Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
             ],
         );
+    }
+
+    #[gpui::test]
+    async fn test_add_to_gitignore(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable tree view so directories are represented as selectable panel
+        // entries.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().tree_view = Some(true);
+                })
+            });
+        });
+
+        let (fs, _project, _workspace, panel, mut cx) =
+            setup_git_panel_with_changes(cx, json!({ ".git": {}, }), &[]).await;
+
+        // Add a new untracked file under a directory so we can confirm that
+        // selecting the directory still allows us to add its path to
+        // `.gitignore`.
+        fs.insert_tree(
+            path!("/project/src"),
+            json!({
+                "untracked.rs": ""
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("src/untracked.rs", FileStatus::Untracked)],
+        );
+
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            let index = directory_index_for_repo_path(&panel, &repo_path("src"))
+                .expect("`src` directory should be present in the Git panel");
+
+            panel.selected_entry = Some(index);
+            panel.add_to_gitignore(&AddToGitignore, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            fs.load(Path::new(path!("/project/.gitignore")))
+                .await
+                .expect(".gitignore should be readable"),
+            "src/\n"
+        );
+
+        // Create a new directory with a tracked and untracked file, so we can
+        // later confirm that its path is not added to `.gitignore`.
+        fs.insert_tree(
+            path!("/project/docs"),
+            json!({
+                "tracked.txt": "",
+                "untracked.txt": ""
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/project/.git")),
+            &[
+                ("docs/tracked.txt", StatusCode::Modified.worktree()),
+                ("docs/untracked.txt", FileStatus::Untracked),
+            ],
+        );
+
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            let index = directory_index_for_repo_path(&panel, &repo_path("docs"))
+                .expect("`docs` directory should be present in the Git panel");
+
+            panel.selected_entry = Some(index);
+            panel.add_to_gitignore(&AddToGitignore, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            fs.load(Path::new(path!("/project/.gitignore")))
+                .await
+                .expect(".gitignore should be readable"),
+            "src/\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_add_to_git_info_exclude(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable tree view so directories are represented as selectable panel
+        // entries.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().tree_view = Some(true);
+                })
+            });
+        });
+
+        let (fs, _project, _workspace, panel, mut cx) =
+            setup_git_panel_with_changes(cx, json!({ ".git": {}, }), &[]).await;
+
+        // Add a new untracked file under a directory so we can confirm that
+        // selecting the directory still allows us to add its path to
+        // `.git/info/exclude`.
+        fs.insert_tree(
+            path!("/project/src"),
+            json!({
+                "untracked.rs": ""
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("src/untracked.rs", FileStatus::Untracked)],
+        );
+
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            let index = directory_index_for_repo_path(&panel, &repo_path("src"))
+                .expect("`src` directory should be present in the Git panel");
+
+            panel.selected_entry = Some(index);
+            panel.add_to_git_info_exclude(&AddToGitInfoExclude, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            fs.load(Path::new(path!("/project/.git/info/exclude")))
+                .await
+                .expect(".git/info/exclude should be readable"),
+            "src/\n"
+        );
+
+        // Create a new directory with a tracked and untracked file, so we can
+        // later confirm that its path is not added to `.git/info/exclude`.
+        fs.insert_tree(
+            path!("/project/docs"),
+            json!({
+                "tracked.txt": "",
+                "untracked.txt": ""
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/project/.git")),
+            &[
+                ("docs/tracked.txt", StatusCode::Modified.worktree()),
+                ("docs/untracked.txt", FileStatus::Untracked),
+            ],
+        );
+
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            let index = directory_index_for_repo_path(&panel, &repo_path("docs"))
+                .expect("`docs` directory should be present in the Git panel");
+
+            panel.selected_entry = Some(index);
+            panel.add_to_git_info_exclude(&AddToGitInfoExclude, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            fs.load(Path::new(path!("/project/.git/info/exclude")))
+                .await
+                .expect(".git/info/exclude should be readable"),
+            "src/\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_revert_directory_trashes_untracked_files(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable tree view so directories are represented as selectable panel
+        // entries.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().tree_view = Some(true);
+                })
+            });
+        });
+
+        let (fs, _project, _workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "changes": {
+                    "untracked.txt": "",
+                    "nested": {
+                        "untracked.txt": ""
+                    }
+                },
+            }),
+            &[],
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/project/.git")),
+            &[
+                ("changes/untracked.txt", FileStatus::Untracked),
+                ("changes/nested/untracked.txt", FileStatus::Untracked),
+            ],
+        );
+
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            let index = directory_index_for_repo_path(&panel, &repo_path("changes"))
+                .expect("`changes` directory should be present in the Git panel");
+
+            panel.selected_entry = Some(index);
+            panel.revert_selected(&RestoreFile { skip_prompt: true }, window, cx);
+        });
+
+        cx.run_until_parked();
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.read_with(&cx, |panel, cx| {
+            let repository = panel
+                .active_repository
+                .as_ref()
+                .expect("Git panel should have an active repository")
+                .read(cx);
+
+            assert_eq!(
+                repository.status_for_path(&repo_path("changes/untracked.txt")),
+                None
+            );
+            assert_eq!(
+                repository.status_for_path(&repo_path("changes/nested/untracked.txt")),
+                None
+            );
+        })
     }
 }
