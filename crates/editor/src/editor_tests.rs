@@ -8624,6 +8624,40 @@ async fn test_rotate_selections(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_rotate_selections_nonconsecutive_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        ˇline1
+        line2
+        liˇne3
+        line4ˇ
+    "});
+
+    cx.update_editor(|e, window, cx| {
+        e.rotate_selections_forward(&RotateSelectionsForward, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        line4ˇ
+        line2
+        ˇline1
+        liˇne3
+    "});
+
+    cx.update_editor(|e, window, cx| {
+        e.rotate_selections_backward(&RotateSelectionsBackward, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        ˇline1
+        line2
+        liˇne3
+        line4ˇ
+    "});
+}
+
+#[gpui::test]
 fn test_move_line_up_down(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
