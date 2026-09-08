@@ -482,23 +482,12 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let typ = {
-            let log_store = self.log_store.read(cx);
-            log_store
-                .language_servers
-                .get(&key)
-                .or_else(|| {
-                    log_store
-                        .stopped_language_servers
-                        .iter()
-                        .find(|(stopped_key, state)| {
-                            state.server_id == key.server_id && stopped_key.kind == key.kind
-                        })
-                        .map(|(_, state)| state)
-                })
-                .map(|v| v.log_level)
-                .unwrap_or(MessageType::LOG)
-        };
+        let typ = self
+            .log_store
+            .read(cx)
+            .language_server_state(&key)
+            .map(|v| v.log_level)
+            .unwrap_or(MessageType::LOG);
         let log_contents = self
             .log_store
             .read(cx)

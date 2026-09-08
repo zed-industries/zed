@@ -697,6 +697,14 @@ impl LocalLspStore {
             pending_workspace_folders,
         };
 
+        self.language_servers.insert(server_id, state);
+        self.language_server_ids
+            .entry(key)
+            .or_insert(UnifiedLanguageServer {
+                id: server_id,
+                project_roots: Default::default(),
+            });
+
         if update_binary_status {
             self.update_binary_status(BinaryStatusUpdate {
                 name: adapter.name(),
@@ -705,13 +713,6 @@ impl LocalLspStore {
             });
         }
 
-        self.language_servers.insert(server_id, state);
-        self.language_server_ids
-            .entry(key)
-            .or_insert(UnifiedLanguageServer {
-                id: server_id,
-                project_roots: Default::default(),
-            });
         server_id
     }
 
@@ -11673,17 +11674,25 @@ impl LspStore {
             .map(|(key, value)| (*key, value))
     }
 
-    fn should_forward_untagged_binary_status(&self, server_name: &LanguageServerName) -> bool {
-        self.as_local().is_some_and(|local| {
-            local
-                .language_server_ids
-                .keys()
-                .any(|seed| &seed.name == server_name)
-                || self
-                    .language_server_statuses
-                    .values()
-                    .any(|status| &status.name == server_name)
-        })
+    fn should_forward_untagged_binary_status(
+        &self,
+        server_name: &LanguageServerName,
+        worktree_id: WorktreeId,
+        cx: &App,
+    ) -> bool {
+        self.worktree_store
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .is_some()
+            && self.as_local().is_some_and(|local| {
+                local
+                    .language_server_ids
+                    .keys()
+                    .any(|seed| &seed.name == server_name && seed.worktree_id == worktree_id)
+                    || self.language_server_statuses.values().any(|status| {
+                        &status.name == server_name && status.worktree == Some(worktree_id)
+                    })
+            })
     }
 
     #[cfg(feature = "test-support")]
@@ -12878,19 +12887,10 @@ impl LspStore {
         self.cleanup_lsp_data(server_id);
         self.language_server_statuses.remove(&server_id);
 
-        // all binary_status_update calls seem to be dead code and seem to be useless.
-        // TODO, verify and change.
+        // The seeds and statuses for this server were removed above.
+        // So, a direct emit is used here.
         if let Some((name, worktree_ids)) = server_identifier {
             log::info!("stopping language server {name}");
-            for worktree_id in &worktree_ids {
-                self.as_local_mut()
-                    .unwrap()
-                    .update_binary_status(BinaryStatusUpdate {
-                        name: name.clone(),
-                        worktree_id: *worktree_id,
-                        binary_status: BinaryStatus::Stopping,
-                    });
-            }
             cx.emit(LspStoreEvent::LanguageServerUpdate {
                 language_server_id: server_id,
                 name: Some(name.clone()),
@@ -12918,11 +12918,6 @@ impl LspStore {
                             BinaryStatus::None
                         };
                         for worktree_id in &worktree_ids {
-                            let binary_status_update = BinaryStatusUpdate {
-                                name: name.clone(),
-                                worktree_id: *worktree_id,
-                                binary_status: binary_status.clone(),
-                            };
                             if retain_stopped_status {
                                 lsp_store.update_stopped_language_servers(
                                     name.clone(),
@@ -12930,10 +12925,6 @@ impl LspStore {
                                     &binary_status,
                                 );
                             }
-                            lsp_store
-                                .as_local_mut()
-                                .unwrap()
-                                .update_binary_status(binary_status_update);
                         }
                         cx.emit(LspStoreEvent::LanguageServerUpdate {
                             language_server_id: server_id,
@@ -13017,6 +13008,7 @@ impl LspStore {
         self.restart_language_servers_for_buffers(buffers, HashSet::default(), true, cx);
     }
 
+    // Restarts all, is global.
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
@@ -13033,6 +13025,7 @@ impl LspStore {
         );
     }
 
+    // Restarts only in the provided worktree.
     pub fn restart_language_server_for_worktree(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
@@ -15282,8 +15275,11 @@ fn subscribe_to_binary_statuses(
                     }
                     if source.is_some_and(|source| source != cx.entity_id())
                         || source.is_none()
-                            && !lsp_store
-                                .should_forward_untagged_binary_status(&binary_status_update.name)
+                            && !lsp_store.should_forward_untagged_binary_status(
+                                &binary_status_update.name,
+                                binary_status_update.worktree_id,
+                                cx,
+                            )
                     {
                         return;
                     }

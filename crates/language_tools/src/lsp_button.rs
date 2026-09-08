@@ -588,6 +588,7 @@ impl LanguageServerState {
                         submenu = submenu.entry("Restart Server", None, move |_window, cx| {
                             state_for_restart
                                 .update(cx, |state, cx| {
+                                    // the else code path should never be hit
                                     if let Some(worktree_id) = item_worktree_id {
                                         state.restart_server_for_worktree(
                                             server_name_for_restart.clone(),
@@ -886,13 +887,13 @@ enum ServerData<'a> {
         server_id: LanguageServerId,
         health: &'a LanguageServerHealthStatus,
         binary_status: Option<&'a LanguageServerBinaryStatus>,
-        worktree_id: Option<WorktreeId>,
+        worktree_id: WorktreeId,
     },
     WithBinaryStatus {
         server_id: LanguageServerId,
         server_name: &'a LanguageServerName,
         binary_status: &'a LanguageServerBinaryStatus,
-        worktree_id: Option<WorktreeId>,
+        worktree_id: WorktreeId,
     },
     WithStoppedStatus {
         server_name: &'a LanguageServerName,
@@ -906,13 +907,13 @@ enum LspMenuItem {
         server_id: LanguageServerId,
         health: LanguageServerHealthStatus,
         binary_status: Option<LanguageServerBinaryStatus>,
-        worktree_id: Option<WorktreeId>,
+        worktree_id: WorktreeId,
     },
     WithBinaryStatus {
         server_id: LanguageServerId,
         server_name: LanguageServerName,
         binary_status: LanguageServerBinaryStatus,
-        worktree_id: Option<WorktreeId>,
+        worktree_id: WorktreeId,
     },
     WithStoppedStatus {
         server_name: LanguageServerName,
@@ -963,8 +964,8 @@ impl LspMenuItem {
     fn worktree_id(&self) -> Option<WorktreeId> {
         match self {
             Self::WithHealthCheck { worktree_id, .. }
-            | Self::WithBinaryStatus { worktree_id, .. } => *worktree_id,
-            Self::WithStoppedStatus { worktree_id, .. } => Some(*worktree_id),
+            | Self::WithBinaryStatus { worktree_id, .. }
+            | Self::WithStoppedStatus { worktree_id, .. } => Some(*worktree_id),
             Self::ToggleServersButton { .. } | Self::Header { .. } => None,
         }
     }
@@ -1245,7 +1246,7 @@ impl LspButton {
                         server_id: *server_id,
                         health,
                         binary_status,
-                        worktree_id: Some(worktree.read(cx).id()),
+                        worktree_id: worktree.read(cx).id(),
                     });
             }
 
@@ -1269,7 +1270,7 @@ impl LspButton {
                         server_name,
                         binary_status,
                         server_id: *server_id,
-                        worktree_id: Some(worktree.read(cx).id()),
+                        worktree_id: worktree.read(cx).id(),
                     });
             }
 
