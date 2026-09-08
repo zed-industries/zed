@@ -205,17 +205,26 @@ its root's box and its own retained styles, so the root is all that needs compar
 
 Everything an element does in prepaint becomes an `OutputItem` in the node's prepaint
 output: `insert_hitbox` → `Hitbox`, tooltips, tab stops, mouse listeners at paint. Items
-are 56 bytes. The dispatch tree the scope builds is a lane of its own, `dispatch`, of
-24-byte `DispatchOp`s: `Drawable::prepaint` → `PushLive(live id)`/`Pop`, a child entering
-prepaint → `Child(node)`, `defer_draw` → `Root(node, priority)` (and a `DeferredDraw`
-queued for the deferred pass). Only where children and roots fall between the pushes
-matters to the tree, which is why those two are repeated in the lane; the item walks
-(hit test, mouse listeners, cursor style) never see a dispatch op.
+are 56 bytes. The dispatch nodes elements push are **not** recorded one by one: pushes are
+sequential, so a node's pushes (its children's included) are a contiguous range of the
+frame's `dispatch_tree.nodes`, and `enter_node_prepaint`/`finish_node_phase` just record
+that range (`PhaseOutput::dispatch_range`). The only per-scope ops are `DispatchOp::Child`
+(a child entered prepaint, hanging from the live node active then) and `DispatchOp::Root`
+(`defer_draw`, likewise), each carrying that live parent.
 
-Replaying a grafted node's prepaint (`graft_view_node_prepaint`) walks its dispatch lane
-(`walk_dispatch`) and, for each `Push`, pushes the *recorded copy* of the dispatch node
-(`push_recorded`) into this frame's dispatch tree; for each `Root`, re-queues the
-deferred root under the dispatch node that is active at that point.
+After paint, `snapshot_dispatch_nodes` copies the range out of the live tree — skipping the
+children's nested ranges, which they copy themselves — keeping only non-empty nodes and
+resolving every parent to a kept node of the scope (`DispatchParent::Recorded`) or, above
+the range or through elided ancestors, to the scope's attachment point
+(`DispatchParent::Attachment`). Replaying a grafted node (`graft_view_node_prepaint` →
+`replay_dispatch`) pushes the kept nodes under the mapped parents with
+`push_recorded_under`, then recurses into `Child` ops with their mapped parent as the
+child's attachment, and re-queues `Root` ops under theirs. Nothing per element is pushed
+or popped on either path.
+
+`assert_incremental_matches_full_refresh` compares the resulting dispatch tree with a full
+refresh's as a set of non-empty nodes with their non-empty ancestor chains, which is what
+dispatch observes; ordering and empty nodes are not part of it.
 
 ## 6. Phase 3: paint
 

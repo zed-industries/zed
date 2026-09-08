@@ -286,25 +286,38 @@ pub(crate) enum OutputItem {
 // the widest common variant; anything wider is boxed.
 const _: () = assert!(size_of::<OutputItem>() <= 56);
 
-/// One step of rebuilding the frame's dispatch tree from a reused scope. Every element
-/// pushes a dispatch node, so these are kept apart from `items`, which the frame's other
-/// walks (hit testing, mouse listeners, cursor styles) would otherwise step over; only
-/// where children and roots fall between the pushes matters, so those are repeated here.
+/// Where a recorded dispatch node, child or root hangs in the frame's dispatch tree.
+/// Recorded as the live node active when it was drawn; once the scope has painted and
+/// its dispatch nodes are copied out, resolved to one of the copies or to the scope's
+/// attachment point, which is whatever is active where the scope is grafted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DispatchParent {
+    Live(Option<crate::DispatchNodeId>),
+    /// A recorded node of this scope, by index in [`PhaseOutput::dispatch_nodes`].
+    Recorded(u32),
+    Attachment,
+}
+
+/// A dispatch node a scope pushed while prepainting that has listeners, a key context, a
+/// focus or a view; empty ones are left out, since a walk of the tree cannot tell they
+/// were there.
+pub(crate) struct RecordedDispatchNode {
+    pub(crate) parent: DispatchParent,
+    pub(crate) node: crate::key_dispatch::DispatchNode,
+}
+
+/// What a reused scope attaches into the frame's dispatch tree besides its own recorded
+/// nodes. Elements' pushes are not recorded one by one: after paint the scope copies the
+/// non-empty nodes out of the live tree (they occupy `PhaseOutput::dispatch_range`), and
+/// only where children and roots hang needs remembering.
 #[derive(Clone, Copy)]
 pub(crate) enum DispatchOp {
-    /// A node pushed by the element being drawn, by its id in the frame's tree. Replaced
-    /// by `Push` once the scope has painted and the node has been copied out.
-    PushLive(crate::DispatchNodeId),
-    /// A recorded node, by its index in [`PhaseOutput::dispatch_nodes`].
-    Push(u32),
-    Pop,
-    Child(crate::node_engine::ViewNodeId),
+    Child(crate::node_engine::ViewNodeId, DispatchParent),
     /// A root this scope attached to the frame with `defer_draw`, drawn after the tree at
-    /// the given priority under the dispatch node active here. Rendering the scope emits
-    /// it; replaying the scope re-attaches the same root, so a deferred draw survives
-    /// exactly as long as some drawn output says it is there. Not descended into: roots
-    /// are walked from the frame's root list.
-    Root(crate::node_engine::ViewNodeId, usize),
+    /// the given priority. Rendering the scope emits it; replaying the scope re-attaches
+    /// the same root, so a deferred draw survives exactly as long as some drawn output
+    /// says it is there. Not descended into: roots are walked from the frame's root list.
+    Root(crate::node_engine::ViewNodeId, usize, DispatchParent),
 }
 
 /// What one scope produced in one phase.
@@ -312,8 +325,11 @@ pub(crate) enum DispatchOp {
 pub(crate) struct PhaseOutput {
     /// In production order.
     pub(crate) items: Vec<OutputItem>,
-    /// The dispatch tree the scope built while prepainting, in production order.
+    /// The children and roots the scope attached while prepainting, in production order.
     pub(crate) dispatch: Vec<DispatchOp>,
+    /// The live dispatch nodes pushed while the scope prepainted, children's included:
+    /// pushes are sequential, so they are a range of the frame's tree.
+    pub(crate) dispatch_range: Range<usize>,
     /// The line layouts looked up, held so they stay shaped while the scope is reused.
     pub(crate) text: crate::text_system::TextUse,
     /// The engine frame `text` was looked up in. Zero until the phase first draws.
@@ -321,10 +337,8 @@ pub(crate) struct PhaseOutput {
     /// The primitives painted, with the children spliced where they were painted. Only
     /// the paint phase records one.
     pub(crate) scene: ViewNodeScene,
-    /// Recorded copies of the dispatch nodes `dispatch` pushes, in push order. Entries
-    /// beyond `dispatch_pushes` are stale slots kept for their buffers.
-    pub(crate) dispatch_nodes: Vec<crate::key_dispatch::DispatchNode>,
-    pub(crate) dispatch_pushes: u32,
+    /// The scope's own non-empty dispatch nodes, in push order, copied out after paint.
+    pub(crate) dispatch_nodes: Vec<RecordedDispatchNode>,
 }
 
 /// Everything one scope produced while drawing, by phase. A reused node keeps its output
@@ -374,12 +388,11 @@ impl NodeOutput {
             .map(|phase| {
                 phase.items.capacity() * size_of::<OutputItem>()
                     + phase.dispatch.capacity() * size_of::<DispatchOp>()
-                    + phase.dispatch_nodes.capacity()
-                        * size_of::<crate::key_dispatch::DispatchNode>()
+                    + phase.dispatch_nodes.capacity() * size_of::<RecordedDispatchNode>()
                     + phase
                         .dispatch_nodes
                         .iter()
-                        .map(|node| node.retained_bytes())
+                        .map(|recorded| recorded.node.retained_bytes())
                         .sum::<usize>()
                     + phase.text.retained_bytes()
                     + phase.scene.retained_bytes()
@@ -398,7 +411,6 @@ impl NodeOutput {
         for phase in &mut self.phases {
             phase.items.clear();
             phase.dispatch.clear();
-            phase.dispatch_pushes = 0;
         }
         self.inline_views.clear();
         self.generation += 1;

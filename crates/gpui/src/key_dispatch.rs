@@ -66,6 +66,17 @@ use std::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct DispatchNodeId(usize);
 
+impl DispatchNodeId {
+    /// The node's position in its tree's push order.
+    pub(crate) fn index(self) -> usize {
+        self.0
+    }
+
+    pub(crate) fn from_index(index: usize) -> Self {
+        DispatchNodeId(index)
+    }
+}
+
 pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
     pub(crate) context_stack: Vec<KeyContext>,
@@ -89,6 +100,10 @@ pub(crate) struct DispatchNode {
 }
 
 impl DispatchNode {
+    pub(crate) fn parent(&self) -> Option<DispatchNodeId> {
+        self.parent
+    }
+
     /// Whether the node contributes nothing to dispatch: no listeners, context, focus or
     /// view. Such a node is transparent to every walk of the tree, which only reads those
     /// fields along parent links, so a reused recording can leave it out.
@@ -265,29 +280,74 @@ impl DispatchTree {
         self.node_stack.pop();
     }
 
-    /// Pushes a node reproduced from one recorded while a reused view drew, under the
-    /// active node. Returns its focus id so the caller can tell whether focus is inside.
-    pub(crate) fn push_recorded(&mut self, recorded: &DispatchNode) -> Option<FocusId> {
-        let node_id = self.push_node();
-        let node = &mut self.nodes[node_id.0];
-        node.key_listeners.clone_from(&recorded.key_listeners);
-        node.action_listeners.clone_from(&recorded.action_listeners);
-        node.modifiers_changed_listeners
-            .clone_from(&recorded.modifiers_changed_listeners);
-        node.context.clone_from(&recorded.context);
-        node.focus_id = recorded.focus_id;
-        node.view_id = recorded.view_id;
-        if let Some(context) = recorded.context.clone() {
-            self.context_stack.push(context);
-        }
+    /// Adds a node reproduced from one recorded while a reused view drew, under `parent`.
+    /// Nothing is being drawn, so the node, context and view stacks are left alone.
+    pub(crate) fn push_recorded_under(
+        &mut self,
+        parent: Option<DispatchNodeId>,
+        recorded: &DispatchNode,
+    ) -> DispatchNodeId {
+        let node_id = DispatchNodeId(self.nodes.len());
+        self.nodes.push(DispatchNode {
+            key_listeners: recorded.key_listeners.clone(),
+            action_listeners: recorded.action_listeners.clone(),
+            modifiers_changed_listeners: recorded.modifiers_changed_listeners.clone(),
+            context: recorded.context.clone(),
+            focus_id: recorded.focus_id,
+            view_id: recorded.view_id,
+            parent,
+        });
         if let Some(focus_id) = recorded.focus_id {
             self.focusable_node_ids.insert(focus_id, node_id);
         }
         if let Some(view_id) = recorded.view_id {
             self.view_node_ids.insert(view_id, node_id);
-            self.view_stack.push(view_id);
         }
-        recorded.focus_id
+        node_id
+    }
+
+    /// The tree's dispatch-relevant content, independent of node order and of empty
+    /// nodes: for every node with listeners, a context, a focus or a view, its signature
+    /// followed by the signatures of its non-empty ancestors, root last. Two trees that
+    /// dispatch identically have equal snapshots, however they were built.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn snapshot_for_test(&self) -> Vec<String> {
+        let signature = |node: &DispatchNode| {
+            let mut actions: Vec<String> = node
+                .action_listeners
+                .iter()
+                .map(|listener| format!("{:?}", listener.action_type))
+                .collect();
+            actions.sort();
+            format!(
+                "focus={:?} view={:?} context={:?} keys={} modifiers={} actions={:?}",
+                node.focus_id,
+                node.view_id,
+                node.context,
+                node.key_listeners.len(),
+                node.modifiers_changed_listeners.len(),
+                actions
+            )
+        };
+        let mut chains: Vec<String> = self
+            .nodes
+            .iter()
+            .filter(|node| !node.is_empty())
+            .map(|node| {
+                let mut chain = vec![signature(node)];
+                let mut parent = node.parent;
+                while let Some(id) = parent {
+                    let ancestor = &self.nodes[id.0];
+                    if !ancestor.is_empty() {
+                        chain.push(signature(ancestor));
+                    }
+                    parent = ancestor.parent;
+                }
+                chain.join(" <- ")
+            })
+            .collect();
+        chains.sort();
+        chains
     }
 
     pub fn truncate(&mut self, index: usize) {

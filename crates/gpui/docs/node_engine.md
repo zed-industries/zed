@@ -316,8 +316,8 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   whole-window refresh. Prompts, accessibility, and the inspector still refresh.
 - [x] **A frame is an ordered list of roots; deferred draws are roots.** `defer_draw`
   mounts a root node keyed by the element-id scope it was called from, under the node
-  being drawn (the owner), and records `DispatchOp::Root(node, priority)` in the owner's
-  prepaint dispatch lane. That op is the whole relationship: rendering the owner emits it,
+  being drawn (the owner), and records `DispatchOp::Root(node, priority, parent)` in the
+  owner's prepaint dispatch lane. That op is the whole relationship: rendering the owner emits it,
   replaying the owner (`graft_view_node_prepaint`'s walk) sees the same op and
   re-attaches the root, and a root survives a frame iff some drawn output attached it
   (the existing root reconciliation). The deferred pass draws a fresh attachment inside

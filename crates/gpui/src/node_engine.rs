@@ -1,16 +1,19 @@
 use crate::{
     Bounds, EntityId, GlobalElementId, LayoutId, Pixels, ViewNode, ViewNodeCacheKey,
-    view_node::{DispatchOp, MetadataPhase, NodeOutput, OutputItem, OutputSlot, ViewNodeScene},
+    view_node::{
+        DispatchOp, DispatchParent, MetadataPhase, NodeOutput, OutputItem, OutputSlot,
+        RecordedDispatchNode, ViewNodeScene,
+    },
 };
 use collections::{FxHashMap, FxHashSet};
 use slotmap::SlotMap;
 use smallvec::SmallVec;
-use std::{any::TypeId, ops::ControlFlow};
+use std::{any::TypeId, ops::ControlFlow, ops::Range};
 
 /// A point in a scope's output that `NodeEngine::rollback` returns to. `None` when taken
 /// outside every node, where nothing is recorded.
 #[derive(Clone, Copy)]
-pub(crate) struct OutputCheckpoint(Option<(ViewNodeId, MetadataPhase, usize, usize, u32)>);
+pub(crate) struct OutputCheckpoint(Option<(ViewNodeId, MetadataPhase, usize, usize)>);
 
 /// Which frame's roots a query walks: the frame drawn last, which events are dispatched
 /// against, or the one being drawn.
@@ -111,9 +114,9 @@ pub(crate) struct NodeEngine {
     traversal_stack: Vec<(ViewNodeId, MetadataPhase)>,
     /// Scratch for `invalidate_consumers`, which cannot walk `consumers` while setting flags.
     invalidation_scratch: Vec<ViewNodeId>,
-    /// Scratch for `snapshot_dispatch_nodes`: whether each open dispatch push is being
-    /// dropped, so its pop is dropped with it.
-    elided_dispatch_pushes: Vec<bool>,
+    /// Scratch for `snapshot_dispatch_nodes`: where each live dispatch node in the scope's
+    /// range resolves to, so parents of later nodes resolve in one step.
+    dispatch_resolution: Vec<DispatchParent>,
     /// A frame is its roots, in drawing order: the window's root view, then the roots
     /// attached by `defer_draw` in priority order, then the prompt, drag overlay or
     /// tooltip. Walking them in order reproduces the frame. `roots` is the frame drawn
@@ -150,7 +153,7 @@ impl NodeEngine {
             frame_bound_count: 0,
             retired_layouts: Vec::new(),
             traversal_stack: Vec::new(),
-            elided_dispatch_pushes: Vec::new(),
+            dispatch_resolution: Vec::new(),
             invalidation_scratch: Vec::new(),
             roots: Vec::new(),
             next_roots: Vec::new(),
@@ -266,6 +269,10 @@ impl NodeEngine {
         self.traversal_stack.last().map(|(node_id, _)| *node_id)
     }
 
+    pub(crate) fn current_phase(&self) -> Option<MetadataPhase> {
+        self.traversal_stack.last().map(|(_, phase)| *phase)
+    }
+
     /// Takes the state kept for `key` in the node being drawn; `put_element_state` stores it
     /// back stamped with this redraw, which is what keeps it past the redraw.
     pub(crate) fn take_element_state(
@@ -315,29 +322,20 @@ impl NodeEngine {
         }
     }
 
-    /// Records a root the scope being drawn attached with `defer_draw`.
-    pub(crate) fn push_root(&mut self, node: ViewNodeId, priority: usize) {
+    /// Records a root the scope being drawn attached with `defer_draw`, under the live
+    /// dispatch node active there.
+    pub(crate) fn push_root(
+        &mut self,
+        node: ViewNodeId,
+        priority: usize,
+        under: Option<crate::DispatchNodeId>,
+    ) {
         if let Some((_, phase, output)) = self.current_output() {
-            output
-                .phase_mut(phase)
-                .dispatch
-                .push(DispatchOp::Root(node, priority));
-        }
-    }
-
-    /// Records a dispatch node pushed for the element being drawn; see [`DispatchOp`].
-    /// Outside every node nothing replays it, so nothing is recorded.
-    pub(crate) fn push_dispatch_node(&mut self, live: crate::DispatchNodeId) {
-        if let Some((_, phase, output)) = self.current_output() {
-            let output = output.phase_mut(phase);
-            output.dispatch_pushes += 1;
-            output.dispatch.push(DispatchOp::PushLive(live));
-        }
-    }
-
-    pub(crate) fn pop_dispatch_node(&mut self) {
-        if let Some((_, phase, output)) = self.current_output() {
-            output.phase_mut(phase).dispatch.push(DispatchOp::Pop);
+            output.phase_mut(phase).dispatch.push(DispatchOp::Root(
+                node,
+                priority,
+                DispatchParent::Live(under),
+            ));
         }
     }
 
@@ -346,24 +344,17 @@ impl NodeEngine {
     pub(crate) fn checkpoint(&mut self) -> OutputCheckpoint {
         OutputCheckpoint(self.current_output().map(|(node_id, phase, output)| {
             let output = output.phase(phase);
-            (
-                node_id,
-                phase,
-                output.items.len(),
-                output.dispatch.len(),
-                output.dispatch_pushes,
-            )
+            (node_id, phase, output.items.len(), output.dispatch.len())
         }))
     }
 
     pub(crate) fn rollback(&mut self, checkpoint: OutputCheckpoint) {
-        if let Some((node_id, phase, items, dispatch, dispatch_pushes)) = checkpoint.0
+        if let Some((node_id, phase, items, dispatch)) = checkpoint.0
             && let Some(node) = self.nodes.get_mut(node_id)
         {
             let output = node.output.phase_mut(phase);
             output.items.truncate(items);
             output.dispatch.truncate(dispatch);
-            output.dispatch_pushes = dispatch_pushes;
         }
     }
 
@@ -471,77 +462,178 @@ impl NodeEngine {
         ControlFlow::Continue(())
     }
 
-    /// Replays the dispatch tree a reused node and its descendants built while prepainting:
-    /// `visit` receives each op with the recorded dispatch nodes of the scope that produced
-    /// it, in drawing order, descending into children where they were drawn.
-    pub(crate) fn walk_dispatch(
+    /// Rebuilds, in `tree`, the dispatch nodes a reused node and its descendants pushed
+    /// while prepainting, hanging the node's top-level ones from `attachment`. Roots the
+    /// subtree attached are reported to `attach_root` with the dispatch node they hang from.
+    /// Returns whether one of the rebuilt nodes is `focus`.
+    pub(crate) fn replay_dispatch(
         &self,
         node_id: ViewNodeId,
-        visit: &mut impl FnMut(&DispatchOp, &[crate::key_dispatch::DispatchNode]),
-    ) {
+        attachment: Option<crate::DispatchNodeId>,
+        tree: &mut crate::key_dispatch::DispatchTree,
+        focus: Option<crate::FocusId>,
+        attach_root: &mut impl FnMut(ViewNodeId, usize, crate::DispatchNodeId),
+    ) -> bool {
         // A child that was removed since its parent last drew is skipped.
         let Some(output) = self.output(node_id) else {
-            return;
+            return false;
         };
         let output = output.phase(MetadataPhase::Prepaint);
+        let mut contains_focus = false;
+        // Most scopes keep a handful of nodes: a view's, a focusable's, a key context's.
+        let mut rebuilt: SmallVec<[crate::DispatchNodeId; 8]> = SmallVec::new();
+        for recorded in &output.dispatch_nodes {
+            let parent = match recorded.parent {
+                DispatchParent::Recorded(index) => rebuilt.get(index as usize).copied(),
+                DispatchParent::Attachment => attachment,
+                DispatchParent::Live(_) => {
+                    debug_assert!(false, "a reused scope's dispatch nodes were snapshotted");
+                    attachment
+                }
+            };
+            rebuilt.push(tree.push_recorded_under(parent, &recorded.node));
+            contains_focus |= focus.is_some() && recorded.node.focus_id == focus;
+        }
         for op in &output.dispatch {
-            match op {
-                DispatchOp::Child(child) => self.walk_dispatch(*child, visit),
-                op => visit(op, &output.dispatch_nodes),
+            let (parent, child) = match *op {
+                DispatchOp::Child(child, parent) => (parent, Some(child)),
+                DispatchOp::Root(_, _, parent) => (parent, None),
+            };
+            let under = match parent {
+                DispatchParent::Recorded(index) => rebuilt.get(index as usize).copied(),
+                DispatchParent::Attachment => attachment,
+                DispatchParent::Live(_) => {
+                    debug_assert!(false, "a reused scope's attachments were resolved");
+                    attachment
+                }
+            };
+            match (*op, child) {
+                (_, Some(child)) => {
+                    contains_focus |= self.replay_dispatch(child, under, tree, focus, attach_root);
+                }
+                (DispatchOp::Root(root, priority, _), None) => {
+                    if let Some(under) = under {
+                        attach_root(root, priority, under);
+                    }
+                }
+                _ => {}
             }
+        }
+        contains_focus
+    }
+
+    /// Records where the live dispatch nodes a node is about to push will start.
+    pub(crate) fn begin_dispatch_range(&mut self, node_id: ViewNodeId, start: usize) {
+        if let Some(node) = self.nodes.get_mut(node_id) {
+            let output = node.output.phase_mut(MetadataPhase::Prepaint);
+            output.dispatch_range = start..start;
         }
     }
 
-    /// Copies the dispatch nodes a node pushed while prepainting out of the frame's dispatch
-    /// tree, now that painting has added their listeners and contexts. Existing slots are
-    /// cloned into so their listener buffers are reused. Most elements' nodes turn out
-    /// empty; their push and pop are dropped from the recording, since a replay without
-    /// them dispatches identically and does less.
+    pub(crate) fn end_dispatch_range(&mut self, node_id: ViewNodeId, end: usize) {
+        if let Some(node) = self.nodes.get_mut(node_id) {
+            let output = node.output.phase_mut(MetadataPhase::Prepaint);
+            output.dispatch_range.end = end.max(output.dispatch_range.start);
+        }
+    }
+
+    /// Copies the dispatch nodes a node pushed while prepainting out of the frame's tree,
+    /// now that painting has added their listeners and contexts. Its pushes are the range
+    /// recorded by `begin_dispatch_range`/`end_dispatch_range`, minus its children's ranges,
+    /// which the children copy themselves. Empty nodes — most elements' — are left out, and
+    /// whatever hung from one is resolved to its nearest kept ancestor or, above the range,
+    /// to the scope's attachment point.
     pub(crate) fn snapshot_dispatch_nodes(
         &mut self,
         node_id: ViewNodeId,
         dispatch_tree: &crate::key_dispatch::DispatchTree,
     ) {
-        let Some(node) = self.nodes.get_mut(node_id) else {
+        let Some(node) = self.nodes.get(node_id) else {
             return;
         };
-        let output = node.output.phase_mut(MetadataPhase::Prepaint);
-        let ops = &mut output.dispatch;
-        let elided = &mut self.elided_dispatch_pushes;
-        elided.clear();
-        let mut kept_pushes = 0u32;
-        let mut write = 0;
-        for read in 0..ops.len() {
-            let keep = match ops[read] {
-                DispatchOp::PushLive(live) => {
-                    let recorded = dispatch_tree.node(live);
-                    let keep = !recorded.is_empty();
-                    elided.push(!keep);
-                    if keep {
-                        match output.dispatch_nodes.get_mut(kept_pushes as usize) {
-                            Some(slot) => slot.clone_from(recorded),
-                            None => output.dispatch_nodes.push(recorded.clone()),
-                        }
-                        ops[read] = DispatchOp::Push(kept_pushes);
-                        kept_pushes += 1;
-                    }
-                    keep
+        let range = node
+            .output
+            .phase(MetadataPhase::Prepaint)
+            .dispatch_range
+            .clone();
+        let mut resolution = std::mem::take(&mut self.dispatch_resolution);
+        resolution.clear();
+        resolution.resize(range.len(), DispatchParent::Attachment);
+        let resolve =
+            |resolution: &[DispatchParent], live: Option<crate::DispatchNodeId>| match live {
+                Some(live) if range.contains(&live.index()) => {
+                    resolution[live.index() - range.start]
                 }
-                DispatchOp::Push(_) => {
-                    debug_assert!(false, "a scope's dispatch nodes are snapshotted once");
-                    true
-                }
-                DispatchOp::Pop => !elided.pop().unwrap_or(false),
-                DispatchOp::Child(_) | DispatchOp::Root(..) => true,
+                _ => DispatchParent::Attachment,
             };
-            if keep {
-                ops[write] = ops[read];
-                write += 1;
+
+        // The scopes whose prepaint ran inside this one — the `Child` ops, in drawing order —
+        // pushed nested ranges that they copy out themselves. They are not always this
+        // node's `children`: a deferred root draws views that belong to its owner.
+        let child_ranges: Vec<Range<usize>> = node
+            .output
+            .phase(MetadataPhase::Prepaint)
+            .dispatch
+            .iter()
+            .filter_map(|op| match op {
+                DispatchOp::Child(child, _) => self.nodes.get(*child).map(|child| {
+                    child
+                        .output
+                        .phase(MetadataPhase::Prepaint)
+                        .dispatch_range
+                        .clone()
+                }),
+                DispatchOp::Root(..) => None,
+            })
+            .collect();
+        let mut child_ranges = child_ranges.into_iter().peekable();
+        let mut kept = 0u32;
+        let mut live = range.start;
+        let mut skip_until = None;
+        let output = self.nodes[node_id]
+            .output
+            .phase_mut(MetadataPhase::Prepaint);
+        output.dispatch_nodes.clear();
+        while live < range.end {
+            if skip_until.is_none()
+                && let Some(next) = child_ranges.peek()
+                && next.start <= live
+            {
+                skip_until = Some(next.end);
+                child_ranges.next();
+            }
+            if let Some(end) = skip_until {
+                if live < end {
+                    live += 1;
+                    continue;
+                }
+                skip_until = None;
+                continue;
+            }
+            let recorded = dispatch_tree.node(crate::DispatchNodeId::from_index(live));
+            let parent = resolve(&resolution, recorded.parent());
+            if recorded.is_empty() {
+                resolution[live - range.start] = parent;
+            } else {
+                resolution[live - range.start] = DispatchParent::Recorded(kept);
+                kept += 1;
+                output.dispatch_nodes.push(RecordedDispatchNode {
+                    parent,
+                    node: recorded.clone(),
+                });
+            }
+            live += 1;
+        }
+        for op in &mut output.dispatch {
+            match op {
+                DispatchOp::Child(_, parent) | DispatchOp::Root(_, _, parent) => {
+                    if let DispatchParent::Live(live) = *parent {
+                        *parent = resolve(&resolution, live);
+                    }
+                }
             }
         }
-        ops.truncate(write);
-        output.dispatch_pushes = kept_pushes;
-        output.dispatch_nodes.truncate(kept_pushes as usize);
+        self.dispatch_resolution = resolution;
     }
 
     /// Takes the callback at `slot` out of its output for a call, via `take` on the matching
@@ -577,7 +669,12 @@ impl NodeEngine {
     /// Enters `phase` of `node`. Inside another node, records where the node's output of
     /// that phase belongs in the enclosing output; at the top level, the node is a root of
     /// the frame, registered in drawing order when its prepaint is entered.
-    fn splice(&mut self, node: ViewNodeId, phase: MetadataPhase) {
+    fn splice(
+        &mut self,
+        node: ViewNodeId,
+        phase: MetadataPhase,
+        under: Option<crate::DispatchNodeId>,
+    ) {
         if self.traversal_stack.is_empty() {
             if phase == MetadataPhase::Prepaint && !self.next_roots.contains(&node) {
                 self.next_roots.push(node);
@@ -590,7 +687,7 @@ impl NodeEngine {
                 output
                     .phase_mut(parent_phase)
                     .dispatch
-                    .push(DispatchOp::Child(node));
+                    .push(DispatchOp::Child(node, DispatchParent::Live(under)));
             }
         }
         self.traversal_stack.push((node, phase));
@@ -801,7 +898,7 @@ impl NodeEngine {
         {
             parent_node.next_children.push(node_id);
         }
-        self.splice(node_id, MetadataPhase::Layout);
+        self.splice(node_id, MetadataPhase::Layout, None);
         node_id
     }
 
@@ -896,7 +993,7 @@ impl NodeEngine {
             {
                 output.items.pop();
             }
-            if matches!(output.dispatch.last(), Some(DispatchOp::Child(child)) if *child == node_id)
+            if matches!(output.dispatch.last(), Some(DispatchOp::Child(child, _)) if *child == node_id)
             {
                 output.dispatch.pop();
             }
@@ -1010,15 +1107,20 @@ impl NodeEngine {
     /// mounts are its children. Views enter layout through `begin_occurrence`.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn enter_layout(&mut self, node_id: ViewNodeId) {
-        self.splice(node_id, MetadataPhase::Layout);
+        self.splice(node_id, MetadataPhase::Layout, None);
     }
 
-    pub(crate) fn enter_prepaint(&mut self, node_id: ViewNodeId) {
-        self.splice(node_id, MetadataPhase::Prepaint);
+    /// Enters the node's prepaint; `under` is the live dispatch node it will hang from.
+    pub(crate) fn enter_prepaint(
+        &mut self,
+        node_id: ViewNodeId,
+        under: Option<crate::DispatchNodeId>,
+    ) {
+        self.splice(node_id, MetadataPhase::Prepaint, under);
     }
 
     pub(crate) fn enter_paint(&mut self, node_id: ViewNodeId) {
-        self.splice(node_id, MetadataPhase::Paint);
+        self.splice(node_id, MetadataPhase::Paint, None);
     }
 
     /// Adds text looked up on the node's behalf outside its traversal, such as while
@@ -1206,6 +1308,9 @@ mod oracle_tests {
     impl Render for Row {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div()
+                .id("row")
+                .key_context("Row")
+                .on_key_down(|_, _, _| {})
                 .h(px(20.))
                 .w_full()
                 .bg(rgb(self.color))
@@ -1225,6 +1330,9 @@ mod oracle_tests {
     impl Render for Panel {
         fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div()
+                .id("panel")
+                .key_context("Panel")
+                .on_modifiers_changed(|_, _, _| {})
                 .flex()
                 .h(px(30.))
                 .children(self.focus_handles.iter().enumerate().map(|(ix, handle)| {

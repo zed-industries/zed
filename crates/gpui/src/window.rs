@@ -28,7 +28,7 @@ use crate::{
     point,
     prelude::*,
     px, rems, size, transparent_black,
-    view_node::{DispatchOp, OutputItem, OutputSlot},
+    view_node::{MetadataPhase, OutputItem, OutputSlot},
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -3619,6 +3619,13 @@ impl Window {
         self.rendered_frame.scene.snapshot_for_test()
     }
 
+    /// Returns the last completed frame's dispatch tree, as what it dispatches to, for
+    /// differential rendering tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn dispatch_snapshot_for_test(&self) -> Vec<String> {
+        self.rendered_frame.dispatch_tree.snapshot_for_test()
+    }
+
     #[cfg(test)]
     pub(crate) fn clear_view_nodes_for_test(&mut self) {
         let node_engine = &mut self.node_engine;
@@ -3668,8 +3675,13 @@ impl Window {
         self.text_system.begin_text_use();
     }
 
+    /// Enters the node's prepaint under the active dispatch node, and marks where in the
+    /// frame's dispatch tree the nodes it pushes will begin.
     pub(crate) fn enter_node_prepaint(&mut self, node_id: ViewNodeId) {
-        self.node_engine.enter_prepaint(node_id);
+        let tree = &self.next_frame.dispatch_tree;
+        self.node_engine
+            .enter_prepaint(node_id, tree.active_node_id());
+        self.node_engine.begin_dispatch_range(node_id, tree.len());
         self.text_system.begin_text_use();
     }
 
@@ -3681,6 +3693,10 @@ impl Window {
     /// Leaves the node's current phase; see [`NodeEngine::finish_phase`].
     pub(crate) fn finish_node_phase(&mut self, node_id: ViewNodeId, rendered: bool) {
         let text = self.text_system.end_text_use();
+        if self.node_engine.current_phase() == Some(MetadataPhase::Prepaint) {
+            self.node_engine
+                .end_dispatch_range(node_id, self.next_frame.dispatch_tree.len());
+        }
         self.node_engine.finish_phase(node_id, rendered, text);
     }
 
@@ -3714,53 +3730,40 @@ impl Window {
     }
 
     /// Rebuilds the dispatch nodes a reused view and its descendants pushed, under the
-    /// active dispatch node, and re-attaches the roots they attached, under the dispatch
-    /// node that is active when the walk reaches them.
+    /// active dispatch node, and re-attaches the roots they attached under the dispatch
+    /// nodes they hung from.
     pub(crate) fn graft_view_node_prepaint(&mut self, node_id: ViewNodeId) {
         let Frame {
             dispatch_tree,
             deferred_draws,
             ..
         } = &mut self.next_frame;
-        let engine = &self.node_engine;
-        let mut contains_focus = false;
-        engine.walk_dispatch(node_id, &mut |op, recorded_nodes| match op {
-            DispatchOp::Push(index) => {
-                if let Some(recorded) = recorded_nodes.get(*index as usize) {
-                    contains_focus |=
-                        dispatch_tree.push_recorded(recorded) == self.focus && self.focus.is_some();
-                }
-            }
-            DispatchOp::PushLive(_) => {
-                debug_assert!(false, "a reused scope's dispatch nodes were snapshotted");
-            }
-            DispatchOp::Pop => dispatch_tree.pop_node(),
-            DispatchOp::Root(node, priority) => {
-                if let Some(parent_node) = dispatch_tree.active_node_id() {
-                    deferred_draws.push(DeferredDraw {
-                        node: *node,
-                        priority: *priority,
-                        parent_node,
-                        fresh: None,
-                    });
-                }
-            }
-            DispatchOp::Child(_) => {}
-        });
+        let attachment = dispatch_tree.active_node_id();
+        let contains_focus = self.node_engine.replay_dispatch(
+            node_id,
+            attachment,
+            dispatch_tree,
+            self.focus,
+            &mut |node, priority, parent_node| {
+                deferred_draws.push(DeferredDraw {
+                    node,
+                    priority,
+                    parent_node,
+                    fresh: None,
+                });
+            },
+        );
         if contains_focus {
             self.next_frame.focus = self.focus;
         }
     }
 
     pub(crate) fn push_dispatch_node(&mut self) -> DispatchNodeId {
-        let node_id = self.next_frame.dispatch_tree.push_node();
-        self.node_engine.push_dispatch_node(node_id);
-        node_id
+        self.next_frame.dispatch_tree.push_node()
     }
 
     pub(crate) fn pop_dispatch_node(&mut self) {
         self.next_frame.dispatch_tree.pop_node();
-        self.node_engine.pop_dispatch_node();
     }
 
     /// Replays a reused node's scene into the frame, splicing it into the parent's.
@@ -4193,8 +4196,9 @@ impl Window {
             self.element_path_hash(),
             &cache_key,
         );
-        self.node_engine.push_root(node, priority);
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
+        self.node_engine
+            .push_root(node, priority, Some(parent_node));
         self.next_frame.deferred_draws.push(DeferredDraw {
             node,
             priority,

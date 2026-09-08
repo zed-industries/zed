@@ -788,18 +788,32 @@ impl VisualTestContext {
         &mut self,
         step: impl std::fmt::Display,
     ) -> NodeStats {
-        let (incremental, stats) =
-            self.update(|window, _| (window.scene_snapshot_for_test(), window.node_stats()));
+        let (incremental, incremental_dispatch, stats) = self.update(|window, _| {
+            (
+                window.scene_snapshot_for_test(),
+                window.dispatch_snapshot_for_test(),
+                window.node_stats(),
+            )
+        });
         assert!(
             !incremental.is_empty(),
             "the window must have drawn a frame before {step}"
         );
         self.update(|window, _| window.refresh());
         self.run_until_parked();
-        let rebuilt = self.update(|window, _| window.scene_snapshot_for_test());
+        let (rebuilt, rebuilt_dispatch) = self.update(|window, _| {
+            (
+                window.scene_snapshot_for_test(),
+                window.dispatch_snapshot_for_test(),
+            )
+        });
         assert!(
             incremental == rebuilt,
             "incremental scene differs from full refresh at {step}"
+        );
+        assert!(
+            incremental_dispatch == rebuilt_dispatch,
+            "incremental dispatch tree differs from full refresh at {step}:\n{incremental_dispatch:#?}\nvs\n{rebuilt_dispatch:#?}"
         );
         stats
     }
