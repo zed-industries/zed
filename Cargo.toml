@@ -755,12 +755,13 @@ profiling = "1"
 pollster = "0.4.0"
 proptest = { git = "https://github.com/proptest-rs/proptest", rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b", features = ["attr-macro"] }
 proptest-derive = "0.8.0"
+pollster = "0.4.0"
+pulldown-cmark = { version = "0.13.0", default-features = false, features = ["html"] }
 prost = "0.14"
 prost-build = "0.14"
 prost-types = "0.14"
 protox = "0.9"
 proxyvars = "0.2"
-pulldown-cmark = { version = "0.13.0", default-features = false }
 quick-xml = "0.41"
 quote = "1.0.9"
 rand = "0.9"

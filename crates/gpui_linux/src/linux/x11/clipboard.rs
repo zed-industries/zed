@@ -19,7 +19,6 @@
 // https://freedesktop.org/wiki/ClipboardManager/
 
 use std::{
-    borrow::Cow,
     cell::RefCell,
     collections::{HashMap, hash_map::Entry},
     sync::{
@@ -77,7 +76,7 @@ x11rb::atom_manager! {
         TEXT,
         TEXT_MIME_UNKNOWN: b"text/plain",
 
-        // HTML: b"text/html",
+        HTML_MIME: b"text/html",
         // URI_LIST: b"text/uri-list",
 
         PNG__MIME: ImageFormat::mime_type(ImageFormat::Png ).as_bytes(),
@@ -977,16 +976,25 @@ impl Clipboard {
         Ok(Self { inner: ctx })
     }
 
-    pub(crate) fn set_text(
+    pub(crate) fn set_item(
         &self,
-        message: Cow<'_, str>,
+        item: &ClipboardItem,
         selection: ClipboardKind,
         wait: WaitConfig,
     ) -> Result<()> {
-        let data = vec![ClipboardData {
-            bytes: message.into_owned().into_bytes(),
-            format: self.inner.atoms.UTF8_STRING,
-        }];
+        let mut data = Vec::new();
+        if let Some(text) = item.text() {
+            data.push(ClipboardData {
+                bytes: text.into_bytes(),
+                format: self.inner.atoms.UTF8_STRING,
+            });
+        }
+        if let Some(html) = item.html() {
+            data.push(ClipboardData {
+                bytes: html.into_bytes(),
+                format: self.inner.atoms.HTML_MIME,
+            });
+        }
         self.inner.write(data, selection, wait)
     }
 

@@ -19,6 +19,7 @@ use gpui::{ClipboardEntry, ClipboardItem, Image, ImageFormat, hash};
 /// Text mime types that we'll offer to other programs.
 pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
     ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"];
+pub(crate) const HTML_MIME_TYPE: &str = "text/html";
 pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
 
 /// Text mime types that we'll accept from other programs.
@@ -180,19 +181,29 @@ impl Clipboard {
         self.self_mime.clone()
     }
 
-    pub fn send(&self, _mime_type: String, fd: OwnedFd) {
-        if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
-            self.send_bytes(fd, text.as_bytes().to_owned());
+    pub fn send(&self, mime_type: String, fd: OwnedFd) {
+        if let Some(item) = self.contents.as_ref() {
+            let bytes = if mime_type == HTML_MIME_TYPE {
+                item.html().map(|html| html.into_bytes())
+            } else {
+                item.text().map(|text| text.into_bytes())
+            };
+            if let Some(bytes) = bytes {
+                self.send_bytes(fd, bytes);
+            }
         }
     }
 
-    pub fn send_primary(&self, _mime_type: String, fd: OwnedFd) {
-        if let Some(text) = self
-            .primary_contents
-            .as_ref()
-            .and_then(|contents| contents.text())
-        {
-            self.send_bytes(fd, text.as_bytes().to_owned());
+    pub fn send_primary(&self, mime_type: String, fd: OwnedFd) {
+        if let Some(item) = self.primary_contents.as_ref() {
+            let bytes = if mime_type == HTML_MIME_TYPE {
+                item.html().map(|html| html.into_bytes())
+            } else {
+                item.text().map(|text| text.into_bytes())
+            };
+            if let Some(bytes) = bytes {
+                self.send_bytes(fd, bytes);
+            }
         }
     }
 

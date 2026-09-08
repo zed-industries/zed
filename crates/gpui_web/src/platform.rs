@@ -645,12 +645,42 @@ impl Platform for WebPlatform {
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        if let Some(text) = item.text()
-            && let Some(window) = web_sys::window()
-        {
-            // Fire-and-forget; called synchronously inside the user's input
-            // event, which satisfies the browser's user-activation requirement.
-            drop(window.navigator().clipboard().write_text(&text));
+        // Fire-and-forget; called synchronously inside the user's input
+        // event, which satisfies the browser's user-activation requirement.
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let clipboard = window.navigator().clipboard();
+        match (item.text(), item.html()) {
+            (Some(text), Some(html)) => {
+                let data = js_sys::Object::new();
+                let plain_blob: JsValue = blob_from_string(&text).into();
+                let html_blob: JsValue = blob_from_string(&html).into();
+                js_sys::Reflect::set(
+                    &data,
+                    &"text/plain".into(),
+                    &js_sys::Promise::resolve(&plain_blob),
+                )
+                .ok();
+                js_sys::Reflect::set(
+                    &data,
+                    &"text/html".into(),
+                    &js_sys::Promise::resolve(&html_blob),
+                )
+                .ok();
+                let clipboard_item =
+                    web_sys::ClipboardItem::new_with_record_from_str_to_blob_promise(&data);
+                let items = js_sys::Array::new();
+                match clipboard_item {
+                    Ok(clipboard_item) => {
+                        items.push(&clipboard_item);
+                        drop(clipboard.write(&items));
+                    }
+                    Err(_) => drop(clipboard.write_text(&text)),
+                }
+            }
+            (Some(text), None) => drop(clipboard.write_text(&text)),
+            _ => {}
         }
     }
 
@@ -683,6 +713,9 @@ impl Platform for WebPlatform {
     }
 }
 
+fn blob_from_string(text: &str) -> web_sys::Blob {
+    let sequence = js_sys::Array::of1(&js_sys::Uint8Array::from(text.as_bytes()).into());
+    web_sys::Blob::new_with_u8_array_sequence(&sequence).unwrap()
 /// Maps a `navigator.clipboard.read()` rejection to a [`ClipboardReadError`].
 ///
 /// Only `NotAllowedError` and `SecurityError` mean the user or browser
