@@ -12698,6 +12698,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0008e816fcdaf229cdd540e9b6ca2dc4a10d65c31624abb546c6420a02846e61"
 
 [[package]]
+name = "pdf_viewer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "db",
+ "editor",
+ "file_icons",
+ "fs",
+ "gpui",
+ "image",
+ "language",
+ "log",
+ "menu",
+ "project",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "settings",
+ "tempfile",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "peg"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22816,6 +22843,7 @@ dependencies = [
  "outline_panel",
  "parking_lot",
  "paths",
+ "pdf_viewer",
  "picker",
  "pkg-config",
  "pretty_assertions",

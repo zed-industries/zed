@@ -1,0 +1,47 @@
+[package]
+name = "pdf_viewer"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+description = "Native GPU-accelerated PDF viewer for Zed IDE"
+repository = "https://github.com/zed-industries/zed"
+readme = "README.md"
+keywords = ["zed", "pdf", "viewer", "gpui", "editor"]
+categories = ["development-tools", "rendering"]
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/pdf_viewer.rs"
+doctest = false
+
+[features]
+test-support = ["gpui/test-support", "editor/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+db.workspace = true
+editor.workspace = true
+file_icons.workspace = true
+gpui.workspace = true
+image.workspace = true
+language.workspace = true
+log.workspace = true
+menu.workspace = true
+project.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+theme_settings.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
+
+[dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
+fs.workspace = true
+tempfile.workspace = true
+theme.workspace = true
