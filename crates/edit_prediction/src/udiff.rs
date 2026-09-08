@@ -2,20 +2,27 @@ use std::{mem, ops::Range, path::Path, path::PathBuf, sync::Arc};
 
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, hash_map::Entry};
+use edit_prediction_types::PredictedCursorPosition;
 use gpui::{AsyncApp, Entity};
-use language::{Anchor, Buffer, OffsetRangeExt as _, TextBufferSnapshot, text_diff};
+use language::{
+    Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, TextBufferSnapshot, ToOffset as _,
+    text_diff,
+};
 use postage::stream::Stream as _;
 use project::Project;
 use util::{paths::PathStyle, rel_path::RelPath};
 use worktree::Worktree;
 use zeta_prompt::udiff::{
-    DiffEvent, DiffParser, FileStatus, Hunk, disambiguate_by_line_number, find_context_candidates,
+    DiffEvent, DiffParser, FileStatus, Hunk, INLINE_CURSOR_MARKER, disambiguate_by_line_number,
+    find_context_candidates,
 };
 
 pub use zeta_prompt::udiff::{
     DiffLine, HunkLocation, apply_diff_to_string, apply_diff_to_string_with_hunk_offset,
     strip_diff_metadata, strip_diff_path_prefix,
 };
+
+const INLINE_CURSOR_SENTINEL: &str = "\u{fdd0}";
 
 #[derive(Clone, Debug)]
 pub struct OpenedBuffers(HashMap<String, Entity<Buffer>>);
@@ -28,6 +35,101 @@ impl OpenedBuffers {
     pub fn buffers(&self) -> impl Iterator<Item = &Entity<Buffer>> {
         self.0.values()
     }
+}
+
+pub async fn prediction_edits_for_single_file_diff(
+    diff_str: &str,
+    project: &Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Result<
+    Option<(
+        Entity<Buffer>,
+        BufferSnapshot,
+        Vec<(Range<Anchor>, Arc<str>)>,
+        Option<PredictedCursorPosition>,
+    )>,
+> {
+    let mut diff = DiffParser::new(diff_str);
+    let mut target_file = None;
+    let mut edits = Vec::new();
+    let mut cursor_position = None;
+
+    while let Some(event) = diff.next()? {
+        match event {
+            DiffEvent::Hunk {
+                path,
+                mut hunk,
+                status,
+            } => {
+                anyhow::ensure!(
+                    status == FileStatus::Modified,
+                    "V4 edit predictions only support modifying existing files"
+                );
+
+                let path = path.to_string();
+                if let Some((target_path, _, _)) = &target_file {
+                    anyhow::ensure!(
+                        target_path == &path,
+                        "V4 edit predictions only support one file"
+                    );
+                } else {
+                    let project_path = project
+                        .update(cx, |project, cx| {
+                            project.find_project_path(Path::new(&path), cx)
+                        })
+                        .with_context(|| format!("no such path: {path}"))?;
+                    let buffer = project
+                        .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                        .await?;
+                    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+                    target_file = Some((path, buffer, snapshot));
+                }
+
+                let (_, _, snapshot) = target_file.as_ref().context("missing target file")?;
+                for edit in &mut hunk.edits {
+                    while let Some(marker_offset) = edit.text.find(INLINE_CURSOR_MARKER) {
+                        edit.text.replace_range(
+                            marker_offset..marker_offset + INLINE_CURSOR_MARKER.len(),
+                            INLINE_CURSOR_SENTINEL,
+                        );
+                    }
+                }
+
+                for (range, text) in resolve_hunk_edits_in_buffer(
+                    hunk,
+                    snapshot,
+                    &[Anchor::min_max_range_for_buffer(snapshot.remote_id())],
+                    status,
+                )? {
+                    if let Some(marker_offset) = text.find(INLINE_CURSOR_SENTINEL) {
+                        cursor_position.get_or_insert_with(|| {
+                            PredictedCursorPosition::new(
+                                snapshot.anchor_before(range.start.to_offset(snapshot)),
+                                marker_offset,
+                            )
+                        });
+                        let text = text.replace(INLINE_CURSOR_SENTINEL, "");
+                        if range.start.to_offset(snapshot) != range.end.to_offset(snapshot)
+                            || !text.is_empty()
+                        {
+                            edits.push((range, text.into()));
+                        }
+                    } else {
+                        edits.push((range, text));
+                    }
+                }
+            }
+            DiffEvent::FileEnd { renamed_to } => {
+                anyhow::ensure!(
+                    renamed_to.is_none(),
+                    "V4 edit predictions do not support renames"
+                );
+            }
+        }
+    }
+
+    Ok(target_file.map(|(_, buffer, snapshot)| (buffer, snapshot, edits, cursor_position)))
 }
 
 #[must_use]
@@ -65,7 +167,7 @@ pub async fn apply_diff(
                 if status == FileStatus::Deleted {
                     let delete_task = project.update(cx, |project, cx| {
                         if let Some(path) = project.find_project_path(path.as_ref(), cx) {
-                            project.delete_file(path, false, cx)
+                            project.delete_file(path, cx)
                         } else {
                             None
                         }
@@ -165,12 +267,12 @@ pub async fn refresh_worktree_entries(
 ) -> Result<()> {
     let mut rel_paths = Vec::new();
     for path in paths {
-        if let Ok(rel_path) = RelPath::new(path, PathStyle::Posix) {
+        if let Ok(rel_path) = RelPath::new(path, PathStyle::Unix) {
             rel_paths.push(rel_path.into_arc());
         }
 
         let path_without_root: PathBuf = path.components().skip(1).collect();
-        if let Ok(rel_path) = RelPath::new(&path_without_root, PathStyle::Posix) {
+        if let Ok(rel_path) = RelPath::new(&path_without_root, PathStyle::Unix) {
             rel_paths.push(rel_path.into_arc());
         }
     }
@@ -243,7 +345,7 @@ fn resolve_hunk_edits_in_buffer(
     buffer: &TextBufferSnapshot,
     ranges: &[Range<Anchor>],
     status: FileStatus,
-) -> Result<impl Iterator<Item = (Range<Anchor>, Arc<str>)>, anyhow::Error> {
+) -> Result<Vec<(Range<Anchor>, Arc<str>)>, anyhow::Error> {
     let context_offset = if status == FileStatus::Created || hunk.context.is_empty() {
         0
     } else {
@@ -272,22 +374,26 @@ fn resolve_hunk_edits_in_buffer(
         return Err(anyhow!("Edit range {:?} exceeds buffer length", edit.range));
     }
 
-    let iter = hunk.edits.into_iter().flat_map(move |edit| {
-        let old_text = buffer
-            .text_for_range(context_offset + edit.range.start..context_offset + edit.range.end)
-            .collect::<String>();
-        let edits_within_hunk = language::text_diff(&old_text, &edit.text);
-        edits_within_hunk
-            .into_iter()
-            .map(move |(inner_range, inner_text)| {
-                (
-                    buffer.anchor_after(context_offset + edit.range.start + inner_range.start)
-                        ..buffer.anchor_before(context_offset + edit.range.start + inner_range.end),
-                    inner_text,
-                )
-            })
-    });
-    Ok(iter)
+    Ok(hunk
+        .edits
+        .into_iter()
+        .flat_map(move |edit| {
+            let old_text = buffer
+                .text_for_range(context_offset + edit.range.start..context_offset + edit.range.end)
+                .collect::<String>();
+            let edits_within_hunk = language::text_diff(&old_text, &edit.text);
+            edits_within_hunk
+                .into_iter()
+                .map(move |(inner_range, inner_text)| {
+                    (
+                        buffer.anchor_after(context_offset + edit.range.start + inner_range.start)
+                            ..buffer
+                                .anchor_before(context_offset + edit.range.start + inner_range.end),
+                        inner_text,
+                    )
+                })
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -295,10 +401,12 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use indoc::indoc;
+
     use pretty_assertions::assert_eq;
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
+    use std::path::Path;
     use util::path;
 
     #[test]
@@ -361,6 +469,226 @@ mod tests {
         assert_eq!(range.start, 41);
         assert_eq!(range.end, 54); // "second unique" is 13 bytes
         assert_eq!(text, "REPLACED");
+    }
+
+    #[gpui::test]
+    async fn test_prediction_edits_for_single_file_diff_can_target_project_file(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = init_test(cx);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file1": "Hello!\nHow\nBye\n",
+                "file2": "Hola!\nComo\nAdios\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let diff = indoc! {r#"
+            --- a/file2
+            +++ b/file2
+            @@ ... @@
+             Hola!
+            -Como
+            +Como estas?
+             Adios
+        "#};
+
+        let (buffer, snapshot, edits, cursor_position) =
+            prediction_edits_for_single_file_diff(diff, &project, &mut cx.to_async())
+                .await
+                .unwrap()
+                .unwrap();
+
+        assert!(cursor_position.is_none());
+        buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        assert_eq!(
+            snapshot.file().unwrap().path().as_std_path(),
+            Path::new("file2")
+        );
+        buffer.read_with(cx, |buffer, _cx| {
+            assert_eq!(buffer.text(), "Hola!\nComo estas?\nAdios\n");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prediction_edits_for_single_file_diff_strips_inline_cursor_marker(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = init_test(cx);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file": "Hello!\nHow\nBye\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let diff = indoc! {r#"
+            --- a/file
+            +++ b/file
+            @@ ... @@
+             Hello!
+            -How
+            +How are <|user_cursor|>you?
+             Bye
+        "#};
+
+        let (buffer, snapshot, edits, cursor_position) =
+            prediction_edits_for_single_file_diff(diff, &project, &mut cx.to_async())
+                .await
+                .unwrap()
+                .unwrap();
+
+        assert!(
+            edits
+                .iter()
+                .all(|(_, text)| !text.contains(INLINE_CURSOR_MARKER))
+        );
+        let cursor_position = cursor_position.unwrap();
+        assert_eq!(
+            cursor_position.anchor.to_offset(&snapshot),
+            "Hello!\nHow".len()
+        );
+        assert_eq!(cursor_position.offset, " are ".len());
+
+        buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        buffer.read_with(cx, |buffer, _cx| {
+            assert_eq!(buffer.text(), "Hello!\nHow are you?\nBye\n");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prediction_edits_for_single_file_diff_places_cursor_after_inline_completion(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = init_test(cx);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file": "        }\n\n        let api_key = data.\n    }\n    drop(sender);\n    Ok(())\n}\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let diff = indoc! {r#"
+            --- a/file
+            +++ b/file
+            @@ ... @@
+                     }
+
+            -        let api_key = data.
+            +        let api_key = data.config.<|user_cursor|>open_ai_api_key.clone();
+                 }
+                 drop(sender);
+                 Ok(())
+             }
+        "#};
+
+        let (buffer, _, edits, cursor_position) =
+            prediction_edits_for_single_file_diff(diff, &project, &mut cx.to_async())
+                .await
+                .unwrap()
+                .unwrap();
+        let cursor_position = cursor_position.unwrap();
+
+        buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        buffer.read_with(cx, |buffer, _cx| {
+            let snapshot = buffer.snapshot();
+            let cursor_offset = (cursor_position.anchor.to_offset(&snapshot)
+                + cursor_position.offset)
+                .min(snapshot.len());
+            let mut text = buffer.text();
+            text.insert(cursor_offset, 'ˇ');
+
+            assert_eq!(
+                text,
+                "        }\n\n        let api_key = data.config.ˇopen_ai_api_key.clone();\n    }\n    drop(sender);\n    Ok(())\n}\n"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prediction_edits_for_single_file_diff_drops_marker_only_edit(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = init_test(cx);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file": "Name</Update>\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let diff = indoc! {r#"
+            --- a/file
+            +++ b/file
+            @@ ... @@
+            -Name</Update>
+            +<|user_cursor|>Name</Update>
+        "#};
+
+        let (buffer, snapshot, edits, cursor_position) =
+            prediction_edits_for_single_file_diff(diff, &project, &mut cx.to_async())
+                .await
+                .unwrap()
+                .unwrap();
+
+        assert!(edits.is_empty());
+        let cursor_position = cursor_position.unwrap();
+        assert_eq!(cursor_position.anchor.to_offset(&snapshot), 0);
+        assert_eq!(cursor_position.offset, 0);
+
+        buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        buffer.read_with(cx, |buffer, _cx| {
+            assert_eq!(buffer.text(), "Name</Update>\n");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prediction_edits_for_single_file_diff_strips_cursor_marker_that_overlaps_source(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = init_test(cx);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file": "before<after\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let diff = indoc! {r#"
+            --- a/file
+            +++ b/file
+            @@ ... @@
+            -before<after
+            +before<|user_cursor|><after
+        "#};
+
+        let (buffer, snapshot, edits, cursor_position) =
+            prediction_edits_for_single_file_diff(diff, &project, &mut cx.to_async())
+                .await
+                .unwrap()
+                .unwrap();
+
+        assert!(edits.is_empty());
+        let cursor_position = cursor_position.unwrap();
+        assert_eq!(
+            cursor_position.anchor.to_offset(&snapshot) + cursor_position.offset,
+            "before".len()
+        );
+        buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        buffer.read_with(cx, |buffer, _cx| {
+            assert_eq!(buffer.text(), "before<after\n");
+        });
     }
 
     #[gpui::test]

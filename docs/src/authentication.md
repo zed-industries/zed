@@ -38,5 +38,5 @@ Stripe is used for billing, and will use your Zed account's email address when s
 
 ## Hiding Sign In button from the interface
 
-In case the Sign In feature is not used, it's possible to hide that from the interface by using `show_sign_in` settings property.
+In case the Sign In feature is not used, it's possible to hide that from the interface by using the `show_sign_in` settings property.
 Refer to [Visual Customization page](./visual-customization.md) for more details.

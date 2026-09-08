@@ -27,7 +27,7 @@ use zed_actions::ShowCallStats;
 
 use crate::TitleBar;
 
-fn format_stat(value: Option<f64>, format: impl Fn(f64) -> String) -> String {
+fn format_stat<T>(value: Option<T>, format: impl Fn(T) -> String) -> String {
     match value {
         Some(v) => format(v),
         None => "—".to_string(),
@@ -240,7 +240,7 @@ impl TitleBar {
                                 })
                                 .occlude()
                                 .tooltip({
-                                    let login = collaborator.user.github_login.clone();
+                                    let login = collaborator.user.username.clone();
                                     Tooltip::text(format!("Follow {login}"))
                                 }),
                         )
@@ -295,8 +295,8 @@ impl TitleBar {
                                     avatar.indicator(
                                         AvatarAudioStatusIndicator::new(ui::AudioStatus::Muted)
                                             .tooltip({
-                                                let github_login = user.github_login.clone();
-                                                Tooltip::text(format!("{} is muted", github_login))
+                                                let username = user.username.clone();
+                                                Tooltip::text(format!("{} is muted", username))
                                             }),
                                     )
                                 }),
@@ -373,7 +373,10 @@ impl TitleBar {
             .channel_id()
             .and_then(|channel_id| channel_store.read(cx).channel_for_id(channel_id).cloned());
 
-        let effective_quality = stats.effective_quality.unwrap_or(ConnectionQuality::Lost);
+        let effective_quality = stats
+            .effective_quality
+            .map(|inner| inner.0)
+            .unwrap_or(ConnectionQuality::Lost);
         let (signal_icon, signal_color, quality_label) = match effective_quality {
             ConnectionQuality::Excellent => {
                 (IconName::SignalHigh, Some(Color::Success), "Excellent")
@@ -414,8 +417,8 @@ impl TitleBar {
                         let packet_loss =
                             format_stat(stats.packet_loss_pct, |v| format!("{:.1}%", v));
                         let input_lag =
-                            format_stat(stats.input_lag.map(|d| d.as_secs_f64() * 1000.0), |v| {
-                                format!("{:.1}ms", v)
+                            format_stat(stats.input_lag.map(|d| d.0.as_millis()), |v| {
+                                format!("{}ms", v)
                             });
 
                         let key_binding = KeyBinding::for_action(&ShowCallStats, cx);

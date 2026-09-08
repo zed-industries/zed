@@ -4,17 +4,18 @@ use crate::session::running::RunningState;
 use crate::session::running::breakpoint_list::BreakpointList;
 
 use crate::{
-    ClearAllBreakpoints, Continue, CopyDebugAdapterArguments, Detach, FocusBreakpointList,
-    FocusConsole, FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables,
-    NewProcessModal, NewProcessMode, Pause, RerunSession, StepInto, StepOut, StepOver, Stop,
-    ToggleExpandItem, ToggleSessionPicker, ToggleThreadPicker, persistence, spawn_task_or_modal,
+    ClearAllBreakpoints, Continue, ContinueThread, CopyDebugAdapterArguments, Detach,
+    FocusBreakpointList, FocusConsole, FocusFrames, FocusLoadedSources, FocusModules,
+    FocusTerminal, FocusVariables, NewProcessModal, NewProcessMode, Pause, RerunSession, StepInto,
+    StepOut, StepOver, Stop, ToggleExpandItem, ToggleSessionPicker, ToggleThreadPicker,
+    persistence, spawn_task_or_modal,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::IndexMap;
 use dap::adapters::DebugAdapterName;
 use dap::{DapRegistry, StartDebuggingRequestArguments};
 use dap::{client::SessionId, debugger_settings::DebuggerSettings};
-use editor::{Editor, MultiBufferOffset, ToPoint};
+use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use gpui::{
     Action, Anchor, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity,
@@ -29,11 +30,12 @@ use project::{DebugScenarioContext, Fs, ProjectPath, TaskSourceKind, WorktreeId}
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use task::{DebugScenario, SharedTaskContext};
-use tree_sitter::{Query, StreamingIterator as _};
+
 use ui::{
-    ContextMenu, Divider, PopoverMenu, PopoverMenuHandle, SplitButton, Tab, Tooltip, prelude::*,
+    ButtonLike, ContextMenu, Divider, ElevationIndex, PopoverMenu, PopoverMenuHandle, SplitButton,
+    Tab, TintColor, Tooltip, prelude::*,
 };
 use util::redact::redact_command;
 use util::rel_path::RelPath;
@@ -69,7 +71,7 @@ pub struct DebugPanel {
     pub(crate) session_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     fs: Arc<dyn Fs>,
     is_zoomed: bool,
-    _subscriptions: [Subscription; 1],
+    _subscriptions: [Subscription; 2],
     breakpoint_list: Entity<BreakpointList>,
 }
 
@@ -93,6 +95,11 @@ impl DebugPanel {
                 },
             );
 
+            let breakpoint_subscription =
+                cx.observe(&project.read(cx).breakpoint_store(), |_, _, cx| {
+                    cx.notify();
+                });
+
             Self {
                 sessions_with_children: Default::default(),
                 active_session: None,
@@ -111,7 +118,7 @@ impl DebugPanel {
                 thread_picker_menu_handle,
                 session_picker_menu_handle,
                 is_zoomed: false,
-                _subscriptions: [focus_subscription],
+                _subscriptions: [focus_subscription, breakpoint_subscription],
                 debug_scenario_scheduled_last: true,
             }
         })
@@ -725,28 +732,63 @@ impl DebugPanel {
                                                 }),
                                             )
                                         } else {
-                                            this.child(
-                                                IconButton::new(
-                                                    "debug-continue",
-                                                    IconName::DebugContinue,
-                                                )
-                                                .icon_size(IconSize::Small)
-                                                .on_click(window.listener_for(
-                                                    running_state,
-                                                    |this, _, _window, cx| this.continue_thread(cx),
-                                                ))
-                                                .disabled(thread_status != ThreadStatus::Stopped)
-                                                .tooltip({
-                                                    let focus_handle = focus_handle.clone();
-                                                    move |_window, cx| {
-                                                        Tooltip::for_action_in(
-                                                            "Continue Program",
-                                                            &Continue,
-                                                            &focus_handle,
-                                                            cx,
+                                            let continue_button = IconButton::new(
+                                                "debug-continue",
+                                                IconName::DebugContinue,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .on_click(window.listener_for(
+                                                running_state,
+                                                |this, _, _window, cx| {
+                                                    this.continue_program(cx);
+                                                },
+                                            ))
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |_window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Continue Program",
+                                                        &Continue,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                }
+                                            });
+
+                                            this.child(continue_button).when(
+                                                capabilities
+                                                    .supports_single_thread_execution_requests
+                                                    .unwrap_or_default(),
+                                                |this| {
+                                                    this.child(
+                                                        IconButton::new(
+                                                            "debug-continue-thread",
+                                                            IconName::DebugContinueThread,
                                                         )
-                                                    }
-                                                }),
+                                                        .icon_size(IconSize::Small)
+                                                        .disabled(
+                                                            thread_status != ThreadStatus::Stopped,
+                                                        )
+                                                        .on_click(window.listener_for(
+                                                            running_state,
+                                                            |this, _, _window, cx| {
+                                                                this.continue_thread(cx);
+                                                            },
+                                                        ))
+                                                        .tooltip({
+                                                            let focus_handle = focus_handle.clone();
+                                                            move |_window, cx| {
+                                                                Tooltip::for_action_in(
+                                                                    "Continue Thread",
+                                                                    &ContinueThread,
+                                                                    &focus_handle,
+                                                                    cx,
+                                                                )
+                                                            }
+                                                        }),
+                                                    )
+                                                },
                                             )
                                         }
                                     })
@@ -953,28 +995,26 @@ impl DebugPanel {
                                     .map(|session| session.read(cx).running_state())
                                     .cloned(),
                                 |this, running_state| {
-                                    this.children({
-                                        let threads =
-                                            running_state.update(cx, |running_state, cx| {
-                                                let session = running_state.session();
-                                                session.read(cx).is_started().then(|| {
-                                                    session.update(cx, |session, cx| {
-                                                        session.threads(cx)
-                                                    })
-                                                })
-                                            });
-
-                                        threads.and_then(|threads| {
-                                            self.render_thread_dropdown(
-                                                &running_state,
-                                                threads,
-                                                window,
-                                                cx,
-                                            )
+                                    let threads = running_state.update(cx, |running_state, cx| {
+                                        let session = running_state.session();
+                                        session.read(cx).is_started().then(|| {
+                                            session.update(cx, |session, cx| session.threads(cx))
                                         })
-                                    })
-                                    .when(!is_side, |this| {
-                                        this.gap_0p5().child(Divider::vertical())
+                                    });
+
+                                    let thread_dropdown = threads.and_then(|threads| {
+                                        self.render_thread_dropdown(
+                                            &running_state,
+                                            threads,
+                                            window,
+                                            cx,
+                                        )
+                                    });
+
+                                    this.when_some(thread_dropdown, |this, dropdown| {
+                                        this.child(dropdown).when(!is_side, |this| {
+                                            this.gap_0p5().child(Divider::vertical())
+                                        })
                                     })
                                 },
                             ),
@@ -1091,14 +1131,14 @@ impl DebugPanel {
                 directory_in_worktree: dir,
                 ..
             } => {
-                let relative_path = if dir.ends_with(RelPath::unix(".vscode").unwrap()) {
-                    dir.join(RelPath::unix("launch.json").unwrap())
+                let relative_path = if dir.ends_with(RelPath::from_unix_str(".vscode").unwrap()) {
+                    dir.join(RelPath::from_unix_str("launch.json").unwrap())
                 } else {
-                    dir.join(RelPath::unix("debug.json").unwrap())
+                    dir.join(RelPath::from_unix_str("debug.json").unwrap())
                 };
                 ProjectPath {
                     worktree_id: id,
-                    path: relative_path,
+                    path: relative_path.into(),
                 }
             }
             _ => return self.save_scenario(scenario, worktree_id, window, cx),
@@ -1221,76 +1261,7 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Result<Task<Result<()>>> {
-        static LAST_ITEM_QUERY: LazyLock<Query> = LazyLock::new(|| {
-            Query::new(
-                &tree_sitter_json::LANGUAGE.into(),
-                "(document (array (object) @object))", // TODO: use "." anchor to only match last object
-            )
-            .expect("Failed to create LAST_ITEM_QUERY")
-        });
-        static EMPTY_ARRAY_QUERY: LazyLock<Query> = LazyLock::new(|| {
-            Query::new(
-                &tree_sitter_json::LANGUAGE.into(),
-                "(document (array) @array)",
-            )
-            .expect("Failed to create EMPTY_ARRAY_QUERY")
-        });
-
-        let content = editor.text(cx);
-        let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_json::LANGUAGE.into())?;
-        let mut cursor = tree_sitter::QueryCursor::new();
-        let syntax_tree = parser
-            .parse(&content, None)
-            .context("could not parse debug.json")?;
-        let mut matches = cursor.matches(
-            &LAST_ITEM_QUERY,
-            syntax_tree.root_node(),
-            content.as_bytes(),
-        );
-
-        let mut last_offset = None;
-        while let Some(mat) = matches.next() {
-            if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end) {
-                last_offset = Some(MultiBufferOffset(pos))
-            }
-        }
-        let mut edits = Vec::new();
-        let mut cursor_position = MultiBufferOffset(0);
-
-        if let Some(pos) = last_offset {
-            edits.push((pos..pos, format!(",\n{new_scenario}")));
-            cursor_position = pos + ",\n  ".len();
-        } else {
-            let mut matches = cursor.matches(
-                &EMPTY_ARRAY_QUERY,
-                syntax_tree.root_node(),
-                content.as_bytes(),
-            );
-
-            if let Some(mat) = matches.next() {
-                if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end - 1) {
-                    edits.push((
-                        MultiBufferOffset(pos)..MultiBufferOffset(pos),
-                        format!("\n{new_scenario}\n"),
-                    ));
-                    cursor_position = MultiBufferOffset(pos) + "\n  ".len();
-                }
-            } else {
-                edits.push((
-                    MultiBufferOffset(0)..MultiBufferOffset(0),
-                    format!("[\n{}\n]", new_scenario),
-                ));
-                cursor_position = MultiBufferOffset("[\n  ".len());
-            }
-        }
-        editor.transact(window, cx, |editor, window, cx| {
-            editor.edit(edits, cx);
-            let snapshot = editor.buffer().read(cx).read(cx);
-            let point = cursor_position.to_point(&snapshot);
-            drop(snapshot);
-            editor.go_to_singleton_buffer_point(point, window, cx);
-        });
+        tasks_ui::insert_task_json_into_editor(editor, new_scenario, window, cx)?;
         Ok(editor.save(SaveOptions::default(), project, window, cx))
     }
 
@@ -1351,9 +1322,14 @@ impl DebugPanel {
         running_state: &Entity<RunningState>,
         thread_status: ThreadStatus,
         window: &mut Window,
-    ) -> IconButton {
-        IconButton::new("debug-back-in-history", IconName::HistoryRerun)
-            .icon_size(IconSize::Small)
+    ) -> ButtonLike {
+        ButtonLike::new_rounded_left("debug-back-in-history")
+            .layer(ElevationIndex::ModalSurface)
+            .child(Icon::new(IconName::HistoryRerun).size(IconSize::Small))
+            .disabled(
+                thread_status == ThreadStatus::Running || thread_status == ThreadStatus::Stepping,
+            )
+            .tooltip(Tooltip::text("Step Back in Session History"))
             .on_click(window.listener_for(running_state, |this, _, _window, cx| {
                 this.session().update(cx, |session, cx| {
                     let ix = session
@@ -1363,9 +1339,6 @@ impl DebugPanel {
                     session.select_historic_snapshot(Some(ix.saturating_sub(1)), cx);
                 })
             }))
-            .disabled(
-                thread_status == ThreadStatus::Running || thread_status == ThreadStatus::Stepping,
-            )
     }
 
     fn render_history_toggle_button(
@@ -1373,20 +1346,19 @@ impl DebugPanel {
         thread_status: ThreadStatus,
         running_state: &Entity<RunningState>,
     ) -> impl IntoElement {
+        let chevron_button_size = rems_from_px(20_f32);
         PopoverMenu::new("debug-back-in-history-menu")
             .trigger(
-                ui::ButtonLike::new_rounded_right("debug-back-in-history-menu-trigger")
-                    .layer(ui::ElevationIndex::ModalSurface)
-                    .size(ui::ButtonSize::None)
-                    .child(
-                        div()
-                            .px_1()
-                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
-                    )
+                ButtonLike::new_rounded_right("debug-back-in-history-menu-trigger")
+                    .layer(ElevationIndex::ModalSurface)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .disabled(
                         thread_status == ThreadStatus::Running
                             || thread_status == ThreadStatus::Stepping,
-                    ),
+                    )
+                    .width(chevron_button_size)
+                    .height(chevron_button_size.into())
+                    .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
             )
             .menu({
                 let running_state = running_state.clone();
@@ -1417,7 +1389,10 @@ impl DebugPanel {
                                     handler(None, running_state.clone(), cx);
                                 }
                             });
-                            context_menu = context_menu.separator();
+
+                            if !history.is_empty() {
+                                context_menu = context_menu.separator();
+                            }
 
                             for (ix, _) in history.iter().enumerate().rev() {
                                 context_menu =
@@ -1935,9 +1910,9 @@ impl Render for DebugPanel {
                                         h_flex()
                                             .size_full()
                                             .child(breakpoint_list)
-                                            .child(Divider::vertical())
+                                            .child(Divider::vertical().h_full())
                                             .child(welcome_experience)
-                                            .child(Divider::vertical()),
+                                            .child(Divider::vertical().h_full()),
                                     )
                                 } else {
                                     this.child(

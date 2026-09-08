@@ -8,6 +8,8 @@
 //!
 //! A theme is a collection of colors used to build a consistent appearance for UI components across the application.
 
+mod buffer_line_height;
+mod color_space;
 mod default_colors;
 mod fallback_themes;
 mod font_family_cache;
@@ -30,6 +32,8 @@ use gpui::{
 };
 use serde::Deserialize;
 
+pub use crate::buffer_line_height::*;
+pub use crate::color_space::*;
 pub use crate::default_colors::*;
 pub use crate::fallback_themes::{apply_status_color_defaults, apply_theme_color_defaults};
 pub use crate::font_family_cache::*;

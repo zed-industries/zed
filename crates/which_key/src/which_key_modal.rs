@@ -2,19 +2,19 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight, Keystroke,
-    ScrollHandle, Subscription, WeakEntity, Window,
+    App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight,
+    KeybindingKeystroke, ScrollHandle, Subscription, WeakEntity, Window,
 };
 use settings::Settings;
 use std::collections::HashMap;
 use theme_settings::ThemeSettings;
 use ui::{
     Divider, DividerColor, DynamicSpacing, LabelSize, WithScrollbar, prelude::*,
-    text_for_keystrokes,
+    text_for_keybinding_keystrokes,
 };
 use workspace::{ModalView, Workspace};
 
-use crate::FILTERED_KEYSTROKES;
+use crate::{bindings_for_which_key, map_pending_keystrokes};
 
 pub struct WhichKeyModal {
     _workspace: WeakEntity<Workspace>,
@@ -65,35 +65,9 @@ impl WhichKeyModal {
             cx.emit(DismissEvent);
             return;
         };
-        let bindings = window.possible_bindings_for_input(pending_keys);
-
-        let mut binding_data = bindings
-            .iter()
-            .map(|binding| {
-                // Map to keystrokes
-                (
-                    binding
-                        .keystrokes()
-                        .iter()
-                        .map(|k| k.inner().to_owned())
-                        .collect::<Vec<_>>(),
-                    binding.action(),
-                )
-            })
-            .filter(|(keystrokes, _action)| {
-                // Check if this binding matches any filtered keystroke pattern
-                !FILTERED_KEYSTROKES.iter().any(|filtered| {
-                    keystrokes.len() >= filtered.len()
-                        && keystrokes[..filtered.len()] == filtered[..]
-                })
-            })
-            .map(|(keystrokes, action)| {
-                // Map to remaining keystrokes and action name
-                let remaining_keystrokes = keystrokes[pending_keys.len()..].to_vec();
-                let action_name: SharedString =
-                    command_palette::humanize_action_name(action.name()).into();
-                (remaining_keystrokes, action_name)
-            })
+        let mut binding_data = bindings_for_which_key(window, pending_keys)
+            .into_iter()
+            .map(|binding| (binding.remaining_keystrokes, binding.action_name))
             .collect();
 
         binding_data = group_bindings(binding_data);
@@ -118,8 +92,8 @@ impl WhichKeyModal {
             }
 
             // Finally sort by text length, then lexicographically for full stability
-            let text_a = text_for_keystrokes(keystrokes_a, cx);
-            let text_b = text_for_keystrokes(keystrokes_b, cx);
+            let text_a = text_for_keybinding_keystrokes(keystrokes_a, cx);
+            let text_b = text_for_keybinding_keystrokes(keystrokes_b, cx);
             let text_len_cmp = text_a.len().cmp(&text_b.len());
             if text_len_cmp != std::cmp::Ordering::Equal {
                 return text_len_cmp;
@@ -127,10 +101,16 @@ impl WhichKeyModal {
             text_a.cmp(&text_b)
         });
         binding_data.dedup();
-        self.pending_keys = text_for_keystrokes(&pending_keys, cx).into();
+        let pending_keys = map_pending_keystrokes(pending_keys, cx.keyboard_mapper().as_ref());
+        self.pending_keys = text_for_keybinding_keystrokes(&pending_keys, cx).into();
         self.bindings = binding_data
             .into_iter()
-            .map(|(keystrokes, action)| (text_for_keystrokes(&keystrokes, cx).into(), action))
+            .map(|(keystrokes, action)| {
+                (
+                    text_for_keybinding_keystrokes(&keystrokes, cx).into(),
+                    action,
+                )
+            })
             .collect();
     }
 }
@@ -271,10 +251,12 @@ impl ModalView for WhichKeyModal {
 }
 
 fn group_bindings(
-    binding_data: Vec<(Vec<Keystroke>, SharedString)>,
-) -> Vec<(Vec<Keystroke>, SharedString)> {
-    let mut groups: HashMap<Option<Keystroke>, Vec<(Vec<Keystroke>, SharedString)>> =
-        HashMap::new();
+    binding_data: Vec<(Vec<KeybindingKeystroke>, SharedString)>,
+) -> Vec<(Vec<KeybindingKeystroke>, SharedString)> {
+    let mut groups: HashMap<
+        Option<KeybindingKeystroke>,
+        Vec<(Vec<KeybindingKeystroke>, SharedString)>,
+    > = HashMap::new();
 
     // Group bindings by their first keystroke
     for (remaining_keystrokes, action_name) in binding_data {
@@ -305,4 +287,115 @@ fn group_bindings(
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_os = "windows")]
+    use gpui::Modifiers;
+    use gpui::{
+        Action as _, Entity, FocusHandle, InvalidKeystrokeError, KeyBinding, Keystroke,
+        TestAppContext, VisualTestContext, actions,
+    };
+
+    use super::*;
+
+    actions!(
+        which_key_modal_test,
+        [FirstBinding, SecondBinding, ThirdBinding]
+    );
+
+    struct TestView {
+        focus_handle: FocusHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .key_context("WhichKeyModalTest")
+                .track_focus(&self.focus_handle)
+                .on_action(|_: &FirstBinding, _, _| {})
+                .on_action(|_: &SecondBinding, _, _| {})
+                .on_action(|_: &ThirdBinding, _, _| {})
+        }
+    }
+
+    fn setup_modal_test<'a>(
+        cx: &'a mut TestAppContext,
+        bindings: impl IntoIterator<Item = KeyBinding>,
+        pending_keystrokes: &str,
+    ) -> (Entity<WhichKeyModal>, &'a mut VisualTestContext) {
+        cx.update(|cx| cx.bind_keys(bindings));
+        let (test_view, cx) = cx.add_window_view(|_, cx| TestView {
+            focus_handle: cx.focus_handle(),
+        });
+        let focus_handle = test_view.read_with(cx, |test_view, _| test_view.focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+        cx.simulate_keystrokes(pending_keystrokes);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+
+        let modal = cx.update(|window, cx| {
+            cx.new(|cx| WhichKeyModal::new(WeakEntity::new_invalid(), window, cx))
+        });
+        (modal, cx)
+    }
+
+    #[test]
+    fn test_group_bindings_preserves_keybinding_keystrokes() -> Result<(), InvalidKeystrokeError> {
+        #[cfg(target_os = "windows")]
+        let keystroke = KeybindingKeystroke::new(
+            Keystroke::parse("ctrl-$")?,
+            Modifiers::control_shift(),
+            "4".to_owned(),
+        );
+        #[cfg(not(target_os = "windows"))]
+        let keystroke = KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-x")?);
+        let binding_data = vec![(vec![keystroke.clone()], SharedString::from("test action"))];
+
+        let grouped_bindings = group_bindings(binding_data);
+
+        assert_eq!(
+            grouped_bindings,
+            vec![(vec![keystroke], SharedString::from("test action"))]
+        );
+        Ok(())
+    }
+
+    #[gpui::test]
+    fn test_which_key_modal_groups_and_orders_pending_bindings(cx: &mut TestAppContext) {
+        let (modal, cx) = setup_modal_test(
+            cx,
+            [
+                KeyBinding::new("ctrl-b h", FirstBinding, Some("WhichKeyModalTest")),
+                KeyBinding::new("ctrl-b h j", SecondBinding, Some("WhichKeyModalTest")),
+                KeyBinding::new("ctrl-b k", ThirdBinding, Some("WhichKeyModalTest")),
+            ],
+            "ctrl-b",
+        );
+
+        let h = KeybindingKeystroke::from_keystroke(
+            Keystroke::parse("h").expect("valid test keystroke"),
+        );
+        let k = KeybindingKeystroke::from_keystroke(
+            Keystroke::parse("k").expect("valid test keystroke"),
+        );
+        let h_text = cx.update(|_, cx| text_for_keybinding_keystrokes(&[h], cx));
+        let k_text = cx.update(|_, cx| text_for_keybinding_keystrokes(&[k], cx));
+        let expected_bindings = vec![
+            (
+                k_text.into(),
+                command_palette::humanize_action_name(ThirdBinding.name()).into(),
+            ),
+            (h_text.into(), SharedString::from("+2 keybinds")),
+        ];
+
+        assert_eq!(
+            modal.read_with(cx, |modal, _| modal.bindings.clone()),
+            expected_bindings
+        );
+    }
 }

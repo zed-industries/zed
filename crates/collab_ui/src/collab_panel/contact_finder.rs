@@ -6,7 +6,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::{Avatar, ListItem, ListItemSpacing, prelude::*};
-use util::{ResultExt as _, TryFutureExt};
+use util::TryFutureExt;
 use workspace::ModalView;
 
 pub struct ContactFinder {
@@ -24,12 +24,6 @@ impl ContactFinder {
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded());
 
         Self { picker }
-    }
-
-    pub fn set_query(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.picker.update(cx, |picker, cx| {
-            picker.set_query(&query, window, cx);
-        });
     }
 }
 
@@ -139,9 +133,7 @@ impl PickerDelegate for ContactFinderDelegate {
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
-        self.parent
-            .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+        self.parent.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
     }
 
     fn render_match(
@@ -167,7 +159,7 @@ impl PickerDelegate for ContactFinderDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .start_slot(Avatar::new(user.avatar_uri.clone()))
-                .child(Label::new(user.github_login.clone()))
+                .child(Label::new(user.username.clone()))
                 .end_slot::<Icon>(icon_path.map(Icon::from_path)),
         )
     }

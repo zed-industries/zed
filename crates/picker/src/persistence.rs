@@ -36,6 +36,26 @@ pub(crate) fn store_shape_for_this_layout(
     });
 }
 
+/// Persist the last-used preview layout without touching the stored shape.
+///
+/// Changing the preview position (e.g. right/below/hidden) without resizing
+/// must still be remembered, so this is called whenever the layout changes.
+pub(crate) fn store_last_layout(
+    picker_delegate: &'static str,
+    preview_layout: Option<preview::Layout>,
+    cx: &App,
+) {
+    let kvp = KeyValueStore::global(cx);
+    db::write_and_log(cx, async move || {
+        kvp.scoped(PICKERS_NAMESPACE)
+            .write(
+                last_layout_key(picker_delegate),
+                layout_as_str(preview_layout).to_string(),
+            )
+            .await
+    });
+}
+
 pub(crate) fn try_load_shape(
     picker_delegate: &'static str,
     preview_layout: impl Into<Option<preview::Layout>>,
@@ -49,9 +69,7 @@ pub(crate) fn try_load_shape(
         return Ok(None);
     };
 
-    let shape = serde_json::from_str::<PickerConfig>(&shape)
-        .context("Could not deserialize loaded picker shape from persistence")?
-        .into_centered();
+    let shape = parse_shape(&shape)?;
     Ok(Some(Shape::HorizontallyCentered(shape)))
 }
 
@@ -68,6 +86,13 @@ pub(crate) fn load_last_preview_layout(
     };
 
     parse_layout(&last_layout)
+}
+
+#[inline(never)]
+fn parse_shape(json: &str) -> anyhow::Result<Centered> {
+    Ok(serde_json::from_str::<PickerConfig>(json)
+        .context("Could not deserialize loaded picker shape from persistence")?
+        .into_centered())
 }
 
 fn shape_key(picker_delegate: &'static str, preview_layout: Option<preview::Layout>) -> String {

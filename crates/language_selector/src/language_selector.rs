@@ -232,7 +232,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.language_selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
     }
 
     fn selected_index(&self) -> usize {
@@ -366,10 +366,11 @@ mod tests {
                 language_registry.add(Arc::new(Language::new(
                     LanguageConfig {
                         name: language_name.into(),
-                        matcher: LanguageMatcher {
+                        matcher: (LanguageMatcher {
                             path_suffixes: vec![path_suffix.to_string()],
                             ..Default::default()
-                        },
+                        })
+                        .into(),
                         ..Default::default()
                     },
                     None,

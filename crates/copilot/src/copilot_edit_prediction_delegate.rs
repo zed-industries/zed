@@ -15,8 +15,6 @@ use icons::IconName;
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToPointUtf16};
 use std::{ops::Range, sync::Arc, time::Duration};
 
-pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
-
 pub struct CopilotEditPredictionDelegate {
     completion: Option<(CopilotEditPrediction, EditPreview)>,
     pending_refresh: Option<Task<Result<()>>>,
@@ -77,16 +75,14 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         &mut self,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
-        debounce: bool,
+        debounce_duration: Duration,
         _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         let copilot = self.copilot.clone();
         self.pending_refresh = Some(cx.spawn(async move |this, cx| {
-            if debounce {
-                cx.background_executor()
-                    .timer(COPILOT_DEBOUNCE_TIMEOUT)
-                    .await;
+            if !debounce_duration.is_zero() {
+                cx.background_executor().timer(debounce_duration).await;
             }
 
             let completions = copilot
@@ -250,12 +246,14 @@ mod tests {
     use lsp::Uri;
     use project::Project;
     use serde_json::json;
-    use settings::{AllLanguageSettingsContent, SettingsStore};
+    use settings::{AllLanguageSettingsContent, DelayMs, SettingsStore};
     use std::future::Future;
     use util::{
         path,
         test::{TextRangeMarker, marked_text_ranges_by},
     };
+
+    const COPILOT_TEST_DEBOUNCE: Duration = Duration::from_millis(75);
 
     #[gpui::test(iterations = 10)]
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -283,7 +281,12 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         cx.set_state(indoc! {"
@@ -313,7 +316,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.context_menu_visible());
             assert!(editor.has_active_edit_prediction());
@@ -362,7 +365,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_edit_prediction());
@@ -394,7 +397,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, window, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_edit_prediction());
@@ -419,7 +422,7 @@ mod tests {
             assert_eq!(editor.display_text(cx), "one.c\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
         });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.editor(|editor, _, cx| {
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
@@ -491,7 +494,12 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         // Setup the editor with a completion request.
@@ -522,7 +530,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
 
@@ -569,7 +577,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
 
@@ -623,7 +631,12 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         cx.set_state(indoc! {"
@@ -647,7 +660,7 @@ mod tests {
         cx.update_editor(|editor, window, cx| {
             editor.show_edit_prediction(&Default::default(), window, cx)
         });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
@@ -655,7 +668,7 @@ mod tests {
 
             editor.backspace(&Default::default(), window, cx);
         });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.run_until_parked();
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
@@ -664,7 +677,7 @@ mod tests {
 
             editor.backspace(&Default::default(), window, cx);
         });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.run_until_parked();
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
@@ -718,7 +731,12 @@ mod tests {
         });
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         editor.update_in(cx, |editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         handle_copilot_completion_request(
@@ -740,7 +758,7 @@ mod tests {
             });
             editor.show_edit_prediction(&Default::default(), window, cx);
         });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         _ = editor.update_in(cx, |editor, _, _| {
             assert!(editor.has_active_edit_prediction());
         });
@@ -809,7 +827,7 @@ mod tests {
         );
 
         // Ensure the new suggestion is displayed when the debounce timeout expires.
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         _ = editor.update(cx, |editor, _| {
             assert!(editor.has_active_edit_prediction());
         });
@@ -848,7 +866,12 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         cx.set_state(indoc! {"
@@ -881,7 +904,7 @@ mod tests {
         cx.update_editor(|editor, window, cx| {
             editor.show_edit_prediction(&Default::default(), window, cx)
         });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_edit_prediction());
@@ -911,7 +934,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_edit_prediction());
@@ -941,7 +964,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, _, cx| {
             assert!(editor.context_menu_visible());
             assert!(editor.has_active_edit_prediction());
@@ -1014,7 +1037,12 @@ mod tests {
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         editor
             .update(cx, |editor, window, cx| {
-                editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+                editor.set_edit_prediction_provider(
+                    Some(copilot_provider),
+                    EditPredictionRequestTrigger::EditorCreated,
+                    window,
+                    cx,
+                )
             })
             .unwrap();
 
@@ -1051,7 +1079,7 @@ mod tests {
             );
         });
 
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         assert!(copilot_requests.try_recv().is_err());
 
         _ = editor.update(cx, |editor, window, cx| {
@@ -1067,7 +1095,7 @@ mod tests {
             );
         });
 
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         assert!(copilot_requests.try_recv().is_ok());
     }
 
@@ -1135,7 +1163,18 @@ mod tests {
             cx.set_global(store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
-                store.update_user_settings(cx, |settings| f(&mut settings.project.all_languages));
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .copilot
+                        .get_or_insert_default()
+                        .prediction_debounce =
+                        Some(DelayMs(COPILOT_TEST_DEBOUNCE.as_millis() as u64));
+                    f(&mut settings.project.all_languages);
+                });
             });
         });
     }

@@ -263,7 +263,7 @@ if [[ -n $emerge ]]; then
     dev-libs/glib
     dev-libs/openssl
     dev-libs/wayland
-    dev-util/cmake
+    dev-build/cmake
     media-libs/alsa-lib
     media-libs/fontconfig
     media-libs/libva

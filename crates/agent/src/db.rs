@@ -1,8 +1,8 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
-use acp_thread::UserMessageId;
+use acp_thread::ClientUserMessageId;
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentProfileId;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, IndexMap};
 use futures::{FutureExt, future::Shared};
@@ -62,13 +62,11 @@ pub struct DbThread {
     #[serde(default)]
     pub cumulative_token_usage: language_model::TokenUsage,
     #[serde(default)]
-    pub request_token_usage: HashMap<acp_thread::UserMessageId, language_model::TokenUsage>,
+    pub request_token_usage: HashMap<acp_thread::ClientUserMessageId, language_model::TokenUsage>,
     #[serde(default)]
     pub model: Option<DbLanguageModel>,
     #[serde(default)]
     pub profile: Option<AgentProfileId>,
-    #[serde(default)]
-    pub imported: bool,
     #[serde(default)]
     pub subagent_context: Option<crate::SubagentContext>,
     #[serde(default)]
@@ -95,9 +93,13 @@ pub struct DbThread {
 /// thread blob; round-trips with [`crate::sandboxing::ThreadSandboxGrants`].
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DbSandboxGrants {
-    /// Canonicalized paths granted write access; each covers its whole subtree.
+    /// Paths granted write access, each paired with the canonical
+    /// (symlink-resolved) target established when the grant was approved; each
+    /// covers its whole subtree. Legacy rows stored a bare path string per
+    /// entry, which still deserializes (as a grant with no resolved canonical)
+    /// via [`settings::GrantedWritePath`]'s string-or-object format.
     #[serde(default)]
-    pub write_paths: Vec<PathBuf>,
+    pub write_paths: Vec<settings::GrantedWritePath>,
     /// Host patterns granted network access, in canonical string form (e.g.
     /// `github.com`, `*.npmjs.org`). Parsed back into patterns on load.
     #[serde(default)]
@@ -109,9 +111,7 @@ pub struct DbSandboxGrants {
     /// granted.
     #[serde(default)]
     pub allow_fs_write_all: bool,
-    /// Whether access to protected Git directories (`.git`) was granted.
-    #[serde(default)]
-    pub allow_git_access: bool,
+
     /// Whether the model-requested fully-unsandboxed escape was granted.
     #[serde(default)]
     pub unsandboxed: bool,
@@ -161,7 +161,6 @@ impl SharedThread {
             request_token_usage: Default::default(),
             model: self.model,
             profile: None,
-            imported: true,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
@@ -244,7 +243,7 @@ impl DbThread {
                         content.push(UserMessageContent::Text(msg.context));
                     }
 
-                    let id = UserMessageId::new();
+                    let id = ClientUserMessageId::new();
                     last_user_message_id = Some(id.clone());
 
                     crate::Message::User(UserMessage {
@@ -286,7 +285,9 @@ impl DbThread {
                                 name: tool_use.name.into(),
                                 raw_input: serde_json::to_string(&tool_use.input)
                                     .unwrap_or_default(),
-                                input: tool_use.input,
+                                input: language_model::LanguageModelToolUseInput::Json(
+                                    tool_use.input,
+                                ),
                                 is_input_complete: true,
                                 thought_signature: None,
                             },
@@ -346,7 +347,6 @@ impl DbThread {
             request_token_usage,
             model: thread.model,
             profile: thread.profile,
-            imported: false,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
@@ -392,6 +392,12 @@ impl Column for DataType {
 pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
     connection: Arc<Mutex<Connection>>,
+    /// In production, saves take real time (serialization, zstd, disk I/O) while
+    /// the user keeps typing, so new save requests routinely arrive mid-write.
+    /// The test executor completes writes instantly, so tests use this gate to
+    /// hold a write in flight and interleave more save requests with it.
+    #[cfg(test)]
+    write_gate: Mutex<Option<Shared<futures::channel::oneshot::Receiver<()>>>>,
 }
 
 struct GlobalThreadsDatabase(Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>);
@@ -450,7 +456,7 @@ impl ThreadsDatabase {
                 data BLOB NOT NULL
             )
         "})?()
-        .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
+        .map_err(|e| e.context("Failed to create threads table"))?;
 
         if let Ok(mut s) = connection.exec(indoc! {"
             ALTER TABLE threads ADD COLUMN parent_id TEXT
@@ -481,6 +487,8 @@ impl ThreadsDatabase {
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
+            #[cfg(test)]
+            write_gate: Mutex::new(None),
         };
 
         Ok(db)
@@ -629,9 +637,21 @@ impl ThreadsDatabase {
         folder_paths: PathList,
     ) -> Task<Result<()>> {
         let connection = self.connection.clone();
+        #[cfg(test)]
+        let write_gate = self.write_gate.lock().clone();
 
-        self.executor
-            .spawn(async move { Self::save_thread_sync(&connection, id, thread, &folder_paths) })
+        self.executor.spawn(async move {
+            #[cfg(test)]
+            if let Some(write_gate) = write_gate {
+                write_gate.await.ok();
+            }
+            Self::save_thread_sync(&connection, id, thread, &folder_paths)
+        })
+    }
+
+    #[cfg(test)]
+    pub fn set_write_gate(&self, gate: futures::channel::oneshot::Receiver<()>) {
+        *self.write_gate.lock() = Some(gate.shared());
     }
 
     fn deserialize_thread(data_type: DataType, data: Vec<u8>) -> Result<DbThread> {
@@ -672,31 +692,48 @@ impl ThreadsDatabase {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
-            let sandboxed_terminal_temp_dir = {
+            let sandboxed_terminal_temp_dirs = {
                 let connection = connection.lock();
+
+                let mut select_children =
+                    connection.select_bound::<Arc<str>, Arc<str>>(indoc! {"
+                    SELECT id FROM threads WHERE parent_id = ?
+                "})?;
+
+                // Collect target thread together with all of its transitive
+                // subagent threads
+                let mut ids_to_delete = vec![id.0.clone()];
+                let mut frontier = vec![id.0.clone()];
+                while let Some(parent) = frontier.pop() {
+                    for child in select_children(parent)? {
+                        ids_to_delete.push(child.clone());
+                        frontier.push(child);
+                    }
+                }
 
                 let mut select =
                     connection.select_bound::<Arc<str>, (DataType, Vec<u8>)>(indoc! {"
                     SELECT data_type, data FROM threads WHERE id = ? LIMIT 1
                 "})?;
 
-                let sandboxed_terminal_temp_dir = select(id.0.clone())?
-                    .into_iter()
-                    .next()
-                    .and_then(|(data_type, data)| {
-                        Self::sandboxed_terminal_temp_dir(data_type, data)
-                    });
-
                 let mut delete = connection.exec_bound::<Arc<str>>(indoc! {"
                     DELETE FROM threads WHERE id = ?
                 "})?;
 
-                delete(id.0)?;
+                let mut sandboxed_terminal_temp_dirs = Vec::new();
+                for thread_id in ids_to_delete {
+                    if let Some(temp_dir) = select(thread_id.clone())?.into_iter().next().and_then(
+                        |(data_type, data)| Self::sandboxed_terminal_temp_dir(data_type, data),
+                    ) {
+                        sandboxed_terminal_temp_dirs.push(temp_dir);
+                    }
+                    delete(thread_id)?;
+                }
 
-                sandboxed_terminal_temp_dir
+                sandboxed_terminal_temp_dirs
             };
 
-            if let Some(temp_dir) = sandboxed_terminal_temp_dir {
+            for temp_dir in sandboxed_terminal_temp_dirs {
                 Self::remove_sandboxed_terminal_temp_dir(temp_dir);
             }
 
@@ -766,23 +803,6 @@ mod tests {
         assert_eq!(restored.updated_at, original.updated_at);
     }
 
-    #[test]
-    fn test_imported_flag_defaults_to_false() {
-        // Simulate deserializing a thread without the imported field (backwards compatibility).
-        let json = r#"{
-            "title": "Old Thread",
-            "messages": [],
-            "updated_at": "2024-01-01T00:00:00Z"
-        }"#;
-
-        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
-
-        assert!(
-            !db_thread.imported,
-            "Legacy threads without imported field should default to false"
-        );
-    }
-
     fn session_id(value: &str) -> acp::SessionId {
         acp::SessionId::new(Arc::<str>::from(value))
     }
@@ -798,7 +818,6 @@ mod tests {
             request_token_usage: HashMap::default(),
             model: None,
             profile: None,
-            imported: false,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
@@ -952,10 +971,18 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
         );
         let grants = DbSandboxGrants {
-            write_paths: vec![PathBuf::from("/tmp/build")],
+            write_paths: vec![
+                // A legacy bare-string grant (no resolved canonical) and a grant
+                // carrying its resolved canonical, to exercise both forms of the
+                // string-or-object round-trip.
+                settings::GrantedWritePath::from_requested(PathBuf::from("/tmp/build")),
+                settings::GrantedWritePath::resolved(
+                    PathBuf::from("/tmp/link"),
+                    PathBuf::from("/tmp/real"),
+                ),
+            ],
             network_hosts: vec!["github.com".to_string(), "*.npmjs.org".to_string()],
             network_any_host: false,
-            allow_git_access: true,
             allow_fs_write_all: false,
             unsandboxed: true,
             sandbox_fallback: true,
@@ -1029,6 +1056,62 @@ mod tests {
         database.delete_thread(thread_id).await.unwrap();
 
         assert!(!temp_dir.exists());
+    }
+
+    #[gpui::test]
+    async fn test_delete_thread_deletes_subagent_threads(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let parent_id = session_id("parent-thread");
+        let child_id = session_id("child-thread");
+        let grandchild_id = session_id("grandchild-thread");
+        let unrelated_id = session_id("unrelated-thread");
+
+        let parent_thread = make_thread(
+            "Parent Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+
+        let mut child_thread = make_thread(
+            "Child Subagent Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        child_thread.subagent_context = Some(crate::SubagentContext {
+            parent_thread_id: parent_id.clone(),
+            depth: 1,
+        });
+
+        let mut grandchild_thread = make_thread(
+            "Grandchild Subagent Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        grandchild_thread.subagent_context = Some(crate::SubagentContext {
+            parent_thread_id: child_id.clone(),
+            depth: 2,
+        });
+
+        let unrelated_thread = make_thread(
+            "Unrelated Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+
+        for (id, thread) in [
+            (parent_id.clone(), parent_thread),
+            (child_id.clone(), child_thread),
+            (grandchild_id.clone(), grandchild_thread),
+            (unrelated_id.clone(), unrelated_thread),
+        ] {
+            database
+                .save_thread(id, thread, PathList::default())
+                .await
+                .unwrap();
+        }
+
+        database.delete_thread(parent_id.clone()).await.unwrap();
+
+        let remaining = database.list_threads().await.unwrap();
+        let remaining_ids: Vec<_> = remaining.iter().map(|thread| thread.id.clone()).collect();
+        assert_eq!(remaining_ids, vec![unrelated_id]);
     }
 
     #[gpui::test]

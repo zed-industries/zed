@@ -10,7 +10,7 @@ use project::{
     Project,
     agent_server_store::{AgentId, AllAgentServersSettings},
 };
-use settings::{SettingsStore, update_settings_file};
+use settings::{AgentConfigOptionValue, SettingsStore, update_settings_file};
 use std::{rc::Rc, sync::Arc};
 use ui::IconName;
 
@@ -142,7 +142,7 @@ impl AgentServer for CustomAgentServer {
         });
     }
 
-    fn default_config_option(&self, config_id: &str, cx: &App) -> Option<String> {
+    fn default_config_option(&self, config_id: &str, cx: &App) -> Option<AgentConfigOptionValue> {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
@@ -152,19 +152,18 @@ impl AgentServer for CustomAgentServer {
 
         settings
             .as_ref()
-            .and_then(|s| s.default_config_option(config_id).map(|s| s.to_string()))
+            .and_then(|s| s.default_config_option(config_id).cloned())
     }
 
     fn set_default_config_option(
         &self,
         config_id: &str,
-        value_id: Option<&str>,
+        value: Option<AgentConfigOptionValue>,
         fs: Arc<dyn Fs>,
         cx: &mut App,
     ) {
         let agent_id = self.agent_id();
         let config_id = config_id.to_string();
-        let value_id = value_id.map(|s| s.to_string());
         update_settings_file(fs, cx, move |settings, _cx| {
             let settings = settings
                 .agent_servers
@@ -181,7 +180,7 @@ impl AgentServer for CustomAgentServer {
                     default_config_options,
                     ..
                 } => {
-                    if let Some(value) = value_id.clone() {
+                    if let Some(value) = value {
                         default_config_options.insert(config_id.clone(), value);
                     } else {
                         default_config_options.remove(&config_id);

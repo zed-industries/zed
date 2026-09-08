@@ -61,7 +61,7 @@ impl<T, R, E> Asset for AssetLogger<T>
 where
     T: Asset<Output = Result<R, E>>,
     R: Clone + Send,
-    E: Clone + Send + std::fmt::Display,
+    E: Clone + Send + Debug,
 {
     type Source = T::Source;
 
@@ -72,7 +72,7 @@ where
         cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let load = T::load(source, cx);
-        load.inspect_err(|e| log::error!("Failed to load asset: {}", e))
+        load.inspect_err(|e| log::error!("Failed to load asset: {:?}", e))
     }
 }
 

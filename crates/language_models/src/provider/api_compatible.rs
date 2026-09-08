@@ -178,6 +178,23 @@ impl<S: ApiCompatibleProviderSettings> ApiCompatibleProviderConfigurationView<S>
         .detach_and_log_err(cx);
     }
 
+    fn remove_provider(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        let id = self.state.read(cx).id.clone();
+        let fs = <dyn fs::Fs>::global(cx);
+        settings::update_settings_file(fs, cx, move |settings, _| {
+            let Some(language_models) = settings.language_models.as_mut() else {
+                return;
+            };
+
+            if let Some(providers) = language_models.openai_compatible.as_mut() {
+                providers.remove(id.as_ref());
+            }
+            if let Some(providers) = language_models.anthropic_compatible.as_mut() {
+                providers.remove(id.as_ref());
+            }
+        });
+    }
+
     fn should_render_editor(&self, cx: &Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
     }
@@ -256,7 +273,26 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials…")).into_any()
         } else {
-            v_flex().size_full().child(api_key_section).into_any()
+            v_flex()
+                .size_full()
+                .gap_4()
+                .child(api_key_section)
+                .child(
+                    h_flex().w_full().justify_end().child(
+                        Button::new("remove-compatible-provider", "Remove Provider")
+                            .style(ButtonStyle::OutlinedGhost)
+                            .label_size(LabelSize::Small)
+                            .start_icon(
+                                Icon::new(IconName::Trash)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.remove_provider(window, cx)
+                            })),
+                    ),
+                )
+                .into_any()
         }
     }
 }

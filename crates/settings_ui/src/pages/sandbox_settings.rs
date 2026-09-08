@@ -10,12 +10,9 @@ use util::ResultExt as _;
 use crate::SettingsWindow;
 use crate::components::{SettingsInputField, SettingsSectionHeader};
 
-const SANDBOX_DISCLAIMER: &str = "Customize how the sandbox for the agents tool should behave.";
-
 const DOMAINS_DESCRIPTION: &str = "Each entry is an exact domain (github.com) or a leading-*. subdomain wildcard (*.npmjs.org). IP addresses and local domains are not allowed.";
 
-const WRITE_PATHS_DESCRIPTION: &str =
-    "Each entry must be an absolute path and grants write access to the whole subtree.";
+const WRITE_PATHS_DESCRIPTION: &str = "Each entry must be an absolute path and grants write access to the whole subtree, except protected Git metadata.";
 
 pub(crate) fn render_sandbox_settings_page(
     settings_window: &SettingsWindow,
@@ -58,17 +55,9 @@ pub(crate) fn render_sandbox_settings_page(
         .pt_2p5()
         .px_8()
         .pb_16()
-        .gap_4()
+        .gap_6()
         .overflow_y_scroll()
         .track_scroll(scroll_handle)
-        .child(
-            Banner::new().child(
-                Label::new(SANDBOX_DISCLAIMER)
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .mt_0p5(),
-            ),
-        )
         .child(
             SwitchField::new(
                 "sandbox-enabled",
@@ -84,6 +73,25 @@ pub(crate) fn render_sandbox_settings_page(
             )
             .tab_index(0),
         )
+        .child({
+            let docs_url =
+                client::zed_urls::sandboxing_docs(Some("persistent-sandbox-permissions"), cx);
+            let tooltip = format!("Opens {docs_url}");
+            // Wrap in a row so the button shrinks to its content width instead
+            // of stretching across the settings page.
+            h_flex().child(
+                Button::new("sandbox-docs-link", "Learn more about sandboxing")
+                    .label_size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .end_icon(
+                        Icon::new(IconName::ArrowUpRight)
+                            .color(Color::Muted)
+                            .size(IconSize::XSmall),
+                    )
+                    .tooltip(Tooltip::text(tooltip))
+                    .on_click(move |_, _, cx| cx.open_url(&docs_url)),
+            )
+        })
         .when(sandbox_enabled, |this| this
         .when_some(validation_error, |this, error| {
             this.child(
@@ -102,7 +110,7 @@ pub(crate) fn render_sandbox_settings_page(
         })
         .child(
             v_flex()
-                .gap_3()
+                .gap_4()
                 .child(SettingsSectionHeader::new("Network").no_padding(true))
                 .child(
                     SwitchField::new(
@@ -127,38 +135,18 @@ pub(crate) fn render_sandbox_settings_page(
                     empty_border,
                 )),
         )
+
         .child(Divider::horizontal())
         .child(
             v_flex()
-                .gap_3()
-                .child(SettingsSectionHeader::new("Git").no_padding(true))
-                .child(
-                    SwitchField::new(
-                        "sandbox-allow-git-access",
-                        Some("Allow Git Metadata Access"),
-                        Some(
-                            "Let sandboxed commands access protected Git metadata, including .git directories and linked worktree metadata, without prompting."
-                                .into(),
-                        ),
-                        permissions.allow_git_access,
-                        move |state, _window, cx| {
-                            set_allow_git_access(*state == ToggleState::Selected, cx);
-                        },
-                    )
-                    .tab_index(0),
-                ),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_3()
-                .child(SettingsSectionHeader::new("Filesystem").no_padding(true))
+                .gap_4()
+                .child(SettingsSectionHeader::new("File System").no_padding(true))
                 .child(
                     SwitchField::new(
                         "sandbox-allow-fs-write-all",
-                        Some("Allow All Filesystem Writes"),
+                        Some("Allow All File System Writes"),
                         Some(
-                            "Let sandboxed commands write anywhere on the filesystem without prompting."
+                            "Let sandboxed commands write anywhere except protected Git metadata without prompting."
                                 .into(),
                         ),
                         permissions.allow_fs_write_all,
@@ -175,6 +163,42 @@ pub(crate) fn render_sandbox_settings_page(
                     add_path_input,
                     empty_border,
                 )),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_4()
+                .child(SettingsSectionHeader::new("Escalation Prompts").no_padding(true))
+                .child(
+                    SwitchField::new(
+                        "sandbox-warn-confusable-unicode",
+                        Some("Warn About Confusable Unicode"),
+                        Some(
+                            "Warn when an approval prompt requests a domain or write path that contains potentially confusable Unicode characters, such as homoglyphs (i.e. two symbols that look similar, such as a Cyrillic `а`)"
+                                .into(),
+                        ),
+                        permissions.warn_confusable_unicode,
+                        move |state, _window, cx| {
+                            set_warn_confusable_unicode(*state == ToggleState::Selected, cx);
+                        },
+                    )
+                    .tab_index(0),
+                )
+                .child(
+                    SwitchField::new(
+                        "sandbox-warn-ntfs-grants",
+                        Some("Warn About Windows-Drive Grants"),
+                        Some(
+                            "Windows only: warn when a sandbox grant targets a file on a Windows drive (accessed inside WSL via DrvFs). Such grants are enforced through a translated path and their sandbox-integrity guarantees are weaker than files on the Linux distro's own filesystem."
+                                .into(),
+                        ),
+                        permissions.warn_ntfs_grants,
+                        move |state, _window, cx| {
+                            set_warn_ntfs_grants(*state == ToggleState::Selected, cx);
+                        },
+                    )
+                    .tab_index(0),
+                ),
         )
         )
         .into_any_element()
@@ -384,9 +408,18 @@ fn raw_sandbox_lists(cx: &App) -> (Vec<String>, Vec<PathBuf>) {
         .and_then(|permissions| permissions.network_hosts.as_ref())
         .map(|hosts| hosts.0.clone())
         .unwrap_or_default();
+    // Display and match on the requested path of each entry (the literal a
+    // hand-edit types); Zed-written "allow always" grants also carry a resolved
+    // canonical, but the settings row still keys off the requested path.
     let write_paths = permissions
         .and_then(|permissions| permissions.write_paths.as_ref())
-        .map(|paths| paths.0.clone())
+        .map(|paths| {
+            paths
+                .0
+                .iter()
+                .map(|entry| entry.requested.clone())
+                .collect()
+        })
         .unwrap_or_default();
 
     (network_hosts, write_paths)
@@ -443,15 +476,21 @@ fn set_allow_all_hosts(value: bool, cx: &mut App) {
     });
 }
 
-fn set_allow_git_access(value: bool, cx: &mut App) {
-    update_sandbox_permissions(cx, move |permissions| {
-        permissions.allow_git_access = Some(value);
-    });
-}
-
 fn set_allow_fs_write_all(value: bool, cx: &mut App) {
     update_sandbox_permissions(cx, move |permissions| {
         permissions.allow_fs_write_all = Some(value);
+    });
+}
+
+fn set_warn_confusable_unicode(value: bool, cx: &mut App) {
+    update_sandbox_permissions(cx, move |permissions| {
+        permissions.warn_confusable_unicode = Some(value);
+    });
+}
+
+fn set_warn_ntfs_grants(value: bool, cx: &mut App) {
+    update_sandbox_permissions(cx, move |permissions| {
+        permissions.warn_ntfs_grants = Some(value);
     });
 }
 
@@ -484,17 +523,33 @@ fn remove_network_host(host: String, cx: &mut App) {
     });
 }
 
+/// Insert a hand-authored write-path entry (no resolved canonical) into the
+/// settings list as a minimal subtree, mirroring `util::paths::insert_subtree`
+/// but over [`settings::GrantedWritePathContent`] keyed on the requested path.
+fn insert_write_path_subtree(paths: &mut Vec<settings::GrantedWritePathContent>, path: PathBuf) {
+    if paths.iter().any(|entry| path.starts_with(&entry.requested)) {
+        return;
+    }
+    paths.retain(|entry| !entry.requested.starts_with(&path));
+    paths.push(settings::GrantedWritePathContent {
+        requested: path,
+        resolved: None,
+        on_windows_fs: false,
+    });
+}
+
 fn add_write_path(path: PathBuf, cx: &mut App) {
     // Normalize away `.`/`..` so the stored entry matches the form the runtime
     // uses for coverage checks (see `compile_sandbox_permissions`) and the form
-    // persisted by the in-thread "Allow always" grant.
+    // persisted by the in-thread "Allow always" grant. A hand-authored entry
+    // records no resolved canonical, so enforcement resolves it fresh (see
+    // `granted_write_path_to_location`).
     let Ok(path) = util::paths::normalize_lexically(&path) else {
         return;
     };
     update_sandbox_permissions(cx, move |permissions| {
         let paths = &mut permissions.write_paths.get_or_insert_default().0;
-        // Store minimal subtrees so a parent path subsumes its descendants.
-        util::paths::insert_subtree(paths, path);
+        insert_write_path_subtree(paths, path);
     });
 }
 
@@ -504,8 +559,8 @@ fn update_write_path(old_path: PathBuf, new_path: PathBuf, cx: &mut App) {
     };
     update_sandbox_permissions(cx, move |permissions| {
         if let Some(paths) = permissions.write_paths.as_mut() {
-            paths.0.retain(|entry| *entry != old_path);
-            util::paths::insert_subtree(&mut paths.0, new_path);
+            paths.0.retain(|entry| entry.requested != old_path);
+            insert_write_path_subtree(&mut paths.0, new_path);
         }
     });
 }
@@ -513,7 +568,7 @@ fn update_write_path(old_path: PathBuf, new_path: PathBuf, cx: &mut App) {
 fn remove_write_path(path: PathBuf, cx: &mut App) {
     update_sandbox_permissions(cx, move |permissions| {
         if let Some(paths) = permissions.write_paths.as_mut() {
-            paths.0.retain(|entry| *entry != path);
+            paths.0.retain(|entry| entry.requested != path);
         }
     });
 }

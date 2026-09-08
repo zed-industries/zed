@@ -64,13 +64,6 @@ We'd love your help making Zed available for everyone. If Zed is not yet availab
 
 The packages in this section provide binary installs for Zed but are not official packages within the associated distributions. These packages are maintained by community members and as such a higher level of caution should be taken when installing them.
 
-#### Debian and Ubuntu
-
-Zed is available in [this community-maintained repository](https://debian.griffo.io/).
-
-Instructions for each version are available in the README of the repository where packages are built.
-Build, packaging and instructions for each version are available in the README of the [repository](https://github.com/dariogriffo/zed-debian)
-
 ### Downloading manually
 
 If you'd prefer, you can install Zed by downloading our pre-built .tar.gz. This is the same artifact that our install script uses, but you can customize the location of your installation by modifying the instructions below:
@@ -104,29 +97,31 @@ sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/bin/zed|g" ~/.local/share/applicati
 
 ### Standard Uninstall
 
-If Zed was installed using the default installation script, it can be uninstalled by supplying the `--uninstall` flag to the `zed` shell command
+If Zed was installed using the default installation script, it can be uninstalled by supplying the `--uninstall` flag to the `zed` shell command:
 
 ```sh
 zed --uninstall
 ```
 
+Note that this will uninstall the Zed variant that the symlink points to. If you have multiple, parallel installations (such as both Stable and Preview), then you should instead use its absolute path as described further down in this section.
+
 If there are no errors, the shell will then prompt you whether you'd like to keep your preferences or delete them. After making a choice, you should see a message that Zed was successfully uninstalled.
 
-In the case that the `zed` shell command was not found in your PATH, you can try one of the following commands
+In the case that the `zed` shell command was not found in your PATH, you can try one of the following commands:
 
 ```sh
 $HOME/.local/bin/zed --uninstall
 ```
 
-or
+or the absolute path to your installation, such as
 
 ```sh
-$HOME/.local/zed.app/bin.zed --uninstall
+$HOME/.local/zed.app/bin/zed --uninstall
 ```
 
-The first case might fail if a symlink was not properly established between `$HOME/.local/bin/zed` and `$HOME/.local/zed.app/bin.zed`. But the second case should work as long as Zed was installed to its default location.
+The first case might fail if a symlink was not properly established between `$HOME/.local/bin/zed` and `$HOME/.local/zed.app/bin/zed`, or if the symlink was overwritten by having parallel installations of different versions of Zed. But the second command should always work as long as Zed was installed to its default location.
 
-If Zed was installed to a different location, you must invoke the `zed` binary stored in that installation directory and pass the `--uninstall` flag to it in the same format as the previous commands.
+If Zed was installed to a different location (such as the `zed-preview.app` variant), you must invoke the `zed` binary stored in that installation directory and pass the `--uninstall` flag to it in the same format as the previous commands.
 
 ### Package Manager
 
@@ -134,7 +129,7 @@ If Zed was installed using a package manager, please consult the documentation f
 
 ## Troubleshooting
 
-Linux works on a large variety of systems configured in many different ways. We primarily test Zed on a vanilla Ubuntu setup, as it is the most common distribution our users use, that said we do expect it to work on a wide variety of machines.
+Linux works on a large variety of systems configured in many different ways. We primarily test Zed on a vanilla Ubuntu setup, as it is the most common distribution our users use. That said, we do expect it to work on a wide variety of machines.
 
 ### Zed fails to start
 

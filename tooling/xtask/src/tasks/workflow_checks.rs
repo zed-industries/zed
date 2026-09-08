@@ -1,20 +1,22 @@
+mod check_permissions;
 mod check_run_patterns;
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
-use annotate_snippets::Renderer;
+use annotate_snippets::{Group, Renderer};
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use itertools::{Either, Itertools};
 use serde_yaml::Value;
 use strum::IntoEnumIterator;
 
-use crate::tasks::{
-    workflow_checks::check_run_patterns::{
-        RunValidationError, WorkflowFile, WorkflowValidationError,
-    },
-    workflows::WorkflowType,
-};
+use crate::tasks::workflows::WorkflowType;
+
+use check_permissions::PermissionsError;
+use check_run_patterns::RunValidationError;
 
 pub use check_run_patterns::validate_run_command;
 
@@ -36,18 +38,73 @@ pub fn validate(_: WorkflowValidationArgs) -> Result<()> {
             parsing_errors.into_iter().join("\n")
         ))
     } else if !file_errors.is_empty() {
-        let errors: Vec<_> = file_errors
+        let groups: Vec<_> = file_errors
             .iter()
-            .map(|error| error.annotation_group())
+            .flat_map(|error| error.annotation_groups())
             .collect();
 
         let renderer =
             Renderer::styled().decor_style(annotate_snippets::renderer::DecorStyle::Ascii);
-        println!("{}", renderer.render(errors.as_slice()));
+        println!("{}", renderer.render(groups.as_slice()));
 
         Err(anyhow!("Workflow checks failed!"))
     } else {
         Ok(())
+    }
+}
+
+struct WorkflowFile {
+    raw_content: String,
+    parsed_content: Value,
+}
+
+impl WorkflowFile {
+    fn load(workflow_file_path: &Path) -> Result<Self> {
+        fs::read_to_string(workflow_file_path)
+            .map_err(|_| {
+                anyhow!(
+                    "Could not read workflow file at {}",
+                    workflow_file_path.display()
+                )
+            })
+            .and_then(|file_content| {
+                serde_yaml::from_str(&file_content)
+                    .map(|parsed_content| Self {
+                        raw_content: file_content,
+                        parsed_content,
+                    })
+                    .map_err(|e| anyhow!("Failed to parse workflow file: {e:?}"))
+            })
+    }
+}
+
+/// A single kind of validation failure found within a workflow file.
+enum ValidationError {
+    RunInjection(RunValidationError),
+    Permissions(PermissionsError),
+}
+
+impl ValidationError {
+    fn annotation_group<'a>(&self, file_path: &Path, raw_content: &'a str) -> Group<'a> {
+        match self {
+            ValidationError::RunInjection(error) => error.annotation_group(file_path, raw_content),
+            ValidationError::Permissions(error) => error.annotation_group(file_path, raw_content),
+        }
+    }
+}
+
+struct WorkflowValidationError {
+    file_path: PathBuf,
+    contents: WorkflowFile,
+    errors: Vec<ValidationError>,
+}
+
+impl WorkflowValidationError {
+    fn annotation_groups(&self) -> Vec<Group<'_>> {
+        self.errors
+            .iter()
+            .map(|error| error.annotation_group(&self.file_path, &self.contents.raw_content))
+            .collect()
     }
 }
 
@@ -73,41 +130,47 @@ fn get_all_workflow_files() -> impl Iterator<Item = PathBuf> {
 }
 
 fn check_workflow(workflow_file_path: PathBuf) -> Result<(), WorkflowError> {
-    fn collect_errors(
-        iter: impl Iterator<Item = Result<(), Vec<RunValidationError>>>,
-    ) -> Result<(), Vec<RunValidationError>> {
-        Some(iter.flat_map(Result::err).flatten().collect::<Vec<_>>())
-            .filter(|errors| !errors.is_empty())
-            .map_or(Ok(()), Err)
-    }
-
-    fn check_recursive(key: &Value, value: &Value) -> Result<(), Vec<RunValidationError>> {
-        match value {
-            Value::Mapping(mapping) => collect_errors(
-                mapping
-                    .into_iter()
-                    .map(|(key, value)| check_recursive(key, value)),
-            ),
-            Value::Sequence(sequence) => collect_errors(
-                sequence
-                    .into_iter()
-                    .map(|value| check_recursive(key, value)),
-            ),
-            Value::String(string) => check_string(key, string).map_err(|error| vec![error]),
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Tagged(_) => Ok(()),
-        }
-    }
-
     let file_content =
         WorkflowFile::load(&workflow_file_path).map_err(WorkflowError::ParseError)?;
 
-    check_recursive(&Value::Null, &file_content.parsed_content).map_err(|errors| {
-        WorkflowError::ValidationError(Box::new(WorkflowValidationError::new(
-            errors,
-            file_content,
-            workflow_file_path,
+    let mut errors = Vec::new();
+
+    if let Err(error) = check_permissions::validate_permissions(&file_content.parsed_content) {
+        errors.push(ValidationError::Permissions(error));
+    }
+
+    errors.extend(
+        collect_run_injection_errors(&Value::Null, &file_content.parsed_content)
+            .into_iter()
+            .map(ValidationError::RunInjection),
+    );
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(WorkflowError::ValidationError(Box::new(
+            WorkflowValidationError {
+                file_path: workflow_file_path,
+                contents: file_content,
+                errors,
+            },
         )))
-    })
+    }
+}
+
+fn collect_run_injection_errors(key: &Value, value: &Value) -> Vec<RunValidationError> {
+    match value {
+        Value::Mapping(mapping) => mapping
+            .iter()
+            .flat_map(|(key, value)| collect_run_injection_errors(key, value))
+            .collect(),
+        Value::Sequence(sequence) => sequence
+            .iter()
+            .flat_map(|value| collect_run_injection_errors(key, value))
+            .collect(),
+        Value::String(string) => check_string(key, string).err().into_iter().collect(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Tagged(_) => Vec::new(),
+    }
 }
 
 fn check_string(key: &Value, value: &str) -> Result<(), RunValidationError> {

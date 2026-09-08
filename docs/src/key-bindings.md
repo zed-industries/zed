@@ -12,7 +12,8 @@ Zed's key binding system is fully customizable. You can rebind any action, creat
 If you're used to a specific editor's defaults, you can change your `base_keymap` through the settings window ({#kb zed::OpenSettings}) or directly through your `settings.json` file ({#kb zed::OpenSettingsFile}).
 We currently support:
 
-- VS Code (default)
+- Zed (default)
+- VS Code
 - Atom
 - Emacs (Beta)
 - JetBrains
@@ -174,6 +175,25 @@ The other kind of conflict that arises is when you have two bindings, one of whi
 
 When this happens, and both bindings are active in the current context, Zed will wait for 1 second after you type `ctrl-w` to see if you're about to type `left`. If you don't type anything, or if you type a different key, then `DeleteToNextWordEnd` will be triggered. If you do, then `DeleteToEndOfLine` will be triggered.
 
+Zed can also wait before inserting printable text when it might begin a multi-stroke binding. For example, with a `j k` binding, typing `j` waits briefly for `k`; otherwise, `j` is inserted after the timeout.
+
+Whenever pending input has a timeout, a countdown indicator with the pending keystrokes is shown in the status bar. Hovering it lists the bindings that could still match and pauses the timeout so you can read them. The timeout resumes with the same remaining duration when the pointer leaves. The indicator can be hidden with `{"status_bar": {"pending_keystrokes_indicator": false}}`. Vim and Helix modes continue to use their existing pending-key indicator instead.
+
+To also use the larger which-key menu, open the Settings Editor and search for
+`Show Which-key Menu`. The pending keystrokes indicator remains visible when the
+menu is enabled, and hovering it still pauses the timeout, but its binding list
+popover is disabled. Or add this to your settings.json:
+
+```json [settings]
+{
+  "which_key": {
+    "enabled": true
+  }
+}
+```
+
+Set `which_key.delay_ms` to change how long Zed waits before opening the menu.
+
 ### Non-QWERTY keyboards
 
 Zed's support for non-QWERTY keyboards is still a work in progress.
@@ -304,3 +324,37 @@ For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ct
 
 You can also bind keys to launch Zed Tasks defined in your `tasks.json`.
 See the [tasks documentation](tasks.md#custom-keybindings-for-tasks) for more.
+
+### Subword Navigation
+
+Zed exposes word and subword motions as separate actions. Word motions stop at whitespace and punctuation boundaries, while subword motions also stop inside identifiers such as `camelCase`, `PascalCase`, and `snake_case`.
+
+The JetBrains base keymap uses editor-local `alt-left` / `alt-right` and `shift-alt-left` / `shift-alt-right` for subword navigation to match JetBrains-style CamelHump navigation. If you use another base keymap and want that behavior, add this to your `keymap.json`:
+
+```json [keymap]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-left": "editor::MoveToPreviousSubwordStart",
+      "alt-right": "editor::MoveToNextSubwordEnd",
+      "shift-alt-left": "editor::SelectToPreviousSubwordStart",
+      "shift-alt-right": "editor::SelectToNextSubwordEnd"
+    }
+  }
+]
+```
+
+If you use the JetBrains base keymap and want `alt-left` / `alt-right` to keep moving between tabs in editors, add this override:
+
+```json [keymap]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-left": "pane::ActivatePreviousItem",
+      "alt-right": "pane::ActivateNextItem"
+    }
+  }
+]
+```
