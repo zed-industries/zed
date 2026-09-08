@@ -1265,41 +1265,48 @@ where
     // the same positions the caller will: collapsed content puts every position in a buffer on one
     // display point, and coalescing there would merge cursors the expanded buffer keeps apart.
     // This is also what the `has_collapsed_content` shortcut above does.
-    let wrapped_around_blocks = resolve_selections_point(selections, map).map(move |s| {
-        let (start, end) =
-            if s.start == s.end && map.is_line_in_folded_buffer(MultiBufferRow(s.start.row)) {
-                // A cursor inside a collapsed buffer keeps the position it actually holds. The round
-                // trip would otherwise bias its start to the beginning of that buffer and its end to
-                // the far edge of it, so the cursor would resolve to a range covering everything the
-                // buffer hides and the next edit would replace all of it. Ranges are left alone:
-                // wrapping them around the block is this function's documented job, and it is how a
-                // selection reaching a replacement block comes to cover it.
-                (s.start, s.start)
-            } else {
-                let display_start = map.point_to_display_point(s.start, Bias::Left);
-                let display_end = map.point_to_display_point(
-                    s.end,
-                    if s.start == s.end {
-                        Bias::Right
-                    } else {
-                        Bias::Left
-                    },
-                );
-                (
-                    map.display_point_to_point(display_start, Bias::Left),
-                    map.display_point_to_point(display_end, Bias::Right),
-                )
-            };
-        assert!(start <= end, "start: {:?}, end: {:?}", start, end);
-        Selection {
-            id: s.id,
-            start,
-            end,
-            reversed: s.reversed,
-            goal: s.goal,
-        }
-    });
-    let (to_convert, selections) = coalesce_selections(wrapped_around_blocks).tee();
+    let mut wrapped_around_blocks = resolve_selections_point(selections, map)
+        .map(move |s| {
+            let (start, end) =
+                if s.start == s.end && map.is_line_in_folded_buffer(MultiBufferRow(s.start.row)) {
+                    let wrap_snapshot = map.wrap_snapshot();
+                    (
+                        wrap_snapshot.to_point(
+                            wrap_snapshot.make_wrap_point(s.start, Bias::Left),
+                            Bias::Left,
+                        ),
+                        wrap_snapshot.to_point(
+                            wrap_snapshot.make_wrap_point(s.end, Bias::Right),
+                            Bias::Right,
+                        ),
+                    )
+                } else {
+                    let display_start = map.point_to_display_point(s.start, Bias::Left);
+                    let display_end = map.point_to_display_point(
+                        s.end,
+                        if s.start == s.end {
+                            Bias::Right
+                        } else {
+                            Bias::Left
+                        },
+                    );
+                    (
+                        map.display_point_to_point(display_start, Bias::Left),
+                        map.display_point_to_point(display_end, Bias::Right),
+                    )
+                };
+            assert!(start <= end, "start: {:?}, end: {:?}", start, end);
+            Selection {
+                id: s.id,
+                start,
+                end,
+                reversed: s.reversed,
+                goal: s.goal,
+            }
+        })
+        .collect::<Vec<_>>();
+    wrapped_around_blocks.sort_by_key(|selection| selection.start);
+    let (to_convert, selections) = coalesce_selections(wrapped_around_blocks.into_iter()).tee();
     let mut converted_endpoints = map
         .buffer_snapshot()
         .dimensions_from_points::<D>(to_convert.flat_map(|s| [s.start, s.end]));
@@ -1580,6 +1587,119 @@ mod tests {
         assert_eq!(
             resolved[0].start, resolved[0].end,
             "a cursor in a folded buffer must not widen to the folded region: {resolved:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn wrapping_folded_buffer_selections_preserves_their_complete_union(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            crate::init(cx);
+        });
+
+        let buffer = cx.update(|cx| {
+            MultiBuffer::build_multi(
+                [
+                    ("alpha\nbeta\ngamma\n", vec![Point::row_range(0..3)]),
+                    ("delta\n", vec![Point::row_range(0..1)]),
+                ],
+                cx,
+            )
+        });
+        let display_map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                test_font(),
+                px(14.),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+
+        let (snapshot, selections, second_buffer_cursor) = display_map.update(cx, |map, cx| {
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let excerpts = buffer_snapshot.excerpts().collect::<Vec<_>>();
+            let first_buffer_id = excerpts[0].context.start.buffer_id;
+            let first_buffer = buffer_snapshot
+                .buffer_for_id(first_buffer_id)
+                .expect("the first buffer is in the multibuffer");
+            let first_anchor = |point| {
+                buffer_snapshot
+                    .anchor_in_excerpt(first_buffer.anchor_before(point))
+                    .expect("the point is inside the first excerpt")
+            };
+            let second_buffer_cursor = buffer_snapshot
+                .anchor_in_excerpt(
+                    buffer_snapshot
+                        .buffer_for_id(excerpts[1].context.start.buffer_id)
+                        .expect("the second buffer is in the multibuffer")
+                        .anchor_before(Point::new(0, 1)),
+                )
+                .expect("the point is inside the second excerpt");
+            let selections = vec![
+                Selection {
+                    id: 0,
+                    start: first_anchor(Point::new(0, 0)),
+                    end: first_anchor(Point::new(0, 0)),
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                },
+                Selection {
+                    id: 1,
+                    start: first_anchor(Point::new(1, 0)),
+                    end: first_anchor(Point::new(1, 0)),
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                },
+                Selection {
+                    id: 2,
+                    start: first_anchor(Point::new(2, 0)),
+                    end: first_anchor(Point::new(2, 1)),
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                },
+                Selection {
+                    id: 3,
+                    start: second_buffer_cursor,
+                    end: second_buffer_cursor,
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                },
+            ];
+            map.fold_buffers([first_buffer_id], cx);
+            (map.snapshot(cx), selections, second_buffer_cursor)
+        });
+
+        let resolved_points =
+            resolve_selections_wrapping_blocks::<Point, _>(selections.iter(), &snapshot)
+                .collect::<Vec<_>>();
+        assert_eq!(resolved_points.len(), 2);
+        assert_eq!(
+            resolved_points[0].range(),
+            Point::new(0, 0)..Point::new(3, 0)
+        );
+        assert_eq!(
+            resolved_points[1].range(),
+            second_buffer_cursor.to_point(snapshot.buffer_snapshot())
+                ..second_buffer_cursor.to_point(snapshot.buffer_snapshot())
+        );
+
+        let resolved_offsets = resolve_selections_wrapping_blocks::<MultiBufferOffset, _>(
+            selections.iter(),
+            &snapshot,
+        )
+        .collect::<Vec<_>>();
+        assert_eq!(resolved_offsets.len(), 2);
+        assert_eq!(
+            resolved_offsets[0].range(),
+            MultiBufferOffset(0)..MultiBufferOffset(17)
         );
     }
 

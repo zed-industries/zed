@@ -11951,15 +11951,11 @@ fn consume_contiguous_rows(
 }
 
 fn starting_row(selection: &Selection<Point>, display_map: &DisplaySnapshot) -> MultiBufferRow {
-    if selection.start.column > 0 {
-        MultiBufferRow(
-            display_map
-                .prev_line_boundary_ignoring_collapsed_buffers(selection.start)
-                .row,
-        )
-    } else {
-        MultiBufferRow(selection.start.row)
-    }
+    MultiBufferRow(
+        display_map
+            .prev_line_boundary_ignoring_collapsed_buffers(selection.start)
+            .row,
+    )
 }
 
 fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) -> MultiBufferRow {

@@ -41911,86 +41911,234 @@ async fn test_edit_actions_in_folded_buffer_match_the_expanded_buffer(cx: &mut T
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
 
+#[derive(Clone, Copy)]
+enum InnerCreaseAction {
+    DeleteLine,
+    MoveLineUp,
+    MoveLineDown,
+    Tab,
+}
+
+async fn run_action_with_inner_crease(
+    cx: &mut TestAppContext,
+    text: &'static str,
+    crease: Range<Point>,
+    collapse_buffer: bool,
+    caret_point: Point,
+    action: InnerCreaseAction,
+) -> (String, String, bool, Vec<Range<Point>>) {
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                (text, vec![Point::row_range(0..text.lines().count() as u32)]),
+                ("other\n", vec![Point::row_range(0..1)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut editor_cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+    let buffer_ids = editor_cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    editor_cx.update_editor(|editor, window, cx| {
+        editor.fold_creases(
+            vec![Crease::simple(crease, FoldPlaceholder::test())],
+            true,
+            window,
+            cx,
+        );
+        if collapse_buffer {
+            editor.fold_buffer(buffer_ids[0], cx);
+        }
+
+        let caret = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            snapshot
+                .anchor_in_excerpt(
+                    snapshot
+                        .buffer_for_id(buffer_ids[0])
+                        .expect("the first buffer is in the multibuffer")
+                        .anchor_before(caret_point),
+                )
+                .expect("the caret is inside the first buffer's excerpt")
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([caret..caret])
+        });
+
+        let display_snapshot = editor.display_snapshot(cx);
+        let resolved_ranges = editor
+            .selections
+            .all::<Point>(&display_snapshot)
+            .iter()
+            .map(Selection::range)
+            .collect::<Vec<_>>();
+
+        match action {
+            InnerCreaseAction::DeleteLine => editor.delete_line(&DeleteLine, window, cx),
+            InnerCreaseAction::MoveLineUp => editor.move_line_up(&MoveLineUp, window, cx),
+            InnerCreaseAction::MoveLineDown => editor.move_line_down(&MoveLineDown, window, cx),
+            InnerCreaseAction::Tab => editor.tab(&Tab, window, cx),
+        }
+
+        let text_of = |buffer_id, cx: &mut Context<Editor>| {
+            editor
+                .buffer()
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .find(|buffer| buffer.read(cx).remote_id() == buffer_id)
+                .expect("the edited buffer is still in the multibuffer")
+                .read(cx)
+                .text()
+        };
+        (
+            text_of(buffer_ids[0], cx),
+            text_of(buffer_ids[1], cx),
+            editor.is_buffer_folded(buffer_ids[0], cx),
+            resolved_ranges,
+        )
+    })
+}
+
+const INNER_CREASE_TEXT: &str = "zero\none\ntwo\nthree\n";
+
+fn inner_crease() -> Range<Point> {
+    Point::new(0, 1)..Point::new(2, 2)
+}
+
 #[gpui::test]
 async fn test_delete_line_in_folded_buffer_with_inner_crease_matches_expanded_buffer(
     cx: &mut TestAppContext,
 ) {
     init_test(cx, |_| {});
 
-    let mut outcomes = Vec::new();
-    for collapse_buffer in [false, true] {
-        let (editor, window_cx) = cx.add_window_view(|window, cx| {
-            let multi_buffer = MultiBuffer::build_multi(
-                [
-                    ("zero\none\ntwo\nthree\n", vec![Point::row_range(0..4)]),
-                    ("other\n", vec![Point::row_range(0..1)]),
-                ],
-                cx,
-            );
-            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
-        });
-        let mut editor_cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
-        let buffer_ids = editor_cx.multibuffer(|multi_buffer, cx| {
-            multi_buffer
-                .snapshot(cx)
-                .excerpts()
-                .map(|excerpt| excerpt.context.start.buffer_id)
-                .collect::<Vec<_>>()
-        });
+    for caret_point in [Point::new(1, 0), Point::new(1, 1)] {
+        let expanded = run_action_with_inner_crease(
+            cx,
+            INNER_CREASE_TEXT,
+            inner_crease(),
+            false,
+            caret_point,
+            InnerCreaseAction::DeleteLine,
+        )
+        .await;
+        let collapsed = run_action_with_inner_crease(
+            cx,
+            INNER_CREASE_TEXT,
+            inner_crease(),
+            true,
+            caret_point,
+            InnerCreaseAction::DeleteLine,
+        )
+        .await;
 
-        outcomes.push(editor_cx.update_editor(|editor, window, cx| {
-            editor.fold_creases(
-                vec![Crease::simple(
-                    Point::new(0, 1)..Point::new(2, 2),
-                    FoldPlaceholder::test(),
-                )],
-                true,
-                window,
-                cx,
-            );
-            if collapse_buffer {
-                editor.fold_buffer(buffer_ids[0], cx);
-            }
-
-            let caret = {
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                snapshot
-                    .anchor_in_excerpt(
-                        snapshot
-                            .buffer_for_id(buffer_ids[0])
-                            .expect("the first buffer is in the multibuffer")
-                            .anchor_before(Point::new(1, 1)),
-                    )
-                    .expect("the caret is inside the first buffer's excerpt")
-            };
-            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                selections.select_ranges([caret..caret])
-            });
-            editor.delete_line(&DeleteLine, window, cx);
-
-            let text_of = |buffer_id, cx: &mut Context<Editor>| {
-                editor
-                    .buffer()
-                    .read(cx)
-                    .all_buffers()
-                    .into_iter()
-                    .find(|buffer| buffer.read(cx).remote_id() == buffer_id)
-                    .expect("the edited buffer is still in the multibuffer")
-                    .read(cx)
-                    .text()
-            };
-            (
-                text_of(buffer_ids[0], cx),
-                text_of(buffer_ids[1], cx),
-                editor.is_buffer_folded(buffer_ids[0], cx),
-            )
-        }));
+        assert_eq!(expanded.0, "three\n");
+        assert_eq!(expanded.1, "other\n");
+        assert_eq!(collapsed, expanded);
+        assert!(!collapsed.2, "editing must expand the collapsed buffer");
     }
+}
 
-    assert_eq!(outcomes[0].0, "three\n");
-    assert_eq!(outcomes[0].1, "other\n");
-    assert_eq!(outcomes[1], outcomes[0]);
-    assert!(!outcomes[1].2, "editing must expand the collapsed buffer");
+#[gpui::test]
+async fn test_move_line_down_in_folded_buffer_with_inner_crease_matches_expanded_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let expanded = run_action_with_inner_crease(
+        cx,
+        INNER_CREASE_TEXT,
+        inner_crease(),
+        false,
+        Point::new(1, 0),
+        InnerCreaseAction::MoveLineDown,
+    )
+    .await;
+    let collapsed = run_action_with_inner_crease(
+        cx,
+        INNER_CREASE_TEXT,
+        inner_crease(),
+        true,
+        Point::new(1, 0),
+        InnerCreaseAction::MoveLineDown,
+    )
+    .await;
+
+    assert_eq!(expanded.0, "three\nzero\none\ntwo\n");
+    assert_eq!(expanded.1, "other\n");
+    assert_eq!(collapsed, expanded);
+    assert!(!collapsed.2, "editing must expand the collapsed buffer");
+}
+
+#[gpui::test]
+async fn test_tab_in_folded_buffer_with_inner_crease_matches_expanded_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let expanded = run_action_with_inner_crease(
+        cx,
+        INNER_CREASE_TEXT,
+        inner_crease(),
+        false,
+        Point::new(1, 1),
+        InnerCreaseAction::Tab,
+    )
+    .await;
+    let collapsed = run_action_with_inner_crease(
+        cx,
+        INNER_CREASE_TEXT,
+        inner_crease(),
+        true,
+        Point::new(1, 1),
+        InnerCreaseAction::Tab,
+    )
+    .await;
+
+    assert_eq!(expanded.3, vec![Point::new(0, 1)..Point::new(2, 2)]);
+    assert_eq!(collapsed.3, expanded.3);
+    assert_eq!(expanded.0, "    zero\n    one\n    two\nthree\n");
+    assert_eq!(expanded.1, "other\n");
+    assert_eq!(collapsed, expanded);
+    assert!(!collapsed.2, "editing must expand the collapsed buffer");
+}
+
+#[gpui::test]
+async fn test_line_moves_at_a_creases_column_zero_end_keep_it_intact(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    const TEXT: &str = "aaa\nbbb\nccc\nddd\neee\nfff\n";
+    let crease = Point::new(3, 3)..Point::new(4, 0);
+
+    for (action, expected_text) in [
+        (
+            InnerCreaseAction::MoveLineUp,
+            "aaa\nbbb\nddd\neee\nccc\nfff\n",
+        ),
+        (
+            InnerCreaseAction::MoveLineDown,
+            "aaa\nbbb\nccc\nfff\nddd\neee\n",
+        ),
+    ] {
+        let expanded =
+            run_action_with_inner_crease(cx, TEXT, crease.clone(), false, Point::new(4, 0), action)
+                .await;
+        let collapsed =
+            run_action_with_inner_crease(cx, TEXT, crease.clone(), true, Point::new(4, 0), action)
+                .await;
+
+        assert_eq!(expanded.0, expected_text);
+        assert_eq!(expanded.1, "other\n");
+        assert_eq!(collapsed, expanded);
+        assert!(!collapsed.2, "editing must expand the collapsed buffer");
+    }
 }
 
 #[gpui::test]
@@ -42041,6 +42189,249 @@ async fn test_line_boundaries_in_folded_buffer_ignore_soft_wraps(cx: &mut TestAp
         assert_eq!(
             snapshot.next_line_boundary_ignoring_collapsed_buffers(point),
             Point::new(0, 26)
+        );
+    });
+}
+
+#[derive(Clone, Copy)]
+enum MultilineInlayAction {
+    MoveLineDown,
+    MoveLineUp,
+}
+
+async fn run_line_move_with_multiline_inlay(
+    cx: &mut TestAppContext,
+    collapse_buffer: bool,
+    action: MultilineInlayAction,
+) -> (String, String, bool, MultiBufferPoint, MultiBufferPoint) {
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("top\nabcd\ntail\n", vec![Point::row_range(0..3)]),
+                ("other\n", vec![Point::row_range(0..1)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut editor_cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+    let buffer_ids = editor_cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    editor_cx.update_editor(|editor, window, cx| {
+        let (inlay_position, caret) = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let first_buffer = snapshot
+                .buffer_for_id(buffer_ids[0])
+                .expect("the first buffer is in the multibuffer");
+            let inlay_position = snapshot
+                .anchor_in_excerpt(first_buffer.anchor_before(Point::new(1, 2)))
+                .expect("the inlay is inside the first excerpt");
+            let caret_point = match action {
+                MultilineInlayAction::MoveLineDown => Point::new(0, 1),
+                MultilineInlayAction::MoveLineUp => Point::new(2, 1),
+            };
+            let caret = snapshot
+                .anchor_in_excerpt(first_buffer.anchor_before(caret_point))
+                .expect("the caret is inside the first excerpt");
+            (inlay_position, caret)
+        };
+        editor.splice_inlays(&[], vec![Inlay::mock_hint(0, inlay_position, "X\nY")], cx);
+        if collapse_buffer {
+            editor.fold_buffer(buffer_ids[0], cx);
+        }
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([caret..caret])
+        });
+
+        let snapshot = editor.display_snapshot(cx);
+        let previous_boundary =
+            snapshot.prev_line_boundary_ignoring_collapsed_buffers(Point::new(1, 3));
+        let next_boundary =
+            snapshot.next_line_boundary_ignoring_collapsed_buffers(Point::new(1, 0));
+
+        match action {
+            MultilineInlayAction::MoveLineDown => editor.move_line_down(&MoveLineDown, window, cx),
+            MultilineInlayAction::MoveLineUp => editor.move_line_up(&MoveLineUp, window, cx),
+        }
+
+        let text_of = |buffer_id, cx: &mut Context<Editor>| {
+            editor
+                .buffer()
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .find(|buffer| buffer.read(cx).remote_id() == buffer_id)
+                .expect("the edited buffer is still in the multibuffer")
+                .read(cx)
+                .text()
+        };
+        (
+            text_of(buffer_ids[0], cx),
+            text_of(buffer_ids[1], cx),
+            editor.is_buffer_folded(buffer_ids[0], cx),
+            previous_boundary,
+            next_boundary,
+        )
+    })
+}
+
+#[gpui::test]
+async fn test_line_moves_in_folded_buffer_with_multiline_inlay_match_expanded_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    for (action, expected_text) in [
+        (MultilineInlayAction::MoveLineDown, "abcd\ntop\ntail\n"),
+        (MultilineInlayAction::MoveLineUp, "top\ntail\nabcd\n"),
+    ] {
+        let expanded = run_line_move_with_multiline_inlay(cx, false, action).await;
+        let collapsed = run_line_move_with_multiline_inlay(cx, true, action).await;
+
+        assert_eq!(expanded.0, expected_text);
+        assert_eq!(expanded.1, "other\n");
+        assert_eq!(collapsed.0, expanded.0);
+        assert_eq!(collapsed.1, expanded.1);
+        assert_eq!(collapsed.3, Point::new(1, 0));
+        assert_eq!(collapsed.4, Point::new(1, 4));
+        assert!(!collapsed.2, "editing must expand the collapsed buffer");
+    }
+}
+
+/// Boundary-only counterpart of
+/// [`test_line_moves_in_folded_buffer_with_multiline_inlay_match_expanded_buffer`]: the line-move
+/// test pins the boundaries it feeds to the action, this one pins that they are fixed points, so a
+/// helper that stops resetting the column before walking the fold layers is still caught.
+#[gpui::test]
+async fn test_line_boundaries_in_folded_buffer_handle_one_multiline_inlay(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("top\nabcd\ntail\n", vec![Point::row_range(0..3)]),
+                ("other\n", vec![Point::row_range(0..1)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut editor_cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+
+    editor_cx.update_editor(|editor, _, cx| {
+        let (buffer_id, inlay_position) = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let buffer_id = snapshot
+                .excerpts()
+                .next()
+                .expect("the first buffer has an excerpt")
+                .context
+                .start
+                .buffer_id;
+            let first_buffer = snapshot
+                .buffer_for_id(buffer_id)
+                .expect("the first buffer is in the multibuffer");
+            (
+                buffer_id,
+                snapshot
+                    .anchor_in_excerpt(first_buffer.anchor_before(Point::new(1, 2)))
+                    .expect("the inlay is inside the first excerpt"),
+            )
+        };
+        editor.splice_inlays(&[], vec![Inlay::mock_hint(0, inlay_position, "X\nY")], cx);
+        editor.fold_buffer(buffer_id, cx);
+
+        let snapshot = editor.display_snapshot(cx);
+        let previous = snapshot.prev_line_boundary_ignoring_collapsed_buffers(Point::new(1, 3));
+        let next = snapshot.next_line_boundary_ignoring_collapsed_buffers(Point::new(1, 0));
+        assert_eq!(previous, Point::new(1, 0));
+        assert_eq!(next, Point::new(1, 4));
+        assert_eq!(
+            snapshot.prev_line_boundary_ignoring_collapsed_buffers(previous),
+            previous
+        );
+        assert_eq!(
+            snapshot.next_line_boundary_ignoring_collapsed_buffers(next),
+            next
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_line_boundaries_in_folded_buffer_handle_multiple_multiline_inlays(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("top\nabcdef\ntail", vec![Point::row_range(0..3)]),
+                ("other\n", vec![Point::row_range(0..1)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut editor_cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+
+    editor_cx.update_editor(|editor, _, cx| {
+        let (buffer_id, left_biased, right_biased) = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot
+                .excerpts()
+                .next()
+                .expect("the first buffer has an excerpt");
+            let buffer_id = excerpt.context.start.buffer_id;
+            let first_buffer = snapshot
+                .buffer_for_id(buffer_id)
+                .expect("the first buffer is in the multibuffer");
+            (
+                buffer_id,
+                snapshot
+                    .anchor_in_excerpt(first_buffer.anchor_before(Point::new(1, 2)))
+                    .expect("the left-biased inlay is inside the excerpt"),
+                snapshot
+                    .anchor_in_excerpt(first_buffer.anchor_after(Point::new(1, 4)))
+                    .expect("the right-biased inlay is inside the excerpt"),
+            )
+        };
+        editor.splice_inlays(
+            &[],
+            vec![
+                Inlay::mock_hint(0, left_biased, "L\nl"),
+                Inlay::mock_hint(1, right_biased, "R\nr"),
+            ],
+            cx,
+        );
+        editor.fold_buffer(buffer_id, cx);
+
+        let snapshot = editor.display_snapshot(cx);
+        let previous = snapshot.prev_line_boundary_ignoring_collapsed_buffers(Point::new(1, 5));
+        let next = snapshot.next_line_boundary_ignoring_collapsed_buffers(Point::new(1, 0));
+        assert_eq!(previous, Point::new(1, 0));
+        assert_eq!(next, Point::new(1, 6));
+        assert_eq!(
+            snapshot.prev_line_boundary_ignoring_collapsed_buffers(previous),
+            previous
+        );
+        assert_eq!(
+            snapshot.next_line_boundary_ignoring_collapsed_buffers(next),
+            next
+        );
+        assert_eq!(
+            snapshot.prev_line_boundary_ignoring_collapsed_buffers(Point::new(2, 3)),
+            Point::new(2, 0)
+        );
+        assert_eq!(
+            snapshot.next_line_boundary_ignoring_collapsed_buffers(Point::new(2, 0)),
+            Point::new(2, 4)
         );
     });
 }
@@ -42577,6 +42968,104 @@ async fn test_two_cursors_in_folded_buffer_stay_two_cursors(cx: &mut TestAppCont
             "tab must indent each cursor's line, the way it would with the buffer expanded"
         );
     }
+}
+
+#[gpui::test]
+async fn test_cursor_and_range_in_folded_buffer_preserve_their_complete_union(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\ngamma\n", vec![Point::row_range(0..3)]),
+                ("delta\n", vec![Point::row_range(0..1)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut editor_cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+    let buffer_ids = editor_cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    editor_cx.update_editor(|editor, window, cx| {
+        editor.fold_buffer(buffer_ids[0], cx);
+        let (cursor, range_start, range_end) = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let first_buffer = snapshot
+                .buffer_for_id(buffer_ids[0])
+                .expect("the first buffer is in the multibuffer");
+            let anchor = |point| {
+                snapshot
+                    .anchor_in_excerpt(first_buffer.anchor_before(point))
+                    .expect("the point is inside the first excerpt")
+            };
+            (
+                anchor(Point::new(1, 0)),
+                anchor(Point::new(2, 0)),
+                anchor(Point::new(2, 1)),
+            )
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select(vec![
+                Selection {
+                    id: 0,
+                    start: cursor,
+                    end: cursor,
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                },
+                Selection {
+                    id: 1,
+                    start: range_start,
+                    end: range_end,
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                },
+            ]);
+        });
+
+        let snapshot = editor.display_snapshot(cx);
+        let resolved_points = editor.selections.all::<Point>(&snapshot);
+        assert_eq!(resolved_points.len(), 1);
+        assert_eq!(
+            resolved_points[0].range(),
+            Point::new(0, 0)..Point::new(3, 0)
+        );
+        let resolved_offsets = editor.selections.all::<MultiBufferOffset>(&snapshot);
+        assert_eq!(resolved_offsets.len(), 1);
+        assert_eq!(
+            resolved_offsets[0].range(),
+            MultiBufferOffset(0)..MultiBufferOffset(17)
+        );
+
+        editor.cut(&Cut, window, cx);
+
+        let text_of = |buffer_id, cx: &mut Context<Editor>| {
+            editor
+                .buffer()
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .find(|buffer| buffer.read(cx).remote_id() == buffer_id)
+                .expect("the buffer is still in the multibuffer")
+                .read(cx)
+                .text()
+        };
+        assert_eq!(text_of(buffer_ids[0], cx), "");
+        assert_eq!(text_of(buffer_ids[1], cx), "delta\n");
+        assert!(
+            !editor.is_buffer_folded(buffer_ids[0], cx),
+            "cutting must expand the collapsed buffer"
+        );
+    });
 }
 
 /// A range reaching into a collapsed buffer keeps wrapping around it, which is what
