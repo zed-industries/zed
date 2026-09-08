@@ -69,13 +69,15 @@ use std::{
     ptr::{self, NonNull},
     rc::Rc,
     sync::{
-        Arc, Weak,
+        Arc, Once, Weak,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
 
 const WINDOW_STATE_IVAR: &str = "windowState";
+
+static RESTORES_WORKSPACE_AT_LAUNCH_DEFAULT: Once = Once::new();
 
 static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
@@ -1497,7 +1499,13 @@ impl PlatformWindow for MacWindow {
     }
 
     fn native_window_state(&self) -> Option<Vec<u8>> {
-        let native_window = self.0.lock().native_window;
+        let native_window = {
+            let state = self.0.lock();
+            if state.is_fullscreen() || state.simple_fullscreen_state.is_some() {
+                return None;
+            }
+            state.native_window
+        };
         // SAFETY: `native_window` is a live `NSWindow` retained by this window's state, and the
         // selectors below are AppKit/Foundation methods sent with their documented signatures. The
         // archived bytes are copied into an owned `Vec` before the objects we allocated are
@@ -1506,7 +1514,7 @@ impl PlatformWindow for MacWindow {
             let archiver: id = msg_send![class!(NSKeyedArchiver), alloc];
             let archiver: id = msg_send![archiver, initRequiringSecureCoding: YES];
             if archiver.is_null() {
-                log::error!("failed to create an archiver for the native window state");
+                log::warn!("failed to create an archiver for the native window state");
                 return None;
             }
             let delegate: id = msg_send![WINDOW_STATE_ARCHIVER_DELEGATE_CLASS, new];
@@ -1524,7 +1532,7 @@ impl PlatformWindow for MacWindow {
                 data.bytes() as *const u8
             };
             let state = if bytes.is_null() {
-                log::error!("the archiver produced no data for the native window state");
+                log::warn!("the archiver produced no data for the native window state");
                 None
             } else {
                 Some(std::slice::from_raw_parts(bytes, data.length() as usize).to_vec())
@@ -1552,7 +1560,7 @@ impl PlatformWindow for MacWindow {
                 state.len() as u64,
             );
             if data.is_null() {
-                log::error!(
+                log::warn!(
                     "failed to wrap {} bytes of native window state",
                     state.len()
                 );
@@ -1564,12 +1572,17 @@ impl PlatformWindow for MacWindow {
             // (FB15644170), and the `_windowRestorationOptions` override on our unarchiver subclass
             // handles it instead.
             if !is_macos_version_at_least(NSOperatingSystemVersion::new(15, 0, 0)) {
-                let defaults: id = NSUserDefaults::standardUserDefaults();
-                let key = ns_string("NSWindowRestoresWorkspaceAtLaunch");
-                let yes_value: id = msg_send![class!(NSNumber), numberWithBool: YES];
-                let dict: id =
-                    msg_send![class!(NSDictionary), dictionaryWithObject: yes_value forKey: key];
-                let _: () = msg_send![defaults, registerDefaults: dict];
+                RESTORES_WORKSPACE_AT_LAUNCH_DEFAULT.call_once(|| {
+                    let defaults: id = NSUserDefaults::standardUserDefaults();
+                    let key = ns_string("NSWindowRestoresWorkspaceAtLaunch");
+                    let yes_value: id = msg_send![class!(NSNumber), numberWithBool: YES];
+                    let dict: id = msg_send![
+                        class!(NSDictionary),
+                        dictionaryWithObject: yes_value
+                        forKey: key
+                    ];
+                    let _: () = msg_send![defaults, registerDefaults: dict];
+                });
             }
 
             let unarchiver: id = msg_send![WINDOW_STATE_UNARCHIVER_CLASS, alloc];
@@ -1577,7 +1590,7 @@ impl PlatformWindow for MacWindow {
             let unarchiver: id =
                 msg_send![unarchiver, initForReadingFromData: data error: &mut error];
             if unarchiver.is_null() {
-                log::error!(
+                log::warn!(
                     "failed to unarchive the native window state: {}",
                     ns_error_description(error)
                 );
@@ -1586,7 +1599,7 @@ impl PlatformWindow for MacWindow {
             let _: () = msg_send![native_window, restoreStateWithCoder: unarchiver];
             let error: id = msg_send![unarchiver, error];
             if !error.is_null() {
-                log::error!(
+                log::warn!(
                     "failed to restore the native window state: {}",
                     ns_error_description(error)
                 );

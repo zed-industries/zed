@@ -1124,7 +1124,6 @@ impl WorkspaceDb {
             centered_layout,
             docks,
             window_id,
-            native_window_state,
         ): (
             WorkspaceId,
             String,
@@ -1136,7 +1135,6 @@ impl WorkspaceDb {
             Option<bool>,
             DockStructure,
             Option<u64>,
-            Option<Vec<u8>>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -1161,8 +1159,7 @@ impl WorkspaceDb {
                     bottom_dock_visible,
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
-                    window_id,
-                    native_window_state
+                    window_id
                 FROM workspaces
                 WHERE
                     paths IS ? AND
@@ -1213,7 +1210,6 @@ impl WorkspaceDb {
             window_bounds,
             centered_layout: centered_layout.unwrap_or(false),
             display,
-            native_window_state,
             docks,
             session_id: None,
             bookmarks: self.bookmarks(workspace_id),
@@ -1240,7 +1236,6 @@ impl WorkspaceDb {
             docks,
             window_id,
             remote_connection_id,
-            native_window_state,
         ): (
             String,
             String,
@@ -1252,7 +1247,6 @@ impl WorkspaceDb {
             DockStructure,
             Option<u64>,
             Option<i32>,
-            Option<Vec<u8>>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -1277,8 +1271,7 @@ impl WorkspaceDb {
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
                     window_id,
-                    remote_connection_id,
-                    native_window_state
+                    remote_connection_id
                 FROM workspaces
                 WHERE workspace_id = ?
             })
@@ -1322,7 +1315,6 @@ impl WorkspaceDb {
             window_bounds,
             centered_layout: centered_layout.unwrap_or(false),
             display,
-            native_window_state,
             docks,
             session_id: None,
             bookmarks: self.bookmarks(workspace_id),
@@ -2497,17 +2489,17 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub(crate) async fn set_centered_layout(workspace_id: WorkspaceId, centered_layout: bool) -> Result<()> {
-            UPDATE workspaces
-            SET centered_layout = ?2
-            WHERE workspace_id = ?1
+        pub(crate) fn native_window_state(workspace_id: WorkspaceId) -> Result<Option<(Option<Uuid>, Option<Vec<u8>>)>> {
+            SELECT display, native_window_state
+            FROM workspaces
+            WHERE workspace_id = ?
         }
     }
 
     query! {
-        pub(crate) async fn set_session_id(workspace_id: WorkspaceId, session_id: Option<String>) -> Result<()> {
+        pub(crate) async fn set_centered_layout(workspace_id: WorkspaceId, centered_layout: bool) -> Result<()> {
             UPDATE workspaces
-            SET session_id = ?2
+            SET centered_layout = ?2
             WHERE workspace_id = ?1
         }
     }
@@ -2968,7 +2960,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3127,7 +3118,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3179,7 +3169,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3271,7 +3260,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: None,
             display: None,
-            native_window_state: None,
             docks: Default::default(),
             bookmarks: Default::default(),
             breakpoints: Default::default(),
@@ -3282,8 +3270,10 @@ mod tests {
             recent_navigation_history: Default::default(),
         })
         .await;
+        assert_eq!(db.native_window_state(id).unwrap(), Some((None, None)));
         assert_eq!(
-            db.workspace_for_roots(paths).unwrap().native_window_state,
+            db.native_window_state(WorkspaceId::from_i64(i64::MAX))
+                .unwrap(),
             None
         );
 
@@ -3291,30 +3281,34 @@ mod tests {
         db.set_window_open_status(id, window_bounds, display_uuid, Some(state.clone()))
             .await
             .unwrap();
+        assert_eq!(
+            db.native_window_state(id).unwrap(),
+            Some((Some(display_uuid), Some(state)))
+        );
         let restored = db.workspace_for_roots(paths).unwrap();
-        assert_eq!(restored.native_window_state, Some(state.clone()));
         assert_eq!(restored.window_bounds, Some(window_bounds));
         assert_eq!(restored.display, Some(display_uuid));
-        assert_eq!(
-            db.workspace_for_id(id).unwrap().native_window_state,
-            Some(state)
-        );
 
         let new_state = vec![9u8, 8, 7];
         db.set_window_open_status(id, window_bounds, display_uuid, Some(new_state.clone()))
             .await
             .unwrap();
         assert_eq!(
-            db.workspace_for_roots(paths).unwrap().native_window_state,
-            Some(new_state)
+            db.native_window_state(id).unwrap(),
+            Some((Some(display_uuid), Some(new_state)))
         );
 
         db.set_window_open_status(id, window_bounds, display_uuid, None)
             .await
             .unwrap();
-        let restored = db.workspace_for_roots(paths).unwrap();
-        assert_eq!(restored.native_window_state, None);
-        assert_eq!(restored.window_bounds, Some(window_bounds));
+        assert_eq!(
+            db.native_window_state(id).unwrap(),
+            Some((Some(display_uuid), None))
+        );
+        assert_eq!(
+            db.workspace_for_roots(paths).unwrap().window_bounds,
+            Some(window_bounds)
+        );
     }
 
     #[gpui::test]
@@ -3348,7 +3342,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3367,7 +3360,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3480,7 +3472,6 @@ mod tests {
             bookmarks: Default::default(),
             breakpoints: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
@@ -3523,7 +3514,6 @@ mod tests {
             bookmarks: Default::default(),
             breakpoints: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
@@ -3540,7 +3530,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3588,7 +3577,6 @@ mod tests {
             bookmarks: Default::default(),
             breakpoints: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
@@ -3628,7 +3616,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3647,7 +3634,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3666,7 +3652,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3685,7 +3670,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3715,7 +3699,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3736,7 +3719,6 @@ mod tests {
             bookmarks: Default::default(),
             breakpoints: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("session-id-3".to_owned()),
@@ -3795,7 +3777,6 @@ mod tests {
             center_group: center_group.clone(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             bookmarks: Default::default(),
             breakpoints: Default::default(),
@@ -3840,7 +3821,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("one-session".to_owned()),
@@ -3941,7 +3921,6 @@ mod tests {
             center_group,
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             bookmarks: Default::default(),
             breakpoints: Default::default(),
@@ -3967,7 +3946,6 @@ mod tests {
             center_group: empty_pane_group(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             bookmarks: Default::default(),
             breakpoints: Default::default(),
@@ -4227,7 +4205,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("one-session".to_owned()),
@@ -4592,7 +4569,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: None,
             display: None,
-            native_window_state: None,
             docks: Default::default(),
             bookmarks: Default::default(),
             breakpoints: Default::default(),
@@ -4672,7 +4648,6 @@ mod tests {
                 center_group: Default::default(),
                 window_bounds: Default::default(),
                 display: Default::default(),
-                native_window_state: None,
                 docks: Default::default(),
                 centered_layout: false,
                 session_id: Some("test-session".to_owned()),
@@ -5012,7 +4987,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some(session_id.clone()),
@@ -5111,7 +5085,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some(session_id.to_owned()),
@@ -5131,7 +5104,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some(session_id.to_owned()),
@@ -5213,7 +5185,6 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
-            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some(session_id.clone()),
@@ -5495,6 +5466,108 @@ mod tests {
             after.window_bounds.is_some(),
             "flush_serialization should ensure window bounds are persisted to the DB \
              before the process exits."
+        );
+    }
+
+    #[gpui::test]
+    async fn test_empty_window_without_items_stays_in_session(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = db.next_id().await.unwrap();
+        let session_id = multi_workspace
+            .update_in(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, _| {
+                    workspace.set_database_id(workspace_id);
+                    workspace.session_id()
+                })
+            })
+            .unwrap();
+
+        multi_workspace
+            .update_in(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.flush_serialization(window, cx)
+                })
+            })
+            .await;
+
+        let restored = db
+            .last_session_workspace_locations(&session_id, None, fs.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(
+            restored
+                .iter()
+                .map(|workspace| workspace.workspace_id)
+                .collect::<Vec<_>>(),
+            vec![workspace_id]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_window_with_last_folder_removed_reopens_empty(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "main.rs": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = db.next_id().await.unwrap();
+        let session_id = multi_workspace
+            .update_in(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, _| {
+                    workspace.set_database_id(workspace_id);
+                    workspace.session_id()
+                })
+            })
+            .unwrap();
+        multi_workspace
+            .update_in(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.flush_serialization(window, cx)
+                })
+            })
+            .await;
+        assert_eq!(
+            db.workspace_for_id(workspace_id).unwrap().paths,
+            PathList::new(&[Path::new("/project")])
+        );
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+        multi_workspace
+            .update_in(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.flush_serialization(window, cx)
+                })
+            })
+            .await;
+
+        assert_eq!(
+            db.workspace_for_id(workspace_id).unwrap().paths,
+            PathList::default()
+        );
+        let restored = db
+            .last_session_workspace_locations(&session_id, None, fs.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(
+            restored
+                .iter()
+                .map(|workspace| (workspace.workspace_id, workspace.paths.clone()))
+                .collect::<Vec<_>>(),
+            vec![(workspace_id, PathList::default())]
         );
     }
 

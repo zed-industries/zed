@@ -141,7 +141,6 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) window_bounds: Option<SerializedWindowBounds>,
     pub(crate) centered_layout: bool,
     pub(crate) display: Option<Uuid>,
-    pub(crate) native_window_state: Option<Vec<u8>>,
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
     pub(crate) bookmarks: BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
