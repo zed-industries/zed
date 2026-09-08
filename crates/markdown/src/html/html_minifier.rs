@@ -1,8 +1,8 @@
 use html5ever::{
-    Attribute, ParseOpts, QualName, parse_document,
-    tendril::{Tendril, TendrilSink, fmt::UTF8},
+    Attribute, QualName,
+    tendril::{Tendril, fmt::UTF8},
 };
-use markup5ever_rcdom::{Node, NodeData, RcDom};
+use markup5ever_rcdom::{Node, NodeData};
 use std::{cell::RefCell, io, rc::Rc, str};
 
 #[derive(Default)]
@@ -38,10 +38,8 @@ where
     ///
     /// Will return `Err` if unable to write to the output writer.
     #[inline]
-    pub fn minify<R: io::Read>(&mut self, mut r: &mut R) -> io::Result<()> {
-        let dom = parse_document(RcDom::default(), ParseOpts::default())
-            .from_utf8()
-            .read_from(&mut r)?;
+    pub fn minify(&mut self, reader: &mut dyn io::Read) -> io::Result<()> {
+        let dom = super::parse_html(reader)?;
 
         if !self.options.omit_doctype {
             self.w.write_all(b"<!doctype html>")?;

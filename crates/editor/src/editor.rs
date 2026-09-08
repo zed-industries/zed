@@ -65,6 +65,7 @@ mod clipboard;
 mod code_actions;
 mod completions;
 mod config;
+mod cursor_animation;
 mod diagnostics;
 mod edit_prediction;
 mod input;
@@ -146,6 +147,7 @@ use code_context_menus::{
 use code_lens::CodeLensState;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
+use cursor_animation::CursorAnimationStates;
 use dap::TelemetrySpawnLocation;
 use display_map::*;
 use document_colors::LspColorData;
@@ -991,6 +993,7 @@ pub struct Editor {
     completion_provider: Option<Rc<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Entity<BlinkManager>,
+    cursor_animations: CursorAnimationStates,
     show_cursor_names: bool,
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
@@ -2337,6 +2340,7 @@ impl Editor {
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
             blink_manager: blink_manager.clone(),
+            cursor_animations: CursorAnimationStates::default(),
             show_local_selections: true,
             show_scrollbars: ScrollbarAxes {
                 horizontal: full_mode,
@@ -5786,20 +5790,21 @@ impl Editor {
                             .collect::<String>();
 
                         if !line_text_after_indent.is_empty() {
-                            let block_prefix = language_scope
+                            let block_prefixes = language_scope
                                 .block_comment()
-                                .map(|c| c.prefix.as_ref())
-                                .filter(|p| !p.is_empty());
-                            let doc_prefix = language_scope
-                                .documentation_comment()
-                                .map(|c| c.prefix.as_ref())
-                                .filter(|p| !p.is_empty());
+                                .into_iter()
+                                .chain(language_scope.documentation_comment())
+                                .filter(|comment| {
+                                    language_scope.override_name() == Some("comment")
+                                        && !comment.prefix.is_empty()
+                                        && !line_text_after_indent.starts_with(comment.end.as_ref())
+                                })
+                                .map(|comment| comment.prefix.as_ref());
                             let comment_prefixes = language_scope
                                 .line_comment_prefixes()
                                 .iter()
                                 .map(|p| p.as_ref())
-                                .chain(block_prefix)
-                                .chain(doc_prefix)
+                                .chain(block_prefixes)
                                 .map(|prefix| (prefix, false));
                             let all_prefixes = comment_prefixes.chain(
                                 language_scope
@@ -7261,7 +7266,7 @@ impl Editor {
     }
 
     fn convert_text_case(text: &str, case: Case) -> String {
-        text.lines()
+        text.split('\n')
             .map(|line| {
                 let trimmed_start = line.trim_start();
                 let leading = &line[..line.len() - trimmed_start.len()];
@@ -10791,6 +10796,7 @@ impl Editor {
     }
 
     fn handle_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cursor_animations.clear();
         cx.emit(EditorEvent::Focused);
 
         if let Some(descendant) = self
@@ -10855,6 +10861,7 @@ impl Editor {
     }
 
     pub fn handle_blur(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cursor_animations.clear();
         self.blink_manager.update(cx, BlinkManager::disable);
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
