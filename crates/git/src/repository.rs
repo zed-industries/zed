@@ -631,7 +631,7 @@ async fn read_shallow_file(shallow_file_path: &Path) -> Result<Option<String>> {
     }
 }
 
-async fn is_shallow_boundary_commit(
+pub(crate) async fn is_shallow_boundary_commit(
     git: &GitBinary,
     shallow_file_path: &Path,
     commit: &str,
@@ -5993,6 +5993,70 @@ mod tests {
                 .map(|entry| (entry.sha.to_string(), entry.range.clone()))
                 .collect::<Vec<_>>(),
             vec![(first_sha.clone(), 0..1)]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_blame_boundary_only_for_shallow_repository(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let source_dir = tempfile::tempdir().unwrap();
+        git_init_repo(source_dir.path());
+        fs::write(source_dir.path().join("a.txt"), "one\n").unwrap();
+        git_command(source_dir.path(), ["add", "a.txt"]);
+        git_command(source_dir.path(), ["commit", "-m", "first"]);
+        let head_sha = git_command_output(source_dir.path(), ["rev-parse", "HEAD"]);
+        let source_repo = RealGitRepository::new(
+            &source_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let source_blame = source_repo
+            .blame(repo_path("a.txt"), Rope::from("one\n"), LineEnding::Unix)
+            .await
+            .unwrap();
+        assert_eq!(
+            source_blame
+                .entries
+                .iter()
+                .map(|entry| (entry.sha.to_string(), entry.range.clone(), entry.boundary))
+                .collect::<Vec<_>>(),
+            vec![(head_sha.clone(), 0..1, false)]
+        );
+
+        let clone_dir = tempfile::tempdir().unwrap();
+        git_command(
+            clone_dir.path(),
+            [
+                "clone".to_string(),
+                "--depth=1".to_string(),
+                format!("file://{}", source_dir.path().display()),
+                "shallow".to_string(),
+            ],
+        );
+        let shallow_repo = RealGitRepository::new(
+            &clone_dir.path().join("shallow/.git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let shallow_blame = shallow_repo
+            .blame(repo_path("a.txt"), Rope::from("one\n"), LineEnding::Unix)
+            .await
+            .unwrap();
+        assert_eq!(
+            shallow_blame
+                .entries
+                .iter()
+                .map(|entry| (entry.sha.to_string(), entry.range.clone(), entry.boundary))
+                .collect::<Vec<_>>(),
+            vec![(head_sha, 0..1, true)]
         );
     }
 
