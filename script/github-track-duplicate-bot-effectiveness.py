@@ -24,13 +24,11 @@ import functools
 import os
 import re
 import sys
-import time
 from datetime import datetime, timezone
 
 import requests
+from github_helpers import add_github_project_item, github_graphql, github_rest_api
 
-GITHUB_API = "https://api.github.com"
-GRAPHQL_URL = "https://api.github.com/graphql"
 REPO_OWNER = "zed-industries"
 REPO_NAME = "zed"
 STAFF_TEAM_SLUG = "staff"
@@ -48,8 +46,7 @@ BOT_START_DATE = "2026-02-18"
 NEEDS_TRIAGE_LABEL = "state:needs triage"
 DEFAULT_PROJECT_NUMBER = 76
 VALID_CLOSED_AS_VALUES = {"duplicate", "not_planned", "completed"}
-# HTTP statuses we'll retry on for GET requests
-TRANSIENT_HTTP_STATUSES = {429, 500, 502, 503, 504}
+
 # Add a new tuple when you deploy a new version of the bot that you want to
 # keep track of (e.g. the prompt gets a rewrite or the model gets swapped).
 # Newest first, please. The datetime is for the deployment time (merge to main).
@@ -74,37 +71,19 @@ def bot_version_for_time(date_string):
     return BOT_VERSION_TIMELINE[-1][0]
 
 
-def github_api_get(path, params=None):
-    """Fetch JSON from the GitHub REST API, retrying transient failures. Raises on non-2xx status."""
-    url = f"{GITHUB_API}/{path.lstrip('/')}"
-    for attempt in range(3):
-        try:
-            response = requests.get(url, headers=GITHUB_HEADERS, params=params)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            transient = isinstance(e, (requests.ConnectionError, requests.Timeout)) or (
-                isinstance(e, requests.HTTPError) and e.response.status_code in TRANSIENT_HTTP_STATUSES
-            )
-            if not transient or attempt == 2:
-                raise
-            wait = 2 ** attempt
-            print(f"  Transient GitHub API error ({e}); retrying in {wait}s")
-            time.sleep(wait)
-
-
 def github_search_issues(query):
     """Search issues, returning most recently created first."""
     # not handling pagination on purpose: the oldest issues are on the board already
     params = {"q": query, "sort": "created", "order": "desc", "per_page": 100}
-    return github_api_get("/search/issues", params).get("items", [])
+    return github_rest_api("GET", "search/issues", params=params).get("items", [])
 
 
 def is_staff_member(username):
     """Check if user is an active member of the staff team."""
     try:
-        data = github_api_get(
-            f"/orgs/{REPO_OWNER}/teams/{STAFF_TEAM_SLUG}/memberships/{username}"
+        data = github_rest_api(
+            "GET",
+            f"orgs/{REPO_OWNER}/teams/{STAFF_TEAM_SLUG}/memberships/{username}",
         )
         return data.get("state") == "active"
     except requests.HTTPError as error:
@@ -114,7 +93,9 @@ def is_staff_member(username):
 
 
 def fetch_issue(issue_number):
-    data = github_api_get(f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}")
+    data = github_rest_api(
+        "GET", f"repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}"
+    )
     return {
         "number": issue_number,
         "node_id": data["node_id"],
@@ -139,9 +120,11 @@ def get_bot_comment_with_time(issue_number):
     Recognizes user-facing issue and Discussion alerts as well as triage-only
     comments. Returns {"body": str, "created_at": str} if found, else None.
     """
-    comments_path = f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}/comments"
+    comments_path = f"repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}/comments"
     page = 1
-    while comments := github_api_get(comments_path, {"per_page": 100, "page": page}):
+    while comments := github_rest_api(
+        "GET", comments_path, params={"per_page": 100, "page": page}
+    ):
         for comment in comments:
             author = (comment.get("user") or {}).get("login", "")
             body = comment.get("body", "")
@@ -154,22 +137,6 @@ def get_bot_comment_with_time(issue_number):
 def parse_suggested_issues(comment_body):
     """Extract issue numbers from the bot's comment (lines like '- #12345')."""
     return [int(match) for match in re.findall(r"^- #(\d+)", comment_body, re.MULTILINE)]
-
-
-def github_api_graphql(query, variables=None, partial_errors_ok=False):
-    """Execute a GitHub GraphQL query. Raises on errors unless partial_errors_ok is set."""
-    response = requests.post(
-        GRAPHQL_URL,
-        headers=GITHUB_HEADERS,
-        json={"query": query, "variables": variables or {}},
-    )
-    response.raise_for_status()
-    data = response.json()
-    if "errors" in data:
-        if not partial_errors_ok or "data" not in data:
-            raise RuntimeError(f"GraphQL errors: {data['errors']}")
-        print(f"  GraphQL partial errors (ignored): {data['errors']}")
-    return data["data"]
 
 
 def find_canonical_among(duplicate_number, candidates):
@@ -187,7 +154,7 @@ def find_canonical_among(duplicate_number, candidates):
 
     # candidate issue numbers are baked into the query body via field aliases
     # (GraphQL doesn't let you parametrize alias names), so $numbers isn't needed.
-    data = github_api_graphql(
+    data = github_graphql(
         """
         query($owner: String!, $repo: String!) {
           repository(owner: $owner, name: $repo) {
@@ -219,7 +186,7 @@ def find_canonical_among(duplicate_number, candidates):
 @functools.lru_cache
 def get_project_config():
     """Fetch the project board's ID, field IDs, and option IDs."""
-    data = github_api_graphql(
+    data = github_graphql(
         """
         query($org: String!, $number: Int!) {
           organization(login: $org) {
@@ -260,7 +227,7 @@ def find_project_item(issue_node_id):
 
     Returns the project item ID if found, or None.
     """
-    data = github_api_graphql(
+    data = github_graphql(
         "query($id: ID!) { node(id: $id) { ... on Issue { projectItems(first: 20) { nodes { id project { number } } } } } }",
         {"id": issue_node_id},
     )
@@ -273,17 +240,7 @@ def find_project_item(issue_node_id):
 def add_project_item(issue_node_id):
     """Add an issue to the project board. Returns the new item ID."""
     config = get_project_config()
-    data = github_api_graphql(
-        """
-        mutation($projectId: ID!, $contentId: ID!) {
-          addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
-            item { id }
-          }
-        }
-        """,
-        {"projectId": config["project_id"], "contentId": issue_node_id},
-    )
-    return data["addProjectV2ItemById"]["item"]["id"]
+    return add_github_project_item(config["project_id"], issue_node_id)
 
 
 def set_field_value(item_id, field_name, value):
@@ -305,7 +262,7 @@ def set_field_value(item_id, field_name, value):
         # text field
         field_value = {"text": str(value)}
 
-    github_api_graphql(
+    github_graphql(
         """
         mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: ProjectV2FieldValue!) {
           updateProjectV2ItemFieldValue(input: {
@@ -543,11 +500,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-    if not GITHUB_TOKEN:
-        print("Error: GITHUB_TOKEN environment variable is required")
-        sys.exit(1)
-
     raw_project_number = os.environ.get("PROJECT_NUMBER", "")
     if raw_project_number:
         try:
@@ -557,11 +509,6 @@ if __name__ == "__main__":
             sys.exit(1)
     else:
         PROJECT_NUMBER = DEFAULT_PROJECT_NUMBER
-
-    GITHUB_HEADERS = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github+json",
-    }
 
     if args.command == "classify-closed":
         classify_closed(args.issue_number, args.closer_login, args.state_reason)

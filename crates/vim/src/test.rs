@@ -1432,7 +1432,7 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
             "g w",
-            workspace::SendKeystrokes(": j enter".to_string()),
+            workspace::SendKeystrokes(": j o i n space l i n e s enter".to_string()),
             None,
         )])
     });
