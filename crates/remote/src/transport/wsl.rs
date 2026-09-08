@@ -762,3 +762,112 @@ fn wsl_command_impl(
     log::debug!("wsl {:?}", command);
     command
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_connection(user: Option<String>) -> WslRemoteConnection {
+        WslRemoteConnection {
+            remote_binary_path: None,
+            platform: RemotePlatform {
+                os: RemoteOs::Linux,
+                arch: RemoteArch::X86_64,
+            },
+            os_version: None,
+            shell: "/bin/bash".to_string(),
+            shell_kind: ShellKind::Posix,
+            default_system_shell: "/bin/bash".to_string(),
+            has_wsl_interop: false,
+            connection_options: WslConnectionOptions {
+                distro_name: "Ubuntu".to_string(),
+                user,
+            },
+        }
+    }
+
+    #[test]
+    fn test_build_command_uses_exec_without_user() {
+        let connection = test_connection(None);
+        let command = connection
+            .build_command(
+                Some("remote_program".to_string()),
+                &["arg with space".to_string()],
+                &HashMap::default(),
+                Some("/home/user".to_string()),
+                None,
+                Interactive::No,
+            )
+            .unwrap();
+
+        assert_eq!(command.program, "wsl.exe");
+        // `--exec` must be used so wsl.exe does not wrap the command in the
+        // distro's default shell, which would re-interpret quoting.
+        assert_eq!(command.args.first().unwrap(), "--distribution");
+        let exec_index = command
+            .args
+            .iter()
+            .position(|arg| arg == "--exec")
+            .expect("--exec must be present");
+        assert!(!command.args.iter().any(|arg| arg == "--"));
+        // The program and its arguments follow `--exec`.
+        assert_eq!(command.args[exec_index + 1], "/bin/bash");
+        assert!(command.args[exec_index + 2..].contains(&"-c".to_string()));
+    }
+
+    #[test]
+    fn test_build_command_uses_exec_with_user() {
+        let connection = test_connection(Some("user".to_string()));
+        let command = connection
+            .build_command(
+                Some("remote_program".to_string()),
+                &[],
+                &HashMap::default(),
+                Some("/home/user".to_string()),
+                None,
+                Interactive::No,
+            )
+            .unwrap();
+
+        assert!(
+            command
+                .args
+                .windows(2)
+                .any(|window| window[0] == "--user" && window[1] == "user")
+        );
+        let exec_index = command
+            .args
+            .iter()
+            .position(|arg| arg == "--exec")
+            .expect("--exec must be present");
+        assert!(!command.args.iter().any(|arg| arg == "--"));
+        assert_eq!(command.args[exec_index + 1], "/bin/bash");
+    }
+
+    #[test]
+    fn test_build_command_without_program_starts_login_shell() {
+        let connection = test_connection(None);
+        let command = connection
+            .build_command(None, &[], &HashMap::default(), None, None, Interactive::No)
+            .unwrap();
+
+        // A bare `--exec` still applies: the login shell must be exec'd
+        // directly as well, not passed through the distro's default shell.
+        let exec_index = command
+            .args
+            .iter()
+            .position(|arg| arg == "--exec")
+            .expect("--exec must be present");
+        assert!(!command.args.iter().any(|arg| arg == "--"));
+        assert_eq!(command.args[exec_index + 1], "/bin/bash");
+        // ShellBuilder turns the `exec "<shell> -l`" script into
+        // `<shell> -i -c "<shell> -l"` (interactive is hard-coded to true in
+        // `build_command`), so the login flag lives inside the -c script.
+        let script_index = command
+            .args
+            .iter()
+            .position(|arg| arg == "-c")
+            .expect("-c must be present");
+        assert!(command.args[script_index + 1].contains("-l"));
+    }
+}
