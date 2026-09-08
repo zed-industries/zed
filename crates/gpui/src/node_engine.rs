@@ -266,8 +266,8 @@ impl NodeEngine {
         self.traversal_stack.last().map(|(node_id, _)| *node_id)
     }
 
-    /// Takes the state kept for `key` in the node being drawn, recording the access so the
-    /// state survives the redraw.
+    /// Takes the state kept for `key` in the node being drawn; `put_element_state` stores it
+    /// back stamped with this redraw, which is what keeps it past the redraw.
     pub(crate) fn take_element_state(
         &mut self,
         key: &(GlobalElementId, TypeId),
@@ -276,9 +276,8 @@ impl NodeEngine {
             debug_assert!(false, "element state is only kept inside a node");
             return None;
         };
-        let output = &mut self.nodes[node_id].output;
-        output.accessed_element_states.insert(key.clone());
-        output.element_states.remove(key)
+        let (_, state) = self.nodes[node_id].output.element_states.remove(key)?;
+        Some(state)
     }
 
     pub(crate) fn put_element_state(
@@ -287,7 +286,8 @@ impl NodeEngine {
         state: crate::window::ElementStateBox,
     ) {
         if let Some((_, _, output)) = self.current_output() {
-            output.element_states.insert(key, state);
+            let generation = output.generation;
+            output.element_states.insert(key, (generation, state));
         }
     }
 

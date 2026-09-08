@@ -557,7 +557,7 @@ fn workbench_render(mode: &&str, cx: &mut BenchAppContext) {
 /// The node engine's worst case: many small views, every one of them dirty on every
 /// update, so nothing is reused and each node pays its fixed bookkeeping in full.
 #[gpui::bench(
-    inputs = [64usize, 512],
+    inputs = [64usize, 256, 1024],
     group = "Siblings",
     input_name = "all dirty",
     sample_size = 20
@@ -624,6 +624,101 @@ fn siblings_all_dirty(count: &usize, cx: &mut BenchAppContext) {
     cx.bench_renderer(host, update);
 }
 
+/// The node engine's proportional cost: one view (one node) rendering `count` plain
+/// elements, re-rendered in full on every update. Nothing here is a node but the host, so
+/// the difference from `main` is what each element pays to be recorded: its dispatch op,
+/// its hitbox item, its primitives written into the node's scene as well as the frame's,
+/// and its text line's handle. Sweeping `count` separates that slope from the fixed cost
+/// `Siblings` measures.
+#[gpui::bench(
+    inputs = [256usize, 2048, 8192],
+    group = "Elements",
+    input_name = "all dirty",
+    sample_size = 20
+)]
+fn elements_all_dirty(count: &usize, cx: &mut BenchAppContext) {
+    bench_elements(*count, false, cx);
+}
+
+/// As `Elements/all dirty`, with one clean sibling view so the frame is incremental: the
+/// retained layout tree is kept rather than cleared, and the host's previous tree is
+/// retired subtree by subtree. This is the shape of a real window with one busy view.
+#[gpui::bench(
+    inputs = [256usize, 2048, 8192],
+    group = "Elements",
+    input_name = "incremental",
+    sample_size = 20
+)]
+fn elements_incremental(count: &usize, cx: &mut BenchAppContext) {
+    bench_elements(*count, true, cx);
+}
+
+fn bench_elements(count: usize, with_clean_sibling: bool, cx: &mut BenchAppContext) {
+    use gpui::{
+        AnyElement, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
+        Styled, Window, div, px, rgb,
+    };
+
+    struct Sibling;
+    impl Render for Sibling {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size(px(24.)).bg(rgb(0x334455))
+        }
+    }
+    struct Host {
+        count: usize,
+        revision: usize,
+        sibling: Option<Entity<Sibling>>,
+    }
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let revision = self.revision;
+            div()
+                .size_full()
+                .flex()
+                .flex_wrap()
+                .bg(rgb(0x18202a))
+                .text_color(rgb(0xdde5ef))
+                .children(self.sibling.clone().map(IntoElement::into_any_element))
+                .children((0..self.count).map(|index| -> AnyElement {
+                    div()
+                        .id(index)
+                        .size(px(24.))
+                        .m(px(2.))
+                        .bg(rgb(if (index + revision).is_multiple_of(2) {
+                            0x336699
+                        } else {
+                            0x996633
+                        }))
+                        .child(format!("{}", revision % 10))
+                        .into_any_element()
+                }))
+        }
+    }
+
+    init_context(cx);
+    let mut window = cx.add_empty_window();
+    let host = window.update(|window, cx| {
+        window.resize(gpui::size(px(1600.), px(1000.)));
+        window.bounds_changed(cx);
+        let sibling = with_clean_sibling.then(|| cx.new(|_| Sibling));
+        window.replace_root(cx, |_, _| Host {
+            count,
+            revision: 0,
+            sibling,
+        })
+    });
+    let update = move |host: &mut Host, _: &mut Window, cx: &mut Context<Host>| {
+        host.revision += 1;
+        cx.notify();
+    };
+    for _ in 0..4 {
+        cx.run_until_idle();
+        window.update(|window, cx| host.update(cx, |host, cx| update(host, window, cx)));
+    }
+    cx.bench_renderer(host, update);
+}
+
 fn init_context(cx: &mut BenchAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
@@ -649,6 +744,8 @@ gpui::bench_group!(
     editor_render,
     editor_render_with_editorconfig,
     workbench_render,
-    siblings_all_dirty
+    siblings_all_dirty,
+    elements_all_dirty,
+    elements_incremental
 );
 gpui::bench_main!(benches);

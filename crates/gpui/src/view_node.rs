@@ -2,7 +2,7 @@ use crate::{
     Bounds, ContentMask, CursorStyleRequest, EntityId, GlobalElementId, Hitbox, LayoutId, Pixels,
     Scene, TextStyle, TooltipRequest,
 };
-use collections::{FxHashMap, FxHashSet};
+use collections::FxHashMap;
 use std::any::TypeId;
 use std::ops::Range;
 
@@ -174,8 +174,10 @@ pub(crate) struct NodeOutput {
     pub(crate) generation: u64,
     /// State kept for elements drawn in this scope, by element id and state type. It
     /// survives redraws; entries not accessed by a redraw are dropped when it finishes.
-    pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), crate::window::ElementStateBox>,
-    pub(crate) accessed_element_states: FxHashSet<(GlobalElementId, TypeId)>,
+    /// Each state is stamped with the output generation that last stored it, so the sweep
+    /// after a redraw needs no separate record of what the redraw accessed.
+    pub(crate) element_states:
+        FxHashMap<(GlobalElementId, TypeId), (u64, crate::window::ElementStateBox)>,
     /// How many views of each type have rendered inline in this scope so far, so siblings
     /// of one type get distinct element-id scopes.
     pub(crate) inline_views: FxHashMap<&'static str, u64>,
@@ -184,8 +186,9 @@ pub(crate) struct NodeOutput {
 impl NodeOutput {
     /// Drops the element states a redraw did not access.
     pub(crate) fn retain_accessed_element_states(&mut self) {
+        let generation = self.generation;
         self.element_states
-            .retain(|key, _| self.accessed_element_states.contains(key));
+            .retain(|_, (stored_in, _)| *stored_in == generation);
     }
 
     pub(crate) fn phase(&self, phase: MetadataPhase) -> &PhaseOutput {
@@ -222,8 +225,7 @@ impl NodeOutput {
             .sum::<usize>()
             + self.element_states.capacity()
                 * (size_of::<(GlobalElementId, TypeId)>()
-                    + size_of::<crate::window::ElementStateBox>())
-            + self.accessed_element_states.capacity() * size_of::<(GlobalElementId, TypeId)>()
+                    + size_of::<(u64, crate::window::ElementStateBox)>())
             + self.inline_views.capacity() * size_of::<(&'static str, u64)>()
     }
 
@@ -236,7 +238,6 @@ impl NodeOutput {
             phase.dispatch.clear();
             phase.dispatch_pushes = 0;
         }
-        self.accessed_element_states.clear();
         self.inline_views.clear();
         self.generation += 1;
     }
