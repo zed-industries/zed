@@ -976,15 +976,15 @@ impl Model {
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
-                ReasoningEffort::XHigh,
                 ReasoningEffort::Max,
+                ReasoningEffort::XHigh,
             ]),
 
             Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => Some(vec![
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
-                ReasoningEffort::High,
                 ReasoningEffort::Max,
+                ReasoningEffort::High,
             ]),
 
             Self::ClaudeOpus4_5 => Some(vec![
@@ -994,7 +994,7 @@ impl Model {
             ]),
 
             Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4 | Self::ClaudeHaiku4_5 => {
-                Some(vec![ReasoningEffort::High, ReasoningEffort::Max])
+                Some(vec![ReasoningEffort::Max, ReasoningEffort::High])
             }
 
             // OpenAI models
@@ -1002,8 +1002,8 @@ impl Model {
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
-                ReasoningEffort::XHigh,
                 ReasoningEffort::Max,
+                ReasoningEffort::XHigh,
             ]),
 
             Self::Gpt5_6Sol | Self::Gpt5_6Terra | Self::Gpt5_6Luna => Some(vec![
@@ -1011,8 +1011,8 @@ impl Model {
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
-                ReasoningEffort::XHigh,
                 ReasoningEffort::Max,
+                ReasoningEffort::XHigh,
             ]),
 
             Self::Gpt5_5
@@ -1094,8 +1094,8 @@ impl Model {
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
-                ReasoningEffort::XHigh,
                 ReasoningEffort::Max,
+                ReasoningEffort::XHigh,
             ]),
 
             // Alibaba models
@@ -1105,11 +1105,11 @@ impl Model {
                 ReasoningEffort::XHigh,
             ]),
 
-            Self::Qwen3_5Plus => Some(vec![ReasoningEffort::High, ReasoningEffort::Max]),
+            Self::Qwen3_5Plus => Some(vec![ReasoningEffort::Max, ReasoningEffort::High]),
 
             Self::Qwen3_6Plus => {
                 if subscription == OpenCodeSubscription::Zen {
-                    Some(vec![ReasoningEffort::High, ReasoningEffort::Max])
+                    Some(vec![ReasoningEffort::Max, ReasoningEffort::High])
                 } else {
                     None
                 }
@@ -1130,29 +1130,29 @@ impl Model {
             ]),
 
             // Z.ai models
-            Self::Glm5_2 => Some(vec![ReasoningEffort::High, ReasoningEffort::Max]),
+            Self::Glm5_2 => Some(vec![ReasoningEffort::Max, ReasoningEffort::High]),
 
             Self::Glm5_3 => Some(vec![
                 ReasoningEffort::Low,
-                ReasoningEffort::High,
                 ReasoningEffort::Max,
+                ReasoningEffort::High,
             ]),
 
             Self::Glm5_3Flash => Some(vec![
                 ReasoningEffort::Low,
-                ReasoningEffort::High,
                 ReasoningEffort::Max,
+                ReasoningEffort::High,
             ]),
 
             // Moonshot AI models
             Self::KimiK3 => Some(vec![ReasoningEffort::Max]),
 
             // DeepSeek models
-            Self::DeepSeekV4Pro => Some(vec![ReasoningEffort::High, ReasoningEffort::Max]),
+            Self::DeepSeekV4Pro => Some(vec![ReasoningEffort::Max, ReasoningEffort::High]),
             Self::DeepSeekV4FlashVisionExp | Self::DeepSeekV4Flash => Some(vec![
                 ReasoningEffort::Low,
-                ReasoningEffort::High,
                 ReasoningEffort::Max,
+                ReasoningEffort::High,
             ]),
 
             // Minimax Group models
