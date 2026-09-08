@@ -40,6 +40,7 @@ pub struct EditorSettings {
     pub mouse_wheel_zoom: bool,
     pub fast_scroll_sensitivity: f32,
     pub sticky_scroll: StickyScroll,
+    pub comments: Comments,
     pub relative_line_numbers: RelativeLineNumbers,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub use_smartcase_search: bool,
@@ -97,6 +98,11 @@ pub struct Jupyter {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct StickyScroll {
     pub enabled: bool,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Comments {
+    pub ignore_empty_lines: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -224,6 +230,7 @@ impl Settings for EditorSettings {
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
         let sticky_scroll = editor.sticky_scroll.unwrap();
+        let comments = editor.comments.unwrap();
         let file_diff = content.git.as_ref().unwrap().file_diff.unwrap();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
@@ -292,6 +299,9 @@ impl Settings for EditorSettings {
             fast_scroll_sensitivity: editor.fast_scroll_sensitivity.unwrap(),
             sticky_scroll: StickyScroll {
                 enabled: sticky_scroll.enabled.unwrap(),
+            },
+            comments: Comments {
+                ignore_empty_lines: comments.ignore_empty_lines.unwrap(),
             },
             relative_line_numbers: editor.relative_line_numbers.unwrap(),
             seed_search_query_from_cursor: editor.seed_search_query_from_cursor.unwrap(),

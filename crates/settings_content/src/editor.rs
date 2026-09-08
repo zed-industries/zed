@@ -114,6 +114,8 @@ pub struct EditorSettingsContent {
     ///
     /// Default: sticky scroll is disabled
     pub sticky_scroll: Option<StickyScrollContent>,
+    /// Settings for toggling comments in the editor.
+    pub comments: Option<CommentsContent>,
     /// Whether the line numbers on editors gutter are relative or not.
     /// When "enabled" shows relative number of buffer lines, when "wrapped" shows
     /// relative number of display lines.
@@ -446,6 +448,17 @@ pub struct StickyScrollContent {
     ///
     /// Default: false
     pub enabled: Option<bool>,
+}
+
+/// Comment toggling related settings
+#[with_fallible_options]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct CommentsContent {
+    /// Whether to leave empty lines untouched when toggling comments over a
+    /// selection that spans multiple lines.
+    ///
+    /// Default: true
+    pub ignore_empty_lines: Option<bool>,
 }
 
 /// Minimap related settings

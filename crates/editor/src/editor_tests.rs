@@ -23320,6 +23320,83 @@ async fn test_toggle_comment_ignore_indent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_comment_without_ignoring_blank_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.comments = Some(settings::CommentsContent {
+                    ignore_empty_lines: Some(false),
+                })
+            });
+        });
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    // A prefix without a trailing space keeps every expectation below free of
+    // trailing whitespace, which would otherwise be stripped on save and break
+    // the assertions on commented blank lines.
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        //«fn a() {
+        //    b();
+        //
+        //    c();
+        //}ˇ»
+    "});
+
+    // Toggling again removes the prefix from every line, blank ones included.
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    // All prefixes in a block go at one shared column so they line up: the
+    // smallest indent among the rows being commented. A blank line contributes
+    // 0 and drags that to 0 - shifting every line in the block left. VS Code
+    // does the same.
+    cx.set_state(indoc! {"
+        fn a() {
+            «b();
+
+            c();ˇ»
+        }
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //    «b();
+        //
+        //    c();ˇ»
+        }
+    "});
+}
+
+#[gpui::test]
 async fn test_advance_downward_on_toggle_comment(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

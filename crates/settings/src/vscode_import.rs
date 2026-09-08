@@ -282,6 +282,7 @@ impl VsCodeSettings {
             expand_excerpt_lines: None,
             fast_scroll_sensitivity: self.read_f32("editor.fastScrollSensitivity"),
             sticky_scroll: self.sticky_scroll_content(),
+            comments: self.comments_content(),
             go_to_definition_fallback: None,
             go_to_definition_scroll_strategy: None,
             lsp_results_location: None,
@@ -343,6 +344,12 @@ impl VsCodeSettings {
     fn sticky_scroll_content(&self) -> Option<StickyScrollContent> {
         skip_default(StickyScrollContent {
             enabled: self.read_bool("editor.stickyScroll.enabled"),
+        })
+    }
+
+    fn comments_content(&self) -> Option<CommentsContent> {
+        skip_default(CommentsContent {
+            ignore_empty_lines: self.read_bool("editor.comments.ignoreEmptyLines"),
         })
     }
 
@@ -1240,6 +1247,28 @@ mod tests {
             None
         );
         assert_eq!(imported_reduce_motion("{}"), None);
+    }
+
+    #[test]
+    fn test_import_ignore_empty_lines() {
+        let imported = |content: &str| {
+            VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
+                .unwrap()
+                .settings_content()
+                .editor
+                .comments
+                .and_then(|comments| comments.ignore_empty_lines)
+        };
+
+        assert_eq!(
+            imported(r#"{ "editor.comments.ignoreEmptyLines": false }"#),
+            Some(false)
+        );
+        assert_eq!(
+            imported(r#"{ "editor.comments.ignoreEmptyLines": true }"#),
+            Some(true)
+        );
+        assert_eq!(imported("{}"), None);
     }
 
     #[test]

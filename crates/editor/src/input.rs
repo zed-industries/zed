@@ -1403,6 +1403,7 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        let ignore_blank_lines = EditorSettings::get_global(cx).comments.ignore_empty_lines;
         let text_layout_details = &self.text_layout_details(window, cx);
         self.transact(window, cx, |this, window, cx| {
             let mut selections = this
@@ -1548,7 +1549,8 @@ impl Editor {
 
                     for row in start_row.0..=end_row.0 {
                         let row = MultiBufferRow(row);
-                        if start_row < end_row && snapshot.is_line_blank(row) {
+                        if start_row < end_row && snapshot.is_line_blank(row) && ignore_blank_lines
+                        {
                             continue;
                         }
 

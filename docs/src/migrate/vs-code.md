@@ -52,6 +52,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `editor.minimap.showSlider`                 | `minimap.thumb`                                |
 | `editor.minimap.maxColumn`                  | `minimap.max_width_columns`                    |
 | `editor.stickyScroll.enabled`               | `sticky_scroll.enabled`                        |
+| `editor.comments.ignoreEmptyLines`          | `comments.ignore_empty_lines`                  |
 | `editor.scrollbar.horizontal`               | `scrollbar.axes.horizontal`                    |
 | `editor.scrollbar.vertical`                 | `scrollbar.axes.vertical`                      |
 | `editor.mouseWheelScrollSensitivity`        | `scroll_sensitivity`                           |
