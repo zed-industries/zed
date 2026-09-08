@@ -761,7 +761,6 @@ fn create_worktree_in_workspace(
 struct DraggedProjectGroup {
     key: ProjectGroupKey,
     label: SharedString,
-    index: usize,
     width: Pixels,
 }
 
@@ -776,6 +775,12 @@ impl Render for DraggedProjectGroup {
             .gap_1()
             .child(Label::new(self.label.clone()))
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DropMarkerSide {
+    Above,
+    Below,
 }
 
 /// The sidebar re-derives its entire entry list from scratch on every
@@ -2350,9 +2355,9 @@ impl Sidebar {
         let dragged_project_group = DraggedProjectGroup {
             key: key.clone(),
             label: label.clone(),
-            index: ix,
             width: self.width,
         };
+        let multi_workspace_for_drag_over = self.multi_workspace.clone();
         let label = if highlight_positions.is_empty() {
             Label::new(label.clone())
                 .when(!is_active, |this| this.color(Color::Muted))
@@ -2515,17 +2520,26 @@ impl Sidebar {
             )
             .drag_over::<DraggedProjectGroup>({
                 move |style, dragged_project_group: &DraggedProjectGroup, _window, cx| {
-                    if dragged_project_group.key == key_for_drag_over {
+                    let marker_side = multi_workspace_for_drag_over
+                        .read_with(cx, |multi_workspace, _| {
+                            Sidebar::drop_marker_side(
+                                &dragged_project_group.key,
+                                &key_for_drag_over,
+                                multi_workspace,
+                            )
+                        })
+                        .ok()
+                        .flatten();
+                    let Some(marker_side) = marker_side else {
                         return style;
-                    }
+                    };
                     let style = style
                         .bg(cx.theme().colors().drop_target_background)
                         .border_color(cx.theme().colors().drop_target_border)
                         .border_0();
-                    if ix < dragged_project_group.index {
-                        style.border_t_2()
-                    } else {
-                        style.border_b_2()
+                    match marker_side {
+                        DropMarkerSide::Above => style.border_t_2(),
+                        DropMarkerSide::Below => style.border_b_2(),
                     }
                 }
             })
@@ -3312,6 +3326,29 @@ impl Sidebar {
             .into_any_element();
 
         Some(element)
+    }
+
+    /// Decides which edge of `target`'s header shows the drop indicator while
+    /// `source` is dragged over it, so the indicator matches where
+    /// `MultiWorkspace::move_project_group` will land the group. Positions are
+    /// looked up by key rather than by list row, because thread rows expanding
+    /// or collapsing mid-drag shift row indices without changing group order.
+    fn drop_marker_side(
+        source: &ProjectGroupKey,
+        target: &ProjectGroupKey,
+        multi_workspace: &MultiWorkspace,
+    ) -> Option<DropMarkerSide> {
+        if source == target {
+            return None;
+        }
+        let keys = multi_workspace.project_group_keys();
+        let source_position = keys.iter().position(|key| key == source)?;
+        let target_position = keys.iter().position(|key| key == target)?;
+        if target_position < source_position {
+            Some(DropMarkerSide::Above)
+        } else {
+            Some(DropMarkerSide::Below)
+        }
     }
 
     fn toggle_collapse(
