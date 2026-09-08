@@ -1,6 +1,10 @@
 use crate::{
     Bounds, ContentMask, CursorStyleRequest, EntityId, GlobalElementId, Hitbox, LayoutId, Pixels,
-    Scene, TextStyle, TooltipRequest,
+    ScaledPixels, Scene, TextStyle, TooltipRequest,
+    scene::{
+        MonochromeSprite, PaintSurface, Path, PolychromeSprite, Primitive, Quad, Shadow,
+        SubpixelSprite, Underline,
+    },
 };
 use collections::FxHashMap;
 use std::any::TypeId;
@@ -38,12 +42,81 @@ pub(crate) enum MetadataPhase {
     Paint,
 }
 
+/// The primitives one scope painted, kept so the scope can be replayed into a later
+/// frame's scene without painting again. Primitives are stored by kind, so a glyph costs
+/// a glyph's worth of bytes rather than the widest primitive's, and `operations` records
+/// their order as small references into those lanes. A redraw overwrites the lanes in
+/// place, so a node that paints the same shape every frame allocates nothing.
 #[derive(Default)]
 pub(crate) struct ViewNodeScene {
-    operations: Vec<crate::scene::PaintOperation>,
+    operations: Vec<RecordedOperation>,
+    shadows: Lane<Shadow>,
+    quads: Lane<Quad>,
+    paths: Lane<Path<ScaledPixels>>,
+    underlines: Lane<Underline>,
+    monochrome_sprites: Lane<MonochromeSprite>,
+    subpixel_sprites: Lane<SubpixelSprite>,
+    polychrome_sprites: Lane<PolychromeSprite>,
+    surfaces: Lane<PaintSurface>,
+    layers: Lane<Bounds<ScaledPixels>>,
     segments: Vec<ViewNodeSceneSegment>,
     operation_count: usize,
     local_start: usize,
+}
+
+#[derive(Clone, Copy)]
+enum RecordedOperation {
+    Shadow(u32),
+    Quad(u32),
+    Path(u32),
+    Underline(u32),
+    MonochromeSprite(u32),
+    SubpixelSprite(u32),
+    PolychromeSprite(u32),
+    Surface(u32),
+    StartLayer(u32),
+    EndLayer,
+}
+
+/// A vector overwritten from the front on each redraw; `len` is how much of it the
+/// current recording uses.
+struct Lane<T> {
+    items: Vec<T>,
+    len: usize,
+}
+
+impl<T> Default for Lane<T> {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            len: 0,
+        }
+    }
+}
+
+impl<T> Lane<T> {
+    fn push(&mut self, item: T) -> u32 {
+        let index = self.len;
+        if let Some(slot) = self.items.get_mut(index) {
+            *slot = item;
+        } else {
+            self.items.push(item);
+        }
+        self.len += 1;
+        index as u32
+    }
+
+    fn get(&self, index: u32) -> &T {
+        &self.items[index as usize]
+    }
+
+    fn finish(&mut self) {
+        self.items.truncate(self.len);
+    }
+
+    fn retained_bytes(&self) -> usize {
+        self.items.capacity() * size_of::<T>()
+    }
 }
 
 enum ViewNodeSceneSegment {
@@ -56,9 +129,51 @@ impl ViewNodeScene {
         self.segments.clear();
         self.operation_count = 0;
         self.local_start = 0;
+        self.shadows.len = 0;
+        self.quads.len = 0;
+        self.paths.len = 0;
+        self.underlines.len = 0;
+        self.monochrome_sprites.len = 0;
+        self.subpixel_sprites.len = 0;
+        self.polychrome_sprites.len = 0;
+        self.surfaces.len = 0;
+        self.layers.len = 0;
     }
 
-    pub(crate) fn push(&mut self, operation: crate::scene::PaintOperation) {
+    /// Records a primitive the frame has just taken a copy of. Not-`Copy` kinds are moved
+    /// in, so the recording does not clone them a second time.
+    pub(crate) fn record_primitive(&mut self, primitive: Primitive) {
+        let operation = match primitive {
+            Primitive::Shadow(shadow) => RecordedOperation::Shadow(self.shadows.push(shadow)),
+            Primitive::Quad(quad) => RecordedOperation::Quad(self.quads.push(quad)),
+            Primitive::Path(path) => RecordedOperation::Path(self.paths.push(path)),
+            Primitive::Underline(underline) => {
+                RecordedOperation::Underline(self.underlines.push(underline))
+            }
+            Primitive::MonochromeSprite(sprite) => {
+                RecordedOperation::MonochromeSprite(self.monochrome_sprites.push(sprite))
+            }
+            Primitive::SubpixelSprite(sprite) => {
+                RecordedOperation::SubpixelSprite(self.subpixel_sprites.push(sprite))
+            }
+            Primitive::PolychromeSprite(sprite) => {
+                RecordedOperation::PolychromeSprite(self.polychrome_sprites.push(sprite))
+            }
+            Primitive::Surface(surface) => RecordedOperation::Surface(self.surfaces.push(surface)),
+        };
+        self.push(operation);
+    }
+
+    pub(crate) fn record_start_layer(&mut self, bounds: Bounds<ScaledPixels>) {
+        let index = self.layers.push(bounds);
+        self.push(RecordedOperation::StartLayer(index));
+    }
+
+    pub(crate) fn record_end_layer(&mut self) {
+        self.push(RecordedOperation::EndLayer);
+    }
+
+    fn push(&mut self, operation: RecordedOperation) {
         if let Some(previous) = self.operations.get_mut(self.operation_count) {
             *previous = operation;
         } else {
@@ -82,22 +197,69 @@ impl ViewNodeScene {
     }
 
     fn retained_bytes(&self) -> usize {
-        self.operations.capacity() * size_of::<crate::scene::PaintOperation>()
+        self.operations.capacity() * size_of::<RecordedOperation>()
             + self.segments.capacity() * size_of::<ViewNodeSceneSegment>()
+            + self.shadows.retained_bytes()
+            + self.quads.retained_bytes()
+            + self.paths.retained_bytes()
+            + self.underlines.retained_bytes()
+            + self.monochrome_sprites.retained_bytes()
+            + self.subpixel_sprites.retained_bytes()
+            + self.polychrome_sprites.retained_bytes()
+            + self.surfaces.retained_bytes()
+            + self.layers.retained_bytes()
     }
 
     pub(crate) fn finish(&mut self) {
         self.finish_local();
         self.operations.truncate(self.operation_count);
+        self.shadows.finish();
+        self.quads.finish();
+        self.paths.finish();
+        self.underlines.finish();
+        self.monochrome_sprites.finish();
+        self.subpixel_sprites.finish();
+        self.polychrome_sprites.finish();
+        self.surfaces.finish();
+        self.layers.finish();
     }
 
     pub(crate) fn replay(&self, scene: &mut Scene, engine: &crate::node_engine::NodeEngine) {
         for segment in &self.segments {
             match segment {
-                ViewNodeSceneSegment::Local(local) => {
-                    scene.replay_recording(&self.operations[local.clone()])
-                }
+                ViewNodeSceneSegment::Local(local) => self.replay_local(local.clone(), scene),
                 ViewNodeSceneSegment::Child(child) => engine.replay_scene(*child, scene),
+            }
+        }
+    }
+
+    fn replay_local(&self, operations: Range<usize>, scene: &mut Scene) {
+        for operation in &self.operations[operations] {
+            match *operation {
+                RecordedOperation::Shadow(index) => {
+                    scene.insert_primitive(*self.shadows.get(index))
+                }
+                RecordedOperation::Quad(index) => scene.insert_primitive(*self.quads.get(index)),
+                RecordedOperation::Path(index) => {
+                    scene.insert_primitive(self.paths.get(index).clone())
+                }
+                RecordedOperation::Underline(index) => {
+                    scene.insert_primitive(*self.underlines.get(index))
+                }
+                RecordedOperation::MonochromeSprite(index) => {
+                    scene.insert_primitive(*self.monochrome_sprites.get(index))
+                }
+                RecordedOperation::SubpixelSprite(index) => {
+                    scene.insert_primitive(*self.subpixel_sprites.get(index))
+                }
+                RecordedOperation::PolychromeSprite(index) => {
+                    scene.insert_primitive(*self.polychrome_sprites.get(index))
+                }
+                RecordedOperation::Surface(index) => {
+                    scene.insert_primitive(self.surfaces.get(index).clone())
+                }
+                RecordedOperation::StartLayer(index) => scene.push_layer(*self.layers.get(index)),
+                RecordedOperation::EndLayer => scene.pop_layer(),
             }
         }
     }
@@ -286,7 +448,7 @@ pub(crate) struct ViewNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Path, Primitive, ScaledPixels, point, px, rgb};
+    use crate::{Path, ScaledPixels, point, px, rgb};
 
     fn path_scene(vertices: usize, offset: f32) -> Scene {
         let mut path = Path::new(point(px(offset), px(0.)));
@@ -306,7 +468,7 @@ mod tests {
 
     fn recorded_path(recording: &ViewNodeScene) -> &Path<ScaledPixels> {
         match recording.operations.first() {
-            Some(crate::scene::PaintOperation::Primitive(Primitive::Path(path))) => path,
+            Some(RecordedOperation::Path(index)) => recording.paths.get(*index),
             _ => panic!("expected a recorded path"),
         }
     }
@@ -315,7 +477,7 @@ mod tests {
         let mut replayed = Scene::default();
         for segment in &recording.segments {
             if let ViewNodeSceneSegment::Local(range) = segment {
-                replayed.replay_recording(&recording.operations[range.clone()]);
+                recording.replay_local(range.clone(), &mut replayed);
             }
         }
         replayed.finish();

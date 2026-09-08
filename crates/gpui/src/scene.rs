@@ -78,12 +78,18 @@ impl Scene {
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
         let order = self.primitive_bounds.insert(bounds);
         self.layer_stack.push(order);
-        self.record_operation(PaintOperation::StartLayer(bounds));
+        self.operation_count += 1;
+        if let Some(recording) = &mut self.node_scene {
+            recording.record_start_layer(bounds);
+        }
     }
 
     pub fn pop_layer(&mut self) {
         self.layer_stack.pop();
-        self.record_operation(PaintOperation::EndLayer);
+        self.operation_count += 1;
+        if let Some(recording) = &mut self.node_scene {
+            recording.record_end_layer();
+        }
     }
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
@@ -136,7 +142,10 @@ impl Scene {
                 self.surfaces.push(surface.clone());
             }
         }
-        self.record_operation(PaintOperation::Primitive(primitive));
+        self.operation_count += 1;
+        if let Some(recording) = &mut self.node_scene {
+            recording.record_primitive(primitive);
+        }
     }
 
     pub(crate) fn begin_node_scene(&mut self, mut recording: crate::view_node::ViewNodeScene) {
@@ -172,23 +181,6 @@ impl Scene {
             parent.push_child(child);
         }
         self.node_scene = parent;
-    }
-
-    fn record_operation(&mut self, operation: PaintOperation) {
-        self.operation_count += 1;
-        if let Some(recording) = &mut self.node_scene {
-            recording.push(operation);
-        }
-    }
-
-    pub(crate) fn replay_recording(&mut self, recording: &[PaintOperation]) {
-        for operation in recording {
-            match operation {
-                PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
-                PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
-                PaintOperation::EndLayer => self.pop_layer(),
-            }
-        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -269,12 +261,6 @@ pub(crate) enum PrimitiveKind {
     SubpixelSprite,
     PolychromeSprite,
     Surface,
-}
-
-pub(crate) enum PaintOperation {
-    Primitive(Primitive),
-    StartLayer(Bounds<ScaledPixels>),
-    EndLayer,
 }
 
 #[derive(Clone)]
