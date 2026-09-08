@@ -119,40 +119,77 @@ state. `VisualTestContext::assert_incremental_matches_full_refresh` asserts it;
 
 `cargo bench -p benchmarks --bench editor_render` (and `--bench markdown_renderer`).
 Compare against `main` with Criterion baselines: check out `main` in a second worktree
-with this branch's `benches/editor_render.rs` copied over (the `Workbench` fixture is
-new here), run there with `--save-baseline main`, then run here with `--baseline main`.
-Use the same `CARGO_TARGET_DIR` so the dependency build is shared. Check the load
-average first: another build or test run on the machine widens the intervals past the
-effects being measured. `Workbench/update/{row,editor,mixed}` are the fixtures where
-reuse fires; `full` dirties every node each update and should match `main`.
-`Siblings/all dirty/{64,512}` is the engine's worst case — many trivially cheap views,
-all dirty every frame, so nothing is reused and every node pays its fixed cost — and
-bounds the overhead: about 0.6 µs per dirty node per frame, +20% on the 512 fixture and
-+18% on 64. Real views amortize it: `Workbench/update/full` (48 rows, four panels and an
-editor, all dirty) is 12% faster than `main`, and `Markdown render` (one view, re-rendered
-in full each frame) is 1% slower. A Zed window has tens of nodes, so its worst frame pays
-tens of microseconds.
+with this branch's `benches/editor_render.rs` copied over (the `Workbench`, `Siblings` and
+`Elements` fixtures are new here), build both, then run `docs/node_engine/matrix.sh`,
+which runs every fixture paired — `main` then branch, back to back, so both see the same
+machine state — and writes `matrix.csv`; `charts.py` draws the figures below from it.
+Check the load average first: another build on the machine widens the intervals past
+the effects being measured (a `main`-against-`main` run should report under 0.5%).
 
-Where the 0.6 µs goes, by ablation (switching one mechanism off and re-measuring the
-512 fixture; ~330 µs of overhead per frame): text-use recording, three `begin/end` pairs
-per node, 15%; dependency read tracking (the `FxHashSet` per render), 7%; the
-dispatch-node snapshot after paint, 7%; building the `TextStyle` for the cache key, 3%;
-scene recording, 1%. The other two thirds is the node lifecycle: occurrence lookup
-(hashing the element path), output reset and item pushes, dirty propagation through
-`consumers` and parents, the frame walks, and the dispatch node each `ViewElement`
-pushes. Already taken: the line layout cache behind `RefCell`s rather than locks; text a
-node looked up last frame is not reseeded (the cache still holds it); reads no longer
-bubble into the parent's dependency set (a parent is dirtied through its descendants);
-empty dispatch nodes are dropped from recordings after paint. Each was worth one to
-three points; none was the villain. Remaining candidates, each estimated at a point or
-two: key nodes on the refinement stack rather than a materialized `TextStyle`; keep
-dependency sets as small sorted vectors (most nodes read one to three entities); give
-occurrences a per-parent counter so a repeated element id does not probe; replace the
-per-frame `dirty_nodes`/`frame_bound_nodes`/`mounted_this_frame` sets with flags on the
-node. Getting to the 5% target needs the per-node steps themselves to go rather than to
-get cheaper — a fused per-phase choreography, or fine-grained caching changing which
-steps run — and is follow-up work. `crates/gpui/docs/node_engine_render_path.md` walks
-the path step by step.
+The fixtures separate three things. `Workbench/update/{row,editor,mixed}` are where
+reuse fires. `Workbench/update/full`, `editor_render`, the multi-cursor and Markdown
+fixtures dirty everything, so they show what a Zed-shaped or text-heavy frame pays when
+nothing is reused. `Siblings/all dirty/N` is N trivially cheap *views* all notified every
+frame, which isolates the fixed cost of a node; `Elements/{all dirty,incremental}/N` is
+one view rendering N plain id'd `div`s, which isolates the cost per element.
+
+![overview](node_engine/overview.png)
+
+| Fixture | `main` | branch | change (95% CI) |
+| --- | ---: | ---: | ---: |
+| Workbench/update/row | 769 µs | 324 µs | **−58%** (−59.5, −57.8) |
+| Workbench/update/editor | 1.54 ms | 1.11 ms | **−28%** (−30.2, −28.4) |
+| Workbench/update/mixed | 1.20 ms | 796 µs | **−34%** (−34.9, −33.2) |
+| Workbench/update/full (all dirty) | 1.60 ms | 1.48 ms | **−7.5%** (−9.7, −6.5) |
+| editor_render | 694 µs | 697 µs | +0.5% (−0.7, +1.5) |
+| editor_render_with_editorconfig | 1.56 ms | 1.59 ms | +1.6% (−0.0, +3.5) |
+| open_editor_with_one_long_line | 832 µs | 813 µs | −2.4% (−3.0, +1.1) |
+| Multi-cursor input 1000 / 10000 | 71 ms / 659 ms | 71 ms / 665 ms | +0.1% / +0.9% |
+| Markdown render 5000 / 10000 / 50000 | 1.15 / 1.61 / 6.46 ms | 1.18 / 1.66 / 6.70 ms | **+2.2% / +3.2% / +3.7%** |
+| Elements/all dirty 256 / 2048 / 8192 | 743 µs / 6.71 ms / 23.7 ms | 770 µs / 6.97 ms / 24.8 ms | **+3.6% / +3.8% / +4.6%** |
+| Elements/incremental 256 / 2048 / 8192 | 762 µs / 6.81 ms / 24.1 ms | 783 µs / 7.19 ms / 24.9 ms | +2.7% / +5.6% / +3.2% |
+| Siblings/all dirty 64 / 256 / 1024 | 220 µs / 760 µs / 3.20 ms | 255 µs / 889 µs / 3.89 ms | **+15.7% / +17.0% / +21.7%** |
+
+`main` at `5a9b9558db`, branch at `46c3ffa866`, M-series laptop, load average under 4.
+
+**The cost model.** Two synthetic sweeps pin the engine's tax on a frame in which nothing
+is reused:
+
+![per node](node_engine/per_node.png)
+
+A node costs about **0.5–0.7 µs per dirty node per frame**, flat in the node's size
+(occurrence lookup, cache key, three phases of begin/end, dependency recording, the
+dispatch snapshot, layout retention). The 1024 point is steeper than the others; the
+fixture's hitbox bounds tree, which is `main`'s and 30% of the frame, is the likely
+cause, but it is not separated.
+
+![per element](node_engine/per_element.png)
+
+An element costs about **0.1–0.13 µs per rendered element per frame** (a 24-byte
+dispatch op, a hitbox item, its primitives written into the node's scene as well as the
+frame's, and its text line's handle) — 3.5–4.5% of an id'd `div` with a glyph, which
+costs `main` about 2.9 µs, and 2–4% of Markdown's heavier elements. The incremental
+variant, where the retained layout tree is kept and the view's previous tree retired
+subtree by subtree, is within noise of the cleared one.
+
+![by shape](node_engine/tax_by_shape.png)
+
+So an all-dirty frame pays roughly `0.55 µs × dirty nodes + 0.12 µs × dirty elements`,
+less what retention saves it (kept text layouts, kept Taffy trees for clean subtrees).
+A Zed window has tens of nodes and a few thousand elements, so the tax is one to two
+hundred microseconds on a frame of one to several milliseconds — and `Workbench/full`,
+the Zed-shaped all-dirty fixture, comes out 7.5% *faster* than `main` because the
+retention wins are larger than that. The tax is visible only where nodes are many and
+trivial (`Siblings`) or a single view is thousands of cheap elements (`Elements`,
+Markdown). By ablation, no single mechanism is more than 15% of it; the passes taken
+(the line layout cache behind `RefCell`s, no reseeding of text still cached, no bubbling
+of reads into the parent, empty dispatch nodes dropped, node flags instead of hash sets,
+`SmallVec` dependency sets, occurrence keys from a running path hash, 56-byte items, the
+dispatch record in its own lane, generation-stamped element states) took `Siblings/512`
+from +22% to about +19%. Getting materially lower needs the per-node steps themselves
+to go — a node-owned dispatch tree, then fused per-phase choreography — which is
+follow-up work. `crates/gpui/docs/node_engine_render_path.md` walks the render path step
+by step.
 
 ### Memory
 

@@ -286,9 +286,11 @@ real window (10–30k items) perhaps 10–30 µs per query, two or three per mou
 
 ## 9. Where the per-node cost goes
 
-Measured on `Siblings/all dirty/512` (512 views, ~3 µs each to render, all dirty every
-frame): ~0.6 µs per node per frame over `main`, i.e. +20% (64 nodes: +18%). By ablation
-of the ~330 µs of overhead per frame, before the passes listed below:
+Measured on `Siblings/all dirty` (N trivial views, all dirty every frame): 0.5–0.7 µs
+per node per frame over `main` (64: +15.7%, 256: +17.0%, 1024: +21.7%), and on
+`Elements/all dirty` (one view, N id'd `div`s): 0.10–0.13 µs per element (+3.6% to
++4.6%). Full table and charts in `node_engine.md` under "Measuring". By ablation of the
+per-node overhead on the 512 fixture, before the passes listed below:
 
 | mechanism | share | notes |
 | --- | ---: | --- |
@@ -309,7 +311,7 @@ an O(nodes) "is everything dirty" probe; `TextUse` reallocations; the text syste
 locks; reseeding text the cache still holds from last frame; bubbling child reads into
 the parent's dependency set (the window's tracked entities now come from `consumers`);
 copying and replaying empty dispatch nodes; the window's unread `dirty_views` set. The
-passes since the ablation took 512 from +22% to +20% and 64 from +21% to +18%.
+passes since the ablation took 256 to +17% and 64 to +15.7% (512 was +22%, 64 +21%).
 
 Also fixed on the way, found by review of the retention protocol: a tree laid out with
 `layout_as_root` inside a node (list items, editor blocks, the measured row of a
