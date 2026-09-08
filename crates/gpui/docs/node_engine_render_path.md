@@ -243,10 +243,18 @@ match state {
 window.finish_node_phase(node_id, rendered);
 ```
 
-- The scene: `Scene::record_operation` writes every primitive both into the frame's
-  primitive arrays and into the node's `ViewNodeScene` recording (child nodes are recorded
-  as `Child` segments). Replay copies a recording into the frame arrays
-  (`replay_recording`).
+- The scene: primitives are written **once**, into the frame's paint-order lanes
+  (`Scene::painted`). The node's `ViewNodeScene` records only their kinds, one byte each,
+  in runs split by children and layers, with the frame's lane cursors at each run's start
+  — the frame is the cache. `Scene::finish` then index-sorts each lane by draw order into
+  the public lanes the renderers upload (`sort_lane`: 12-byte keys, one gather; paths and
+  surfaces are permuted in place) and keeps a painted→sorted position per primitive, so a
+  record still addresses its primitives after the sort. Replaying a grafted node
+  (`NodeEngine::replay_scene`) walks its kinds, copies each primitive out of the *rendered*
+  frame at the cursor, and paints it into the next frame — which records the node anew at
+  its new positions. A node is therefore reusable only when its record is from the frame
+  just drawn (`painted_frame + 1 == frame`); one that prepainted without painting renders
+  again the frame after.
 - `snapshot_dispatch_nodes`: paint adds listeners and key contexts to the dispatch nodes
   prepaint pushed, so after paint the node copies (`clone_from`) each of its live dispatch
   nodes into its `dispatch_nodes` lane. This is what replay pushes back next frame. Nodes
@@ -307,7 +315,7 @@ per-node overhead on the 512 fixture, before the passes listed below:
 | dependency read tracking | 7% | `FxHashSet` per render, `consumers` diff |
 | dispatch-node snapshot | 7% | `clone_from` of 2 dispatch nodes per leaf after paint |
 | cache-key `TextStyle` | 3% | built twice per node |
-| scene recording | 1% | |
+| scene recording | 1% | since removed: the frame is the cache, nothing is copied at paint |
 | node lifecycle | ~67% | occurrence lookup (path hash ×2 sets), output reset, item pushes (56 B memmoves; 88 B before `Tooltip` was boxed), dirty propagation, frame walks, per-`ViewElement` dispatch push, `Arc` handle churn in text uses, `ViewNode`/`TextUse`/`ElementDrawPhase` moves and drops |
 
 Self-time, by symbol, of what the branch adds: `memmove` +1.5%, `Arc` refcount ops

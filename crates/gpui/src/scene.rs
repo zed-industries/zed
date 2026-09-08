@@ -36,6 +36,11 @@ impl From<bool> for PaddedBool32 {
     }
 }
 
+/// The frame's primitives. While painting they accumulate in paint order in `painted`,
+/// which is what a node's scene record addresses (see `ViewNodeScene`): a reused node is
+/// replayed by copying its primitives out of the last drawn frame. `finish` then sorts
+/// each kind by draw order into the public lanes the renderers upload, and keeps, per
+/// kind, where each painted primitive ended up so the record can still find it.
 #[derive(Default)]
 #[expect(missing_docs)]
 pub struct Scene {
@@ -44,6 +49,10 @@ pub struct Scene {
     node_scene_stack: Vec<crate::view_node::ViewNodeScene>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
+    painted: PaintedLanes,
+    /// Painted index → position in the sorted lane, per kind; valid once finished.
+    positions: LanePositions,
+    sort_scratch: Vec<(u64, u32)>,
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
     pub paths: Vec<Path<ScaledPixels>>,
@@ -54,6 +63,112 @@ pub struct Scene {
     pub surfaces: Vec<PaintSurface>,
 }
 
+/// Primitives in the order they were painted, before `finish` sorts them.
+#[derive(Default)]
+struct PaintedLanes {
+    shadows: Vec<Shadow>,
+    quads: Vec<Quad>,
+    paths: Vec<Path<ScaledPixels>>,
+    underlines: Vec<Underline>,
+    monochrome_sprites: Vec<MonochromeSprite>,
+    subpixel_sprites: Vec<SubpixelSprite>,
+    polychrome_sprites: Vec<PolychromeSprite>,
+    surfaces: Vec<PaintSurface>,
+}
+
+#[derive(Default)]
+struct LanePositions {
+    shadows: Vec<u32>,
+    quads: Vec<u32>,
+    paths: Vec<u32>,
+    underlines: Vec<u32>,
+    monochrome_sprites: Vec<u32>,
+    subpixel_sprites: Vec<u32>,
+    polychrome_sprites: Vec<u32>,
+    surfaces: Vec<u32>,
+}
+
+/// How many primitives of each kind a scene has been given so far; a node's scene record
+/// captures these where a run of its own primitives begins.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub(crate) struct LaneCursors {
+    pub(crate) shadows: u32,
+    pub(crate) quads: u32,
+    pub(crate) paths: u32,
+    pub(crate) underlines: u32,
+    pub(crate) monochrome_sprites: u32,
+    pub(crate) subpixel_sprites: u32,
+    pub(crate) polychrome_sprites: u32,
+    pub(crate) surfaces: u32,
+}
+
+/// Sorts `painted` by draw order (then `tie`, then paint order) into `sorted`, recording in
+/// `positions` where each painted index went. `scratch` is the sort buffer. Sorting keys
+/// rather than the primitives themselves keeps the comparisons on 12-byte entries; the
+/// primitives move once, in the gather.
+fn sort_lane<T: Copy>(
+    painted: &mut Vec<T>,
+    sorted: &mut Vec<T>,
+    positions: &mut Vec<u32>,
+    scratch: &mut Vec<(u64, u32)>,
+    key: impl Fn(&T) -> (DrawOrder, u32),
+) {
+    sort_keys(painted, positions, scratch, key);
+    sorted.clear();
+    sorted.extend(scratch.iter().map(|(_, index)| painted[*index as usize]));
+    painted.clear();
+}
+
+/// As `sort_lane`, for kinds that own buffers: the primitives are permuted in place with
+/// swaps rather than gathered, then the lanes trade vectors.
+fn sort_lane_in_place<T>(
+    painted: &mut Vec<T>,
+    sorted: &mut Vec<T>,
+    positions: &mut Vec<u32>,
+    scratch: &mut Vec<(u64, u32)>,
+    key: impl Fn(&T) -> (DrawOrder, u32),
+) {
+    sort_keys(painted, positions, scratch, key);
+    // `scratch[position].1` is the painted index that belongs at `position`. Follow each
+    // cycle of that permutation, marking entries done by clearing their index.
+    for start in 0..scratch.len() {
+        let mut position = start;
+        loop {
+            let source = scratch[position].1;
+            if source == u32::MAX {
+                break;
+            }
+            scratch[position].1 = u32::MAX;
+            if source as usize == start {
+                break;
+            }
+            painted.swap(position, source as usize);
+            position = source as usize;
+        }
+    }
+    std::mem::swap(painted, sorted);
+    painted.clear();
+}
+
+fn sort_keys<T>(
+    painted: &[T],
+    positions: &mut Vec<u32>,
+    scratch: &mut Vec<(u64, u32)>,
+    key: impl Fn(&T) -> (DrawOrder, u32),
+) {
+    scratch.clear();
+    scratch.extend(painted.iter().enumerate().map(|(index, item)| {
+        let (order, tie) = key(item);
+        (((order as u64) << 32) | tie as u64, index as u32)
+    }));
+    scratch.sort_unstable();
+    positions.clear();
+    positions.resize(painted.len(), 0);
+    for (position, (_, index)) in scratch.iter().enumerate() {
+        positions[*index as usize] = position as u32;
+    }
+}
+
 #[expect(missing_docs)]
 impl Scene {
     pub fn clear(&mut self) {
@@ -61,6 +176,14 @@ impl Scene {
         self.operation_count = 0;
         self.primitive_bounds.clear();
         self.layer_stack.clear();
+        self.painted.paths.clear();
+        self.painted.shadows.clear();
+        self.painted.quads.clear();
+        self.painted.underlines.clear();
+        self.painted.monochrome_sprites.clear();
+        self.painted.subpixel_sprites.clear();
+        self.painted.polychrome_sprites.clear();
+        self.painted.surfaces.clear();
         self.paths.clear();
         self.shadows.clear();
         self.quads.clear();
@@ -69,6 +192,20 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+    }
+
+    /// How many primitives of each kind have been painted so far.
+    pub(crate) fn cursors(&self) -> LaneCursors {
+        LaneCursors {
+            shadows: self.painted.shadows.len() as u32,
+            quads: self.painted.quads.len() as u32,
+            paths: self.painted.paths.len() as u32,
+            underlines: self.painted.underlines.len() as u32,
+            monochrome_sprites: self.painted.monochrome_sprites.len() as u32,
+            subpixel_sprites: self.painted.subpixel_sprites.len() as u32,
+            polychrome_sprites: self.painted.polychrome_sprites.len() as u32,
+            surfaces: self.painted.surfaces.len() as u32,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -107,45 +244,74 @@ impl Scene {
             .last()
             .copied()
             .unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds));
-        match &mut primitive {
-            Primitive::Shadow(shadow) => {
+        let kind = primitive.kind();
+        let cursors = self.cursors();
+        match primitive {
+            Primitive::Shadow(mut shadow) => {
                 shadow.order = order;
-                self.shadows.push(*shadow);
+                self.painted.shadows.push(shadow);
             }
-            Primitive::Quad(quad) => {
+            Primitive::Quad(mut quad) => {
                 quad.order = order;
-                self.quads.push(*quad);
+                self.painted.quads.push(quad);
             }
-            Primitive::Path(path) => {
+            Primitive::Path(mut path) => {
                 path.order = order;
-                path.id = PathId(self.paths.len());
-                self.paths.push(path.clone());
+                path.id = PathId(self.painted.paths.len());
+                self.painted.paths.push(path);
             }
-            Primitive::Underline(underline) => {
+            Primitive::Underline(mut underline) => {
                 underline.order = order;
-                self.underlines.push(*underline);
+                self.painted.underlines.push(underline);
             }
-            Primitive::MonochromeSprite(sprite) => {
+            Primitive::MonochromeSprite(mut sprite) => {
                 sprite.order = order;
-                self.monochrome_sprites.push(*sprite);
+                self.painted.monochrome_sprites.push(sprite);
             }
-            Primitive::SubpixelSprite(sprite) => {
+            Primitive::SubpixelSprite(mut sprite) => {
                 sprite.order = order;
-                self.subpixel_sprites.push(*sprite);
+                self.painted.subpixel_sprites.push(sprite);
             }
-            Primitive::PolychromeSprite(sprite) => {
+            Primitive::PolychromeSprite(mut sprite) => {
                 sprite.order = order;
-                self.polychrome_sprites.push(*sprite);
+                self.painted.polychrome_sprites.push(sprite);
             }
-            Primitive::Surface(surface) => {
+            Primitive::Surface(mut surface) => {
                 surface.order = order;
-                self.surfaces.push(surface.clone());
+                self.painted.surfaces.push(surface);
             }
         }
         self.operation_count += 1;
         if let Some(recording) = &mut self.node_scene {
-            recording.record_primitive(primitive);
+            recording.record_primitive(kind, cursors);
         }
+    }
+
+    /// The primitive at `painted` index of its kind in a finished scene, for replaying a
+    /// node's record into another frame.
+    pub(crate) fn painted_shadow(&self, painted: u32) -> &Shadow {
+        &self.shadows[self.positions.shadows[painted as usize] as usize]
+    }
+    pub(crate) fn painted_quad(&self, painted: u32) -> &Quad {
+        &self.quads[self.positions.quads[painted as usize] as usize]
+    }
+    pub(crate) fn painted_path(&self, painted: u32) -> &Path<ScaledPixels> {
+        &self.paths[self.positions.paths[painted as usize] as usize]
+    }
+    pub(crate) fn painted_underline(&self, painted: u32) -> &Underline {
+        &self.underlines[self.positions.underlines[painted as usize] as usize]
+    }
+    pub(crate) fn painted_monochrome_sprite(&self, painted: u32) -> &MonochromeSprite {
+        &self.monochrome_sprites[self.positions.monochrome_sprites[painted as usize] as usize]
+    }
+    pub(crate) fn painted_subpixel_sprite(&self, painted: u32) -> &SubpixelSprite {
+        &self.subpixel_sprites[self.positions.subpixel_sprites[painted as usize] as usize]
+    }
+    pub(crate) fn painted_polychrome_sprite(&self, painted: u32) -> &PolychromeSprite {
+        &self.polychrome_sprites[self.positions.polychrome_sprites[painted as usize] as usize]
+    }
+    pub(crate) fn painted_surface(&self, painted: u32) -> &PaintSurface {
+        &self.surfaces[self.positions.surfaces[painted as usize] as usize]
     }
 
     pub(crate) fn begin_node_scene(&mut self, mut recording: crate::view_node::ViewNodeScene) {
@@ -168,21 +334,6 @@ impl Scene {
         recording
     }
 
-    pub(crate) fn suspend_node_scene(&mut self) -> Option<crate::view_node::ViewNodeScene> {
-        self.node_scene.take()
-    }
-
-    pub(crate) fn restore_node_scene(
-        &mut self,
-        mut parent: Option<crate::view_node::ViewNodeScene>,
-        child: crate::node_engine::ViewNodeId,
-    ) {
-        if let Some(parent) = &mut parent {
-            parent.push_child(child);
-        }
-        self.node_scene = parent;
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn snapshot_for_test(&self) -> String {
         format!(
@@ -200,18 +351,67 @@ impl Scene {
         )
     }
 
+    /// Sorts what was painted into the lanes the renderers upload. Called once per frame.
     pub fn finish(&mut self) {
-        self.shadows.sort_by_key(|shadow| shadow.order);
-        self.quads.sort_by_key(|quad| quad.order);
-        self.paths.sort_by_key(|path| path.order);
-        self.underlines.sort_by_key(|underline| underline.order);
-        self.monochrome_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
-        self.subpixel_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
-        self.polychrome_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
-        self.surfaces.sort_by_key(|surface| surface.order);
+        let painted = &mut self.painted;
+        let positions = &mut self.positions;
+        let scratch = &mut self.sort_scratch;
+        sort_lane(
+            &mut painted.shadows,
+            &mut self.shadows,
+            &mut positions.shadows,
+            scratch,
+            |shadow| (shadow.order, 0),
+        );
+        sort_lane(
+            &mut painted.quads,
+            &mut self.quads,
+            &mut positions.quads,
+            scratch,
+            |quad| (quad.order, 0),
+        );
+        sort_lane_in_place(
+            &mut painted.paths,
+            &mut self.paths,
+            &mut positions.paths,
+            scratch,
+            |path| (path.order, 0),
+        );
+        sort_lane(
+            &mut painted.underlines,
+            &mut self.underlines,
+            &mut positions.underlines,
+            scratch,
+            |underline| (underline.order, 0),
+        );
+        sort_lane(
+            &mut painted.monochrome_sprites,
+            &mut self.monochrome_sprites,
+            &mut positions.monochrome_sprites,
+            scratch,
+            |sprite| (sprite.order, sprite.tile.tile_id.0),
+        );
+        sort_lane(
+            &mut painted.subpixel_sprites,
+            &mut self.subpixel_sprites,
+            &mut positions.subpixel_sprites,
+            scratch,
+            |sprite| (sprite.order, sprite.tile.tile_id.0),
+        );
+        sort_lane(
+            &mut painted.polychrome_sprites,
+            &mut self.polychrome_sprites,
+            &mut positions.polychrome_sprites,
+            scratch,
+            |sprite| (sprite.order, sprite.tile.tile_id.0),
+        );
+        sort_lane_in_place(
+            &mut painted.surfaces,
+            &mut self.surfaces,
+            &mut positions.surfaces,
+            scratch,
+            |surface| (surface.order, 0),
+        );
     }
 
     #[cfg_attr(
@@ -278,6 +478,19 @@ pub enum Primitive {
 
 #[expect(missing_docs)]
 impl Primitive {
+    pub(crate) fn kind(&self) -> PrimitiveKind {
+        match self {
+            Primitive::Shadow(_) => PrimitiveKind::Shadow,
+            Primitive::Quad(_) => PrimitiveKind::Quad,
+            Primitive::Path(_) => PrimitiveKind::Path,
+            Primitive::Underline(_) => PrimitiveKind::Underline,
+            Primitive::MonochromeSprite(_) => PrimitiveKind::MonochromeSprite,
+            Primitive::SubpixelSprite(_) => PrimitiveKind::SubpixelSprite,
+            Primitive::PolychromeSprite(_) => PrimitiveKind::PolychromeSprite,
+            Primitive::Surface(_) => PrimitiveKind::Surface,
+        }
+    }
+
     pub fn bounds(&self) -> &Bounds<ScaledPixels> {
         match self {
             Primitive::Shadow(shadow) => &shadow.bounds,

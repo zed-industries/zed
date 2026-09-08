@@ -3056,7 +3056,9 @@ impl Window {
 
         // The platform's handle addresses the frame being replaced.
         self.platform_window.take_input_handler();
-        if !cx.mode.skip_drawing() {
+        if cx.mode.skip_drawing() {
+            self.node_engine.skip_frame();
+        } else {
             self.a11y.sync_active_flag();
             self.begin_node_engine_frame();
             self.draw_roots(cx);
@@ -3768,10 +3770,11 @@ impl Window {
 
     /// Replays a reused node's scene into the frame, splicing it into the parent's.
     pub(crate) fn graft_view_node_paint(&mut self, node_id: ViewNodeId) {
-        let parent = self.next_frame.scene.suspend_node_scene();
-        self.node_engine
-            .replay_scene(node_id, &mut self.next_frame.scene);
-        self.next_frame.scene.restore_node_scene(parent, node_id);
+        self.node_engine.replay_scene(
+            node_id,
+            &self.rendered_frame.scene,
+            &mut self.next_frame.scene,
+        );
     }
 
     /// Push a text style onto the stack, and call a function with that style active.

@@ -114,6 +114,8 @@ pub(crate) struct NodeEngine {
     traversal_stack: Vec<(ViewNodeId, MetadataPhase)>,
     /// Scratch for `invalidate_consumers`, which cannot walk `consumers` while setting flags.
     invalidation_scratch: Vec<ViewNodeId>,
+    /// Emptied scene records, so a replayed node records into buffers with capacity.
+    spare_scenes: Vec<ViewNodeScene>,
     /// Scratch for `snapshot_dispatch_nodes`: where each live dispatch node in the scope's
     /// range resolves to, so parents of later nodes resolve in one step.
     dispatch_resolution: Vec<DispatchParent>,
@@ -154,6 +156,7 @@ impl NodeEngine {
             retired_layouts: Vec::new(),
             traversal_stack: Vec::new(),
             dispatch_resolution: Vec::new(),
+            spare_scenes: Vec::new(),
             invalidation_scratch: Vec::new(),
             roots: Vec::new(),
             next_roots: Vec::new(),
@@ -250,19 +253,31 @@ impl NodeEngine {
     pub(crate) fn store_scene(&mut self, node_id: ViewNodeId, scene: ViewNodeScene) {
         if let Some(node) = self.nodes.get_mut(node_id) {
             node.output.phase_mut(MetadataPhase::Paint).scene = scene;
+            node.painted_frame = self.frame;
         }
     }
 
-    /// Replays the node's recorded scene, and its children's where they were painted.
-    pub(crate) fn replay_scene(&self, node_id: ViewNodeId, scene: &mut crate::Scene) {
+    /// Paints the node's primitives from `rendered`, the frame they were last drawn in,
+    /// into `scene`, and its children's where they were painted, recording the node anew
+    /// so its record addresses `scene`.
+    pub(crate) fn replay_scene(
+        &mut self,
+        node_id: ViewNodeId,
+        rendered: &crate::Scene,
+        scene: &mut crate::Scene,
+    ) {
         // A child only appears in its parent's scene after painting, and is removed only
         // when the parent repaints, so it is always present here.
-        if let Some(node) = self.nodes.get(node_id) {
-            node.output
-                .phase(MetadataPhase::Paint)
-                .scene
-                .replay(scene, self);
-        }
+        let Some(node) = self.nodes.get_mut(node_id) else {
+            return;
+        };
+        let previous = std::mem::take(&mut node.output.phase_mut(MetadataPhase::Paint).scene);
+        let fresh = self.spare_scenes.pop().unwrap_or_default();
+        scene.begin_node_scene(fresh);
+        previous.replay(rendered, scene, self);
+        let recorded = scene.finish_node_scene(node_id);
+        self.store_scene(node_id, recorded);
+        self.spare_scenes.push(previous);
     }
 
     pub(crate) fn current_node(&self) -> Option<ViewNodeId> {
@@ -736,6 +751,13 @@ impl NodeEngine {
         }
     }
 
+    /// Accounts for a frame that replaced the rendered one without drawing (a test that
+    /// skips drawing). Nothing can be replayed out of an empty frame, so the frame counter
+    /// advances as if a frame had been drawn: no node's record is from the previous frame.
+    pub(crate) fn skip_frame(&mut self) {
+        self.frame += 1;
+    }
+
     /// Marks dirty every node whose recorded output was computed from a read of one of
     /// `sources`, and every ancestor of such a node. Reads only establish dirtiness; the
     /// sources' observers are not involved and no node is notified.
@@ -883,6 +905,7 @@ impl NodeEngine {
                 previous_bounds: cache_key.bounds,
                 accessed_entities: DependencySet::new(),
                 painted: false,
+                painted_frame: 0,
                 dirty: true,
                 frame_bound: false,
                 mounted_frame: 0,
@@ -932,6 +955,7 @@ impl NodeEngine {
                 previous_bounds: cache_key.bounds,
                 accessed_entities: DependencySet::new(),
                 painted: false,
+                painted_frame: 0,
                 dirty: true,
                 frame_bound: false,
                 mounted_frame: 0,
@@ -1018,6 +1042,7 @@ impl NodeEngine {
         let node = &self.nodes[node_id];
         if !self.full_refresh
             && node.painted
+            && node.painted_frame + 1 == self.frame
             && !node.dirty
             && !node.frame_bound
             && node.cache_key.matches(cache_key, true)
