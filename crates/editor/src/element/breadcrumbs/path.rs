@@ -201,7 +201,10 @@ struct WorktreeChildListingEntry {
 
 fn worktree_child_listing(
     worktree_snapshot: &project::WorktreeSnapshot,
-    repo_snapshots: &collections::HashMap<project::RepositoryId, project::RepositorySnapshot>,
+    repo_snapshots: &collections::HashMap<
+        project::git_store::RepositoryId,
+        project::git_store::RepositorySnapshot,
+    >,
     parent_path: &RelPath,
     options: WorktreeChildListingOptions,
 ) -> Vec<WorktreeChildListingEntry> {
@@ -238,7 +241,10 @@ fn worktree_child_listing(
 
 pub(super) struct BreadcrumbDirectoryListingInputs {
     worktree_snapshot: project::WorktreeSnapshot,
-    repo_snapshots: collections::HashMap<project::RepositoryId, project::RepositorySnapshot>,
+    repo_snapshots: collections::HashMap<
+        project::git_store::RepositoryId,
+        project::git_store::RepositorySnapshot,
+    >,
     options: WorktreeChildListingOptions,
 }
 

@@ -52,17 +52,16 @@
     },
   },
   {
+    // The four the menu takes from the query editor beneath it: the arrows walk the tree
+    // rather than the caret, Home/End reach the ends of the list rather than the ends of the
+    // query. The rest of the menu keys reach it as any picker's do.
     "context": "BreadcrumbNavigationMenu > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "up": "menu::SelectPrevious",
-      "down": "menu::SelectNext",
       "left": "menu::SelectParent",
       "right": "menu::SelectChild",
       "home": "menu::SelectFirst",
       "end": "menu::SelectLast",
-      "enter": "menu::Confirm",
-      "escape": "menu::Cancel",
     },
   },
 ]

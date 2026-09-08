@@ -429,22 +429,14 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_open_breadcrumb_navigation_via_keystroke(cx: &mut TestAppContext) {
+async fn test_open_breadcrumb_navigation_opens_the_file_outline(cx: &mut TestAppContext) {
     use breadcrumbs::Breadcrumbs;
-    use gpui::KeyBinding;
     use project::{FakeFs, Project};
     use serde_json::json;
     use util::path;
     use workspace::Workspace;
 
     init_test(cx, |_| {});
-    cx.update(|cx| {
-        cx.bind_keys([KeyBinding::new(
-            "ctrl-shift-b",
-            OpenBreadcrumbNavigation,
-            Some("Editor"),
-        )]);
-    });
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -458,7 +450,7 @@ async fn test_open_breadcrumb_navigation_via_keystroke(cx: &mut TestAppContext) 
     )
     .await;
     let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-    let worktree_id = project.update(cx, |project, cx| {
+    let _worktree_id = project.update(cx, |project, cx| {
         project.worktrees(cx).next().unwrap().read(cx).id()
     });
 
@@ -490,35 +482,130 @@ async fn test_open_breadcrumb_navigation_via_keystroke(cx: &mut TestAppContext) 
         window.focus(&editor.focus_handle(cx), cx);
     });
     cx.update(|window, cx| {
-        let _ = window.draw(cx);
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
 
-    cx.simulate_keystrokes("ctrl-shift-b");
+    // Dispatched rather than called, so the action's registration on the element is on the path
+    // too. Deliberately not parked: the menu is created with its listing synchronously, and the
+    // outline load that follows is what would dismiss an empty one.
+    cx.update(|window, cx| {
+        window.dispatch_action(OpenBreadcrumbNavigation.boxed_clone(), cx);
+    });
+    editor.read_with(cx, |editor, cx| {
+        let menu = editor
+            .breadcrumb_navigation_menu()
+            .expect("OpenBreadcrumbNavigation must open a menu entity");
+        // The current file's symbols, not its parent directory: the cursor is in code, and the
+        // directory segments open their own listings on click. No language is configured here,
+        // so there is no symbol around the caret and the file segment is the last one.
+        match menu.read(cx).listing() {
+            BreadcrumbListing::Symbols { parent: None, .. } => {}
+            other => panic!("the chord opens the file outline, got {other:?}"),
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_open_breadcrumb_navigation_opens_the_level_the_caret_is_in(cx: &mut TestAppContext) {
+    use breadcrumbs::Breadcrumbs;
+    use language::{Language, LanguageConfig};
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use util::path;
+    use workspace::Workspace;
+
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({ "src": { "main.rs": "fn alpha() {}\nfn beta() {}\nfn gamma() {}\n" } }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+    let workspace_window =
+        cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = workspace_window.root(cx).unwrap();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_outline_query("(function_item name: (_) @name) @item")
+        .expect("rust outline query"),
+    );
+    buffer.update(cx, |buffer, cx| buffer.set_language(Some(language), cx));
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace_window, cx);
+    let editor = cx.update(|window, cx| {
+        cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx))
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.toolbar().update(cx, |toolbar, cx| {
+                let breadcrumbs = cx.new(|_| Breadcrumbs::new());
+                toolbar.add_item(breadcrumbs, window, cx);
+            });
+        });
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    cx.run_until_parked();
+
+    // Put the caret inside `beta`, which is what the bar's last segment then names.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(1, 8)..Point::new(1, 8)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        window.dispatch_action(OpenBreadcrumbNavigation.boxed_clone(), cx);
+    });
     cx.run_until_parked();
 
     editor.read_with(cx, |editor, cx| {
         let menu = editor
             .breadcrumb_navigation_menu()
-            .expect("keystroke OpenBreadcrumbNavigation must open a menu entity");
-        let menu = menu.read(cx);
-        match menu.listing() {
-            BreadcrumbListing::Directory {
-                worktree_id: id,
-                path,
-            } => {
-                assert_eq!(*id, worktree_id);
-                assert_eq!(path.as_unix_str(), "src");
-            }
-            other => panic!("opens parent directory listing, got {other:?}"),
+            .expect("the chord must open a menu");
+        // The caret's own level, so the menu anchors under the segment the caret is in rather
+        // than on the file segment far to its left.
+        match menu.read(cx).listing() {
+            BreadcrumbListing::Symbols {
+                parent: Some(parent),
+                ..
+            } => assert_eq!(
+                parent.text.as_ref(),
+                "beta",
+                "the chord opens the symbol the caret is in"
+            ),
+            other => panic!("expected the caret's symbol level, got {other:?}"),
         }
-        let names = menu.entry_names();
+        // `beta` has no children, so the level is its siblings - the same rows the file's top
+        // level would show here, which is why only the anchor moves in the common case.
         assert_eq!(
-            names.iter().map(|n| n.as_ref()).collect::<Vec<_>>(),
-            vec!["lib.rs", "main.rs"],
+            menu.read(cx)
+                .entry_names()
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "beta", "gamma"],
         );
-        let selected = menu.selected_index().expect("current file preselected");
-        assert_eq!(names[selected].as_ref(), "main.rs");
     });
 }
 

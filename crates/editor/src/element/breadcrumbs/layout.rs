@@ -165,9 +165,8 @@ fn hard_cap_kind_run(
     );
 }
 
-/// Bounds what `measure` shapes and what `plan_breadcrumb_layout` re-sums per drop. A file at
-/// the worktree root has no directory run at all, so capping only that run leaves the symbol
-/// trail - and the quadratic case - uncapped.
+/// Caps both the directory run and the symbol trail, which is what `measure` shapes and what
+/// `plan_breadcrumb_layout` re-sums per drop.
 pub(super) fn hard_cap_segment_runs(
     mut segments: Vec<HighlightedText>,
     mut symbol_segments: Vec<Option<BreadcrumbSegmentTarget>>,
@@ -351,6 +350,35 @@ pub(super) struct BreadcrumbStrip {
     pub(super) breadcrumb_font: Option<Font>,
 }
 
+/// What a segment's chrome needs from the editor rather than from the segment, read once a
+/// frame instead of once per segment: `active_buffer` clones a multibuffer snapshot, and the
+/// strip paints up to `MAX_BREADCRUMB_SEGMENTS_HARD_CAP` segments.
+#[derive(Clone, Copy)]
+struct SegmentEditorState {
+    /// A buffer with no file has no path to copy, so neither the tooltip line nor the
+    /// right-click handler may claim otherwise.
+    has_file_path: bool,
+    menu_open: bool,
+}
+
+impl SegmentEditorState {
+    fn read(editor: Option<&WeakEntity<Editor>>, cx: &App) -> Self {
+        let Some(editor) = editor.and_then(|editor| editor.upgrade()) else {
+            return Self {
+                has_file_path: false,
+                menu_open: false,
+            };
+        };
+        let editor = editor.read(cx);
+        Self {
+            has_file_path: editor
+                .active_buffer(cx)
+                .is_some_and(|buffer| buffer.read(cx).file().is_some()),
+            menu_open: editor.breadcrumb_navigation_menu().is_some(),
+        }
+    }
+}
+
 impl BreadcrumbStrip {
     fn protected_segment_index(&self, cx: &App) -> Option<usize> {
         let editor = self.editor.as_ref()?.upgrade()?;
@@ -475,6 +503,7 @@ impl BreadcrumbStrip {
         position: usize,
         last_position: usize,
         max_label_width: Option<Pixels>,
+        editor_state: SegmentEditorState,
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::AnyElement {
@@ -521,8 +550,8 @@ impl BreadcrumbStrip {
             label
         };
 
-        // One deep clone per segment: the tooltip, click and right-click closures each need
-        // the target for the life of the frame, and they repaint on every cursor blink.
+        // One deep clone per segment: the tooltip, click and right-click closures each hold the
+        // target for the life of the frame.
         let content = match (segment.target.clone(), self.editor.clone()) {
             (Some(target), Some(editor)) => self.render_clickable_segment(
                 ("breadcrumb-segment", index).into(),
@@ -531,6 +560,7 @@ impl BreadcrumbStrip {
                 Rc::new(target),
                 label,
                 editor,
+                editor_state,
                 cx,
             ),
             _ => label,
@@ -546,27 +576,18 @@ impl BreadcrumbStrip {
         target: Rc<BreadcrumbSegmentTarget>,
         label: gpui::AnyElement,
         editor: WeakEntity<Editor>,
+        editor_state: SegmentEditorState,
         cx: &mut App,
     ) -> gpui::AnyElement {
         // The title is built inside the tooltip closure: formatting a path here would allocate
-        // for every segment on every repaint, for a string the user usually never sees.
+        // for a string the user usually never sees.
         let tooltip_target = target.clone();
         let tooltip_editor = editor.clone();
-        // A buffer with no file has no path to copy, so neither the tooltip line nor the
-        // right-click handler may claim otherwise.
         let copyable_path = match target.as_ref() {
             BreadcrumbSegmentTarget::Directory { .. } => true,
-            BreadcrumbSegmentTarget::Symbol { .. } => editor.upgrade().is_some_and(|editor| {
-                let editor = editor.read(cx);
-                editor
-                    .active_buffer(cx)
-                    .is_some_and(|buffer| buffer.read(cx).file().is_some())
-            }),
+            BreadcrumbSegmentTarget::Symbol { .. } => editor_state.has_file_path,
         };
-
-        let menu_open = editor
-            .upgrade()
-            .is_some_and(|editor| editor.read(cx).breadcrumb_navigation_menu().is_some());
+        let menu_open = editor_state.menu_open;
         let trigger = ButtonLike::new(element_id.clone())
             .style(ButtonStyle::Subtle)
             .size(ButtonSize::None)
@@ -574,9 +595,8 @@ impl BreadcrumbStrip {
             .child(div().px(px(SEGMENT_TRIGGER_PADDING_X)).child(label))
             .when(!menu_open, |this| {
                 this.tooltip(move |_, cx| {
-                    // The chord opens the active file's parent directory, so it only belongs on
-                    // directory segments; the file and symbol segments would advertise a shortcut
-                    // that never opens their own listing.
+                    // Only the file segment names the chord, because only its listing is the
+                    // one the chord opens; see `segment_tooltip_shows_navigation_chord`.
                     let title: SharedString = match tooltip_target.as_ref() {
                         BreadcrumbSegmentTarget::Directory { path, .. } => {
                             if path.is_empty() {
@@ -688,6 +708,7 @@ impl BreadcrumbStrip {
         position: usize,
         last_position: usize,
         max_glyph_width: Option<Pixels>,
+        editor_state: SegmentEditorState,
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::AnyElement {
@@ -715,6 +736,7 @@ impl BreadcrumbStrip {
                 Rc::new(target),
                 content,
                 editor,
+                editor_state,
                 cx,
             ),
             _ => content,
@@ -864,6 +886,7 @@ impl gpui::Element for BreadcrumbStrip {
         let mut x = bounds.origin.x;
         let mut children = Vec::with_capacity(sequence.len());
         let mut menu_anchor_bounds = None;
+        let editor_state = SegmentEditorState::read(self.editor.as_ref(), cx);
         for (position, item) in sequence.into_iter().enumerate() {
             let segment_index = match &item {
                 FinalItem::Segment(index) => Some(*index),
@@ -884,7 +907,15 @@ impl gpui::Element for BreadcrumbStrip {
                         };
                     let label_budget = (is_last || protected_index == Some(index))
                         .then(|| (remaining_width - reserved).max(Pixels::ZERO));
-                    self.render_segment(index, position, last_position, label_budget, window, cx)
+                    self.render_segment(
+                        index,
+                        position,
+                        last_position,
+                        label_budget,
+                        editor_state,
+                        window,
+                        cx,
+                    )
                 }
                 FinalItem::Ellipsis(hidden) => {
                     // The collapse below can only pick which slot a run lands in, never widen
@@ -897,6 +928,7 @@ impl gpui::Element for BreadcrumbStrip {
                         position,
                         last_position,
                         Some(glyph_budget),
+                        editor_state,
                         window,
                         cx,
                     )
@@ -1046,16 +1078,15 @@ enum FinalItem {
     Ellipsis(Range<usize>),
 }
 
-/// The `OpenBreadcrumbNavigation` chord opens the active file's parent directory, so a segment's
-/// tooltip may name it only when that is what activating the segment does - the directory
-/// segments. The file and symbol segments open their own listing by click alone.
+/// The `OpenBreadcrumbNavigation` chord opens the current file's outline, which is what the file
+/// segment opens too, so only that segment names the chord. Directory segments open a directory
+/// and the deeper symbol segments open a symbol's children, neither of which the chord does.
 pub(super) fn segment_tooltip_shows_navigation_chord(target: &BreadcrumbSegmentTarget) -> bool {
-    matches!(target, BreadcrumbSegmentTarget::Directory { .. })
+    matches!(target, BreadcrumbSegmentTarget::Symbol { item: None, .. })
 }
 
-/// Where the tail begins: the sum of every item before it. Each measured width already
-/// carries its trailing gap, so adding the inter-item gap again here overestimated the sum by
-/// a gap per item and folded tails that fit.
+/// Where the tail begins: the sum of every item before it. Each measured width already carries
+/// its trailing gap, so the inter-item gap is not added again.
 fn folded_tail_start(
     origin: Pixels,
     sequence: &[FinalItem],
@@ -1147,25 +1178,25 @@ mod tests {
     use gpui::px;
 
     #[test]
-    fn test_only_directory_segments_advertise_the_navigation_chord() {
+    fn test_only_the_file_segment_advertises_the_navigation_chord() {
         use util::rel_path::rel_path;
+
+        let file = BreadcrumbSegmentTarget::Symbol {
+            buffer_id: language::BufferId::new(1).unwrap(),
+            item: None,
+        };
+        assert!(
+            segment_tooltip_shows_navigation_chord(&file),
+            "the file segment: the chord opens the file outline it opens too"
+        );
 
         let directory = BreadcrumbSegmentTarget::Directory {
             worktree_id: project::WorktreeId::from_usize(0),
             path: rel_path("src").into_arc(),
         };
         assert!(
-            segment_tooltip_shows_navigation_chord(&directory),
-            "a directory segment: the chord opens its listing"
-        );
-
-        let symbol = BreadcrumbSegmentTarget::Symbol {
-            buffer_id: language::BufferId::new(1).unwrap(),
-            item: None,
-        };
-        assert!(
-            !segment_tooltip_shows_navigation_chord(&symbol),
-            "file and symbol segments: the chord opens the parent directory, not this listing"
+            !segment_tooltip_shows_navigation_chord(&directory),
+            "a directory segment opens a directory, which the chord does not"
         );
     }
 
@@ -1191,7 +1222,7 @@ mod tests {
         assert_eq!(
             folded_tail_start(px(100.), &sequence, &metrics),
             px(160.),
-            "each width already carries its trailing gap; adding the gap again folded tails              that fit"
+            "each width already carries its trailing gap; adding it again folds tails that fit"
         );
     }
 }

@@ -265,7 +265,7 @@ use ui::{
     prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
 };
 use ui_input::ErasedEditor;
-use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc, rel_path::RelPath};
+use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry, OpenInTerminal,
     OpenTerminal, Pane, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection,
@@ -11484,21 +11484,17 @@ impl Editor {
     }
 
     #[cfg(test)]
-    pub fn set_workspace_for_test(
-        &mut self,
-        workspace: WeakEntity<Workspace>,
-        _cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn set_workspace_for_test(&mut self, workspace: WeakEntity<Workspace>) {
         self.workspace = Some((workspace, None));
     }
 
     #[cfg(test)]
-    pub fn clear_workspace_for_test(&mut self) {
+    pub(crate) fn clear_workspace_for_test(&mut self) {
         self.workspace = None;
     }
 
     #[cfg(test)]
-    pub fn open_or_toggle_breadcrumb_listing_for_test(
+    pub(crate) fn open_or_toggle_breadcrumb_listing_for_test(
         &mut self,
         listing: BreadcrumbListing,
         window: &mut Window,
@@ -11516,22 +11512,6 @@ impl Editor {
             }
         };
         self.open_or_toggle_breadcrumb_listing(target, window, cx);
-    }
-
-    pub(crate) fn map_text_outline_items(
-        &self,
-        text_items: &[OutlineItem<text::Anchor>],
-        multi_buffer_snapshot: &MultiBufferSnapshot,
-    ) -> Vec<OutlineItem<Anchor>> {
-        text_items
-            .iter()
-            .filter_map(|item| {
-                crate::document_symbols::text_outline_item_to_multibuffer(
-                    item,
-                    multi_buffer_snapshot,
-                )
-            })
-            .collect()
     }
 
     pub fn open_breadcrumb_navigation_action(
@@ -11557,41 +11537,18 @@ impl Editor {
         };
         let buffer_id = buffer.read(cx).remote_id();
 
-        let project_path = self.active_project_path(cx);
-        let is_navigable = project_path.as_ref().is_some_and(|project_path| {
-            let is_single_file = self
-                .project()
-                .and_then(|project| {
-                    project
-                        .read(cx)
-                        .worktree_for_id(project_path.worktree_id, cx)
-                })
-                .is_some_and(|worktree| worktree.read(cx).is_single_file());
-            !is_single_file
-        });
-
-        if is_navigable && let Some(project_path) = project_path {
-            let parent_path = project_path
-                .path
-                .parent()
-                .map(|parent| parent.into_arc())
-                .unwrap_or_else(|| RelPath::empty().into_arc());
-            self.open_breadcrumb_navigation(
-                BreadcrumbListing::Directory {
-                    worktree_id: project_path.worktree_id,
-                    path: parent_path,
-                },
-                window,
-                cx,
-            );
-            return;
-        }
-
+        // Opens the level the caret is already in, so the chord does what clicking the bar's
+        // last segment does and the menu hangs under it. `parent: None` lists the file's top
+        // level and therefore anchors on the file segment, which reads as unrelated to where
+        // the caret sits. With no symbol around the caret the file segment is the last one, and
+        // `None` is then the same thing.
+        let parent = self
+            .outline_symbols_at_cursor
+            .as_ref()
+            .filter(|(id, _)| *id == buffer_id)
+            .and_then(|(_, symbols)| symbols.last().cloned());
         self.open_breadcrumb_navigation(
-            BreadcrumbListing::Symbols {
-                buffer_id,
-                parent: None,
-            },
+            BreadcrumbListing::Symbols { buffer_id, parent },
             window,
             cx,
         );
