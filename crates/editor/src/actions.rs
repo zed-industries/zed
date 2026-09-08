@@ -495,6 +495,9 @@ actions!(
         Copy,
         /// Copies selected text to the clipboard with leading/trailing whitespace trimmed.
         CopyAndTrim,
+        /// Copies the labels of all items in the open completions menu to the clipboard,
+        /// one per line. Does nothing when no completions menu is open.
+        CopyCompletionsMenuItems,
         /// Copies the current file location to the clipboard.
         CopyFileLocation,
         /// Copies the highlighted text as JSON.

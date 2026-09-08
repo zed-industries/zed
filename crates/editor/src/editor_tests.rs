@@ -24720,6 +24720,51 @@ async fn test_completion_reuse(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_copy_completions_menu_items(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    // Without an open completions menu, the action is a no-op.
+    cx.set_state("objˇ");
+    cx.update_editor(|editor, window, cx| {
+        editor.copy_completions_menu_items(&CopyCompletionsMenuItems, window, cx);
+    });
+    assert_eq!(cx.read_from_clipboard(), None);
+
+    let counter = Arc::new(AtomicUsize::new(0));
+    cx.simulate_keystroke(".");
+    handle_completion_request(
+        "obj.|<>",
+        vec!["alpha", "beta", "gamma"],
+        false,
+        counter.clone(),
+        &mut cx,
+    )
+    .await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+
+    cx.update_editor(|editor, window, cx| {
+        editor.copy_completions_menu_items(&CopyCompletionsMenuItems, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("alpha\nbeta\ngamma".to_string())
+    );
+}
+
+#[gpui::test]
 async fn test_word_completion(cx: &mut TestAppContext) {
     let lsp_fetch_timeout_ms = 10;
     init_test(cx, |language_settings| {

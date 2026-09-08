@@ -46,6 +46,39 @@ impl Editor {
         self.open_or_update_completions_menu(None, None, false, window, cx);
     }
 
+    pub fn copy_completions_menu_items(
+        &mut self,
+        _: &CopyCompletionsMenuItems,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = {
+            let context_menu = self.context_menu.borrow();
+            let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref() else {
+                return;
+            };
+            if !menu.visible() {
+                return;
+            }
+            let completions = menu.completions.borrow();
+            menu.entries
+                .borrow()
+                .iter()
+                .filter_map(|entry| {
+                    let mat = entry.as_match()?;
+                    completions
+                        .get(mat.candidate_id)
+                        .map(|completion| completion.label.text.clone())
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        if text.is_empty() {
+            return;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
     pub fn confirm_completion(
         &mut self,
         action: &ConfirmCompletion,
