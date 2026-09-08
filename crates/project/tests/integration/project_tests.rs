@@ -11434,6 +11434,295 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     );
 }
 
+// Applies a workspace edit built from `operations`, as a "rename symbol" on a
+// buffer opened from `buffer_path`, and reports whether the edit applied.
+async fn apply_rename_operations(
+    fs: Arc<FakeFs>,
+    buffer_path: &str,
+    operations: Vec<lsp::DocumentChangeOperation>,
+    cx: &mut gpui::TestAppContext,
+) -> Result<()> {
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(buffer_path, cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let response = project.update(cx, |project, cx| {
+        project.perform_rename(buffer.clone(), 0, "renamed".to_string(), cx)
+    });
+    fake_server
+        .set_request_handler::<lsp::request::Rename, _, _>(move |_params, _| {
+            let operations = operations.clone();
+            async move {
+                Ok(Some(lsp::WorkspaceEdit {
+                    changes: None,
+                    document_changes: Some(DocumentChanges::Operations(operations)),
+                    change_annotations: None,
+                }))
+            }
+        })
+        .next()
+        .await
+        .unwrap();
+    let result = response.await;
+    cx.executor().run_until_parked();
+    result.map(|_| ())
+}
+
+// A language server that renames a Go package, or anything else that empties a
+// directory, follows the rename with a delete of the directory left behind.
+#[gpui::test]
+async fn test_workspace_edit_deletes_a_directory(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one": {
+                "one.rs": "const ONE: usize = 1;",
+            },
+        }),
+    )
+    .await;
+
+    let result = apply_rename_operations(
+        fs.clone(),
+        path!("/dir/one/one.rs"),
+        vec![
+            lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(lsp::RenameFile {
+                old_uri: Uri::from_file_path(path!("/dir/one/one.rs")).unwrap(),
+                new_uri: Uri::from_file_path(path!("/dir/two/one.rs")).unwrap(),
+                options: None,
+                annotation_id: None,
+            })),
+            lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(lsp::DeleteFile {
+                uri: Uri::from_file_path(path!("/dir/one")).unwrap(),
+                options: None,
+            })),
+        ],
+        cx,
+    )
+    .await;
+
+    result.expect("deleting the emptied directory should not fail the workspace edit");
+    assert!(
+        fs.metadata(Path::new(path!("/dir/one")))
+            .await
+            .unwrap()
+            .is_none(),
+        "the emptied directory should be gone"
+    );
+    assert_eq!(
+        fs.load(Path::new(path!("/dir/two/one.rs"))).await.unwrap(),
+        "const ONE: usize = 1;",
+        "the renamed file should have survived the delete that followed it"
+    );
+}
+
+// A server that asks to delete a directory recursively means it, so the
+// contents go with it.
+#[gpui::test]
+async fn test_workspace_edit_deletes_a_directory_recursively(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+            "gone": {
+                "two.rs": "const TWO: usize = 2;",
+                "nested": {
+                    "deeper": {
+                        "three.rs": "const THREE: usize = 3;",
+                    },
+                },
+            },
+        }),
+    )
+    .await;
+
+    let result = apply_rename_operations(
+        fs.clone(),
+        path!("/dir/one.rs"),
+        vec![lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(
+            lsp::DeleteFile {
+                uri: Uri::from_file_path(path!("/dir/gone")).unwrap(),
+                options: Some(lsp::DeleteFileOptions {
+                    recursive: Some(true),
+                    ignore_if_not_exists: None,
+                    annotation_id: None,
+                }),
+            },
+        ))],
+        cx,
+    )
+    .await;
+
+    result.expect("a recursive delete should not fail the workspace edit");
+    assert!(
+        fs.metadata(Path::new(path!("/dir/gone")))
+            .await
+            .unwrap()
+            .is_none(),
+        "the directory and everything under it should be gone"
+    );
+    assert!(
+        fs.metadata(Path::new(path!("/dir/gone/nested/deeper/three.rs")))
+            .await
+            .unwrap()
+            .is_none(),
+        "including files nested well below the top"
+    );
+}
+
+// Without that flag a directory that still holds something is left where it is,
+// rather than being emptied on the server's behalf.
+#[gpui::test]
+async fn test_workspace_edit_will_not_delete_a_full_directory_on_its_own(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+            "kept": {
+                "two.rs": "const TWO: usize = 2;",
+            },
+        }),
+    )
+    .await;
+
+    let result = apply_rename_operations(
+        fs.clone(),
+        path!("/dir/one.rs"),
+        vec![lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(
+            lsp::DeleteFile {
+                uri: Uri::from_file_path(path!("/dir/kept")).unwrap(),
+                options: None,
+            },
+        ))],
+        cx,
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "deleting a directory that still holds something should not quietly succeed"
+    );
+    assert_eq!(
+        fs.load(Path::new(path!("/dir/kept/two.rs"))).await.unwrap(),
+        "const TWO: usize = 2;",
+        "the contents should still be there"
+    );
+}
+
+#[gpui::test]
+async fn test_workspace_edit_deletes_a_file(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+            "two.rs": "const TWO: usize = 2;",
+        }),
+    )
+    .await;
+
+    let result = apply_rename_operations(
+        fs.clone(),
+        path!("/dir/one.rs"),
+        vec![lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(
+            lsp::DeleteFile {
+                uri: Uri::from_file_path(path!("/dir/two.rs")).unwrap(),
+                options: None,
+            },
+        ))],
+        cx,
+    )
+    .await;
+
+    result.expect("deleting a file should not fail the workspace edit");
+    assert!(
+        fs.metadata(Path::new(path!("/dir/two.rs")))
+            .await
+            .unwrap()
+            .is_none(),
+        "the deleted file should be gone"
+    );
+}
+
+// A symlink reports the metadata of whatever it points at, so a symlink to a
+// directory has to be unlinked rather than removed as one, or the delete takes
+// the directory with it.
+#[gpui::test]
+async fn test_workspace_edit_deleting_a_symlink_spares_its_target(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+            "target": {
+                "kept.rs": "const KEPT: usize = 3;",
+            },
+        }),
+    )
+    .await;
+    fs.insert_symlink(path!("/dir/link"), path!("/dir/target").into())
+        .await;
+
+    let result = apply_rename_operations(
+        fs.clone(),
+        path!("/dir/one.rs"),
+        vec![lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(
+            lsp::DeleteFile {
+                uri: Uri::from_file_path(path!("/dir/link")).unwrap(),
+                options: None,
+            },
+        ))],
+        cx,
+    )
+    .await;
+
+    result.expect("deleting a symlink should not fail the workspace edit");
+    assert_eq!(
+        fs.load(Path::new(path!("/dir/target/kept.rs")))
+            .await
+            .unwrap(),
+        "const KEPT: usize = 3;",
+        "the directory the symlink pointed at should have survived"
+    );
+}
+
 // Regression test for https://github.com/zed-industries/zed/issues/59077:
 // a "rename symbol" whose workspace edit also renames the file used to swap the
 // two files' contents. The edited content must end up in the renamed file, and
