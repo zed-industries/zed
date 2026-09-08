@@ -6520,13 +6520,9 @@ impl Render for AgentPanel {
                 this.new_terminal(None, AgentThreadSource::AgentPanel, window, cx);
             }))
             .on_action(cx.listener(|this, _: &RenameSelectedThread, window, cx| {
-                let VisibleSurface::Terminal(_) = this.visible_surface() else {
-                    return;
-                };
                 let Some(terminal_id) = this.active_terminal_id() else {
                     return;
                 };
-                cx.stop_propagation();
                 this.edit_terminal_title(terminal_id, window, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
