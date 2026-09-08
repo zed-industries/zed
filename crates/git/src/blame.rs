@@ -1,6 +1,6 @@
 use crate::Oid;
 use crate::commit::{get_messages, get_tag_names};
-use crate::repository::{GitBinary, RepoPath};
+use crate::repository::{GitBinary, RepoPath, is_shallow_boundary_commit};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::{AsyncWriteExt, TryFutureExt, try_join};
@@ -41,8 +41,22 @@ impl Blame {
     }
 
     async fn with_commit_details(git: &GitBinary, mut entries: Vec<BlameEntry>) -> Result<Self> {
-        let mut unique_shas = HashSet::default();
+        let shallow_file_path = git
+            .run(&[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "shallow",
+            ])
+            .await
+            .context("resolving shallow file path")?;
+        let shallow_file_path = std::path::Path::new(shallow_file_path.trim());
+        for entry in entries.iter_mut().filter(|entry| entry.boundary) {
+            entry.boundary =
+                is_shallow_boundary_commit(git, shallow_file_path, &entry.sha.to_string()).await?;
+        }
 
+        let mut unique_shas = HashSet::default();
         for entry in entries.iter_mut() {
             unique_shas.insert(entry.sha);
         }
