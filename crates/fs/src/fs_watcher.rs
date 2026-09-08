@@ -1,26 +1,107 @@
+use futures::{Stream, StreamExt as _};
 use gpui::{BackgroundExecutor, Task};
 use notify::{Event, EventKind};
 use parking_lot::Mutex;
 use std::{
     collections::HashMap,
-    fs,
     ops::DerefMut,
     path::Path,
-    sync::{Arc, LazyLock, OnceLock},
+    pin::Pin,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 use util::{ResultExt, paths::SanitizedPath};
 
-use crate::{PathEvent, PathEventKind, Watcher};
+use crate::{Fs, PathEvent, PathEventKind, Watcher};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum WatcherMode {
-    #[default]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OsWatcherKind {
     Native,
     Poll,
 }
 
+impl OsWatcherKind {
+    /// Poll watches and native macOS/Windows watches cover their whole subtree;
+    /// native Linux (inotify) watches cover one directory.
+    fn is_recursive(self) -> bool {
+        self == Self::Poll || cfg!(any(target_os = "windows", target_os = "macos"))
+    }
+}
+
+pub(crate) async fn watch(
+    fs: Arc<dyn Fs>,
+    native_watcher: Arc<OsWatcher>,
+    poll_watcher: Arc<OsWatcher>,
+    executor: BackgroundExecutor,
+    path: &Path,
+    latency: Duration,
+) -> (
+    Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
+    Arc<dyn Watcher>,
+) {
+    let (tx, rx) = async_channel::unbounded();
+    let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
+
+    let watcher: Arc<dyn Watcher> = Arc::new(FsWatcher::new(
+        native_watcher,
+        poll_watcher,
+        fs.clone(),
+        executor.clone(),
+        tx,
+        pending_paths.clone(),
+    ));
+
+    if let Err(e) = watcher.add(path) {
+        log::warn!("Failed to watch {}:\n{e}", path.display());
+    }
+
+    // Check if path is a symlink and follow the target parent
+    if let Some(mut target) = fs.read_link(path).await.ok() {
+        log::trace!("watch symlink {path:?} -> {target:?}");
+        // Check if symlink target is relative path, if so make it absolute
+        if target.is_relative()
+            && let Some(parent) = path.parent()
+        {
+            target = parent.join(target);
+            if let Ok(canonical) = fs.canonicalize(&target).await {
+                target = SanitizedPath::new(&canonical).as_path().to_path_buf();
+            }
+        }
+        watcher.add(&target).ok();
+        // Skipped for poll watchers: PollWatcher::watch() recursively scans
+        // at registration, blocking on large virtual filesystem mounts
+        if let Some(parent) = target.parent()
+            && !fs.requires_poll_watcher(parent)
+        {
+            watcher.add(parent).log_err();
+        }
+    }
+
+    (
+        Box::pin(rx.filter_map({
+            let watcher = watcher.clone();
+            move |_| {
+                let _ = watcher.clone();
+                let pending_paths = pending_paths.clone();
+                let executor = executor.clone();
+                async move {
+                    if !latency.is_zero() {
+                        executor.timer(latency).await;
+                    }
+                    let paths = std::mem::take(&mut *pending_paths.lock());
+                    log::debug!("pending path events: {:?}", paths);
+                    (!paths.is_empty()).then_some(paths)
+                }
+            }
+        })),
+        watcher,
+    )
+}
+
 pub struct FsWatcher {
+    native_watcher: Arc<OsWatcher>,
+    poll_watcher: Arc<OsWatcher>,
+    fs: Arc<dyn Fs>,
     executor: BackgroundExecutor,
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
@@ -28,19 +109,25 @@ pub struct FsWatcher {
     pending_registrations: Arc<Mutex<HashMap<Arc<std::path::Path>, Task<()>>>>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct FsWatcherRegistration {
     id: WatcherRegistrationId,
-    mode: WatcherMode,
+    os_watcher: Arc<OsWatcher>,
 }
 
 impl FsWatcher {
-    pub fn new(
+    pub(crate) fn new(
+        native_watcher: Arc<OsWatcher>,
+        poll_watcher: Arc<OsWatcher>,
+        fs: Arc<dyn Fs>,
         executor: BackgroundExecutor,
         tx: async_channel::Sender<()>,
         pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
     ) -> Self {
         Self {
+            native_watcher,
+            poll_watcher,
+            fs,
             executor,
             tx,
             pending_path_events,
@@ -50,13 +137,16 @@ impl FsWatcher {
     }
 
     fn add_existing_path(&self, path: Arc<Path>) -> anyhow::Result<()> {
-        let case_insensitive = case_insensitive_path(&path);
+        let case_insensitive = !self.fs.is_path_case_sensitive(&path);
         let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
         if self.registrations.lock().contains_key(&key) {
             log::trace!("path to watch is already watched: {path:?}");
             return Ok(());
         }
         match register_existing_path(
+            &self.native_watcher,
+            &self.poll_watcher,
+            self.fs.as_ref(),
             path.clone(),
             case_insensitive,
             self.tx.clone(),
@@ -83,6 +173,9 @@ impl FsWatcher {
         }
 
         let task = self.executor.spawn(poll_path_until_created(
+            self.native_watcher.clone(),
+            self.poll_watcher.clone(),
+            self.fs.clone(),
             self.executor.clone(),
             path.clone(),
             self.tx.clone(),
@@ -104,9 +197,8 @@ impl Drop for FsWatcher {
             std::mem::swap(old.deref_mut(), &mut registrations);
         }
 
-        let global_watcher = global_watcher();
         for (_, registration) in registrations {
-            global_watcher.remove(registration.id);
+            registration.os_watcher.remove(registration.id);
         }
     }
 }
@@ -133,7 +225,7 @@ impl Watcher for FsWatcher {
             return Ok(());
         }
 
-        if fs::symlink_metadata(path.as_ref()).is_err() {
+        if !self.fs.path_exists(&path) {
             self.add_pending_path(path);
             return Ok(());
         }
@@ -153,7 +245,7 @@ impl Watcher for FsWatcher {
                 .or_else(|| registrations.remove(&WatchKey::folded(sanitized)))
         };
         if let Some(registration) = registration {
-            global_watcher().remove(registration.id);
+            registration.os_watcher.remove(registration.id);
         }
         Ok(())
     }
@@ -171,10 +263,9 @@ fn path_covered_by_recursive_registration(
         [WatchKey::exact(ancestor), WatchKey::folded(ancestor)]
             .iter()
             .any(|key| {
-                registrations.get(key).is_some_and(|registration| {
-                    registration.mode == WatcherMode::Poll
-                        || cfg!(any(target_os = "windows", target_os = "macos"))
-                })
+                registrations
+                    .get(key)
+                    .is_some_and(|registration| registration.os_watcher.is_recursive())
             })
     })
 }
@@ -211,29 +302,29 @@ pub fn requires_poll_watcher(path: &Path) -> bool {
 }
 
 fn register_existing_path(
+    native_watcher: &Arc<OsWatcher>,
+    poll_watcher: &Arc<OsWatcher>,
+    fs: &dyn Fs,
     path: Arc<Path>,
     case_insensitive: bool,
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
 ) -> anyhow::Result<Option<FsWatcherRegistration>> {
-    let mode = if requires_poll_watcher(path.as_ref()) {
+    let os_watcher = if fs.requires_poll_watcher(path.as_ref()) {
         log::info!(
             "Using poll watcher ({}ms interval) for {}",
             poll_interval().as_millis(),
             path.display()
         );
         telemetry::event!("fs_watcher_poll", path = path.display().to_string());
-        WatcherMode::Poll
+        poll_watcher
     } else {
-        WatcherMode::Native
+        native_watcher
     };
     let root_path = SanitizedPath::new_arc(path.as_ref());
     let path_for_callback = path.clone();
-    let Some(registration_id) = global_watcher().add(
-        path,
-        mode,
-        case_insensitive,
-        move |event: &notify::Event| {
+    let Some(registration_id) =
+        os_watcher.add(path, case_insensitive, move |event: &notify::Event| {
             log::trace!("watcher received event: {event:?}");
             push_notify_event(
                 &tx,
@@ -243,14 +334,13 @@ fn register_existing_path(
                 path_for_callback.as_ref(),
                 event,
             );
-        },
-    )?
+        })?
     else {
         return Ok(None);
     };
     Ok(Some(FsWatcherRegistration {
         id: registration_id,
-        mode,
+        os_watcher: os_watcher.clone(),
     }))
 }
 
@@ -365,7 +455,7 @@ fn is_wsl_drvfs_path(path: &Path) -> bool {
 /// Whether the volume backing `path` does case-insensitive name lookups, used to
 /// pick exact vs. folded matching.
 #[cfg(target_os = "macos")]
-fn case_insensitive_path(path: &Path) -> bool {
+pub(crate) fn case_insensitive_path(path: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt as _;
 
     // `pathconf(_PC_CASE_SENSITIVE)` returns 1 (sensitive), 0 (insensitive), or -1
@@ -378,7 +468,7 @@ fn case_insensitive_path(path: &Path) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn case_insensitive_path(_path: &Path) -> bool {
+pub(crate) fn case_insensitive_path(_path: &Path) -> bool {
     // use std::os::unix::ffi::OsStrExt as _;
 
     // // Only ext4/f2fs casefold (`+F`) dirs are insensitive, reported by `statx` via
@@ -403,7 +493,7 @@ fn case_insensitive_path(_path: &Path) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn case_insensitive_path(_path: &Path) -> bool {
+pub(crate) fn case_insensitive_path(_path: &Path) -> bool {
     // todo(windows): Windows defaults to case in sensitive, but
     // they can mark specific directories as case sensitive. Mainly
     // for WSL use cases
@@ -411,7 +501,7 @@ fn case_insensitive_path(_path: &Path) -> bool {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn case_insensitive_path(_path: &Path) -> bool {
+pub(crate) fn case_insensitive_path(_path: &Path) -> bool {
     // Other BSDs default to case-sensitive local filesystems.
     false
 }
@@ -480,6 +570,9 @@ impl WatchKey {
 }
 
 async fn poll_path_until_created(
+    native_watcher: Arc<OsWatcher>,
+    poll_watcher: Arc<OsWatcher>,
+    fs: Arc<dyn Fs>,
     executor: BackgroundExecutor,
     path: Arc<Path>,
     tx: async_channel::Sender<()>,
@@ -494,13 +587,13 @@ async fn poll_path_until_created(
             return;
         }
 
-        if smol::fs::symlink_metadata(path.as_ref()).await.is_err() {
+        if !fs.path_exists(&path) {
             continue;
         }
 
         // Probe case sensitivity now that the path exists, rather than at add
         // time when it didn't.
-        let case_insensitive = case_insensitive_path(path.as_ref());
+        let case_insensitive = !fs.is_path_case_sensitive(&path);
         let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
 
         if registrations.lock().contains_key(&key) {
@@ -509,6 +602,9 @@ async fn poll_path_until_created(
         }
 
         match register_existing_path(
+            &native_watcher,
+            &poll_watcher,
+            fs.as_ref(),
             path.clone(),
             case_insensitive,
             tx.clone(),
@@ -518,7 +614,7 @@ async fn poll_path_until_created(
                 {
                     let mut pending_registrations = pending_registrations.lock();
                     if pending_registrations.remove(path.as_ref()).is_none() {
-                        global_watcher().remove(registration.id);
+                        registration.os_watcher.remove(registration.id);
                         return;
                     }
                     registrations.lock().insert(key, registration);
@@ -598,11 +694,19 @@ fn push_notify_event(
             log::warn!("filesystem watcher lost sync for {watched_root:?}; scheduling rescan");
         }
 
-        path_events.retain(|path_event| path_event.path != watched_root);
-        path_events.push(PathEvent {
-            path: watched_root.to_path_buf(),
-            kind: Some(PathEventKind::Rescan),
-        });
+        // A rescan event names the subtrees that lost sync (FSEvents
+        // `MustScanSubDirs`); only a pathless one (inotify queue overflow) means
+        // the whole watched root is suspect.
+        if path_events.is_empty() {
+            path_events.push(PathEvent {
+                path: watched_root.to_path_buf(),
+                kind: Some(PathEventKind::Rescan),
+            });
+        } else {
+            for path_event in &mut path_events {
+                path_event.kind = Some(PathEventKind::Rescan);
+            }
+        }
     }
     log::trace!("path_events: {:?}", path_events);
     enqueue_path_events(tx, pending_path_events, path_events);
@@ -687,7 +791,6 @@ struct WatcherRegistrationState {
     callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
     key: WatchKey,
     path: Arc<SanitizedPath>,
-    mode: WatcherMode,
 }
 
 struct PathRegistrationState {
@@ -695,7 +798,7 @@ struct PathRegistrationState {
     has_os_watcher: bool,
 }
 
-/// The registered watch paths for one watcher mode, keyed by [`WatchKey`] so that
+/// The registered watch paths for one backend, keyed by [`WatchKey`] so that
 /// add (dedup), remove, and dispatch share a single notion of path identity.
 #[derive(Default)]
 struct WatchPaths(HashMap<WatchKey, PathRegistrationState>);
@@ -722,8 +825,8 @@ impl WatchPaths {
 
     /// True if a recursive registration on a strict ancestor already covers
     /// `path`. Only poll watches and native macOS/Windows watches are recursive.
-    fn covered_by_recursive_ancestor(&self, path: &SanitizedPath, mode: WatcherMode) -> bool {
-        if mode != WatcherMode::Poll && !cfg!(any(target_os = "windows", target_os = "macos")) {
+    fn covered_by_recursive_ancestor(&self, path: &SanitizedPath, recursive: bool) -> bool {
+        if !recursive {
             return false;
         }
         path.as_path().ancestors().skip(1).any(|ancestor| {
@@ -751,8 +854,7 @@ impl WatchPaths {
 
 struct WatcherState {
     watchers: HashMap<WatcherRegistrationId, WatcherRegistrationState>,
-    native_path_registrations: WatchPaths,
-    poll_path_registrations: WatchPaths,
+    paths: WatchPaths,
     cooldown_until: Option<Instant>,
     last_registration: WatcherRegistrationId,
 }
@@ -763,33 +865,22 @@ impl WatcherState {
             .is_some_and(|cooldown_until| cooldown_until > Instant::now())
     }
 
-    fn path_registrations(&mut self, mode: WatcherMode) -> &mut WatchPaths {
-        match mode {
-            WatcherMode::Native => &mut self.native_path_registrations,
-            WatcherMode::Poll => &mut self.poll_path_registrations,
-        }
-    }
-
-    fn remove_registration(
-        &mut self,
-        id: WatcherRegistrationId,
-    ) -> Option<(Arc<SanitizedPath>, WatcherMode)> {
+    fn remove_registration(&mut self, id: WatcherRegistrationId) -> Option<Arc<SanitizedPath>> {
         let registration_state = self.watchers.remove(&id)?;
-        let path_registrations = self.path_registrations(registration_state.mode);
-        let path_state = path_registrations.get_mut(&registration_state.key)?;
+        let path_state = self.paths.get_mut(&registration_state.key)?;
         path_state.watcher_ids.retain(|&existing| existing != id);
         if !path_state.watcher_ids.is_empty() {
             return None;
         }
 
         let was_actually_watched = path_state.has_os_watcher;
-        path_registrations.remove(&registration_state.key);
+        self.paths.remove(&registration_state.key);
 
-        was_actually_watched.then_some((registration_state.path, registration_state.mode))
+        was_actually_watched.then_some(registration_state.path)
     }
 }
 
-trait WatchBackend: Send {
+pub(crate) trait WatchBackend: Send {
     fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()>;
     fn unwatch(&mut self, path: &Path) -> notify::Result<()>;
 }
@@ -804,47 +895,98 @@ impl<T: notify::Watcher + Send> WatchBackend for T {
     }
 }
 
-type DispatchEvent = (WatcherMode, Result<notify::Event, notify::Error>);
+pub struct OsWatcher {
+    kind: OsWatcherKind,
+    recursive: bool,
+    state: Arc<Mutex<WatcherState>>,
 
-pub struct GlobalWatcher {
-    state: Mutex<WatcherState>,
-
-    // DANGER: never keep state lock while holding watcher lock
-    // two mutexes because calling watcher.add triggers watcher.event, which needs watchers.
-    native_watcher: Mutex<Option<Box<dyn WatchBackend>>>,
-    poll_watcher: Mutex<Option<Box<dyn WatchBackend>>>,
-    event_tx: async_channel::Sender<DispatchEvent>,
+    // Never hold the state lock while calling the backend: a backend call can be
+    // slow (a poll watch scans its whole tree up front, an FSEvents watch rebuilds
+    // the stream) and dispatch needs the state to route every other registration's
+    // events. Whoever re-locks the state afterwards must re-check what they assumed.
+    backend: Mutex<Option<Box<dyn WatchBackend>>>,
+    event_tx: async_channel::Sender<notify::Result<notify::Event>>,
+    _dispatch_task: Task<()>,
 }
 
-impl GlobalWatcher {
+impl OsWatcher {
+    /// Watches with notify's backend of `kind`, created lazily on first use so
+    /// that a failure to start it can be reported by `ensure_backend`.
+    pub fn new(kind: OsWatcherKind, executor: BackgroundExecutor) -> Arc<Self> {
+        Self::with_backend(kind, executor, None)
+    }
+
+    /// Watches with the given backend in place of notify's; `event_sink` is how
+    /// that backend reports events, standing in for notify's `EventHandler`.
+    pub(crate) fn with_backend(
+        kind: OsWatcherKind,
+        executor: BackgroundExecutor,
+        backend: Option<Box<dyn WatchBackend>>,
+    ) -> Arc<Self> {
+        let (event_tx, event_rx) = async_channel::unbounded();
+        let state = Arc::new(Mutex::new(WatcherState {
+            watchers: Default::default(),
+            paths: Default::default(),
+            cooldown_until: None,
+            last_registration: Default::default(),
+        }));
+        let dispatch_task = executor.spawn({
+            let state = state.clone();
+            async move {
+                while let Ok(first) = event_rx.recv().await {
+                    dispatch_batch(kind, &state, first, &event_rx);
+                }
+            }
+        });
+        Arc::new(Self {
+            kind,
+            recursive: kind.is_recursive(),
+            state,
+            backend: Mutex::new(backend),
+            event_tx,
+            _dispatch_task: dispatch_task,
+        })
+    }
+
+    /// The callback a substitute backend uses to report events, standing
+    /// in for the `EventHandler` notify would have been constructed with.
+    pub(crate) fn event_sink(
+        &self,
+    ) -> impl Fn(notify::Result<notify::Event>) + Send + Sync + 'static {
+        let event_tx = self.event_tx.clone();
+        move |event| enqueue(&event_tx, event)
+    }
+
+    pub(crate) fn is_recursive(&self) -> bool {
+        self.recursive
+    }
+
     #[must_use]
     fn add(
         &self,
         path: Arc<std::path::Path>,
-        mode: WatcherMode,
         case_insensitive: bool,
         cb: impl Fn(&notify::Event) + Send + Sync + 'static,
     ) -> anyhow::Result<Option<WatcherRegistrationId>> {
         let path = SanitizedPath::from_arc(path);
         let key = WatchKey::for_registration(&path, case_insensitive);
         let mut state = self.state.lock();
-        let (path_already_covered, path_already_registered) = {
-            let registrations_for_mode = state.path_registrations(mode);
-            (
-                registrations_for_mode.covered_by_recursive_ancestor(&path, mode),
-                registrations_for_mode.contains(&key),
-            )
-        };
+        let path_already_covered = state
+            .paths
+            .covered_by_recursive_ancestor(&path, self.recursive);
+        let path_already_registered = state.paths.contains(&key);
 
         if !path_already_covered && !path_already_registered {
-            if mode == WatcherMode::Native && state.is_native_watch_limit_cooldown_active() {
+            if self.kind == OsWatcherKind::Native && state.is_native_watch_limit_cooldown_active() {
                 return Ok(None);
             }
 
             drop(state);
-            match self.watch(path.as_path(), mode) {
+            match self.watch(path.as_path()) {
                 Ok(()) => {}
-                Err(error) if mode == WatcherMode::Native && is_max_files_watch_error(&error) => {
+                Err(error)
+                    if self.kind == OsWatcherKind::Native && is_max_files_watch_error(&error) =>
+                {
                     self.start_native_watch_limit_cooldown(path.as_path());
                     return Ok(None);
                 }
@@ -860,11 +1002,10 @@ impl GlobalWatcher {
             callback: Arc::new(cb),
             key: key.clone(),
             path,
-            mode,
         };
         state.watchers.insert(id, registration_state);
         state
-            .path_registrations(mode)
+            .paths
             .entry(key)
             .and_modify(|registration| registration.watcher_ids.push(id))
             .or_insert_with(|| PathRegistrationState {
@@ -875,97 +1016,18 @@ impl GlobalWatcher {
         Ok(Some(id))
     }
 
-    fn enqueue(&self, mode: WatcherMode, event: Result<notify::Event, notify::Error>) {
-        if matches!(
-            event,
-            Ok(Event {
-                kind: EventKind::Access(_),
-                ..
-            })
-        ) {
-            return;
-        }
-
-        // A failed send only happens once the dispatch thread has shut down, at
-        // which point there's nothing left to dispatch to.
-        self.event_tx.try_send((mode, event)).ok();
+    #[cfg(test)]
+    fn dispatch(&self, event: notify::Result<notify::Event>) {
+        dispatch(self.kind, &self.state, event);
     }
 
-    fn dispatch(&self, mode: WatcherMode, event: Result<notify::Event, notify::Error>) {
-        let event = match event {
-            Ok(event) => event,
-            Err(error) => {
-                log::warn!("watcher error for {mode:?}: {error}");
-                return;
-            }
-        };
-
-        log::trace!("global handle event for {mode:?}: {event:?}");
-
-        let callbacks = {
-            let state = self.state.lock();
-            if event.need_rescan() {
-                let callbacks = state
-                    .watchers
-                    .values()
-                    .filter(|registration| registration.mode == mode)
-                    .map(|registration| registration.callback.clone())
-                    .collect::<Vec<_>>();
-                log::warn!(
-                    "filesystem watcher lost sync for {mode:?}; scheduling rescans for {} registrations",
-                    callbacks.len()
-                );
-                callbacks
-            } else {
-                let path_registrations = match mode {
-                    WatcherMode::Native => &state.native_path_registrations,
-                    WatcherMode::Poll => &state.poll_path_registrations,
-                };
-                let mut ids = Vec::new();
-                for path in &event.paths {
-                    let sanitized = SanitizedPath::new(path);
-                    path_registrations.watcher_ids_covering(sanitized, &mut ids);
-                }
-                ids.sort_unstable_by_key(|id| id.0);
-                ids.dedup();
-                ids.into_iter()
-                    .filter_map(|id| state.watchers.get(&id))
-                    .map(|registration| registration.callback.clone())
-                    .collect::<Vec<_>>()
-            }
-        };
-
-        for callback in callbacks {
-            callback(&event);
-        }
-    }
-
+    #[cfg(test)]
     fn dispatch_batch(
         &self,
-        first: DispatchEvent,
-        event_rx: &async_channel::Receiver<DispatchEvent>,
+        first: notify::Result<notify::Event>,
+        event_rx: &async_channel::Receiver<notify::Result<notify::Event>>,
     ) {
-        // A single backend overflow can enqueue many rescan markers. One rescan
-        // per mode covers the entire drained batch; ordinary events still run.
-        let mut native_rescan_dispatched = false;
-        let mut poll_rescan_dispatched = false;
-
-        for (mode, event) in
-            std::iter::once(first).chain(std::iter::from_fn(|| event_rx.try_recv().ok()))
-        {
-            let rescan_dispatched = match mode {
-                WatcherMode::Native => &mut native_rescan_dispatched,
-                WatcherMode::Poll => &mut poll_rescan_dispatched,
-            };
-            if event.as_ref().is_ok_and(notify::Event::need_rescan) {
-                if *rescan_dispatched {
-                    continue;
-                }
-                *rescan_dispatched = true;
-            }
-
-            self.dispatch(mode, event);
-        }
+        dispatch_batch(self.kind, &self.state, first, event_rx);
     }
 
     fn start_native_watch_limit_cooldown(&self, path: &Path) {
@@ -983,56 +1045,36 @@ impl GlobalWatcher {
 
     pub fn remove(&self, id: WatcherRegistrationId) {
         let mut state = self.state.lock();
-        let Some((path, mode)) = state.remove_registration(id) else {
+        let Some(path) = state.remove_registration(id) else {
             return;
         };
         drop(state);
-        self.unwatch(path.as_path(), mode).log_err();
+        self.unwatch(path.as_path()).log_err();
     }
 
-    fn watch(&self, path: &Path, mode: WatcherMode) -> anyhow::Result<()> {
-        match mode {
-            WatcherMode::Native => {
-                self.ensure_native_watcher()?;
-                self.native_watcher
-                    .lock()
-                    .as_mut()
-                    .expect("native watcher initialized")
-                    .watch(
-                        path,
-                        if cfg!(any(target_os = "windows", target_os = "macos")) {
-                            notify::RecursiveMode::Recursive
-                        } else {
-                            notify::RecursiveMode::NonRecursive
-                        },
-                    )?;
-            }
-            WatcherMode::Poll => {
-                self.ensure_poll_watcher()?;
-                self.poll_watcher
-                    .lock()
-                    .as_mut()
-                    .expect("poll watcher initialized")
-                    .watch(path, notify::RecursiveMode::Recursive)?;
-            }
-        }
-
+    fn watch(&self, path: &Path) -> anyhow::Result<()> {
+        self.ensure_backend()?;
+        self.backend
+            .lock()
+            .as_mut()
+            .expect("watcher backend initialized")
+            .watch(
+                path,
+                if self.recursive {
+                    notify::RecursiveMode::Recursive
+                } else {
+                    notify::RecursiveMode::NonRecursive
+                },
+            )?;
         Ok(())
     }
 
-    fn unwatch(&self, path: &Path, mode: WatcherMode) -> anyhow::Result<()> {
-        let watcher = match mode {
-            WatcherMode::Native => self
-                .native_watcher
-                .lock()
-                .as_mut()
-                .map(|watcher| watcher.unwatch(path)),
-            WatcherMode::Poll => self
-                .poll_watcher
-                .lock()
-                .as_mut()
-                .map(|watcher| watcher.unwatch(path)),
-        };
+    fn unwatch(&self, path: &Path) -> anyhow::Result<()> {
+        let watcher = self
+            .backend
+            .lock()
+            .as_mut()
+            .map(|watcher| watcher.unwatch(path));
 
         match watcher {
             // inotify auto-removes a watch when its directory is deleted, so a
@@ -1045,40 +1087,129 @@ impl GlobalWatcher {
         }
     }
 
-    fn ensure_native_watcher(&self) -> anyhow::Result<()> {
+    pub(crate) fn ensure_backend(&self) -> anyhow::Result<()> {
         // The lock is held across creation: with a check-then-insert under two
         // separate lock acquisitions, concurrent callers could each create a
         // watcher and the loser's insert would silently drop the winner's
         // watcher along with every path registered on it.
-        let mut native_watcher = self.native_watcher.lock();
-        if native_watcher.is_none() {
-            // CORE excludes Access events, which Zed discards anyway. Without this,
-            // the default mask subscribes to inotify OPEN/CLOSE_* on Linux, so every
-            // file read in a watched directory would queue events, increasing the
-            // risk of queue overflows (and thus full rescans) under read-heavy
-            // workloads like grep or language server indexing.
-            let config = notify::Config::default().with_event_kinds(notify::EventKindMask::CORE);
-            let watcher = <notify::RecommendedWatcher as notify::Watcher>::new(
-                |event| global_watcher().enqueue(WatcherMode::Native, event),
-                config,
-            )?;
-            *native_watcher = Some(Box::new(watcher));
+        let mut backend = self.backend.lock();
+        if backend.is_none() {
+            *backend = Some(match self.kind {
+                OsWatcherKind::Native => {
+                    // CORE excludes Access events, which Zed discards anyway. Without this,
+                    // the default mask subscribes to inotify OPEN/CLOSE_* on Linux, so every
+                    // file read in a watched directory would queue events, increasing the
+                    // risk of queue overflows (and thus full rescans) under read-heavy
+                    // workloads like grep or language server indexing.
+                    let config =
+                        notify::Config::default().with_event_kinds(notify::EventKindMask::CORE);
+                    Box::new(<notify::RecommendedWatcher as notify::Watcher>::new(
+                        self.event_sink(),
+                        config,
+                    )?)
+                }
+                OsWatcherKind::Poll => {
+                    let config = notify::Config::default().with_poll_interval(*POLL_INTERVAL);
+                    Box::new(notify::PollWatcher::new(self.event_sink(), config)?)
+                }
+            });
         }
         Ok(())
+    }
+}
+
+fn dispatch(
+    kind: OsWatcherKind,
+    state: &Mutex<WatcherState>,
+    event: notify::Result<notify::Event>,
+) {
+    let event = match event {
+        Ok(event) => event,
+        Err(error) => {
+            log::warn!("{kind:?} watcher error: {error}");
+            return;
+        }
+    };
+
+    log::trace!("handle {kind:?} watcher event: {event:?}");
+
+    let callbacks = {
+        let state = state.lock();
+        if event.need_rescan() {
+            let callbacks = state
+                .watchers
+                .values()
+                .map(|registration| registration.callback.clone())
+                .collect::<Vec<_>>();
+            log::warn!(
+                "{kind:?} filesystem watcher lost sync; scheduling rescans for {} registrations",
+                callbacks.len()
+            );
+            callbacks
+        } else {
+            let mut ids = Vec::new();
+            for path in &event.paths {
+                let sanitized = SanitizedPath::new(path);
+                state.paths.watcher_ids_covering(sanitized, &mut ids);
+            }
+            ids.sort_unstable_by_key(|id| id.0);
+            ids.dedup();
+            ids.into_iter()
+                .filter_map(|id| state.watchers.get(&id))
+                .map(|registration| registration.callback.clone())
+                .collect::<Vec<_>>()
+        }
+    };
+
+    for callback in callbacks {
+        callback(&event);
+    }
+}
+
+fn dispatch_batch(
+    kind: OsWatcherKind,
+    state: &Mutex<WatcherState>,
+    first: notify::Result<notify::Event>,
+    event_rx: &async_channel::Receiver<notify::Result<notify::Event>>,
+) {
+    // A single backend overflow can enqueue many pathless rescan markers, each
+    // of which rescans every watched root, so one covers the entire
+    // drained batch. Rescans that name paths only cover those subtrees and are
+    // all dispatched; ordinary events still run.
+    let mut rescan_dispatched = false;
+
+    for event in std::iter::once(first).chain(std::iter::from_fn(|| event_rx.try_recv().ok())) {
+        if event
+            .as_ref()
+            .is_ok_and(|event| event.need_rescan() && event.paths.is_empty())
+        {
+            if rescan_dispatched {
+                continue;
+            }
+            rescan_dispatched = true;
+        }
+
+        dispatch(kind, state, event);
+    }
+}
+
+fn enqueue(
+    event_tx: &async_channel::Sender<notify::Result<notify::Event>>,
+    event: notify::Result<notify::Event>,
+) {
+    if matches!(
+        event,
+        Ok(Event {
+            kind: EventKind::Access(_),
+            ..
+        })
+    ) {
+        return;
     }
 
-    fn ensure_poll_watcher(&self) -> anyhow::Result<()> {
-        let mut poll_watcher = self.poll_watcher.lock();
-        if poll_watcher.is_none() {
-            let config = notify::Config::default().with_poll_interval(*POLL_INTERVAL);
-            let watcher = notify::PollWatcher::new(
-                |event| global_watcher().enqueue(WatcherMode::Poll, event),
-                config,
-            )?;
-            *poll_watcher = Some(Box::new(watcher));
-        }
-        Ok(())
-    }
+    // A failed send only happens once the dispatch thread has shut down, at
+    // which point there's nothing left to dispatch to.
+    event_tx.try_send(event).ok();
 }
 
 fn is_max_files_watch_error(error: &anyhow::Error) -> bool {
@@ -1107,34 +1238,6 @@ static NATIVE_WATCH_LIMIT_COOLDOWN: LazyLock<Duration> = LazyLock::new(|| {
 
 pub fn poll_interval() -> Duration {
     *POLL_INTERVAL
-}
-
-static FS_WATCHER_INSTANCE: OnceLock<GlobalWatcher> = OnceLock::new();
-
-fn global_watcher() -> &'static GlobalWatcher {
-    FS_WATCHER_INSTANCE.get_or_init(|| {
-        let (event_tx, event_rx) = async_channel::unbounded::<DispatchEvent>();
-        std::thread::Builder::new()
-            .name("fs-watcher-dispatch".to_owned())
-            .spawn(move || {
-                while let Ok(first) = event_rx.recv_blocking() {
-                    global_watcher().dispatch_batch(first, &event_rx);
-                }
-            })
-            .expect("failed to spawn fs watcher dispatch thread");
-        GlobalWatcher {
-            state: Mutex::new(WatcherState {
-                watchers: Default::default(),
-                native_path_registrations: Default::default(),
-                poll_path_registrations: Default::default(),
-                cooldown_until: None,
-                last_registration: Default::default(),
-            }),
-            native_watcher: Mutex::new(None),
-            poll_watcher: Mutex::new(None),
-            event_tx,
-        }
-    })
 }
 
 #[cfg(test)]
@@ -1190,37 +1293,30 @@ mod tests {
         }
     }
 
-    fn test_watcher(poll_watcher: Arc<Mutex<FakeWatchBackend>>) -> GlobalWatcher {
-        test_watcher_with_backends(None, Some(poll_watcher))
-    }
-
-    fn test_watcher_with_backends(
-        native_watcher: Option<Arc<Mutex<FakeWatchBackend>>>,
-        poll_watcher: Option<Arc<Mutex<FakeWatchBackend>>>,
-    ) -> GlobalWatcher {
-        // Tests call `handle_event` directly to exercise dispatch synchronously,
+    fn test_os_watcher(
+        kind: OsWatcherKind,
+        backend: Option<Arc<Mutex<FakeWatchBackend>>>,
+    ) -> OsWatcher {
+        // Tests call `dispatch` directly to exercise dispatch synchronously,
         // rather than going through the OS watcher callbacks, so nothing is ever
         // sent on this channel; the receiver can just be dropped.
         let (event_tx, _event_rx) = async_channel::unbounded();
-        GlobalWatcher {
-            state: Mutex::new(WatcherState {
+        OsWatcher {
+            kind,
+            recursive: kind.is_recursive(),
+            state: Arc::new(Mutex::new(WatcherState {
                 watchers: Default::default(),
-                native_path_registrations: Default::default(),
-                poll_path_registrations: Default::default(),
+                paths: Default::default(),
                 cooldown_until: None,
                 last_registration: Default::default(),
-            }),
-            native_watcher: Mutex::new(
-                native_watcher.map(|watcher| {
-                    Box::new(SharedFakeWatchBackend(watcher)) as Box<dyn WatchBackend>
-                }),
-            ),
-            poll_watcher: Mutex::new(
-                poll_watcher.map(|watcher| {
+            })),
+            backend: Mutex::new(
+                backend.map(|watcher| {
                     Box::new(SharedFakeWatchBackend(watcher)) as Box<dyn WatchBackend>
                 }),
             ),
             event_tx,
+            _dispatch_task: Task::ready(()),
         }
     }
 
@@ -1235,16 +1331,16 @@ mod tests {
     #[test]
     fn covered_child_registration_is_not_unwatched_after_parent_is_removed() {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let watcher = test_watcher(backend.clone());
+        let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
         let parent = Arc::<Path>::from(Path::new("/repo"));
         let child = Arc::<Path>::from(Path::new("/repo/foo.csproj"));
 
         let parent_registration = watcher
-            .add(parent.as_ref().into(), WatcherMode::Poll, false, |_| {})
+            .add(parent.as_ref().into(), false, |_| {})
             .expect("add parent watch")
             .expect("parent watch registered");
         let child_registration = watcher
-            .add(child.as_ref().into(), WatcherMode::Poll, false, |_| {})
+            .add(child.as_ref().into(), false, |_| {})
             .expect("add covered child watch")
             .expect("child watch registered");
 
@@ -1263,7 +1359,14 @@ mod tests {
 
         let (tx, rx) = async_channel::unbounded();
         let pending_path_events: Arc<Mutex<Vec<PathEvent>>> = Default::default();
-        let watcher = FsWatcher::new(cx.executor(), tx, pending_path_events.clone());
+        let watcher = FsWatcher::new(
+            OsWatcher::new(OsWatcherKind::Native, cx.executor()),
+            OsWatcher::new(OsWatcherKind::Poll, cx.executor()),
+            crate::RealFs::new(None, cx.executor()),
+            cx.executor(),
+            tx,
+            pending_path_events.clone(),
+        );
 
         watcher
             .add(&path)
@@ -1312,16 +1415,15 @@ mod tests {
             fail_with_watch_limit: true,
             ..Default::default()
         }));
-        let poll_backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let watcher = test_watcher_with_backends(Some(native_backend.clone()), Some(poll_backend));
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(native_backend.clone()));
         let first_path = Arc::<Path>::from(Path::new("/repo/first"));
         let second_path = Arc::<Path>::from(Path::new("/repo/second"));
 
         let first_registration = watcher
-            .add(first_path.clone(), WatcherMode::Native, false, |_| {})
+            .add(first_path.clone(), false, |_| {})
             .expect("native watch limit is handled");
         let second_registration = watcher
-            .add(second_path, WatcherMode::Native, false, |_| {})
+            .add(second_path, false, |_| {})
             .expect("native watch limit backoff is handled");
 
         assert!(first_registration.is_none());
@@ -1338,22 +1440,17 @@ mod tests {
         }
     }
 
-    fn recording_watcher() -> (GlobalWatcher, Arc<Mutex<Vec<String>>>) {
+    fn recording_watcher() -> (OsWatcher, Arc<Mutex<Vec<String>>>) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let watcher = test_watcher_with_backends(Some(backend), None);
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend));
         let fired = Arc::new(Mutex::new(Vec::new()));
         for dir in ["/repo/a", "/repo/a/nested", "/repo/b"] {
             let fired = fired.clone();
             let label = dir.to_owned();
             watcher
-                .add(
-                    Arc::<Path>::from(Path::new(dir)),
-                    WatcherMode::Native,
-                    false,
-                    move |_| {
-                        fired.lock().push(label.clone());
-                    },
-                )
+                .add(Arc::<Path>::from(Path::new(dir)), false, move |_| {
+                    fired.lock().push(label.clone());
+                })
                 .expect("add watch")
                 .expect("watch registered");
         }
@@ -1364,7 +1461,7 @@ mod tests {
     fn event_dispatches_only_to_registrations_covering_its_path() {
         let (watcher, fired) = recording_watcher();
 
-        watcher.dispatch(WatcherMode::Native, Ok(modify_event("/repo/a/file.txt")));
+        watcher.dispatch(Ok(modify_event("/repo/a/file.txt")));
 
         // Only the directory containing the file resolves; siblings stay untouched.
         assert_eq!(*fired.lock(), vec!["/repo/a".to_owned()]);
@@ -1374,10 +1471,7 @@ mod tests {
     fn event_dispatches_to_every_ancestor_registration() {
         let (watcher, fired) = recording_watcher();
 
-        watcher.dispatch(
-            WatcherMode::Native,
-            Ok(modify_event("/repo/a/nested/file.txt")),
-        );
+        watcher.dispatch(Ok(modify_event("/repo/a/nested/file.txt")));
 
         // Both the directory containing the file and the ancestor watching it
         // resync, each exactly once, matching the previous broadcast-and-filter
@@ -1428,84 +1522,56 @@ mod tests {
     #[test]
     fn case_insensitive_registration_matches_differently_cased_event() {
         let (fired, cb) = fired_count();
-        let watcher = test_watcher_with_backends(Some(Default::default()), None);
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(Default::default()));
         watcher
-            .add(
-                Path::new("/Repo/Project").into(),
-                WatcherMode::Native,
-                true,
-                cb,
-            )
+            .add(Path::new("/Repo/Project").into(), true, cb)
             .expect("add")
             .expect("registered");
 
         // Event arrives lowercased (as TSGO/macOS may report it).
-        watcher.dispatch(
-            WatcherMode::Native,
-            Ok(modify_event("/repo/project/file.txt")),
-        );
+        watcher.dispatch(Ok(modify_event("/repo/project/file.txt")));
         assert_eq!(*fired.lock(), 1);
     }
 
     #[test]
     fn case_insensitive_registration_survives_case_only_rename() {
         let (fired, cb) = fired_count();
-        let watcher = test_watcher_with_backends(Some(Default::default()), None);
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(Default::default()));
         watcher
-            .add(
-                Path::new("/Repo/Proj").into(),
-                WatcherMode::Native,
-                true,
-                cb,
-            )
+            .add(Path::new("/Repo/Proj").into(), true, cb)
             .expect("add")
             .expect("registered");
 
         // The watched directory was renamed to a different casing; events now
         // arrive under the new spelling.
-        watcher.dispatch(WatcherMode::Native, Ok(modify_event("/Repo/PROJ/file.txt")));
+        watcher.dispatch(Ok(modify_event("/Repo/PROJ/file.txt")));
         assert_eq!(*fired.lock(), 1);
     }
 
     #[test]
     fn case_sensitive_registration_ignores_differently_cased_event() {
         let (fired, cb) = fired_count();
-        let watcher = test_watcher_with_backends(Some(Default::default()), None);
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(Default::default()));
         watcher
-            .add(
-                Path::new("/Repo/proj").into(),
-                WatcherMode::Native,
-                false,
-                cb,
-            )
+            .add(Path::new("/Repo/proj").into(), false, cb)
             .expect("add")
             .expect("registered");
 
         // On a case-sensitive volume these are genuinely different directories.
-        watcher.dispatch(WatcherMode::Native, Ok(modify_event("/Repo/PROJ/file.txt")));
+        watcher.dispatch(Ok(modify_event("/Repo/PROJ/file.txt")));
         assert_eq!(*fired.lock(), 0);
     }
 
     #[test]
     fn differently_cased_adds_dedupe_on_case_insensitive_volume() {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let watcher = test_watcher_with_backends(Some(backend.clone()), None);
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
         watcher
-            .add(
-                Path::new("/Repo/Proj").into(),
-                WatcherMode::Native,
-                true,
-                |_| {},
-            )
+            .add(Path::new("/Repo/Proj").into(), true, |_| {})
             .expect("add")
             .expect("registered");
         watcher
-            .add(
-                Path::new("/repo/proj").into(),
-                WatcherMode::Native,
-                true,
-                |_| {},
-            )
+            .add(Path::new("/repo/proj").into(), true, |_| {})
             .expect("add")
             .expect("registered");
 
@@ -1516,18 +1582,13 @@ mod tests {
     #[test]
     fn recursive_parent_covers_differently_cased_child() {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let watcher = test_watcher(backend.clone());
+        let watcher = test_os_watcher(OsWatcherKind::Poll, Some(backend.clone()));
         watcher
-            .add(Path::new("/Repo").into(), WatcherMode::Poll, true, |_| {})
+            .add(Path::new("/Repo").into(), true, |_| {})
             .expect("add")
             .expect("registered");
         watcher
-            .add(
-                Path::new("/repo/child").into(),
-                WatcherMode::Poll,
-                true,
-                |_| {},
-            )
+            .add(Path::new("/repo/child").into(), true, |_| {})
             .expect("add");
 
         // The child is covered by the recursive parent despite the case mismatch.
@@ -1535,14 +1596,14 @@ mod tests {
     }
 
     #[test]
-    fn rescan_event_broadcasts_to_all_registrations_of_the_same_mode() {
+    fn rescan_event_broadcasts_to_all_registrations_of_the_same_backend() {
         let (watcher, fired) = recording_watcher();
 
         let rescan = notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
-        watcher.dispatch(WatcherMode::Native, Ok(rescan));
+        watcher.dispatch(Ok(rescan));
 
         // A pathless rescan may have missed events anywhere, so every registration
-        // of that mode resyncs, regardless of which directory it watches.
+        // of that backend resyncs, regardless of which directory it watches.
         let mut got = fired.lock().clone();
         got.sort();
         assert_eq!(
@@ -1561,13 +1622,11 @@ mod tests {
         let (event_tx, event_rx) = async_channel::unbounded();
         let rescan = || notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
 
+        event_tx.try_send(Ok(rescan())).unwrap();
         event_tx
-            .try_send((WatcherMode::Native, Ok(rescan())))
+            .try_send(Ok(modify_event("/repo/a/file.txt")))
             .unwrap();
-        event_tx
-            .try_send((WatcherMode::Native, Ok(modify_event("/repo/a/file.txt"))))
-            .unwrap();
-        watcher.dispatch_batch((WatcherMode::Native, Ok(rescan())), &event_rx);
+        watcher.dispatch_batch(Ok(rescan()), &event_rx);
 
         let mut got = fired.lock().clone();
         got.sort();
@@ -1583,20 +1642,50 @@ mod tests {
     }
 
     #[test]
+    fn queued_rescans_naming_distinct_paths_are_all_dispatched() {
+        let (watcher, fired) = recording_watcher();
+        let (event_tx, event_rx) = async_channel::unbounded();
+        let rescan_of = |path: &str| {
+            notify::Event::new(EventKind::Other)
+                .set_flag(notify::event::Flag::Rescan)
+                .add_path(PathBuf::from(path))
+        };
+
+        event_tx.try_send(Ok(rescan_of("/repo/b"))).unwrap();
+        watcher.dispatch_batch(Ok(rescan_of("/repo/a/nested")), &event_rx);
+
+        // Each named rescan only covers its own subtree once it reaches the
+        // callbacks, so collapsing the second one would lose /repo/b's resync.
+        // Both are broadcast to every registration of the backend.
+        let mut got = fired.lock().clone();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "/repo/a".to_owned(),
+                "/repo/a".to_owned(),
+                "/repo/a/nested".to_owned(),
+                "/repo/a/nested".to_owned(),
+                "/repo/b".to_owned(),
+                "/repo/b".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
     #[cfg(target_os = "windows")]
     fn event_dispatches_when_reported_path_has_verbatim_prefix() {
         // `notify` (and Windows APIs generally) can report a changed path using the
         // verbatim `\\?\` long-path form even when the directory was registered
         // without it.
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let watcher = test_watcher_with_backends(Some(backend), None);
+        let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend));
         let fired = Arc::new(Mutex::new(Vec::new()));
         {
             let fired = fired.clone();
             watcher
                 .add(
                     Arc::<Path>::from(Path::new("C:\\repo\\src")),
-                    WatcherMode::Native,
                     false,
                     move |_| fired.lock().push(()),
                 )
@@ -1604,10 +1693,7 @@ mod tests {
                 .expect("watch registered");
         }
 
-        watcher.dispatch(
-            WatcherMode::Native,
-            Ok(modify_event("\\\\?\\C:\\repo\\src\\main.rs")),
-        );
+        watcher.dispatch(Ok(modify_event("\\\\?\\C:\\repo\\src\\main.rs")));
 
         assert_eq!(fired.lock().len(), 1);
     }
@@ -1674,10 +1760,4 @@ mod tests {
             );
         }
     }
-}
-
-pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
-    let global_watcher = global_watcher();
-    global_watcher.ensure_native_watcher()?;
-    Ok(f(global_watcher))
 }

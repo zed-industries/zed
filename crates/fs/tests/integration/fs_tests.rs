@@ -631,11 +631,11 @@ async fn test_fake_fs_rename_ignore_if_exists_leaves_source_and_target_unchanged
         "from target"
     );
 
-    // An ignored rename must not be recorded as a move either, or a handle held
-    // across it reports a path its file never went to.
-    assert!(
-        handle.current_path(&(fs.clone() as Arc<dyn Fs>)).is_err(),
-        "an ignored rename should not record a move"
+    // A handle held across an ignored rename must keep reporting the path the
+    // file is actually at, not the one it never went to.
+    assert_eq!(
+        handle.current_path(&(fs.clone() as Arc<dyn Fs>)).unwrap(),
+        PathBuf::from(path!("/root/source.txt"))
     );
 }
 
@@ -664,6 +664,49 @@ async fn test_fake_fs_rename_onto_itself_keeps_the_file(executor: BackgroundExec
 
     assert!(result.is_ok());
     assert_eq!(fs.load(path).await.unwrap(), "content");
+}
+
+#[gpui::test]
+#[cfg(unix)]
+async fn test_realfs_executable_metadata(executor: BackgroundExecutor) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tempdir = TempDir::new().unwrap();
+    let path = tempdir.path();
+    let non_executable_path = path.join("non-executable.sh");
+    let executable_path = path.join("executable.sh");
+    let symlink_path = path.join("executable-symlink.sh");
+
+    std::fs::write(&non_executable_path, "#!/bin/sh\n").unwrap();
+    std::fs::write(&executable_path, "#!/bin/sh\n").unwrap();
+    let mut permissions = std::fs::metadata(&executable_path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&executable_path, permissions).unwrap();
+
+    let fs = RealFs::new(None, executor);
+    gpui::block_on(fs.create_symlink(&symlink_path, PathBuf::from("executable.sh"))).unwrap();
+
+    let non_executable_metadata = fs
+        .metadata(&non_executable_path)
+        .await
+        .expect("metadata call succeeds")
+        .expect("metadata returned");
+    assert!(!non_executable_metadata.is_executable);
+
+    let executable_metadata = fs
+        .metadata(&executable_path)
+        .await
+        .expect("metadata call succeeds")
+        .expect("metadata returned");
+    assert!(executable_metadata.is_executable);
+
+    let symlink_metadata = fs
+        .metadata(&symlink_path)
+        .await
+        .expect("metadata call succeeds")
+        .expect("metadata returned");
+    assert!(symlink_metadata.is_symlink);
+    assert!(symlink_metadata.is_executable);
 }
 
 #[gpui::test]

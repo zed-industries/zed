@@ -23,7 +23,7 @@ use gpui::{
     BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
     VisualTestContext, WindowBounds, WindowOptions, div,
 };
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 use language::{
     BracketPair, BracketPairConfig,
     Capability::{Read, ReadOnly, ReadWrite},
@@ -7038,22 +7038,8 @@ async fn test_join_lines_strips_comment_prefix(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     {
-        let language = Arc::new(Language::new(
-            LanguageConfig {
-                line_comments: vec!["// ".into(), "/// ".into()],
-                documentation_comment: Some(BlockCommentConfig {
-                    start: "/*".into(),
-                    end: "*/".into(),
-                    prefix: "* ".into(),
-                    tab_size: 1,
-                }),
-                ..LanguageConfig::default()
-            },
-            None,
-        ));
-
         let mut cx = EditorTestContext::new(cx).await;
-        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
 
         // Strips the comment prefix (with trailing space) from the joined-in line.
         cx.set_state(indoc! {"
@@ -7117,22 +7103,30 @@ async fn test_join_lines_strips_comment_prefix(cx: &mut TestAppContext) {
 
         // Strips block comment body prefix (`* `) from the joined-in line.
         cx.set_state(indoc! {"
+            /*
              * ˇfoo
              * bar
+             */
         "});
         cx.update_editor(|e, window, cx| e.join_lines(&JoinLines, window, cx));
         cx.assert_editor_state(indoc! {"
+            /*
              * fooˇ bar
+             */
         "});
 
         // Strips bare block comment body prefix (`*` without trailing space).
         cx.set_state(indoc! {"
+            /*
              * ˇfoo
              *
+             */
         "});
         cx.update_editor(|e, window, cx| e.join_lines(&JoinLines, window, cx));
         cx.assert_editor_state(indoc! {"
+            /*
              * fooˇ
+             */
         "});
     }
 
@@ -7205,6 +7199,92 @@ async fn test_join_lines_strips_comment_prefix(cx: &mut TestAppContext) {
         cx.assert_editor_state(indoc! {"
             - fooˇbar
         "});
+    }
+}
+
+#[gpui::test]
+async fn test_join_lines_preserves_rust_operators(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+
+    for insert_whitespace in [true, false] {
+        let separator = if insert_whitespace { " " } else { "" };
+        for indent in ["", "    ", "\t"] {
+            for (first_line, next_line) in [
+                ("let value =", "*pointer;"),
+                ("let value =", "* pointer;"),
+                ("let value =", "**pointer;"),
+                ("let value =", "*指针;"),
+                ("let value = 2", "* 3;"),
+                ("let value = \"text", "*text\";"),
+                ("let value = r#\"text", "*text\"#;"),
+            ] {
+                cx.set_state(&formatdoc! {"
+                    fn main() {{
+                        {first_line}ˇ
+                    {indent}{next_line}
+                    }}"});
+                cx.update_editor(|editor, window, cx| {
+                    editor.join_lines_impl(insert_whitespace, window, cx)
+                });
+                cx.assert_editor_state(&formatdoc! {"
+                    fn main() {{
+                        {first_line}ˇ{separator}{next_line}
+                    }}"});
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_join_lines_rust_block_comments(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+
+    for insert_whitespace in [true, false] {
+        let separator = if insert_whitespace { " " } else { "" };
+        for start in ["/*", "/**", "/*!"] {
+            for next_line in ["* bar", "*bar"] {
+                cx.set_state(&formatdoc! {"
+                    {start}
+                     * fooˇ
+                     {next_line}
+                     */"});
+                cx.update_editor(|editor, window, cx| {
+                    editor.join_lines_impl(insert_whitespace, window, cx)
+                });
+                cx.assert_editor_state(&formatdoc! {"
+                    {start}
+                     * fooˇ{separator}bar
+                     */"});
+            }
+
+            cx.set_state(&formatdoc! {"
+                {start}
+                 * fooˇ
+                 *
+                 */"});
+            cx.update_editor(|editor, window, cx| {
+                editor.join_lines_impl(insert_whitespace, window, cx)
+            });
+            cx.assert_editor_state(&formatdoc! {"
+                {start}
+                 * fooˇ
+                 */"});
+
+            cx.set_state(&formatdoc! {"
+                {start}
+                 * fooˇ
+                 */"});
+            cx.update_editor(|editor, window, cx| {
+                editor.join_lines_impl(insert_whitespace, window, cx)
+            });
+            cx.assert_editor_state(&formatdoc! {"
+                {start}
+                 * fooˇ{separator}*/"});
+        }
     }
 }
 
