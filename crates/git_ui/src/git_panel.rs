@@ -7696,43 +7696,31 @@ impl GitPanel {
         })
     }
 
-    fn deploy_entry_context_menu(
-        &mut self,
-        position: Point<Pixels>,
-        ix: usize,
+    fn build_entry_context_menu(
+        &self,
+        is_created: bool,
+        is_staged: bool,
+        is_deleted: bool,
+        is_dir: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        if matches!(self.entries.get(ix), Some(GitListEntry::Directory(_))) {
-            self.selected_entry = Some(ix);
-            self.deploy_panel_context_menu(position, Some(ix), true, window, cx);
-            return;
-        }
+    ) -> Entity<ContextMenu> {
+        let stage_title = match (is_dir, is_staged) {
+            (true, true) => "Unstage Folder",
+            (true, false) => "Stage Folder",
+            (false, true) => "Unstage File",
+            (false, false) => "Stage File",
+        };
 
-        let stage_intent = self.stage_intent_for_entry_index(ix);
-        let Some(entry) = self.entries.get(ix).and_then(|e| e.status_entry()) else {
-            return;
+        let restore_title = match (is_dir, is_created, is_deleted) {
+            (true, true, _) => "Trash Folder",
+            (true, false, _) => "Discard Changes",
+            (false, true, _) => "Trash File",
+            (false, _, true) => "Restore File",
+            (false, _, _) => "Discard Changes",
         };
-        // Resolve against the pending-op-aware status (like the checkboxes do)
-        // so the menu label can't lag behind a just-clicked checkbox.
-        let repo = self.active_repository.as_ref().map(|repo| repo.read(cx));
-        let stage_title = if stage_intent.resolve_with(|| match repo {
-            Some(repo) => GitPanel::stage_status_for_entry(entry, repo),
-            None => entry.status.staging(),
-        }) {
-            "Stage File"
-        } else {
-            "Unstage File"
-        };
-        let restore_title = if entry.status.is_created() {
-            "Trash File"
-        } else if entry.status.is_deleted() {
-            "Restore File"
-        } else {
-            "Discard Changes"
-        };
-        let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
-            let is_created = entry.status.is_created();
+
+        ContextMenu::build(window, cx, |context_menu, _, _| {
             context_menu
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
@@ -7747,25 +7735,57 @@ impl GitPanel {
                 .action_disabled_when(
                     !is_created,
                     "Add to .gitignore",
-                    git::AddToGitignore.boxed_clone(),
+                    AddToGitignore.boxed_clone(),
                 )
                 .action_disabled_when(
                     !is_created,
                     "Add to .git/info/exclude",
-                    git::AddToGitInfoExclude.boxed_clone(),
+                    AddToGitInfoExclude.boxed_clone(),
                 )
                 .separator()
                 .action("Open Diff", menu::Confirm.boxed_clone())
-                .action("Open File Diff", menu::SecondaryConfirm.boxed_clone())
-                .action("View File", ViewFile.boxed_clone())
-                .when(!is_created, |context_menu| {
+                .when(!is_dir, |context_menu| {
+                    context_menu
+                        .action("Open File Diff", menu::SecondaryConfirm.boxed_clone())
+                        .action("View File", ViewFile.boxed_clone())
+                })
+                .when(!is_dir && !is_created, |context_menu| {
                     context_menu
                         .separator()
                         .action("View File History", Box::new(git::FileHistory))
                 })
+        })
+    }
+
+    fn deploy_entry_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let stage_intent = self.stage_intent_for_entry_index(ix);
+        let Some(entry) = self.entries.get(ix).and_then(|e| e.status_entry()) else {
+            return;
+        };
+        // Resolve against the pending-op-aware status (like the checkboxes do)
+        // so the menu label can't lag behind a just-clicked checkbox.
+        let repo = self.active_repository.as_ref().map(|repo| repo.read(cx));
+        let is_created = entry.status.is_created();
+        let is_deleted = entry.status.is_deleted();
+        let is_staged = !stage_intent.resolve_with(|| match repo {
+            Some(repo) => GitPanel::stage_status_for_entry(entry, repo),
+            None => entry.status.staging(),
         });
+
         self.selected_entry = Some(ix);
-        self.set_context_menu(context_menu, position, None, window, cx);
+        self.set_context_menu(
+            self.build_entry_context_menu(is_created, is_staged, is_deleted, false, window, cx),
+            position,
+            None,
+            window,
+            cx,
+        );
     }
 
     fn deploy_panel_context_menu(
@@ -7823,6 +7843,10 @@ impl GitPanel {
         let Some(entries) = self.directory_descendants(ix) else {
             return;
         };
+        // Check whether we need to do the same `resolve_with` call as found in
+        // `deploy_entry_context_menu` as I suspect that, not doing it, means we
+        // can get a wrong label if we have a process that is still staging or
+        // unstaging the folder.
         let stage_status = if let Some(repo) = &self.active_repository {
             self.stage_status_for_directory(&entry, repo.read(cx))
         } else {
@@ -7831,41 +7855,16 @@ impl GitPanel {
 
         let all_staged = stage_status.is_fully_staged();
         let all_created = entries.iter().all(|e| e.status.is_created());
+        let all_deleted = entries.iter().all(|e| e.status.is_deleted());
 
-        let stage_title = if all_staged {
-            "Unstage Folder"
-        } else {
-            "Stage Folder"
-        };
-        let restore_title = if all_created {
-            "Trash Folder"
-        } else {
-            "Discard Changes"
-        };
-        let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
-            context_menu
-                .context(self.focus_handle.clone())
-                .action(stage_title, ToggleStaged.boxed_clone())
-                .action(restore_title, RestoreFile::default().boxed_clone())
-                .separator()
-                .action("Copy Path", CopyPath.boxed_clone())
-                .action("Copy Relative Path", CopyRelativePath.boxed_clone())
-                .separator()
-                .action_disabled_when(
-                    !all_created,
-                    "Add to .gitignore",
-                    AddToGitignore.boxed_clone(),
-                )
-                .action_disabled_when(
-                    !all_created,
-                    "Add to .git/info/exclude",
-                    AddToGitInfoExclude.boxed_clone(),
-                )
-                .separator()
-                .action("Open Diff", menu::Confirm.boxed_clone())
-        });
         self.selected_entry = Some(ix);
-        self.set_context_menu(context_menu, position, None, window, cx);
+        self.set_context_menu(
+            self.build_entry_context_menu(all_created, all_staged, all_deleted, true, window, cx),
+            position,
+            None,
+            window,
+            cx,
+        );
     }
 
     fn set_context_menu(
