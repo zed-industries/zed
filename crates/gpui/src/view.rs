@@ -426,41 +426,41 @@ impl<V: View> Element for ViewElement<V> {
             };
             self.entity_id = Some(entity_id);
             window.node_engine.set_view_id(node_id, entity_id);
-            let (layout, element) = if let Some(layout) = window
-                .node_engine
-                .reuse_layout(node_id, &cache_key)
-                .filter(|layout| window.layout_is_retained(*layout))
-            {
-                window.finish_node_phase(node_id, false);
-                self.node_layout = Some(NodeViewLayout {
-                    layout,
-                    node_id,
-                    grafted: true,
-                    accessed_entities: window.node_engine.take_dependency_set(),
-                });
-                (layout, None)
-            } else {
-                window.restart_node_render(node_id);
-                let mut accessed_entities = window.node_engine.take_dependency_set();
-                let view = self.view.take().expect("view is rendered once per frame");
-                let (layout, element) = cx.track_reads(&mut accessed_entities, |cx| {
-                    window.with_rendered_view(entity_id, |window| {
-                        let mut element = view.render(window, cx).into_any_element();
-                        let layout = element.request_layout(window, cx);
-                        (layout, element)
-                    })
-                });
-                let previous = window.node_engine.store_layout(node_id, layout);
-                window.retire_layout(previous);
-                window.finish_node_phase(node_id, true);
-                self.node_layout = Some(NodeViewLayout {
-                    layout,
-                    node_id,
-                    grafted: false,
-                    accessed_entities,
-                });
-                (layout, Some(element))
-            };
+            let (layout, element) =
+                if let Some(layout) = window.node_engine.reuse_layout(node_id, &cache_key) {
+                    // A node painted in the previous frame has its root in the layout engine's
+                    // retained roots, which nothing drops out from under it.
+                    debug_assert!(window.layout_is_retained(layout));
+                    window.finish_node_phase(node_id, false);
+                    self.node_layout = Some(NodeViewLayout {
+                        layout,
+                        node_id,
+                        grafted: true,
+                        accessed_entities: window.node_engine.take_dependency_set(),
+                    });
+                    (layout, None)
+                } else {
+                    window.restart_node_render(node_id);
+                    let mut accessed_entities = window.node_engine.take_dependency_set();
+                    let view = self.view.take().expect("view is rendered once per frame");
+                    let (layout, element) = cx.track_reads(&mut accessed_entities, |cx| {
+                        window.with_rendered_view(entity_id, |window| {
+                            let mut element = view.render(window, cx).into_any_element();
+                            let layout = element.request_layout(window, cx);
+                            (layout, element)
+                        })
+                    });
+                    let previous = window.node_engine.store_layout(node_id, layout);
+                    window.retire_layout(previous);
+                    window.finish_node_phase(node_id, true);
+                    self.node_layout = Some(NodeViewLayout {
+                        layout,
+                        node_id,
+                        grafted: false,
+                        accessed_entities,
+                    });
+                    (layout, Some(element))
+                };
             // `.cached(style)` predates node memoization; the style it supplies now simply
             // becomes the box the view is laid out in.
             let layout = match &self.cached_style {

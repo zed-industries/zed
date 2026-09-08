@@ -904,7 +904,6 @@ impl NodeEngine {
                 cache_key: cache_key.clone(),
                 previous_bounds: cache_key.bounds,
                 accessed_entities: DependencySet::new(),
-                painted: false,
                 painted_frame: 0,
                 dirty: true,
                 frame_bound: false,
@@ -954,7 +953,6 @@ impl NodeEngine {
                 cache_key: cache_key.clone(),
                 previous_bounds: cache_key.bounds,
                 accessed_entities: DependencySet::new(),
-                painted: false,
                 painted_frame: 0,
                 dirty: true,
                 frame_bound: false,
@@ -1041,7 +1039,6 @@ impl NodeEngine {
     ) -> Option<LayoutId> {
         let node = &self.nodes[node_id];
         if !self.full_refresh
-            && node.painted
             && node.painted_frame + 1 == self.frame
             && !node.dirty
             && !node.frame_bound
@@ -1196,7 +1193,6 @@ impl NodeEngine {
         accessed_entities.dedup();
         node.cache_key = cache_key;
         node.previous_bounds = new_bounds;
-        node.painted = true;
         node.output.retain_accessed_element_states();
         let previous_accesses = std::mem::replace(&mut node.accessed_entities, accessed_entities);
         Self::replace_dependencies(

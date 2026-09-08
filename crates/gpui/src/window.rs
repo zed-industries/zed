@@ -4951,8 +4951,10 @@ impl Window {
         }
     }
 
-    /// Whether a retained layout root is still in the layout tree. A node that was never
-    /// painted may have had its tree dropped with a frame-bound ancestor's.
+    /// Whether a layout root is still in the layout tree. A node reused into a frame was
+    /// painted in the previous one, and a painted root is never dropped by anyone but its
+    /// node, so this holds by construction; it is asserted, not relied on.
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub(crate) fn layout_is_retained(&self, layout: LayoutId) -> bool {
         self.layout_engine
             .as_ref()

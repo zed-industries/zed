@@ -366,12 +366,11 @@ pub(crate) struct ViewNode {
     pub(crate) cache_key: ViewNodeCacheKey,
     pub(crate) previous_bounds: Bounds<Pixels>,
     pub(crate) accessed_entities: crate::node_engine::DependencySet,
-    /// Whether the node has painted since it was mounted, so its output is complete.
-    pub(crate) painted: bool,
     /// The engine frame the node's scene record was last stored in, by a paint or a
-    /// replay. The record addresses that frame's scene, so the node can only be reused in
-    /// the frame right after it; a node prepainted but not painted in a frame renders
-    /// again the frame after that.
+    /// replay; zero until it first paints. The record addresses that frame's scene, so the
+    /// node can only be reused in the frame right after it; a node prepainted but not
+    /// painted in a frame renders again the frame after that. Painting also records the
+    /// node's layout root as retained, which is what keeps it in the layout tree.
     pub(crate) painted_frame: u64,
     /// Whether the node's recorded output is stale and must be rendered again. Set on
     /// mount, on a notification of something it read, and on every node under a full

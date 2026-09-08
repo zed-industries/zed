@@ -31,7 +31,7 @@ The engine (`node_engine.rs`, `NodeEngine`) is owned by the window. It holds:
   keeps its `output: NodeOutput` (the recording), `layout: Option<LayoutId>` (root of its
   retained Taffy subtree), `cache_key` (ambient inputs it was drawn under), `parent`,
   `children`, `accessed_entities` (what its render read), `view_id` (the entity whose
-  notify re-renders it), `painted`.
+  notify re-renders it), `painted_frame`.
 - `roots` / `next_roots` — the frame as an ordered list of root nodes (window root, then
   deferred roots by priority, then prompt / drag / tooltip). Queries walk this list.
 - `occurrences: FxHashMap<ViewOccurrence, ViewNodeId>` — how a mount finds its node again:

@@ -117,13 +117,17 @@ impl TaffyLayoutEngine {
         self.live.len()
     }
 
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub(crate) fn contains(&self, layout: LayoutId) -> bool {
         self.live.contains_key(layout.0.into())
     }
 
     /// Marks layout no node retains, to be dropped when the frame ends.
     pub(crate) fn mark_frame_node(&mut self, layout: LayoutId) {
-        self.frame_nodes.push(layout);
+        // `layout_as_root` computes the same root again when its available space changes.
+        if self.frame_nodes.last() != Some(&layout) {
+            self.frame_nodes.push(layout);
+        }
     }
 
     pub(crate) fn parent(&self, layout: LayoutId) -> Option<LayoutId> {
