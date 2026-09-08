@@ -1,6 +1,6 @@
 use std::{ops::RangeInclusive, time::Duration};
 
-use crate::{Hsla, Pixels, Rems, Rgba};
+use crate::{Interpolate, Pixels, Rems};
 
 const CRITICAL_DAMPING_TOLERANCE: f32 = 1e-4;
 const DEFAULT_SPRING_EPSILON: f32 = 0.001;
@@ -404,53 +404,6 @@ impl SpringTarget for AnimationPhase {
     }
 }
 
-/// A value that supports linear interpolation and extrapolation.
-pub trait Interpolate: Sized {
-    /// Resolves the value at `phase`, where 0 is `from` and 1 is `to`.
-    fn interpolate(from: Self, to: Self, phase: f32) -> Self;
-}
-
-impl Interpolate for f32 {
-    fn interpolate(from: Self, to: Self, phase: f32) -> Self {
-        from + (to - from) * phase
-    }
-}
-
-impl Interpolate for Pixels {
-    fn interpolate(from: Self, to: Self, phase: f32) -> Self {
-        from + (to - from) * phase
-    }
-}
-
-impl Interpolate for Rems {
-    fn interpolate(from: Self, to: Self, phase: f32) -> Self {
-        from + (to - from) * phase
-    }
-}
-
-impl Interpolate for Rgba {
-    fn interpolate(from: Self, to: Self, phase: f32) -> Self {
-        Self {
-            r: f32::interpolate(from.r, to.r, phase),
-            g: f32::interpolate(from.g, to.g, phase),
-            b: f32::interpolate(from.b, to.b, phase),
-            a: f32::interpolate(from.a, to.a, phase),
-        }
-    }
-}
-
-impl Interpolate for Hsla {
-    fn interpolate(from: Self, to: Self, phase: f32) -> Self {
-        let hue_delta = (to.h - from.h + 0.5).rem_euclid(1.0) - 0.5;
-        Self {
-            h: (from.h + hue_delta * phase).rem_euclid(1.0),
-            s: f32::interpolate(from.s, to.s, phase),
-            l: f32::interpolate(from.l, to.l, phase),
-            a: f32::interpolate(from.a, to.a, phase),
-        }
-    }
-}
-
 /// Controls how a spring advances and resolves its presentation value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SpringPlayback {
@@ -615,6 +568,7 @@ fn duration_from_secs(seconds: f32) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Hsla;
 
     const EPSILON: f32 = 1e-4;
 

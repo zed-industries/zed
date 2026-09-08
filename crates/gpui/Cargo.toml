@@ -230,6 +230,10 @@ name = "text_wrapper"
 path = "examples/text_wrapper.rs"
 
 [[example]]
+name = "style_transitions"
+path = "examples/style_transitions.rs"
+
+[[example]]
 name = "tree"
 path = "examples/tree.rs"
 
