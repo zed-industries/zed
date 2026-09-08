@@ -92,8 +92,24 @@ impl DisconnectedOverlay {
         self.finished = true;
         cx.emit(DismissEvent);
 
-        if let Host::RemoteServerProject(remote_connection_options, _) = &self.host {
-            self.reconnect_to_remote_project(remote_connection_options.clone(), window, cx);
+        match &self.host {
+            // A dev container may have stopped underneath us; a raw remote
+            // reconnect won't start it again, so route through the dev
+            // container lifecycle, which (re)starts the container first.
+            Host::RemoteServerProject(RemoteConnectionOptions::Docker(_), _) => {
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        crate::dev_container_lifecycle::reconnect_dev_container(
+                            workspace, window, cx,
+                        );
+                    });
+                }
+            }
+            Host::RemoteServerProject(remote_connection_options, _) => {
+                let options = remote_connection_options.clone();
+                self.reconnect_to_remote_project(options, window, cx);
+            }
+            Host::CollabGuestProject => {}
         }
     }
 

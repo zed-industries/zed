@@ -1,3 +1,4 @@
+mod dev_container_lifecycle;
 mod dev_container_suggest;
 pub mod disconnected_overlay;
 mod remote_connections;
@@ -18,6 +19,7 @@ use fs::Fs;
 mod wsl_picker;
 
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
+pub use dev_container_lifecycle::delete_dev_container_with_options;
 pub use remote_connection::{RemoteConnectionModal, connect, connect_with_modal};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 
@@ -38,7 +40,6 @@ pub use remote_servers::RemoteServerProjects;
 use settings::{DefaultOpenBehavior, Settings, WorktreeId};
 use workspace::ProjectGroupKey;
 
-use dev_container::{DevContainerContext, find_devcontainer_configs};
 use ui::{
     ButtonLike, ContextMenu, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
     ListSubHeader, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
@@ -49,7 +50,10 @@ use workspace::{
     SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
-use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
+use zed_actions::{
+    DeleteDevContainer, OpenDevContainer, OpenRecent, OpenRemote, RebuildDevContainer,
+    ReconnectDevContainer, RestartDevContainer, StopDevContainer,
+};
 
 actions!(
     recent_projects,
@@ -504,39 +508,32 @@ pub fn init(cx: &mut App) {
     cx.observe_new(DisconnectedOverlay::register).detach();
 
     cx.on_action(|_: &OpenDevContainer, cx| {
-        with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            if !workspace.project().read(cx).is_local() {
-                cx.spawn_in(window, async move |_, cx| {
-                    cx.prompt(
-                        gpui::PromptLevel::Critical,
-                        "Cannot open Dev Container from remote project",
-                        None,
-                        &["OK"],
-                    )
-                    .await
-                    .ok();
-                })
-                .detach();
-                return;
-            }
-
-            let fs = workspace.project().read(cx).fs().clone();
-            let configs = find_devcontainer_configs(workspace, cx);
-            let app_state = workspace.app_state().clone();
-            let dev_container_context = DevContainerContext::from_workspace(workspace, cx);
-            let handle = cx.entity().downgrade();
-            workspace.toggle_modal(window, cx, |window, cx| {
-                RemoteServerProjects::new_dev_container(
-                    fs,
-                    configs,
-                    app_state,
-                    dev_container_context,
-                    window,
-                    handle,
-                    cx,
-                )
-            });
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            dev_container_lifecycle::open_dev_container_modal(workspace, false, window, cx);
         });
+    });
+
+    cx.on_action(|_: &StopDevContainer, cx| {
+        with_active_or_new_workspace(cx, dev_container_lifecycle::stop_dev_container);
+    });
+
+    cx.on_action(|_: &DeleteDevContainer, cx| {
+        with_active_or_new_workspace(cx, dev_container_lifecycle::delete_dev_container);
+    });
+
+    cx.on_action(|_: &RebuildDevContainer, cx| {
+        with_active_or_new_workspace(cx, dev_container_lifecycle::rebuild_dev_container);
+    });
+
+    cx.on_action(|_: &ReconnectDevContainer, cx| {
+        with_active_or_new_workspace(cx, dev_container_lifecycle::reconnect_dev_container);
+    });
+
+    cx.on_action(|_: &RestartDevContainer, cx| {
+        with_active_or_new_workspace(
+            cx,
+            dev_container_lifecycle::restart_dev_container_and_reconnect,
+        );
     });
 
     // Subscribe to worktree additions to suggest opening the project in a dev container

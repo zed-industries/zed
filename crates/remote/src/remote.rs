@@ -13,7 +13,8 @@ pub use remote_client::{
     RemotePlatform, connect, has_active_connection,
 };
 pub use remote_identity::{
-    RemoteConnectionIdentity, remote_connection_identity, same_remote_connection_identity,
+    DockerIdentityKey, RemoteConnectionIdentity, remote_connection_identity,
+    same_remote_connection_identity,
 };
 pub use transport::docker::DockerConnectionOptions;
 pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};
