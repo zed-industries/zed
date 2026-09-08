@@ -23,7 +23,7 @@ use gpui::{
     BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
     VisualTestContext, WindowBounds, WindowOptions, div,
 };
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 use language::{
     BracketPair, BracketPairConfig,
     Capability::{Read, ReadOnly, ReadWrite},
@@ -82,6 +82,108 @@ fn display_ranges(editor: &Editor, cx: &mut Context<'_, Editor>) -> Vec<Range<Di
     editor
         .selections
         .display_ranges(&editor.display_snapshot(cx))
+}
+
+#[gpui::test]
+fn test_highlighted_display_rows_in_range(cx: &mut TestAppContext) {
+    struct FirstHighlight;
+    struct SecondHighlight;
+
+    init_test(cx, |_| {});
+    let buffer = cx.new(|cx| language::Buffer::local(sample_text(8, 3, 'a'), cx));
+    let editor = cx.add_window(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+
+    assert!(
+        editor
+            .update(cx, |editor, window, cx| {
+                let buffer = editor.buffer().read(cx).snapshot(cx);
+                editor.highlight_rows::<FirstHighlight>(
+                    buffer.anchor_before(Point::new(0, 0))..buffer.anchor_before(Point::new(6, 0)),
+                    |cx| cx.theme().colors().editor_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+                editor.highlight_rows::<SecondHighlight>(
+                    buffer.anchor_before(Point::new(0, 0))..buffer.anchor_before(Point::new(1, 0)),
+                    |cx| cx.theme().colors().editor_highlighted_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+                editor.highlight_rows::<SecondHighlight>(
+                    buffer.anchor_before(Point::new(3, 0))..buffer.anchor_before(Point::new(4, 0)),
+                    |cx| cx.theme().colors().editor_highlighted_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+                editor.highlight_rows::<SecondHighlight>(
+                    buffer.anchor_before(Point::new(6, 0))..buffer.anchor_before(Point::new(7, 0)),
+                    |cx| cx.theme().colors().editor_highlighted_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+
+                let display_row_range = DisplayRow(2)..DisplayRow(5);
+                let expected = editor
+                    .highlighted_display_rows(window, cx)
+                    .into_iter()
+                    .filter(|(row, _)| display_row_range.contains(row))
+                    .collect::<BTreeMap<_, _>>();
+                let snapshot = editor.snapshot(window, cx);
+                let actual = editor.highlighted_display_rows_in_range(
+                    buffer.anchor_before(Point::new(2, 0))..buffer.anchor_before(Point::new(5, 0)),
+                    display_row_range,
+                    &snapshot.display_snapshot,
+                    cx,
+                );
+
+                assert_eq!(actual, expected);
+
+                let highlight_start = buffer.anchor_before(Point::new(2, 0));
+                let Some(block_id) = editor
+                    .insert_blocks(
+                        [BlockProperties {
+                            style: BlockStyle::Fixed,
+                            placement: BlockPlacement::Above(highlight_start),
+                            height: Some(1),
+                            render: Arc::new(|_| div().into_any()),
+                            priority: 0,
+                        }],
+                        None,
+                        cx,
+                    )
+                    .into_iter()
+                    .next()
+                else {
+                    panic!("expected an inserted block");
+                };
+                editor.highlight_rows::<SecondHighlight>(
+                    highlight_start..buffer.anchor_before(Point::new(4, 0)),
+                    |cx| cx.theme().colors().editor_highlighted_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+                let Some(block_row) = editor.row_for_block(block_id, cx) else {
+                    panic!("expected an inserted block row");
+                };
+                let display_row_range = block_row..block_row.next_row();
+                let expected = editor
+                    .highlighted_display_rows(window, cx)
+                    .into_iter()
+                    .filter(|(row, _)| display_row_range.contains(row))
+                    .collect::<BTreeMap<_, _>>();
+                let snapshot = editor.snapshot(window, cx);
+                let actual = editor.highlighted_display_rows_in_range(
+                    buffer.anchor_before(Point::new(1, 0))..highlight_start,
+                    display_row_range,
+                    &snapshot.display_snapshot,
+                    cx,
+                );
+
+                assert!(!expected.is_empty());
+                assert_eq!(actual, expected);
+            })
+            .is_ok()
+    );
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -6936,22 +7038,8 @@ async fn test_join_lines_strips_comment_prefix(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     {
-        let language = Arc::new(Language::new(
-            LanguageConfig {
-                line_comments: vec!["// ".into(), "/// ".into()],
-                documentation_comment: Some(BlockCommentConfig {
-                    start: "/*".into(),
-                    end: "*/".into(),
-                    prefix: "* ".into(),
-                    tab_size: 1,
-                }),
-                ..LanguageConfig::default()
-            },
-            None,
-        ));
-
         let mut cx = EditorTestContext::new(cx).await;
-        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
 
         // Strips the comment prefix (with trailing space) from the joined-in line.
         cx.set_state(indoc! {"
@@ -7015,22 +7103,30 @@ async fn test_join_lines_strips_comment_prefix(cx: &mut TestAppContext) {
 
         // Strips block comment body prefix (`* `) from the joined-in line.
         cx.set_state(indoc! {"
+            /*
              * ˇfoo
              * bar
+             */
         "});
         cx.update_editor(|e, window, cx| e.join_lines(&JoinLines, window, cx));
         cx.assert_editor_state(indoc! {"
+            /*
              * fooˇ bar
+             */
         "});
 
         // Strips bare block comment body prefix (`*` without trailing space).
         cx.set_state(indoc! {"
+            /*
              * ˇfoo
              *
+             */
         "});
         cx.update_editor(|e, window, cx| e.join_lines(&JoinLines, window, cx));
         cx.assert_editor_state(indoc! {"
+            /*
              * fooˇ
+             */
         "});
     }
 
@@ -7103,6 +7199,92 @@ async fn test_join_lines_strips_comment_prefix(cx: &mut TestAppContext) {
         cx.assert_editor_state(indoc! {"
             - fooˇbar
         "});
+    }
+}
+
+#[gpui::test]
+async fn test_join_lines_preserves_rust_operators(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+
+    for insert_whitespace in [true, false] {
+        let separator = if insert_whitespace { " " } else { "" };
+        for indent in ["", "    ", "\t"] {
+            for (first_line, next_line) in [
+                ("let value =", "*pointer;"),
+                ("let value =", "* pointer;"),
+                ("let value =", "**pointer;"),
+                ("let value =", "*指针;"),
+                ("let value = 2", "* 3;"),
+                ("let value = \"text", "*text\";"),
+                ("let value = r#\"text", "*text\"#;"),
+            ] {
+                cx.set_state(&formatdoc! {"
+                    fn main() {{
+                        {first_line}ˇ
+                    {indent}{next_line}
+                    }}"});
+                cx.update_editor(|editor, window, cx| {
+                    editor.join_lines_impl(insert_whitespace, window, cx)
+                });
+                cx.assert_editor_state(&formatdoc! {"
+                    fn main() {{
+                        {first_line}ˇ{separator}{next_line}
+                    }}"});
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_join_lines_rust_block_comments(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+
+    for insert_whitespace in [true, false] {
+        let separator = if insert_whitespace { " " } else { "" };
+        for start in ["/*", "/**", "/*!"] {
+            for next_line in ["* bar", "*bar"] {
+                cx.set_state(&formatdoc! {"
+                    {start}
+                     * fooˇ
+                     {next_line}
+                     */"});
+                cx.update_editor(|editor, window, cx| {
+                    editor.join_lines_impl(insert_whitespace, window, cx)
+                });
+                cx.assert_editor_state(&formatdoc! {"
+                    {start}
+                     * fooˇ{separator}bar
+                     */"});
+            }
+
+            cx.set_state(&formatdoc! {"
+                {start}
+                 * fooˇ
+                 *
+                 */"});
+            cx.update_editor(|editor, window, cx| {
+                editor.join_lines_impl(insert_whitespace, window, cx)
+            });
+            cx.assert_editor_state(&formatdoc! {"
+                {start}
+                 * fooˇ
+                 */"});
+
+            cx.set_state(&formatdoc! {"
+                {start}
+                 * fooˇ
+                 */"});
+            cx.update_editor(|editor, window, cx| {
+                editor.join_lines_impl(insert_whitespace, window, cx)
+            });
+            cx.assert_editor_state(&formatdoc! {"
+                {start}
+                 * fooˇ{separator}*/"});
+        }
     }
 }
 
@@ -8179,6 +8361,16 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.convert_to_snake_case(&ConvertToSnakeCase, window, cx));
     cx.assert_editor_state(indoc! {"
         «    hello_world\t\tˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «hello world
+        ˇ»goodbye
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_snake_case(&ConvertToSnakeCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «hello_world
+        ˇ»goodbye
     "});
 
     // Test selections with `line_mode() = true`.
@@ -10645,6 +10837,47 @@ async fn test_copy_file_location_from_multibuffer(cx: &mut TestAppContext) {
         cx.read_from_clipboard().and_then(|item| item.text()),
         Some("file.txt:3-5".to_string()),
         "a multi-row selection should report the original file's line range"
+    );
+}
+
+#[gpui::test]
+async fn test_copy_file_name_for_external_file(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "a.txt": "" })).await;
+    fs.insert_tree(path!("/elsewhere"), json!({ "external.csv": "a,b\n" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/elsewhere/external.csv"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::for_buffer(buffer, Some(project.clone()), window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.copy_file_name(&CopyFileName, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("external.csv".to_string()),
+        "copy_file_name should work for a file outside the project"
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.copy_file_name_without_extension(&CopyFileNameWithoutExtension, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("external".to_string()),
+        "copy_file_name_without_extension should work for a file outside the project"
     );
 }
 
@@ -27976,7 +28209,7 @@ async fn test_merge_base_diff_hunks_are_read_only(cx: &mut TestAppContext) {
             .read(cx)
             .diff_for(buffer_id)
             .expect("buffer should have a display diff");
-        assert!(!diff.read(cx).is_stageable());
+        assert!(diff.read(cx).operations().is_none());
     });
     editor.update_in(cx, |editor, window, cx| {
         editor.select_all(&SelectAll, window, cx);
@@ -45725,7 +45958,7 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
 
-    cx.update_editor(|editor, _, _| {
+    cx.update_editor(|editor, _, cx| {
         let bounds = size(px(1800.), px(900.));
         let settled = |width: f32, height: f32, editor_width: f32, bounds: Size<Pixels>| {
             Some(SettledScrollRange {
@@ -45734,7 +45967,13 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
                 editor_bounds_size: bounds,
             })
         };
-        editor.hold_scrollbar_range(true);
+        editor.set_search_results_status(
+            SearchResultsStatus {
+                pending: true,
+                ..SearchResultsStatus::default()
+            },
+            cx,
+        );
         assert_eq!(
             editor.frozen_scroll_range(false, size(px(1780.), px(100.)), px(1786.), bounds),
             settled(1780., 100., 1786., bounds),
@@ -45765,7 +46004,7 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
             settled(1300., 160., 1276., resized_bounds),
             "after re-freezing on the resize, churn at the same bounds stays frozen again"
         );
-        editor.hold_scrollbar_range(false);
+        editor.set_search_results_status(SearchResultsStatus::default(), cx);
         assert_eq!(
             editor.frozen_scroll_range(false, size(px(1770.), px(160.)), px(1776.), bounds),
             None,

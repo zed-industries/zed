@@ -66,10 +66,7 @@ pub fn init(cx: &mut App) -> EpAppState {
     cx.set_global(app_db);
 
     let git_binary_path = None;
-    let fs = Arc::new(RealFs::new(
-        git_binary_path,
-        cx.background_executor().clone(),
-    ));
+    let fs = RealFs::new(git_binary_path, cx.background_executor().clone());
 
     let mut languages = LanguageRegistry::new(cx.background_executor().clone());
     languages.set_language_server_download_dir(paths::languages_dir().clone());
