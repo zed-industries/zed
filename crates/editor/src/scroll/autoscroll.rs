@@ -235,9 +235,12 @@ impl Editor {
 
         let was_autoscrolled = match strategy {
             AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
-                let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
-                let target_top = (target_top - margin - visible_sticky_headers as f64).max(0.0);
-                let target_bottom = target_bottom + margin;
+                let margin_top = margin.min(self.scroll_manager.vertical_scroll_margin);
+                let total_free_space = visible_lines - (target_bottom - target_top);
+                let margin_bottom = (total_free_space - margin).min(self.scroll_manager.vertical_scroll_margin);
+                let target_top = (target_top - margin_top - visible_sticky_headers as f64).max(0.0);
+                let target_bottom = target_bottom + margin_bottom;
+
                 let start_row = scroll_position.y;
                 let end_row = start_row + visible_lines;
 
