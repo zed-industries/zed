@@ -111,6 +111,7 @@ CREATE TABLE "project_repositories" (
     "linked_worktrees" VARCHAR,
     "repository_dir_abs_path" VARCHAR,
     "common_dir_abs_path" VARCHAR,
+    "tags" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 
