@@ -5,6 +5,7 @@ mod terminal;
 pub use ::terminal::HeadlessTerminal;
 use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::schema::{MaybeUndefined, v1 as acp};
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashSet;
 pub use connection::*;
@@ -29,6 +30,7 @@ use project::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
+use settings::Settings;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Formatter, Write};
@@ -3685,11 +3687,18 @@ impl AcpThread {
                 })
                 .ok();
 
-                let old_checkpoint = git_store
-                    .update(cx, |git, cx| git.checkpoint(cx))
-                    .await
-                    .context("failed to get old checkpoint")
-                    .log_err();
+                let enable_checkpoints =
+                    AgentSettings::try_read_global(cx, |settings| settings.enable_checkpoints)
+                        .unwrap_or(true);
+                let old_checkpoint = if enable_checkpoints {
+                    git_store
+                        .update(cx, |git, cx| git.checkpoint(cx))
+                        .await
+                        .context("failed to get old checkpoint")
+                        .log_err()
+                } else {
+                    None
+                };
                 this.update(cx, |this, _cx| {
                     if let Some((_ix, message)) = this.last_user_message() {
                         message.checkpoint = old_checkpoint.map(|git_checkpoint| Checkpoint {
@@ -4060,6 +4069,10 @@ impl AcpThread {
     }
 
     fn update_last_checkpoint_if_changed(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        if !AgentSettings::get_global(cx).enable_checkpoints {
+            return Task::ready(Ok(()));
+        }
+
         let Some(turn_id) = self.running_turn.as_ref().map(|turn| turn.id) else {
             return Task::ready(Ok(()));
         };
@@ -4131,6 +4144,10 @@ impl AcpThread {
     }
 
     fn update_last_checkpoint(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        if !AgentSettings::get_global(cx).enable_checkpoints {
+            return Task::ready(Ok(()));
+        }
+
         let git_store = self.project.read(cx).git_store().clone();
 
         let Some((_, message)) = self.last_user_message() else {
@@ -7047,6 +7064,85 @@ mod tests {
                 thread.to_markdown(cx),
                 indoc! {"
                     ## User (checkpoint)
+
+                    Lorem
+
+                    ## Assistant
+
+                    LOREM
+
+                "}
+            );
+        });
+        assert_eq!(fs.files(), vec![Path::new(path!("/test/file-0"))]);
+    }
+
+    #[gpui::test]
+    async fn test_checkpoints_can_be_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.enable_checkpoints = false;
+            AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                ".git": {}
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+
+        let next_filename = Arc::new(AtomicUsize::new(0));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let next_filename = next_filename.clone();
+            let fs = fs.clone();
+            move |request, thread, mut cx| {
+                let fs = fs.clone();
+                let next_filename = next_filename.clone();
+                async move {
+                    let filename = format!("/test/file-{}", next_filename.fetch_add(1, SeqCst));
+                    fs.write(Path::new(&filename), b"").await?;
+
+                    let acp::ContentBlock::Text(content) = &request.prompt[0] else {
+                        panic!("expected text content block");
+                    };
+                    thread.update(&mut cx, |thread, cx| {
+                        thread
+                            .handle_session_update(
+                                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                                    content.text.to_uppercase().into(),
+                                )),
+                                cx,
+                            )
+                            .unwrap();
+                    })?;
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            }
+        }));
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["Lorem".into()], cx)))
+            .await
+            .unwrap();
+
+        // The agent modified a file, but with `enable_checkpoints` disabled no git
+        // checkpoint is captured, so the user message has no "(checkpoint)" marker.
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User
 
                     Lorem
 
