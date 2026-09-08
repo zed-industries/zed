@@ -172,6 +172,13 @@ pub enum MarkdownFont {
     Preview,
 }
 
+fn strong_text_style() -> TextStyleRefinement {
+    TextStyleRefinement {
+        font_weight: Some(FontWeight::BOLD),
+        ..Default::default()
+    }
+}
+
 impl MarkdownStyle {
     pub fn themed(font: MarkdownFont, window: &Window, cx: &App) -> Self {
         let colors = cx.theme().colors();
@@ -2811,11 +2818,7 @@ impl Element for MarkdownElement {
                             font_style: Some(FontStyle::Italic),
                             ..Default::default()
                         }),
-                        MarkdownTag::Strong => builder.push_text_style(TextStyleRefinement {
-                            font_weight: Some(FontWeight::BOLD),
-                            color: Some(cx.theme().colors().text),
-                            ..Default::default()
-                        }),
+                        MarkdownTag::Strong => builder.push_text_style(strong_text_style()),
                         MarkdownTag::Strikethrough => {
                             builder.push_text_style(TextStyleRefinement {
                                 strikethrough: Some(StrikethroughStyle {
@@ -6603,6 +6606,20 @@ mod tests {
             assert!(markdown.context_menu_selected_markdown().is_none());
             assert!(markdown.context_menu_selected_text().is_none());
         });
+    }
+
+    #[test]
+    fn test_strong_text_style_inherits_color() {
+        let inherited_color: Hsla = gpui::rgba(0x123456ff).into();
+        let mut text_style = TextStyle {
+            color: inherited_color,
+            ..Default::default()
+        };
+
+        text_style.refine(&strong_text_style());
+
+        assert_eq!(text_style.color, inherited_color);
+        assert_eq!(text_style.font_weight, FontWeight::BOLD);
     }
 
     #[gpui::test]
