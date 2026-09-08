@@ -570,7 +570,7 @@ impl PickerDelegate for ProfilePickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         match self.filtered_entries.get(self.selected_index) {
             Some(ProfilePickerEntry::Profile(entry)) => {
                 if let Some(candidate) = self.candidates.get(entry.candidate_index) {
@@ -578,15 +578,17 @@ impl PickerDelegate for ProfilePickerDelegate {
                     let fs = self.fs.clone();
                     let provider = self.provider.clone();
 
-                    update_settings_file(fs, cx, {
-                        let profile_id = profile_id.clone();
-                        move |settings, _cx| {
-                            settings
-                                .agent
-                                .get_or_insert_default()
-                                .set_profile(profile_id.0);
-                        }
-                    });
+                    if !window.modifiers().shift {
+                        update_settings_file(fs, cx, {
+                            let profile_id = profile_id.clone();
+                            move |settings, _cx| {
+                                settings
+                                    .agent
+                                    .get_or_insert_default()
+                                    .set_profile(profile_id.0);
+                            }
+                        });
+                    }
 
                     provider.set_profile(profile_id.clone(), cx);
 
