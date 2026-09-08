@@ -2307,39 +2307,28 @@ impl Workspace {
                 } else {
                     let window_bounds_override = window_bounds_env_override();
 
-                    let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
-                        (Some(WindowBounds::Windowed(bounds)), None)
-                    } else if let Some(workspace) = serialized_workspace.as_ref()
-                        && let Some(display) = workspace.display
-                        && let Some(bounds) = workspace.window_bounds.as_ref()
-                    {
-                        // Reopening an existing workspace - restore its saved bounds
-                        (Some(bounds.0), Some(display))
-                    } else if let Some((display, bounds)) =
-                        persistence::read_default_window_bounds(&kvp)
-                    {
-                        // New or empty workspace - use the last known window bounds
-                        (Some(bounds), Some(display))
-                    } else {
-                        // New window - let GPUI's default_bounds() handle cascading
-                        (None, None)
-                    };
-
-                    // When reopening a serialized workspace (and not overriding bounds via the
-                    // environment), load the native restorable-state blob so the new window can be
-                    // returned to the macOS Space it was on. `None` on other platforms / when no
-                    // blob was saved.
-                    let restorable_state = if window_bounds_override.is_some() {
-                        None
-                    } else {
-                        serialized_workspace.as_ref().and_then(|workspace| {
-                            workspace
-                                .window_bounds
-                                .is_some()
-                                .then(|| db.restorable_window_state(workspace.id))
-                                .flatten()
-                        })
-                    };
+                    let (window_bounds, display, native_window_state) =
+                        if let Some(bounds) = window_bounds_override {
+                            (Some(WindowBounds::Windowed(bounds)), None, None)
+                        } else if let Some(workspace) = serialized_workspace.as_ref()
+                            && let Some(display) = workspace.display
+                            && let Some(bounds) = workspace.window_bounds.as_ref()
+                        {
+                            // Reopening an existing workspace - restore its saved bounds
+                            (
+                                Some(bounds.0),
+                                Some(display),
+                                workspace.native_window_state.clone(),
+                            )
+                        } else if let Some((display, bounds)) =
+                            persistence::read_default_window_bounds(&kvp)
+                        {
+                            // New or empty workspace - use the last known window bounds
+                            (Some(bounds), Some(display), None)
+                        } else {
+                            // New window - let GPUI's default_bounds() handle cascading
+                            (None, None, None)
+                        };
 
                     // Use the serialized workspace to construct the new window
                     let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx));
@@ -2376,12 +2365,10 @@ impl Workspace {
                         window.update(cx, |multi_workspace: &mut MultiWorkspace, _, _cx| {
                             multi_workspace.workspace().clone()
                         })?;
-                    if let Some(restorable_state) = restorable_state {
-                        window
-                            .update(cx, |_, window, _| {
-                                window.restore_native_state(&restorable_state);
-                            })
-                            .log_err();
+                    if let Some(native_window_state) = native_window_state {
+                        window.update(cx, |_, window, _| {
+                            window.restore_native_window_state(&native_window_state)
+                        })?;
                     }
                     (window, workspace)
                 };
@@ -7552,10 +7539,12 @@ impl Workspace {
         let has_paths = !self.root_paths(cx).is_empty();
         let db = WorkspaceDb::global(cx);
         let kvp = db::kvp::KeyValueStore::global(cx);
-        // On macOS this captures the window frame plus the Space (virtual desktop) it lives on,
-        // so the window can be restored to the same Space on the next launch. Returns `None` on
-        // other platforms.
-        let restorable_state = window.encode_restorable_state();
+        let native_window_state =
+            if database_id.is_some() && matches!(window_bounds, WindowBounds::Windowed(_)) {
+                window.native_window_state()
+            } else {
+                None
+            };
 
         cx.background_executor().spawn(async move {
             if !has_paths {
@@ -7568,14 +7557,10 @@ impl Workspace {
                     database_id,
                     SerializedWindowBounds(window_bounds),
                     display_uuid,
+                    native_window_state,
                 )
                 .await
                 .log_err();
-                if let Some(restorable_state) = restorable_state {
-                    db.save_restorable_window_state(database_id, restorable_state)
-                        .await
-                        .log_err();
-                }
             } else {
                 persistence::write_default_window_bounds(&kvp, window_bounds, display_uuid)
                     .await
@@ -7766,6 +7751,7 @@ impl Workspace {
                     center_group,
                     window_bounds,
                     display: Default::default(),
+                    native_window_state: None,
                     docks,
                     centered_layout: self.centered_layout,
                     session_id: self.session_id.clone(),
@@ -7793,6 +7779,7 @@ impl Workspace {
                         database_id,
                         window_bounds,
                         display.unwrap_or_default(),
+                        None,
                     );
                     let session_id_write = db.set_session_id(database_id, None);
                     let (open_status, session_id) =
@@ -11026,16 +11013,22 @@ pub fn open_workspace_by_id(
         } else {
             let window_bounds_override = window_bounds_env_override();
 
-            let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
-                (Some(WindowBounds::Windowed(bounds)), None)
+            let (window_bounds, display, native_window_state) = if let Some(bounds) =
+                window_bounds_override
+            {
+                (Some(WindowBounds::Windowed(bounds)), None, None)
             } else if let Some(display) = serialized_workspace.display
                 && let Some(bounds) = serialized_workspace.window_bounds.as_ref()
             {
-                (Some(bounds.0), Some(display))
+                (
+                    Some(bounds.0),
+                    Some(display),
+                    serialized_workspace.native_window_state.clone(),
+                )
             } else if let Some((display, bounds)) = persistence::read_default_window_bounds(&kvp) {
-                (Some(bounds), Some(display))
+                (Some(bounds), Some(display), None)
             } else {
-                (None, None)
+                (None, None, None)
             };
 
             let options = cx.update(|cx| {
@@ -11066,16 +11059,10 @@ pub fn open_workspace_by_id(
             let workspace = window.update(cx, |multi_workspace: &mut MultiWorkspace, _, _cx| {
                 multi_workspace.workspace().clone()
             })?;
-
-            if window_bounds_override.is_none()
-                && serialized_workspace.window_bounds.is_some()
-                && let Some(restorable_state) = db.restorable_window_state(workspace_id)
-            {
-                window
-                    .update(cx, |_, window, _| {
-                        window.restore_native_state(&restorable_state);
-                    })
-                    .log_err();
+            if let Some(native_window_state) = native_window_state {
+                window.update(cx, |_, window, _| {
+                    window.restore_native_window_state(&native_window_state)
+                })?;
             }
 
             (window, workspace)

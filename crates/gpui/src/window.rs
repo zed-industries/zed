@@ -2333,19 +2333,16 @@ impl Window {
         self.platform_window.inner_window_bounds()
     }
 
-    /// Encode the window's native restorable state (frame plus the macOS Space the window is on)
-    /// into an opaque blob, to be persisted and later replayed with [`Window::restore_native_state`].
-    ///
-    /// Returns `None` on platforms that don't support native state restoration (everything but
-    /// macOS) or if encoding fails.
-    pub fn encode_restorable_state(&self) -> Option<Vec<u8>> {
-        self.platform_window.encode_restorable_state()
+    /// Encode the window's native restorable state into an opaque blob.
+    /// Returns `None` on platforms without native state restoration or if encoding fails.
+    pub fn native_window_state(&self) -> Option<Vec<u8>> {
+        self.platform_window.native_window_state()
     }
 
-    /// Restore the window's native state (frame plus macOS Space) from a blob previously produced
-    /// by [`Window::encode_restorable_state`]. A no-op on platforms that don't support it.
-    pub fn restore_native_state(&self, state: &[u8]) {
-        self.platform_window.restore_native_state(state);
+    /// Restore the window's native state from a blob previously produced
+    /// by [`Window::native_window_state`]. A no-op on platforms without native state restoration.
+    pub fn restore_native_window_state(&self, state: &[u8]) {
+        self.platform_window.restore_native_window_state(state);
     }
 
     /// Dispatch the given action on the currently focused element.

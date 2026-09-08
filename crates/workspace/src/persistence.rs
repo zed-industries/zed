@@ -1063,13 +1063,7 @@ impl Domain for WorkspaceDb {
             ) STRICT;
         ),
         sql!(
-            CREATE TABLE restorable_window_states (
-                workspace_id INTEGER PRIMARY KEY,
-                state BLOB NOT NULL,
-                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                ON DELETE CASCADE
-                ON UPDATE CASCADE
-            ) STRICT;
+            ALTER TABLE workspaces ADD COLUMN native_window_state BLOB;
         ),
     ];
 
@@ -1130,6 +1124,7 @@ impl WorkspaceDb {
             centered_layout,
             docks,
             window_id,
+            native_window_state,
         ): (
             WorkspaceId,
             String,
@@ -1141,6 +1136,7 @@ impl WorkspaceDb {
             Option<bool>,
             DockStructure,
             Option<u64>,
+            Option<Vec<u8>>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -1165,7 +1161,8 @@ impl WorkspaceDb {
                     bottom_dock_visible,
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
-                    window_id
+                    window_id,
+                    native_window_state
                 FROM workspaces
                 WHERE
                     paths IS ? AND
@@ -1216,6 +1213,7 @@ impl WorkspaceDb {
             window_bounds,
             centered_layout: centered_layout.unwrap_or(false),
             display,
+            native_window_state,
             docks,
             session_id: None,
             bookmarks: self.bookmarks(workspace_id),
@@ -1242,6 +1240,7 @@ impl WorkspaceDb {
             docks,
             window_id,
             remote_connection_id,
+            native_window_state,
         ): (
             String,
             String,
@@ -1253,6 +1252,7 @@ impl WorkspaceDb {
             DockStructure,
             Option<u64>,
             Option<i32>,
+            Option<Vec<u8>>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -1277,7 +1277,8 @@ impl WorkspaceDb {
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
                     window_id,
-                    remote_connection_id
+                    remote_connection_id,
+                    native_window_state
                 FROM workspaces
                 WHERE workspace_id = ?
             })
@@ -1321,6 +1322,7 @@ impl WorkspaceDb {
             window_bounds,
             centered_layout: centered_layout.unwrap_or(false),
             display,
+            native_window_state,
             docks,
             session_id: None,
             bookmarks: self.bookmarks(workspace_id),
@@ -2481,14 +2483,15 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub(crate) async fn set_window_open_status(workspace_id: WorkspaceId, bounds: SerializedWindowBounds, display: Uuid) -> Result<()> {
+        pub(crate) async fn set_window_open_status(workspace_id: WorkspaceId, bounds: SerializedWindowBounds, display: Uuid, native_window_state: Option<Vec<u8>>) -> Result<()> {
             UPDATE workspaces
             SET window_state = ?2,
                 window_x = ?3,
                 window_y = ?4,
                 window_width = ?5,
                 window_height = ?6,
-                display = ?7
+                display = ?7,
+                native_window_state = ?8
             WHERE workspace_id = ?1
         }
     }
@@ -2515,25 +2518,6 @@ impl WorkspaceDb {
             SET session_id = ?2, window_id = ?3
             WHERE workspace_id = ?1
         }
-    }
-
-    query! {
-        pub(crate) async fn save_restorable_window_state(workspace_id: WorkspaceId, state: Vec<u8>) -> Result<()> {
-            INSERT OR REPLACE INTO restorable_window_states (workspace_id, state)
-            VALUES (?1, ?2)
-        }
-    }
-
-    /// Returns the opaque native restorable-state blob saved for the given workspace, if any.
-    /// On macOS this encodes the window frame and the Space (virtual desktop) it was on.
-    pub(crate) fn restorable_window_state(&self, workspace_id: WorkspaceId) -> Option<Vec<u8>> {
-        self.select_row_bound::<WorkspaceId, Vec<u8>>(sql! {
-            SELECT state FROM restorable_window_states WHERE workspace_id = ?
-        })
-        .and_then(|mut statement| statement(workspace_id))
-        .context("Getting restorable window state")
-        .log_err()
-        .flatten()
     }
 
     pub(crate) async fn toolchains(
@@ -2984,6 +2968,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3142,6 +3127,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3193,6 +3179,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3264,44 +3251,70 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_restorable_window_state_round_trip() {
+    async fn test_native_window_state_round_trip() {
         zlog::init_test();
 
-        let db = WorkspaceDb::open_test_db("test_restorable_window_state_round_trip").await;
-
-        // A workspace row must exist to satisfy the foreign key.
+        let db = WorkspaceDb::open_test_db("test_native_window_state_round_trip").await;
         let id = db.next_id().await.unwrap();
+        let paths = &["/tmp/native-window-state"];
+        let display_uuid = Uuid::new_v4();
+        let window_bounds = SerializedWindowBounds(WindowBounds::Windowed(Bounds {
+            origin: point(px(100.0), px(200.0)),
+            size: size(px(800.0), px(600.0)),
+        }));
 
-        assert_eq!(db.restorable_window_state(id), None);
-
-        let state = vec![0u8, 1, 2, 3, 250, 251, 252];
-        db.save_restorable_window_state(id, state.clone())
-            .await
-            .unwrap();
-        assert_eq!(db.restorable_window_state(id), Some(state));
-
-        // Saving again overwrites the previous blob instead of accumulating rows.
-        let new_state = vec![9u8, 8, 7];
-        db.save_restorable_window_state(id, new_state.clone())
-            .await
-            .unwrap();
-        assert_eq!(db.restorable_window_state(id), Some(new_state));
-        let count = db
-            .select_row::<usize>(sql!(SELECT COUNT(*) FROM restorable_window_states))
-            .unwrap()()
-        .unwrap();
-        assert_eq!(count, Some(1));
-
-        assert_eq!(db.restorable_window_state(WorkspaceId(999)), None);
-
-        // The blob is removed when its workspace row is deleted (ON DELETE CASCADE).
-        db.write(move |conn| {
-            conn.exec_bound(sql!(DELETE FROM workspaces WHERE workspace_id = ?))
-                .unwrap()(id)
-            .unwrap()
+        db.save_workspace(SerializedWorkspace {
+            id,
+            paths: PathList::new(paths),
+            identity_paths: None,
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: None,
+            display: None,
+            native_window_state: None,
+            docks: Default::default(),
+            bookmarks: Default::default(),
+            breakpoints: Default::default(),
+            centered_layout: false,
+            session_id: None,
+            window_id: None,
+            user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         })
         .await;
-        assert_eq!(db.restorable_window_state(id), None);
+        assert_eq!(
+            db.workspace_for_roots(paths).unwrap().native_window_state,
+            None
+        );
+
+        let state = vec![0u8, 1, 2, 3, 250, 251, 252];
+        db.set_window_open_status(id, window_bounds, display_uuid, Some(state.clone()))
+            .await
+            .unwrap();
+        let restored = db.workspace_for_roots(paths).unwrap();
+        assert_eq!(restored.native_window_state, Some(state.clone()));
+        assert_eq!(restored.window_bounds, Some(window_bounds));
+        assert_eq!(restored.display, Some(display_uuid));
+        assert_eq!(
+            db.workspace_for_id(id).unwrap().native_window_state,
+            Some(state)
+        );
+
+        let new_state = vec![9u8, 8, 7];
+        db.set_window_open_status(id, window_bounds, display_uuid, Some(new_state.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            db.workspace_for_roots(paths).unwrap().native_window_state,
+            Some(new_state)
+        );
+
+        db.set_window_open_status(id, window_bounds, display_uuid, None)
+            .await
+            .unwrap();
+        let restored = db.workspace_for_roots(paths).unwrap();
+        assert_eq!(restored.native_window_state, None);
+        assert_eq!(restored.window_bounds, Some(window_bounds));
     }
 
     #[gpui::test]
@@ -3335,6 +3348,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3353,6 +3367,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3465,6 +3480,7 @@ mod tests {
             bookmarks: Default::default(),
             breakpoints: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
@@ -3507,6 +3523,7 @@ mod tests {
             bookmarks: Default::default(),
             breakpoints: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
@@ -3523,6 +3540,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3570,6 +3588,7 @@ mod tests {
             bookmarks: Default::default(),
             breakpoints: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
@@ -3609,6 +3628,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3627,6 +3647,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3645,6 +3666,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3663,6 +3685,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3692,6 +3715,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             bookmarks: Default::default(),
@@ -3712,6 +3736,7 @@ mod tests {
             bookmarks: Default::default(),
             breakpoints: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("session-id-3".to_owned()),
@@ -3770,6 +3795,7 @@ mod tests {
             center_group: center_group.clone(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             bookmarks: Default::default(),
             breakpoints: Default::default(),
@@ -3814,6 +3840,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("one-session".to_owned()),
@@ -3914,6 +3941,7 @@ mod tests {
             center_group,
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             bookmarks: Default::default(),
             breakpoints: Default::default(),
@@ -3939,6 +3967,7 @@ mod tests {
             center_group: empty_pane_group(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             bookmarks: Default::default(),
             breakpoints: Default::default(),
@@ -4198,6 +4227,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("one-session".to_owned()),
@@ -4562,6 +4592,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: None,
             display: None,
+            native_window_state: None,
             docks: Default::default(),
             bookmarks: Default::default(),
             breakpoints: Default::default(),
@@ -4576,7 +4607,7 @@ mod tests {
         db.save_workspace(workspace.clone()).await;
 
         // Save window bounds separately (as the actual code does via set_window_open_status)
-        db.set_window_open_status(id, window_bounds, display_uuid)
+        db.set_window_open_status(id, window_bounds, display_uuid, None)
             .await
             .unwrap();
 
@@ -4641,6 +4672,7 @@ mod tests {
                 center_group: Default::default(),
                 window_bounds: Default::default(),
                 display: Default::default(),
+                native_window_state: None,
                 docks: Default::default(),
                 centered_layout: false,
                 session_id: Some("test-session".to_owned()),
@@ -4980,6 +5012,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some(session_id.clone()),
@@ -5078,6 +5111,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some(session_id.to_owned()),
@@ -5097,6 +5131,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some(session_id.to_owned()),
@@ -5178,6 +5213,7 @@ mod tests {
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
+            native_window_state: None,
             docks: Default::default(),
             centered_layout: false,
             session_id: Some(session_id.clone()),

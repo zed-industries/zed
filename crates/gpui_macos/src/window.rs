@@ -81,8 +81,8 @@ static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
 static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
-static mut SPACES_ARCHIVER_DELEGATE_CLASS: *const Class = ptr::null();
-static mut SPACES_UNARCHIVER_CLASS: *const Class = ptr::null();
+static mut WINDOW_STATE_ARCHIVER_DELEGATE_CLASS: *const Class = ptr::null();
+static mut WINDOW_STATE_UNARCHIVER_CLASS: *const Class = ptr::null();
 
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
@@ -315,22 +315,23 @@ unsafe fn build_classes() {
             );
             decl.register()
         };
-        // Helper classes used to encode/restore native window state (frame plus macOS Space).
-        // See `MacWindow::encode_restorable_state` / `restore_native_state`.
-        SPACES_ARCHIVER_DELEGATE_CLASS = {
-            let mut decl = ClassDecl::new("GPUISpacesArchiverDelegate", class!(NSObject)).unwrap();
+        WINDOW_STATE_ARCHIVER_DELEGATE_CLASS = {
+            let mut decl =
+                ClassDecl::new("GPUIWindowStateArchiverDelegate", class!(NSObject)).unwrap();
             decl.add_method(
                 sel!(archiver:willEncodeObject:),
-                spaces_archiver_will_encode_object as extern "C" fn(&Object, Sel, id, id) -> id,
+                window_state_archiver_will_encode_object
+                    as extern "C" fn(&Object, Sel, id, id) -> id,
             );
             decl.register()
         };
-        SPACES_UNARCHIVER_CLASS = {
+        WINDOW_STATE_UNARCHIVER_CLASS = {
             let mut decl =
-                ClassDecl::new("GPUISpacesKeyedUnarchiver", class!(NSKeyedUnarchiver)).unwrap();
+                ClassDecl::new("GPUIWindowStateKeyedUnarchiver", class!(NSKeyedUnarchiver))
+                    .unwrap();
             decl.add_method(
                 sel!(_windowRestorationOptions),
-                spaces_window_restoration_options as extern "C" fn(&Object, Sel) -> id,
+                window_state_unarchiver_restoration_options as extern "C" fn(&Object, Sel) -> id,
             );
             decl.register()
         };
@@ -339,8 +340,9 @@ unsafe fn build_classes() {
 
 // NSKeyedArchiverDelegate callback that skips objects which don't adopt `NSSecureCoding`
 // (the window itself and its NSView hierarchy), so encoding the window's restorable state
-// succeeds. The frame and Space information we care about is encoded separately by AppKit.
-extern "C" fn spaces_archiver_will_encode_object(
+// succeeds. AppKit still encodes the window frame and its persistent window-management
+// identifier, which is what the Space restoration on relaunch keys off.
+extern "C" fn window_state_archiver_will_encode_object(
     _this: &Object,
     _sel: Sel,
     _archiver: id,
@@ -366,7 +368,10 @@ extern "C" fn spaces_archiver_will_encode_object(
 // Returning a default-initialized `NSWindowRestorationOptions` tells AppKit to restore the
 // window to its original Space. This is the macOS 15+ path (FB15644170: the
 // `NSWindowRestoresWorkspaceAtLaunch` user default no longer works there).
-extern "C" fn spaces_window_restoration_options(_this: &Object, _sel: Sel) -> id {
+extern "C" fn window_state_unarchiver_restoration_options(_this: &Object, _sel: Sel) -> id {
+    if !is_macos_version_at_least(NSOperatingSystemVersion::new(15, 0, 0)) {
+        return nil;
+    }
     // SAFETY: we look the class up by name and only send it `alloc`/`init`/`autorelease`, all of
     // which have the standard `-> id` signature. Returning `nil` when the class is absent is valid.
     unsafe {
@@ -1491,7 +1496,7 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn encode_restorable_state(&self) -> Option<Vec<u8>> {
+    fn native_window_state(&self) -> Option<Vec<u8>> {
         let native_window = self.0.lock().native_window;
         // SAFETY: `native_window` is a live `NSWindow` retained by this window's state, and the
         // selectors below are AppKit/Foundation methods sent with their documented signatures. The
@@ -1501,10 +1506,10 @@ impl PlatformWindow for MacWindow {
             let archiver: id = msg_send![class!(NSKeyedArchiver), alloc];
             let archiver: id = msg_send![archiver, initRequiringSecureCoding: YES];
             if archiver.is_null() {
-                log::error!("failed to create archiver for restorable window state");
+                log::error!("failed to create an archiver for the native window state");
                 return None;
             }
-            let delegate: id = msg_send![SPACES_ARCHIVER_DELEGATE_CLASS, new];
+            let delegate: id = msg_send![WINDOW_STATE_ARCHIVER_DELEGATE_CLASS, new];
             let _: () = msg_send![archiver, setDelegate: delegate];
             let _: () = msg_send![native_window, encodeRestorableStateWithCoder: archiver];
             let _: () = msg_send![archiver, finishEncoding];
@@ -1513,22 +1518,25 @@ impl PlatformWindow for MacWindow {
             let _: () = msg_send![archiver, setDelegate: nil];
 
             let data: id = msg_send![archiver, encodedData];
-            let result = if data.is_null() || data.bytes().is_null() {
-                log::error!("archiver produced no data for restorable window state");
+            let bytes = if data.is_null() {
+                ptr::null()
+            } else {
+                data.bytes() as *const u8
+            };
+            let state = if bytes.is_null() {
+                log::error!("the archiver produced no data for the native window state");
                 None
             } else {
-                let bytes =
-                    std::slice::from_raw_parts(data.bytes() as *const u8, data.length() as usize);
-                Some(bytes.to_vec())
+                Some(std::slice::from_raw_parts(bytes, data.length() as usize).to_vec())
             };
 
             let _: () = msg_send![delegate, release];
             let _: () = msg_send![archiver, release];
-            result
+            state
         }
     }
 
-    fn restore_native_state(&self, state: &[u8]) {
+    fn restore_native_window_state(&self, state: &[u8]) {
         if state.is_empty() {
             return;
         }
@@ -1544,6 +1552,10 @@ impl PlatformWindow for MacWindow {
                 state.len() as u64,
             );
             if data.is_null() {
+                log::error!(
+                    "failed to wrap {} bytes of native window state",
+                    state.len()
+                );
                 return;
             }
 
@@ -1560,20 +1572,25 @@ impl PlatformWindow for MacWindow {
                 let _: () = msg_send![defaults, registerDefaults: dict];
             }
 
-            let unarchiver: id = msg_send![SPACES_UNARCHIVER_CLASS, alloc];
+            let unarchiver: id = msg_send![WINDOW_STATE_UNARCHIVER_CLASS, alloc];
             let mut error: id = nil;
             let unarchiver: id =
                 msg_send![unarchiver, initForReadingFromData: data error: &mut error];
             if unarchiver.is_null() {
-                let message: id = if error == nil {
-                    nil
-                } else {
-                    msg_send![error, localizedDescription]
-                };
-                log::error!("failed to unarchive restorable window state: {message:?}");
+                log::error!(
+                    "failed to unarchive the native window state: {}",
+                    ns_error_description(error)
+                );
                 return;
             }
             let _: () = msg_send![native_window, restoreStateWithCoder: unarchiver];
+            let error: id = msg_send![unarchiver, error];
+            if !error.is_null() {
+                log::error!(
+                    "failed to restore the native window state: {}",
+                    ns_error_description(error)
+                );
+            }
             let _: () = msg_send![unarchiver, release];
         }
     }
@@ -2924,6 +2941,16 @@ extern "C" fn window_did_exit_fullscreen(this: &Object, _: Sel, _: id) {
 
 pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bool {
     unsafe { NSProcessInfo::processInfo(nil).isOperatingSystemAtLeastVersion(version) }
+}
+
+fn ns_error_description(error: id) -> String {
+    if error.is_null() {
+        return "unknown error".to_owned();
+    }
+    unsafe {
+        let description: id = msg_send![error, localizedDescription];
+        description.to_str().to_owned()
+    }
 }
 
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
