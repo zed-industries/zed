@@ -4,7 +4,7 @@ use collections::HashMap;
 use futures::future::join_all;
 use gpui::{Hsla, Rgba};
 use itertools::Itertools;
-use language::point_from_lsp;
+use language::range_from_lsp;
 use multi_buffer::Anchor;
 use project::{DocumentColor, InlayId};
 use settings::Settings as _;
@@ -219,8 +219,9 @@ impl Editor {
                                 .clear();
                         } else {
                             for color in colors.colors {
-                                let color_start = point_from_lsp(color.lsp_range.start);
-                                let color_end = point_from_lsp(color.lsp_range.end);
+                                let color_range = range_from_lsp(color.lsp_range);
+                                let color_start = color_range.start;
+                                let color_end = color_range.end;
 
                                 let Some(range) = multi_buffer_snapshot
                                     .buffer_anchor_range_to_anchor_range(
