@@ -105,7 +105,7 @@ pub use editor_settings::{
     ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
     ui_scrollbar_settings_from_raw,
 };
-use element::{BreadcrumbListing, BreadcrumbNavigationMenu};
+use element::{BreadcrumbListing, BreadcrumbNavigationMenu, WithoutSymbols};
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     file_status_label_color, render_breadcrumb_text,
@@ -11409,8 +11409,29 @@ impl Editor {
 
         if let Some(menu) = self.breadcrumb_navigation_menu.clone() {
             // set_listing runs under this editor.update; it must not re-enter the editor.
-            menu.update(cx, |menu, cx| {
-                menu.set_listing(listing, active_file_path, false, window, cx);
+            menu.update(cx, |menu, cx| match listing {
+                // A segment click switches the way Left does: target resolved first, then the
+                // anchor and the rows move together.
+                BreadcrumbListing::Directory { worktree_id, path } => menu
+                    .switch_to_directory_when_loaded(
+                        worktree_id,
+                        path,
+                        active_file_path,
+                        false,
+                        window,
+                        cx,
+                    ),
+                BreadcrumbListing::Symbols {
+                    buffer_id,
+                    parent: None,
+                } => menu.switch_to_symbols_when_loaded(
+                    buffer_id,
+                    active_file_path,
+                    WithoutSymbols::ListSiblings,
+                    window,
+                    cx,
+                ),
+                listing => menu.set_listing(listing, active_file_path, false, window, cx),
             });
             cx.emit(EditorEvent::BreadcrumbsChanged);
             cx.notify();
@@ -11466,7 +11487,7 @@ impl Editor {
         };
 
         if let Some(menu) = self.breadcrumb_navigation_menu.clone()
-            && menu.read(cx).listing() == &listing
+            && (menu.read(cx).listing() == &listing || menu.read(cx).lists_same_rows_as(&listing))
         {
             self.dismiss_breadcrumb_navigation(window, cx);
             return;

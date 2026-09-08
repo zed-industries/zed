@@ -10,7 +10,7 @@ use layout::{
     BreadcrumbStrip, PreparedBreadcrumbSegment, align_symbol_segments,
     breadcrumb_path_is_navigable, classify_breadcrumb_segment_kinds, hard_cap_segment_runs,
 };
-pub(crate) use menu::{BreadcrumbListing, BreadcrumbNavigationMenu};
+pub(crate) use menu::{BreadcrumbListing, BreadcrumbNavigationMenu, WithoutSymbols};
 use path::{breadcrumb_file_icon, breadcrumb_path_segments};
 
 #[derive(Clone, Debug)]

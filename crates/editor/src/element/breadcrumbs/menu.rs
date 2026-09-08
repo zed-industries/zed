@@ -151,6 +151,12 @@ pub(crate) struct BreadcrumbNavigationMenu {
     filter_cancel: Option<Arc<AtomicBool>>,
     filter_epoch: u64,
     ranked_epoch: u64,
+    /// The row under the highlight when the query went from empty to non-empty, restored when it
+    /// comes back to empty unless the user moved the highlight under the filter meanwhile: typing
+    /// to look and then erasing has to leave them where they were, or every abandoned search
+    /// dumps them at the top of the list.
+    pre_filter_selection: Option<PreFilterSelection>,
+    filter_selection_touched: bool,
     /// The row that was arrowed to when a filesystem event forced a reload, restored by path
     /// once the rank that reload triggered lands. Ranked positions do not survive the rebuild.
     pending_restore_path: Option<Arc<RelPath>>,
@@ -174,11 +180,8 @@ pub(crate) struct BreadcrumbNavigationMenu {
     /// screen between two settled states, not merely that something was there.
     #[cfg(test)]
     published_row_history: Vec<Vec<SharedString>>,
-    /// Every published empty-state message, in order, so a test can assert the text a typist
-    /// actually sees rather than only where it lands.
     #[cfg(test)]
     published_empty_message_history: Vec<SharedString>,
-    /// Every published match-count label, in order, including the absences.
     #[cfg(test)]
     published_match_count_history: Vec<Option<SharedString>>,
     _subscriptions: Vec<Subscription>,
@@ -233,6 +236,8 @@ impl BreadcrumbNavigationMenu {
                 filter_cancel: None,
                 filter_epoch: 0,
                 ranked_epoch: 0,
+                pre_filter_selection: None,
+                filter_selection_touched: false,
                 pending_restore_path: None,
                 pending_restore_symbol_range: None,
                 filter_settled: FilterSettled::default(),
@@ -398,6 +403,8 @@ impl BreadcrumbNavigationMenu {
         self.active_file_path = active_file_path;
         self.pending_restore_path = None;
         self.pending_restore_symbol_range = None;
+        self.pre_filter_selection = None;
+        self.filter_selection_touched = false;
         if navigated {
             if let BreadcrumbListing::Directory { worktree_id, path } = &listing {
                 self.navigated_path = Some((*worktree_id, path.clone()));
@@ -483,14 +490,30 @@ impl BreadcrumbNavigationMenu {
     /// What the picker is rendering, which is what the user can act on. It diverges from the
     /// menu's own state whenever a mutation forgets to publish.
     #[cfg(test)]
+    pub fn published_symbol_items(&self, cx: &App) -> Vec<OutlineItem<Anchor>> {
+        let Some(picker) = self.picker.as_ref() else {
+            return Vec::new();
+        };
+        picker
+            .read(cx)
+            .delegate
+            .rows
+            .iter()
+            .filter_map(|row| match row {
+                BreadcrumbMenuRow::Symbol { item, .. } => Some(item.clone()),
+                BreadcrumbMenuRow::Directory { .. } => None,
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
     pub fn published_icon_flags(&self, cx: &App) -> Option<(bool, bool)> {
         let picker = self.picker.as_ref()?;
         let delegate = &picker.read(cx).delegate;
         Some((delegate.show_file_icons, delegate.show_folder_icons))
     }
 
-    /// The empty-state text the picker was last handed, so a test can tell "No matches" from
-    /// rows that were never replaced.
+    /// Tells "No matches" from rows that were never replaced.
     #[cfg(test)]
     pub fn published_empty_message(&self, cx: &App) -> SharedString {
         self.picker
@@ -516,8 +539,7 @@ impl BreadcrumbNavigationMenu {
             .collect()
     }
 
-    /// Each published symbol row as `(label, parent context)` - the parent name a filter shows
-    /// beside a symbol that sits outside the level being browsed.
+    /// Pairs each symbol row with the parent name a filter shows beside an out-of-level match.
     #[cfg(test)]
     pub fn published_symbol_contexts(&self, cx: &App) -> Vec<(SharedString, Option<SharedString>)> {
         let Some(picker) = self.picker.as_ref() else {
@@ -555,19 +577,16 @@ impl BreadcrumbNavigationMenu {
         self.directory_reload_count
     }
 
-    /// Drains the published rows recorded since the last call, oldest first.
     #[cfg(test)]
     pub fn take_published_row_history(&mut self) -> Vec<Vec<SharedString>> {
         std::mem::take(&mut self.published_row_history)
     }
 
-    /// Drains the published empty-state messages recorded since the last call, oldest first.
     #[cfg(test)]
     pub fn take_published_empty_message_history(&mut self) -> Vec<SharedString> {
         std::mem::take(&mut self.published_empty_message_history)
     }
 
-    /// Drains the published match-count labels recorded since the last call, oldest first.
     #[cfg(test)]
     pub fn take_published_match_count_history(&mut self) -> Vec<Option<SharedString>> {
         std::mem::take(&mut self.published_match_count_history)
@@ -637,6 +656,8 @@ impl BreadcrumbNavigationMenu {
             filter_cancel: None,
             filter_epoch: 0,
             ranked_epoch: 0,
+            pre_filter_selection: None,
+            filter_selection_touched: false,
             pending_restore_path: None,
             pending_restore_symbol_range: None,
             filter_settled: FilterSettled::default(),
@@ -720,9 +741,22 @@ impl BreadcrumbNavigationMenu {
         if self.query == query {
             return;
         }
+        let query_started = self.query.is_empty() && !query.is_empty();
         self.query = query;
         self.pending_restore_path = None;
         self.pending_restore_symbol_range = None;
+        if query_started {
+            self.pre_filter_selection = match self.selected_row() {
+                Some(BreadcrumbMenuRow::Directory { entry, .. }) => {
+                    Some(PreFilterSelection::Directory(entry.path.clone()))
+                }
+                Some(BreadcrumbMenuRow::Symbol { item, .. }) => {
+                    Some(PreFilterSelection::Symbol(item.range.clone()))
+                }
+                None => None,
+            };
+            self.filter_selection_touched = false;
+        }
         if !self.filter_is_empty() {
             self.pending_initial_selection = false;
             // A new query lands on its best match. The index is only kept across a rank the
@@ -768,6 +802,9 @@ impl BreadcrumbNavigationMenu {
             return;
         }
         self.pending_initial_selection = false;
+        if !self.filter_is_empty() {
+            self.filter_selection_touched = true;
+        }
         self.selected_index = Some(position);
         // Nothing asks for a scroll here: the picker already scrolls for selections it
         // originates, and deliberately does not for hover. Scrolling would drag rows under a
@@ -819,12 +856,10 @@ impl BreadcrumbNavigationMenu {
         self.listing != listing_before || self.load_epoch != epoch_before
     }
 
-    /// Deferred and coalesced: delegate callbacks hold the picker's lease, so publishing
-    /// inline would try to update it mid-update.
     /// A selection change on its own. The rows are the objects the delegate already holds, and
     /// rebuilding them clones every one - up to `MAX_BREADCRUMB_MENU_ROWS`, each with its
     /// anchors and highlight ranges - which hovering does once per row it crosses. Deferred for
-    /// the same reason as `publish_rows`: callers reach here with the picker leased.
+    /// the same reason as `publish_rows`.
     fn publish_selection(&mut self, cx: &mut Context<Self>) {
         let menu = cx.weak_entity();
         cx.defer(move |cx| {
@@ -849,6 +884,8 @@ impl BreadcrumbNavigationMenu {
         });
     }
 
+    /// Deferred and coalesced: delegate callbacks hold the picker's lease, so publishing inline
+    /// would try to update it mid-update.
     pub(super) fn publish_rows(&mut self, cx: &mut Context<Self>) {
         if self.rows_dirty {
             return;
@@ -952,8 +989,7 @@ impl BreadcrumbNavigationMenu {
                 } = row
                 {
                     *indent = item.depth.saturating_sub(shallowest);
-                    // Built in outline order, and this runs per row per publish, so the
-                    // lookup is a binary search.
+                    // Built in outline order, and this runs per row per publish.
                     if self
                         .listed_symbol_indices
                         .binary_search(outline_index)
@@ -1363,26 +1399,24 @@ impl BreadcrumbNavigationMenu {
                 if !this.apply_loaded_outline(buffer_id, &text_items, parent.clone(), cx) {
                     return;
                 }
-                // A file with no symbols at all has nothing to show, so hand over to the
-                // outline picker rather than opening an empty menu.
+                // A file with no symbols has no level of its own, so its segment lists its
+                // siblings - the parent directory, with the file selected - the rule a childless
+                // symbol already follows.
                 if this.all_symbol_items.is_empty()
                     && parent.is_none()
-                    && let Some(editor) = this.editor.upgrade()
-                    && let Some(callback) = zed_actions::outline::TOGGLE_OUTLINE.get()
+                    && !this.switch_to_file_parent_directory(window, cx)
                 {
-                    callback(editor.to_any_view(), window, cx);
-                    this.emit_dismiss(cx);
+                    this.hand_over_to_outline_picker(window, cx);
                 }
             })
             .ok();
         }));
     }
 
-    fn apply_loaded_outline(
+    fn store_loaded_outline(
         &mut self,
         buffer_id: BufferId,
         text_items: &[OutlineItem<text::Anchor>],
-        parent: Option<OutlineItem<Anchor>>,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(editor) = self.editor.upgrade() else {
@@ -1418,6 +1452,19 @@ impl BreadcrumbNavigationMenu {
                 .map(|item| item.depth)
                 .collect::<Vec<_>>(),
         );
+        true
+    }
+
+    fn apply_loaded_outline(
+        &mut self,
+        buffer_id: BufferId,
+        text_items: &[OutlineItem<text::Anchor>],
+        parent: Option<OutlineItem<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.store_loaded_outline(buffer_id, text_items, cx) {
+            return false;
+        }
         self.loading = false;
         self.publish_rows(cx);
         self.apply_symbol_parent(parent, cx);
@@ -1591,6 +1638,44 @@ impl BreadcrumbNavigationMenu {
         });
     }
 
+    /// Whether opening `listing` would put exactly the rows already on screen back on screen.
+    /// A childless symbol lists its siblings, which is also what its parent lists, so two
+    /// segments can name the same rows - and a click on the other one is then a second click on
+    /// the same thing, which closes rather than re-anchors.
+    pub fn lists_same_rows_as(&self, listing: &BreadcrumbListing) -> bool {
+        match (&self.listing, listing) {
+            (BreadcrumbListing::Directory { .. }, BreadcrumbListing::Directory { .. }) => {
+                &self.listing == listing
+            }
+            (
+                BreadcrumbListing::Symbols {
+                    buffer_id: open_buffer,
+                    ..
+                },
+                BreadcrumbListing::Symbols { buffer_id, parent },
+            ) => {
+                if open_buffer != buffer_id || self.all_symbol_items.is_empty() {
+                    return false;
+                }
+                let depths: Vec<usize> = self
+                    .all_symbol_items
+                    .iter()
+                    .map(|item| item.depth)
+                    .collect();
+                let indices = match parent.as_ref().map(|parent_item| {
+                    self.all_symbol_items
+                        .iter()
+                        .position(|item| item.range == parent_item.range)
+                }) {
+                    Some(Some(parent_index)) => level_outline_indices(&depths, parent_index),
+                    Some(None) | None => top_level_outline_indices(&depths),
+                };
+                indices == self.listed_symbol_indices
+            }
+            _ => false,
+        }
+    }
+
     fn apply_symbol_parent(
         &mut self,
         mut parent: Option<OutlineItem<Anchor>>,
@@ -1606,22 +1691,14 @@ impl BreadcrumbNavigationMenu {
                 .iter()
                 .position(|item| item.range == parent_item.range)
         });
+        // An edit removed the symbol this listing was opened on; an empty listing here would
+        // have no keyboard way back out.
+        if matches!(parent_index, Some(None)) {
+            parent = None;
+        }
         let listed_indices = match parent_index {
-            Some(Some(parent_index)) => {
-                let children = child_outline_indices(&depths, parent_index);
-                if children.is_empty() {
-                    sibling_outline_indices(&depths, parent_index)
-                } else {
-                    children
-                }
-            }
-            // An edit removed the symbol this listing was opened on; an empty listing
-            // here would have no keyboard way back out.
-            Some(None) => {
-                parent = None;
-                top_level_outline_indices(&depths)
-            }
-            None => top_level_outline_indices(&depths),
+            Some(Some(parent_index)) => level_outline_indices(&depths, parent_index),
+            Some(None) | None => top_level_outline_indices(&depths),
         };
 
         let buffer_id = match &self.listing {
@@ -1685,13 +1762,25 @@ impl BreadcrumbNavigationMenu {
                 .map(|match_| match_.candidate_id);
             // For symbols the candidate is an outline index, which only addresses a row if the
             // symbol belongs to the level being browsed; a match from elsewhere has no row.
-            let unranked_selection = match (&self.listing, selected_candidate) {
+            let carried_selection = match (&self.listing, selected_candidate) {
                 (BreadcrumbListing::Symbols { .. }, Some(outline_index)) => self
                     .listed_symbol_indices
                     .iter()
                     .position(|listed| *listed == outline_index),
                 (_, candidate) => candidate,
             };
+            // A search the user typed and erased without arrowing is abandoned, so the row
+            // they left comes back; a search they arrowed through is a choice, so that stays.
+            let restored_selection = if self.filter_selection_touched {
+                None
+            } else {
+                self.pre_filter_selection
+                    .as_ref()
+                    .and_then(|selection| self.position_of_pre_filter_selection(selection))
+            };
+            let unranked_selection = restored_selection.or(carried_selection);
+            self.pre_filter_selection = None;
+            self.filter_selection_touched = false;
             // The old value addresses the ranked matches that are about to be dropped, so
             // keeping it would silently highlight whichever sibling sits at that index.
             if selected_candidate.is_some() && unranked_selection.is_none() {
@@ -1734,10 +1823,11 @@ impl BreadcrumbNavigationMenu {
             // is the whole matching set rather than a screenful.
             let matches = cx
                 .background_spawn(async move {
-                    // Ranked in full and truncated below: `match_strings` truncates on its own
-                    // comparator, which on equal scores keeps the highest candidate ids - the
-                    // last files of the listing - while the cap promises the first ones.
-                    fuzzy::match_strings(
+                    // Ranked in full: `match_strings` truncates on its own comparator, which on
+                    // equal scores keeps the highest candidate ids - the last files of the
+                    // listing - while the cap promises the first ones. The sort and the cut
+                    // stay on this thread too; over a large directory they are the cost.
+                    let mut matches = fuzzy::match_strings(
                         candidates.as_slice(),
                         &query,
                         false,
@@ -1746,7 +1836,18 @@ impl BreadcrumbNavigationMenu {
                         &cancel_flag,
                         executor,
                     )
-                    .await
+                    .await;
+                    // Equal scores otherwise come back in reverse listing order, so filtering a
+                    // directory of item_000..item_199 opened on item_199.
+                    matches.sort_by(|a, b| {
+                        b.score
+                            .partial_cmp(&a.score)
+                            .unwrap_or(Ordering::Equal)
+                            .then(a.candidate_id.cmp(&b.candidate_id))
+                    });
+                    // One past the cap is what tells the footer the list was cut.
+                    matches.truncate(MAX_BREADCRUMB_MENU_ROWS + 1);
+                    matches
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -1755,15 +1856,6 @@ impl BreadcrumbNavigationMenu {
                 }
                 this.ranked_epoch = epoch;
                 this.filter_match_truncated = matches.len() > MAX_BREADCRUMB_MENU_ROWS;
-                let mut matches = matches;
-                // Equal scores otherwise come back in reverse listing order, so filtering a
-                // directory of item_000..item_199 opened on item_199.
-                matches.sort_by(|a, b| {
-                    b.score
-                        .partial_cmp(&a.score)
-                        .unwrap_or(Ordering::Equal)
-                        .then(a.candidate_id.cmp(&b.candidate_id))
-                });
                 this.ranked_matches = matches.into_iter().take(MAX_BREADCRUMB_MENU_ROWS).collect();
                 // Restored by path, never by rank position: a reload rebuilds
                 // `directory_entries`, so the candidate ids the old positions addressed now
@@ -1882,6 +1974,26 @@ impl BreadcrumbNavigationMenu {
         cx.notify();
     }
 
+    fn position_of_pre_filter_selection(&self, selection: &PreFilterSelection) -> Option<usize> {
+        match (selection, &self.listing) {
+            (PreFilterSelection::Directory(path), BreadcrumbListing::Directory { .. }) => self
+                .directory_entries
+                .iter()
+                .take(MAX_BREADCRUMB_MENU_ROWS)
+                .position(|entry| entry.path.as_ref() == path.as_ref()),
+            (PreFilterSelection::Symbol(range), BreadcrumbListing::Symbols { .. }) => self
+                .listed_symbol_indices
+                .iter()
+                .take(MAX_BREADCRUMB_MENU_ROWS)
+                .position(|index| {
+                    self.all_symbol_items
+                        .get(*index)
+                        .is_some_and(|item| item.range == *range)
+                }),
+            _ => None,
+        }
+    }
+
     fn initial_selected_index(&self) -> Option<usize> {
         match &self.listing {
             BreadcrumbListing::Directory { .. } => {
@@ -1976,17 +2088,13 @@ impl BreadcrumbNavigationMenu {
                     else {
                         return;
                     };
-                    self.set_listing(
-                        BreadcrumbListing::Symbols {
-                            buffer_id,
-                            parent: None,
-                        },
+                    self.switch_to_symbols_when_loaded(
+                        buffer_id,
                         self.active_file_path.clone(),
-                        false,
+                        WithoutSymbols::Stay,
                         window,
                         cx,
                     );
-                    self.emit_bar_changed(cx);
                 } else {
                     self.choose_directory_entry(entry, window, cx);
                 }
@@ -2045,18 +2153,15 @@ impl BreadcrumbNavigationMenu {
                 let Some(parent) = path.parent() else {
                     return;
                 };
-                let parent = parent.into_arc();
-                self.set_listing(
-                    BreadcrumbListing::Directory {
-                        worktree_id,
-                        path: parent,
-                    },
-                    self.active_file_path.clone(),
+                let active_file_path = self.active_file_path.clone();
+                self.switch_to_directory_when_loaded(
+                    worktree_id,
+                    parent.into_arc(),
+                    active_file_path,
                     true,
                     window,
                     cx,
                 );
-                self.emit_bar_changed(cx);
             }
             BreadcrumbListing::Symbols { buffer_id, parent } => {
                 if parent.is_none() {
@@ -2088,13 +2193,108 @@ impl BreadcrumbNavigationMenu {
         }
     }
 
-    fn switch_to_file_parent_directory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(editor) = self.editor.upgrade() else {
-            return;
+    /// Resolves the file's outline before switching, as the directory switches do, so an empty
+    /// outline never installs an empty symbols listing: the menu stays or lists the file's
+    /// siblings instead. An outline already held for this file is reused rather than reloaded.
+    pub(crate) fn switch_to_symbols_when_loaded(
+        &mut self,
+        buffer_id: BufferId,
+        active_file_path: Option<Arc<RelPath>>,
+        without_symbols: WithoutSymbols,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let outline_held = match &self.listing {
+            BreadcrumbListing::Symbols {
+                buffer_id: listed, ..
+            } => *listed == buffer_id && !self.all_symbol_items.is_empty(),
+            BreadcrumbListing::Directory { .. } => false,
         };
-        let Some(project_path) = editor.read(cx).active_project_path(cx) else {
+        if outline_held {
+            self.set_listing(
+                BreadcrumbListing::Symbols {
+                    buffer_id,
+                    parent: None,
+                },
+                active_file_path,
+                false,
+                window,
+                cx,
+            );
+            self.emit_bar_changed(cx);
             return;
-        };
+        }
+        self.load_epoch = self.load_epoch.wrapping_add(1);
+        let generation = self.load_epoch;
+        self.rows_frozen_for_load = Some(generation);
+        self.load_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let outline_task = this
+                .update(cx, |this, cx| {
+                    this.editor.upgrade().map(|editor| {
+                        editor.update(cx, |editor, cx| editor.buffer_outline_items(buffer_id, cx))
+                    })
+                })
+                .ok()
+                .flatten();
+            let Some(outline_task) = outline_task else {
+                return;
+            };
+            let items = outline_task.await;
+            this.update_in(cx, |this, window, cx| {
+                if this.load_epoch != generation {
+                    return;
+                }
+                if !items.is_empty() {
+                    if this.store_loaded_outline(buffer_id, &items, cx) {
+                        this.set_listing(
+                            BreadcrumbListing::Symbols {
+                                buffer_id,
+                                parent: None,
+                            },
+                            active_file_path,
+                            false,
+                            window,
+                            cx,
+                        );
+                        this.emit_bar_changed(cx);
+                    }
+                    return;
+                }
+                this.rows_frozen_for_load = None;
+                if without_symbols == WithoutSymbols::Stay {
+                    return;
+                }
+                match this.file_parent_directory(cx) {
+                    Some((worktree_id, parent_path, file_path)) => {
+                        let siblings = BreadcrumbListing::Directory {
+                            worktree_id,
+                            path: parent_path.clone(),
+                        };
+                        if siblings == this.listing {
+                            this.emit_dismiss(cx);
+                        } else {
+                            this.switch_to_directory_when_loaded(
+                                worktree_id,
+                                parent_path,
+                                Some(file_path),
+                                false,
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+                    None => this.hand_over_to_outline_picker(window, cx),
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// The open file's siblings: its parent directory, and the file's own path within it. None
+    /// where there is no directory to list, a single-file worktree or an untitled buffer.
+    fn file_parent_directory(&self, cx: &App) -> Option<(WorktreeId, Arc<RelPath>, Arc<RelPath>)> {
+        let editor = self.editor.upgrade()?;
+        let project_path = editor.read(cx).active_project_path(cx)?;
         // A single-file worktree paints no directory segments, so a directory listing here
         // would have nothing to anchor to and the menu would dismiss itself.
         let is_single_file = editor
@@ -2107,24 +2307,44 @@ impl BreadcrumbNavigationMenu {
             })
             .is_some_and(|worktree| worktree.read(cx).is_single_file());
         if is_single_file {
-            return;
+            return None;
         }
         let parent_path = project_path
             .path
             .parent()
             .map(|parent| parent.into_arc())
             .unwrap_or_else(|| RelPath::empty().into_arc());
-        self.set_listing(
-            BreadcrumbListing::Directory {
-                worktree_id: project_path.worktree_id,
-                path: parent_path,
-            },
-            Some(project_path.path),
+        Some((project_path.worktree_id, parent_path, project_path.path))
+    }
+
+    fn switch_to_file_parent_directory(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some((worktree_id, parent_path, file_path)) = self.file_parent_directory(cx) else {
+            return false;
+        };
+        self.switch_to_directory_when_loaded(
+            worktree_id,
+            parent_path,
+            Some(file_path),
             false,
             window,
             cx,
         );
-        self.emit_bar_changed(cx);
+        true
+    }
+
+    /// The outline picker is what a click on the bar opened before this menu existed. It opens
+    /// nothing for an empty outline, so this is only for a file with no directory to list either.
+    fn hand_over_to_outline_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.editor.upgrade()
+            && let Some(callback) = zed_actions::outline::TOGGLE_OUTLINE.get()
+        {
+            callback(editor.to_any_view(), window, cx);
+            self.emit_dismiss(cx);
+        }
     }
 
     /// Resolved from the row the picker rendered rather than re-derived from the selection,
@@ -2227,31 +2447,102 @@ impl BreadcrumbNavigationMenu {
                 if this.load_epoch != generation {
                     return;
                 }
-                // The removal that takes this path names it while the listing we are leaving is
-                // still installed, so it classifies as an ordinary reload there and leaves this
-                // drill running. The epoch alone cannot tell us the target is gone.
-                let target_survives = this.worktree(worktree_id, cx).is_some_and(|worktree| {
-                    worktree
-                        .read(cx)
-                        .entry_for_path(&path)
-                        .is_some_and(|entry| entry.is_dir())
-                });
-                if !target_survives {
-                    this.dismiss_dead_listing(cx);
-                    return;
-                }
                 let active_file_path = this.active_file_path.clone();
-                this.set_listing(
-                    BreadcrumbListing::Directory { worktree_id, path },
+                this.install_directory_listing(
+                    worktree_id,
+                    path,
                     active_file_path,
                     true,
                     window,
                     cx,
                 );
-                this.emit_bar_changed(cx);
             })
             .ok();
         }));
+    }
+
+    /// Expands the target before switching to it, the way the drill does, so the strip's anchor
+    /// and the rows move in the same frame. Switching synchronously re-anchors the menu under
+    /// the new segment on the next frame while the rows are still the listing being left - a
+    /// window bounded by one `expand_entry`, which is long enough to see on an unscanned
+    /// directory and unbounded on a network worktree.
+    pub(crate) fn switch_to_directory_when_loaded(
+        &mut self,
+        worktree_id: WorktreeId,
+        path: Arc<RelPath>,
+        active_file_path: Option<Arc<RelPath>>,
+        navigated: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.load_epoch = self.load_epoch.wrapping_add(1);
+        let generation = self.load_epoch;
+        self.rows_frozen_for_load = Some(generation);
+        let expand_task = self
+            .worktree(worktree_id, cx)
+            .and_then(|worktree| {
+                worktree
+                    .read(cx)
+                    .entry_for_path(&path)
+                    .map(|entry| entry.id)
+            })
+            .and_then(|entry_id| {
+                let project = self.project(cx)?;
+                project.update(cx, |project, cx| {
+                    project.expand_entry(worktree_id, entry_id, cx)
+                })
+            });
+        self.load_task = Some(cx.spawn_in(window, async move |this, cx| {
+            if let Some(task) = expand_task {
+                task.await.log_err();
+            }
+            this.update_in(cx, |this, window, cx| {
+                if this.load_epoch != generation {
+                    return;
+                }
+                this.install_directory_listing(
+                    worktree_id,
+                    path,
+                    active_file_path,
+                    navigated,
+                    window,
+                    cx,
+                );
+            })
+            .ok();
+        }));
+    }
+
+    fn install_directory_listing(
+        &mut self,
+        worktree_id: WorktreeId,
+        path: Arc<RelPath>,
+        active_file_path: Option<Arc<RelPath>>,
+        navigated: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // The removal that takes this path names it while the listing we are leaving is still
+        // installed, so it classifies as an ordinary reload there and leaves the switch running.
+        // The epoch alone cannot tell us the target is gone.
+        let target_survives = self.worktree(worktree_id, cx).is_some_and(|worktree| {
+            worktree
+                .read(cx)
+                .entry_for_path(&path)
+                .is_some_and(|entry| entry.is_dir())
+        });
+        if !target_survives {
+            self.dismiss_dead_listing(cx);
+            return;
+        }
+        self.set_listing(
+            BreadcrumbListing::Directory { worktree_id, path },
+            active_file_path,
+            navigated,
+            window,
+            cx,
+        );
+        self.emit_bar_changed(cx);
     }
 
     fn open_file(&mut self, path: Arc<RelPath>, window: &mut Window, cx: &mut Context<Self>) {
@@ -2330,6 +2621,16 @@ impl BreadcrumbNavigationMenu {
 const LOADING_MESSAGE: &str = "Loading…";
 const SEARCHING_MESSAGE: &str = "Searching…";
 const NO_MATCHES_MESSAGE: &str = "No matches";
+
+/// A symbol segment lists its children, and falls back to its siblings only when it has none.
+fn level_outline_indices(depths: &[usize], parent_index: usize) -> Vec<usize> {
+    let children = child_outline_indices(depths, parent_index);
+    if children.is_empty() {
+        sibling_outline_indices(depths, parent_index)
+    } else {
+        children
+    }
+}
 
 const MAX_ROW_LABEL_CHARS_WITHOUT_TOOLTIP: usize = 24;
 
@@ -2465,6 +2766,22 @@ impl Render for BreadcrumbNavigationMenu {
             })
             .into_any_element()
     }
+}
+
+/// What a symbols switch does when the file turns out to have no symbols.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WithoutSymbols {
+    /// The drill from the open file's row: its siblings are the rows already on screen.
+    Stay,
+    /// A segment click or the chord: list the file's siblings, or close when they are what is
+    /// already listed, as any click on the rows already on screen does.
+    ListSiblings,
+}
+
+#[derive(Clone)]
+enum PreFilterSelection {
+    Directory(Arc<RelPath>),
+    Symbol(Range<Anchor>),
 }
 
 /// The delegate owns these: `PickerDelegate` renders from `&self` while the menu is itself

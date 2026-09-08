@@ -527,7 +527,11 @@ impl BreadcrumbStrip {
                 .with_default_highlights(&text_style, segment.label.highlights.clone())
                 .into_any()
         };
+        // A line box the height of the font, not the buffer's line height: the icon beside it
+        // is centred on the box, and glyphs in a taller box sit below its centre.
         let label = div()
+            .debug_selector(|| format!("breadcrumb-segment-label-{index}"))
+            .line_height(gpui::relative(1.))
             .min_w_0()
             .overflow_x_hidden()
             .whitespace_nowrap()
@@ -540,9 +544,14 @@ impl BreadcrumbStrip {
                 .min_w_0()
                 .gap_1()
                 .child(
-                    Icon::from_path(icon)
-                        .color(Color::Muted)
-                        .size(IconSize::Small),
+                    div()
+                        .debug_selector(|| format!("breadcrumb-segment-icon-{index}"))
+                        .flex_none()
+                        .child(
+                            Icon::from_path(icon)
+                                .color(Color::Muted)
+                                .size(IconSize::Small),
+                        ),
                 )
                 .child(label)
                 .into_any_element()
@@ -559,6 +568,7 @@ impl BreadcrumbStrip {
                 index,
                 Rc::new(target),
                 label,
+                index + 1 == self.segments.len(),
                 editor,
                 editor_state,
                 cx,
@@ -575,6 +585,7 @@ impl BreadcrumbStrip {
         debug_index: usize,
         target: Rc<BreadcrumbSegmentTarget>,
         label: gpui::AnyElement,
+        advertises_chord: bool,
         editor: WeakEntity<Editor>,
         editor_state: SegmentEditorState,
         cx: &mut App,
@@ -595,8 +606,6 @@ impl BreadcrumbStrip {
             .child(div().px(px(SEGMENT_TRIGGER_PADDING_X)).child(label))
             .when(!menu_open, |this| {
                 this.tooltip(move |_, cx| {
-                    // Only the file segment names the chord, because only its listing is the
-                    // one the chord opens; see `segment_tooltip_shows_navigation_chord`.
                     let title: SharedString = match tooltip_target.as_ref() {
                         BreadcrumbSegmentTarget::Directory { path, .. } => {
                             if path.is_empty() {
@@ -619,9 +628,11 @@ impl BreadcrumbStrip {
                             }
                         }
                     };
+                    // The chord opens the level the caret is in, which is always the bar's
+                    // last segment - whatever kind it is - so that is the only segment that
+                    // names it.
                     let chord: Option<&dyn Action> =
-                        segment_tooltip_shows_navigation_chord(tooltip_target.as_ref())
-                            .then_some(&OpenBreadcrumbNavigation);
+                        advertises_chord.then_some(&OpenBreadcrumbNavigation);
                     if copyable_path {
                         Tooltip::with_meta(title, chord, "Right-click to copy this path", cx)
                     } else if let Some(chord) = chord {
@@ -735,6 +746,7 @@ impl BreadcrumbStrip {
                 0,
                 Rc::new(target),
                 content,
+                false,
                 editor,
                 editor_state,
                 cx,
@@ -1078,13 +1090,6 @@ enum FinalItem {
     Ellipsis(Range<usize>),
 }
 
-/// The `OpenBreadcrumbNavigation` chord opens the current file's outline, which is what the file
-/// segment opens too, so only that segment names the chord. Directory segments open a directory
-/// and the deeper symbol segments open a symbol's children, neither of which the chord does.
-pub(super) fn segment_tooltip_shows_navigation_chord(target: &BreadcrumbSegmentTarget) -> bool {
-    matches!(target, BreadcrumbSegmentTarget::Symbol { item: None, .. })
-}
-
 /// Where the tail begins: the sum of every item before it. Each measured width already carries
 /// its trailing gap, so the inter-item gap is not added again.
 fn folded_tail_start(
@@ -1176,29 +1181,6 @@ pub(super) fn apply_dirty_filename_style(
 mod tests {
     use super::*;
     use gpui::px;
-
-    #[test]
-    fn test_only_the_file_segment_advertises_the_navigation_chord() {
-        use util::rel_path::rel_path;
-
-        let file = BreadcrumbSegmentTarget::Symbol {
-            buffer_id: language::BufferId::new(1).unwrap(),
-            item: None,
-        };
-        assert!(
-            segment_tooltip_shows_navigation_chord(&file),
-            "the file segment: the chord opens the file outline it opens too"
-        );
-
-        let directory = BreadcrumbSegmentTarget::Directory {
-            worktree_id: project::WorktreeId::from_usize(0),
-            path: rel_path("src").into_arc(),
-        };
-        assert!(
-            !segment_tooltip_shows_navigation_chord(&directory),
-            "a directory segment opens a directory, which the chord does not"
-        );
-    }
 
     #[test]
     fn test_tail_start_counts_each_item_once() {
