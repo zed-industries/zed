@@ -1,4 +1,5 @@
 use gpui::BackgroundExecutor;
+use path::{PathStyle, rel_path::RelPath};
 use std::{
     cmp::{self, Ordering},
     sync::{
@@ -6,7 +7,6 @@ use std::{
         atomic::{self, AtomicBool},
     },
 };
-use util::{paths::PathStyle, rel_path::RelPath};
 
 use crate::{
     CharBag,
@@ -135,7 +135,7 @@ pub fn match_fixed_path_set(
             distance_to_relative_ancestor: usize::MAX,
         },
     );
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }
 
@@ -256,7 +256,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     }
 
     let mut results = segment_results.concat();
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }
 
@@ -277,7 +277,7 @@ fn distance_between_paths(path: &RelPath, relative_to: &RelPath) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use util::rel_path::RelPath;
+    use path::rel_path::RelPath;
 
     use super::distance_between_paths;
 

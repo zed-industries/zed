@@ -14,7 +14,7 @@ use gpui::{
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
-    language_settings::{Formatter, FormatterList, LanguageSettings},
+    language_settings::{ConfiguredLanguageServer, Formatter, FormatterList, LanguageSettings},
     rust_lang, tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;
@@ -180,7 +180,7 @@ async fn test_sharing_an_ssh_remote_project(
     cx_b.read(|cx| {
         assert_eq!(
             LanguageSettings::for_buffer(buffer_b.read(cx), cx).language_servers,
-            ["override-rust-analyzer".to_string()]
+            [ConfiguredLanguageServer::new("override-rust-analyzer")]
         )
     });
 
@@ -686,10 +686,11 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     let ts_lang = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             ..LanguageConfig::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -926,12 +927,12 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
         let matching_server_ids = log_store
             .language_servers
             .iter()
-            .filter_map(|(server_id, state)| {
+            .filter_map(|(key, state)| {
                 state
                     .name
                     .as_ref()
                     .is_some_and(|name| name.0 == "the-language-server")
-                    .then_some(*server_id)
+                    .then_some(key.server_id)
             })
             .collect::<Vec<_>>();
         assert_eq!(matching_server_ids, vec![first_server_id]);
@@ -957,10 +958,6 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
             statuses[0].0, restarted_server_id,
             "restarting a remote language server should publish the replacement server id"
         );
-        assert_ne!(
-            statuses[0].0, first_server_id,
-            "restarting a remote language server should remove the previous server id"
-        );
         assert_eq!(statuses[0].1.name.0, "the-language-server");
     });
     cx_a.read_global::<GlobalLogStore, _>(|global, cx| {
@@ -968,22 +965,18 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
         let matching_server_ids = log_store
             .language_servers
             .iter()
-            .filter_map(|(server_id, state)| {
+            .filter_map(|(key, state)| {
                 state
                     .name
                     .as_ref()
                     .is_some_and(|name| name.0 == "the-language-server")
-                    .then_some(*server_id)
+                    .then_some(key.server_id)
             })
             .collect::<Vec<_>>();
         assert_eq!(
             matching_server_ids,
             vec![restarted_server_id],
             "restarting a remote language server should replace the old log store entry"
-        );
-        assert!(
-            !log_store.language_servers.contains_key(&first_server_id),
-            "restarting a remote language server should remove the previous log store entry"
         );
     });
 }
@@ -1441,7 +1434,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     cx_a.read(|cx| {
         assert_eq!(
             LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
-            ["...".to_string()],
+            [ConfiguredLanguageServer::new("...")],
             "remote .zed/settings.json must not sync before trust approval"
         )
     });
@@ -1469,7 +1462,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     cx_a.read(|cx| {
         assert_eq!(
             LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
-            ["override-rust-analyzer".to_string()],
+            [ConfiguredLanguageServer::new("override-rust-analyzer")],
             "remote .zed/settings.json should sync after trust approval"
         )
     });

@@ -47,7 +47,7 @@ impl<T: Operation> OperationQueue<T> {
     }
 
     pub fn insert(&mut self, mut ops: Vec<T>) {
-        ops.sort_by_key(|op| op.lamport_timestamp());
+        ops.sort_unstable_by_key(|op| op.lamport_timestamp());
         ops.dedup_by_key(|op| op.lamport_timestamp());
         self.0.edit(
             ops.into_iter()

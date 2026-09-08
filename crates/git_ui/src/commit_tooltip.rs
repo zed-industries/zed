@@ -1,20 +1,25 @@
 use crate::commit_view::CommitView;
+use anyhow::Result;
+use askpass::AskPassDelegate;
 use editor::hover_markdown_style;
 use futures::Future;
 use git::blame::BlameEntry;
 use git::repository::CommitSummary;
 use git::{GitRemote, commit::ParsedCommitMessage};
+use git_ui_core::askpass_modal::AskPassModal;
+use git_ui_core::notifications::show_error_toast;
 use gpui::{
-    AbsoluteLength, App, Asset, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
-    StatefulInteractiveElement, WeakEntity, prelude::*,
+    AbsoluteLength, App, Asset, Element, Entity, MouseButton, ParentElement, Pixels, Render,
+    ScrollHandle, StatefulInteractiveElement, Task, WeakEntity, Window, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement};
-use project::git_store::Repository;
+use notifications::status_toast::StatusToast;
+use project::git_store::{Repository, UnshallowState};
 use settings::Settings;
 use std::hash::Hash;
 use theme_settings::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{Avatar, CopyButton, Divider, prelude::*, tooltip_container};
+use ui::{Avatar, Chip, CopyButton, Divider, Tooltip, prelude::*, tooltip_container};
 use workspace::Workspace;
 
 #[derive(Clone, Debug)]
@@ -24,7 +29,55 @@ pub struct CommitDetails {
     pub author_email: SharedString,
     pub commit_time: OffsetDateTime,
     pub message: Option<ParsedCommitMessage>,
+    pub tag_names: Vec<SharedString>,
+    pub boundary: bool,
 }
+
+const MAX_COMMIT_TOOLTIP_TAG_CHIPS: usize = 2;
+
+pub(crate) fn commit_tag_chips(tag_names: &[SharedString]) -> Option<impl IntoElement> {
+    if tag_names.is_empty() {
+        return None;
+    }
+
+    let (visible_tags, hidden_tags) =
+        tag_names.split_at(tag_names.len().min(MAX_COMMIT_TOOLTIP_TAG_CHIPS));
+
+    Some(
+        h_flex().max_w(relative(0.6)).gap_1().child(
+            h_flex()
+                .gap_1()
+                .min_w_0()
+                .children(
+                    visible_tags
+                        .iter()
+                        .map(|tag_name| Chip::new(tag_name.clone()).truncate()),
+                )
+                .when(!hidden_tags.is_empty(), |this| {
+                    let hidden_tags = hidden_tags.to_vec();
+                    this.child(Chip::new(format!("+{}", hidden_tags.len())).tooltip(
+                        Tooltip::element(move |_window, cx| {
+                            v_flex()
+                                .gap_1()
+                                .children(itertools::Itertools::intersperse_with(
+                                    hidden_tags.iter().map(|tag_name| {
+                                        Label::new(tag_name.clone())
+                                            .size(LabelSize::Small)
+                                            .buffer_font(cx)
+                                            .into_any_element()
+                                    }),
+                                    || Divider::horizontal().into_any_element(),
+                                ))
+                                .into_any_element()
+                        }),
+                    ))
+                })
+                .child(Divider::vertical()),
+        ),
+    )
+}
+
+const COMMIT_AVATAR_BORDER_WIDTH: Pixels = px(1.);
 
 pub struct CommitAvatar<'a> {
     sha: &'a SharedString,
@@ -64,21 +117,22 @@ impl<'a> CommitAvatar<'a> {
         self
     }
 
+    pub fn rendered_size(size: impl Into<AbsoluteLength>, window: &Window) -> Pixels {
+        size.into().to_pixels(window.rem_size()) + COMMIT_AVATAR_BORDER_WIDTH * 2.
+    }
+
     pub fn render(&'a self, window: &mut Window, cx: &mut App) -> AnyElement {
         let border_color = cx.theme().colors().border_variant;
-        let border_width = px(1.);
 
         match self.avatar(window, cx) {
             None => {
-                let container_size = self
-                    .size
-                    .map(|s| s.to_pixels(window.rem_size()) + border_width * 2.);
+                let container_size = self.size.map(|size| Self::rendered_size(size, window));
 
                 h_flex()
                     .when_some(container_size, |this, size| this.size(size))
                     .justify_center()
                     .rounded_full()
-                    .border(border_width)
+                    .border(COMMIT_AVATAR_BORDER_WIDTH)
                     .border_color(border_color)
                     .bg(cx.theme().colors().element_disabled)
                     .child(
@@ -172,6 +226,7 @@ impl CommitTooltip {
     pub fn blame_entry(
         blame: &BlameEntry,
         details: Option<ParsedCommitMessage>,
+        tag_names: Vec<SharedString>,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
@@ -192,6 +247,8 @@ impl CommitTooltip {
                     .into(),
                 author_email: blame.author_mail.clone().unwrap_or("".to_string()).into(),
                 message: details,
+                tag_names,
+                boundary: blame.boundary,
             },
             repository,
             workspace,
@@ -270,6 +327,7 @@ impl Render for CommitTooltip {
             .message
             .as_ref()
             .and_then(|details| details.pull_request.clone());
+        let tag_names = self.commit.tag_names.clone();
 
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);
@@ -295,6 +353,13 @@ impl Render for CommitTooltip {
             author_name: self.commit.author_name.clone(),
             has_parent: false,
         };
+        let boundary_notice = self
+            .commit
+            .boundary
+            .then(|| {
+                shallow_boundary_notice(self.repository.clone(), self.workspace.clone(), window, cx)
+            })
+            .flatten();
 
         tooltip_container(cx, move |this, cx| {
             this.occlude()
@@ -321,6 +386,7 @@ impl Render for CommitTooltip {
                                 .border_b_1()
                                 .border_color(cx.theme().colors().border_variant),
                         )
+                        .children(boundary_notice)
                         .child(
                             div()
                                 .id("inline-blame-commit-message")
@@ -336,12 +402,16 @@ impl Render for CommitTooltip {
                                 .w_full()
                                 .justify_between()
                                 .pt_1()
+                                .gap_1()
+                                .flex_wrap()
                                 .border_t_1()
                                 .border_color(cx.theme().colors().border_variant)
                                 .child(absolute_timestamp)
                                 .child(
                                     h_flex()
                                         .gap_1()
+                                        .min_w_0()
+                                        .children(commit_tag_chips(&tag_names))
                                         .when_some(pull_request, |this, pr| {
                                             this.child(
                                                 Button::new(
@@ -416,4 +486,159 @@ fn blame_entry_timestamp(blame_entry: &BlameEntry, format: time_format::Timestam
 
 pub fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
     blame_entry_timestamp(blame_entry, time_format::TimestampFormat::Relative)
+}
+
+pub(crate) fn shallow_boundary_notice(
+    repository: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
+    window: &Window,
+    cx: &App,
+) -> Option<impl IntoElement + use<>> {
+    let unshallow_state = repository.read(cx).unshallow_state();
+    if unshallow_state == UnshallowState::Unshallowed {
+        return None;
+    }
+    let in_flight = unshallow_state == UnshallowState::InProgress;
+    let avatar_width = CommitAvatar::rendered_size(rems(1.), window);
+    let can_fetch = workspace
+        .read_with(cx, |workspace, cx| {
+            !workspace.project().read(cx).is_via_collab()
+        })
+        .unwrap_or(false);
+    Some(
+        v_flex()
+            .py_1()
+            .gap_2()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_start()
+                    .child(
+                        h_flex().w(avatar_width).justify_center().child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::Small)
+                                .color(Color::Warning),
+                        ),
+                    )
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Label::new(
+                                "Shallow clone boundary: earlier history is missing, so these lines may come from an older commit.",
+                            )
+                            .size(LabelSize::Small)
+                            .line_height_style(LineHeightStyle::UiLabel),
+                        ),
+                    ),
+            )
+            .when(can_fetch, |this| {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .child(div().w(avatar_width))
+                        .child(
+                            Button::new(
+                                "fetch-unshallow",
+                                if in_flight {
+                                    "Fetching…"
+                                } else {
+                                    "Fetch Missing History"
+                                },
+                            )
+                            .style(ButtonStyle::Outlined)
+                            .label_size(LabelSize::Small)
+                            .disabled(in_flight)
+                            .tooltip(Tooltip::text(
+                                "Run `git fetch --unshallow` to download the full history",
+                            ))
+                            .on_click(move |_, window, cx| {
+                                cx.stop_propagation();
+                                fetch_unshallow(
+                                    repository.clone(),
+                                    workspace.clone(),
+                                    window,
+                                    cx,
+                                )
+                                .detach_and_log_err(cx);
+                            }),
+                        ),
+                )
+            }),
+    )
+}
+
+pub(crate) fn fetch_unshallow(
+    repository: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<()>> {
+    if repository.read(cx).unshallow_state() != UnshallowState::Idle {
+        return Task::ready(Ok(()));
+    }
+    let askpass = {
+        let workspace = workspace.clone();
+        let window_handle = window.window_handle();
+        AskPassDelegate::new_with_cancellation(
+            &mut cx.to_async(),
+            move |prompt, tx, cancellation, cx| {
+                window_handle
+                    .update(cx, |_, window, cx| {
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.toggle_modal(window, cx, |window, cx| {
+                                    AskPassModal::new(
+                                        "git fetch --unshallow".into(),
+                                        prompt.into(),
+                                        tx,
+                                        cancellation,
+                                        window,
+                                        cx,
+                                    )
+                                });
+                            })
+                            .ok();
+                    })
+                    .ok();
+            },
+        )
+    };
+    let fetch = repository.update(cx, |repository, cx| repository.fetch_unshallow(askpass, cx));
+    window.refresh();
+    window.spawn(cx, async move |cx| {
+        let result = match fetch.await {
+            Ok(result) => result,
+            Err(canceled) => Err(anyhow::Error::from(canceled)),
+        };
+        cx.update(|window, cx| {
+            window.refresh();
+            let Some(workspace) = workspace.upgrade() else {
+                return Ok(());
+            };
+            match result {
+                Ok(_) => {
+                    workspace.update(cx, |workspace, cx| {
+                        let toast = StatusToast::new(
+                            "Fetched the missing commit history",
+                            cx,
+                            |this, _| {
+                                this.icon(
+                                    Icon::new(IconName::GitBranch)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                            },
+                        );
+                        workspace.toggle_status_toast(toast, cx);
+                    });
+                    Ok(())
+                }
+                Err(error) => {
+                    show_error_toast(workspace, "fetch --unshallow", error, cx);
+                    Err(anyhow::anyhow!("git fetch --unshallow failed"))
+                }
+            }
+        })?
+    })
 }

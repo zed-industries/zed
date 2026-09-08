@@ -44,14 +44,14 @@ pub struct FuzzySearchUsersResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct FuzzySearchChannelMembersByGithubLoginBody {
+pub struct FuzzySearchChannelMembersBody {
     pub channel_id: i32,
     pub query: String,
     pub limit: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct FuzzySearchChannelMembersByGithubLoginResponse {
+pub struct FuzzySearchChannelMembersResponse {
     pub channel_members: Vec<ChannelMember>,
     pub users: Vec<User>,
 }

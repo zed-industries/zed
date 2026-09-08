@@ -11,6 +11,10 @@ use sha2::{Digest, Sha256};
 
 use crate::{HttpClient, github::AssetKind};
 
+fn sha256_matches(actual: &str, expected: &str) -> bool {
+    actual.eq_ignore_ascii_case(expected)
+}
+
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
 pub struct GithubBinaryMetadata {
     pub metadata_version: u64,
@@ -104,7 +108,7 @@ pub async fn download_server_raw_binary(
 
         if let Some(expected_sha_256) = digest {
             anyhow::ensure!(
-                asset_sha_256 == expected_sha_256,
+                sha256_matches(&asset_sha_256, expected_sha_256),
                 "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
             );
         }
@@ -150,7 +154,7 @@ async fn extract_to_staging(
             let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
 
             anyhow::ensure!(
-                asset_sha_256 == expected_sha_256,
+                sha256_matches(&asset_sha_256, expected_sha_256),
                 "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
             );
             writer
@@ -403,12 +407,12 @@ mod tests {
     }
 
     #[test]
-    fn downloads_raw_binary_into_destination_dir() {
+    fn downloads_raw_binary_with_uppercase_digest_into_destination_dir() {
         futures::executor::block_on(async {
             let temp_dir = tempfile::tempdir().unwrap();
             let destination_path = temp_dir.path().join("v_1");
             let contents = b"#!/bin/sh\necho hello\n".to_vec();
-            let expected_sha_256 = format!("{:x}", Sha256::digest(&contents));
+            let expected_sha_256 = format!("{:X}", Sha256::digest(&contents));
             let client = StaticResponseClient { body: contents };
 
             download_server_raw_binary(
@@ -453,6 +457,68 @@ mod tests {
                 Some("0000000000000000000000000000000000000000000000000000000000000000"),
                 &destination_path,
                 "agent-binary",
+            )
+            .await
+            .unwrap_err();
+
+            assert!(error.to_string().contains("SHA-256 mismatch"));
+            assert!(!destination_path.exists());
+            let leftover_entries = std::fs::read_dir(temp_dir.path()).unwrap().count();
+            assert_eq!(leftover_entries, 0, "staging directory should be removed");
+        });
+    }
+
+    #[test]
+    fn downloads_archive_with_uppercase_digest_and_extracts_contents() {
+        futures::executor::block_on(async {
+            let archive = vec![
+                0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
+                0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
+                0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x50, 0x4b,
+                0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
+                0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00,
+                0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00,
+                0x00, 0x01, 0x00, 0x01, 0x00, 0x33, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x00,
+                0x00,
+            ];
+            let expected_sha_256 = format!("{:X}", Sha256::digest(&archive));
+            let client = StaticResponseClient { body: archive };
+            let temp_dir = tempfile::tempdir().unwrap();
+            let destination_path = temp_dir.path().join("v_1");
+
+            download_server_binary(
+                &client,
+                "https://example.com/agent.zip",
+                Some(&expected_sha_256),
+                &destination_path,
+                AssetKind::Zip,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                std::fs::read(destination_path.join("agent")).unwrap(),
+                b"hello"
+            );
+        });
+    }
+
+    #[test]
+    fn archive_digest_mismatch_prevents_extraction_and_cleans_up_staging() {
+        futures::executor::block_on(async {
+            let temp_dir = tempfile::tempdir().unwrap();
+            let destination_path = temp_dir.path().join("v_1");
+            let client = StaticResponseClient {
+                body: b"not an archive".to_vec(),
+            };
+
+            let error = download_server_binary(
+                &client,
+                "https://example.com/agent.zip",
+                Some("0000000000000000000000000000000000000000000000000000000000000000"),
+                &destination_path,
+                AssetKind::Zip,
             )
             .await
             .unwrap_err();

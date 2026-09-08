@@ -99,10 +99,11 @@ mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Rust".into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec!["rs".to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     brackets: BracketPairConfig {
                         pairs: vec![
                             BracketPair {

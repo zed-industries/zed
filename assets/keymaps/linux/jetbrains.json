@@ -60,6 +60,10 @@
       "ctrl-end": "editor::MoveToEnd",
       "ctrl-shift-home": "editor::SelectToBeginning",
       "ctrl-shift-end": "editor::SelectToEnd",
+      "alt-left": "editor::MoveToPreviousSubwordStart",
+      "alt-right": "editor::MoveToNextSubwordEnd",
+      "shift-alt-left": "editor::SelectToPreviousSubwordStart",
+      "shift-alt-right": "editor::SelectToNextSubwordEnd",
       "ctrl-f8": "editor::ToggleBreakpoint",
       "ctrl-shift-f8": "editor::EditLogBreakpoint",
       "ctrl-shift-u": "editor::ToggleCase",
@@ -79,6 +83,7 @@
       "ctrl-q": "editor::Hover",
       "ctrl-p": "editor::ShowSignatureHelp",
       "ctrl-\\": "assistant::InlineAssist",
+      "ctrl-alt-h": "call_hierarchy::ShowIncomingCalls",
     },
   },
   {
@@ -212,6 +217,13 @@
     "context": "Editor && mode == auto_height",
     "bindings": {
       "escape": "editor::Cancel",
+    },
+  },
+  {
+    "context": "CallHierarchyPicker > Picker > Editor",
+    "bindings": {
+      "ctrl-alt-h": "call_hierarchy::ToggleDirection",
+      "ctrl-k": null,
     },
   },
 ]

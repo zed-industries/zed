@@ -8,7 +8,7 @@ use db::{
 use editor::Editor;
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Modifiers, Subscription, Task, WeakEntity, actions,
+    Modifiers, Subscription, Task, TaskExt as _, WeakEntity, actions,
 };
 use language::Buffer;
 use picker::Picker;
@@ -17,10 +17,7 @@ use project::ProjectPath;
 use settings::SeedQuerySetting;
 use text::Anchor;
 use ui::Window;
-use workspace::{
-    DismissDecision, ModalView, Workspace, WorkspaceDb, WorkspaceId,
-    searchable::SearchableItemHandle,
-};
+use workspace::{DismissDecision, ItemHandle, ModalView, Workspace, WorkspaceDb, WorkspaceId};
 
 mod delegate;
 mod render;
@@ -331,19 +328,45 @@ impl TextFinder {
         Some(SearchSeed { query, options })
     }
 
-    /// The query to seed from the active item, if any.
+    /// The query to seed from the focused or active item, if any.
     ///
-    /// Only an explicit selection seeds from the editor; the bare word under the cursor is
-    /// ignored. Confirming a match jumps to (and places the cursor on) it, so seeding from the
-    /// cursor on reopen would clobber the search you were in the middle of, whereas a deliberate
-    /// selection (e.g. a double-click) is a clear signal to search for that text.
+    /// The focused pane's item is consulted before the active center pane's, so invoking the
+    /// finder from a dock (e.g. with a selection in the terminal) seeds from that item even when
+    /// an editor with its own selection is active in the center — the selection the user made
+    /// last is the one next to the focus. When the focused item has nothing to offer (say, a
+    /// focused terminal without a selection), the center item is tried so an editor selection
+    /// still seeds.
     fn active_item_query(
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<String> {
-        let item = workspace.active_item(cx)?;
+        let focused_item = workspace.focused_pane(window, cx).read(cx).active_item();
+        let active_item = workspace
+            .active_item(cx)
+            .filter(|active| match &focused_item {
+                Some(focused) => focused.item_id() != active.item_id(),
+                None => true,
+            });
 
+        focused_item
+            .into_iter()
+            .chain(active_item)
+            .find_map(|item| Self::item_query(workspace, item.as_ref(), window, cx))
+    }
+
+    /// The query to seed from one item, if any.
+    ///
+    /// Only an explicit selection seeds from the item; the bare word under the cursor is
+    /// ignored. Confirming a match jumps to (and places the cursor on) it, so seeding from the
+    /// cursor on reopen would clobber the search you were in the middle of, whereas a deliberate
+    /// selection (e.g. a double-click) is a clear signal to search for that text.
+    fn item_query(
+        workspace: &mut Workspace,
+        item: &dyn ItemHandle,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<String> {
         if let Some(project_search) = item.downcast::<ProjectSearchView>() {
             let query = project_search.read(cx).search_query_text(cx);
             if !query.is_empty() {
@@ -351,14 +374,13 @@ impl TextFinder {
             }
         }
 
-        if let Some(query) =
-            crate::project_search::buffer_search_query(workspace, item.as_ref(), cx)
-        {
+        if let Some(query) = crate::project_search::buffer_search_query(workspace, item, cx) {
             return Some(query);
         }
 
-        if let Some(editor) = item.act_as::<Editor>(cx) {
-            let query = editor.query_suggestion(Some(SeedQuerySetting::Selection), window, cx);
+        if let Some(searchable_item) = item.to_searchable_item_handle(cx) {
+            let query =
+                searchable_item.query_suggestion(Some(SeedQuerySetting::Selection), window, cx);
             if !query.is_empty() {
                 return Some(query);
             }
@@ -399,12 +421,24 @@ impl TextFinder {
         cx: &mut Context<Self>,
     ) -> Self {
         let project = delegate.project(cx).clone();
+        let languages = project.read(cx).languages().clone();
         let preview = picker_preview::editor_preview(project, window, cx);
-        let picker = cx.new(|cx| Picker::list_with_preview(delegate, preview, window, cx));
+        let query_editor = cx.new(|cx| Editor::single_line(window, cx));
+        let erased_query_editor = query_editor.update(cx, |editor, cx| editor.erased(cx));
+        let picker = cx.new(|cx| {
+            Picker::list_with_preview_and_query_editor(
+                delegate,
+                preview,
+                erased_query_editor,
+                window,
+                cx,
+            )
+        });
         let picker_weak = picker.downgrade();
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
+            picker.delegate.query_editor = Some(query_editor);
             picker.delegate.hook_up_any_ongoing_search(picker_weak, cx);
             if let Some(seed_query) = seed_query {
                 // Restore filters before seeding the query so the initial search runs with them.
@@ -415,6 +449,25 @@ impl TextFinder {
                 picker.select_query(window, cx);
             }
         });
+        cx.spawn({
+            let picker = picker.downgrade();
+            async move |_, cx| {
+                use anyhow::Context as _;
+
+                let regex_language = languages
+                    .language_for_name("regex")
+                    .await
+                    .context("loading regex language")?;
+                picker
+                    .update(cx, |picker, cx| {
+                        picker.delegate.regex_language = Some(regex_language);
+                        picker.delegate.adjust_query_regex_language(cx);
+                    })
+                    .ok();
+                anyhow::Ok(())
+            }
+        })
+        .detach_and_log_err(cx);
         let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
             cx.emit(DismissEvent);
         });
@@ -453,10 +506,8 @@ impl ModalView for TextFinder {
     ) -> DismissDecision {
         let picker = self.picker.read(cx);
         let query = picker.query(cx);
-        if !query.is_empty() {
-            let options = picker.delegate.search_options;
-            store_last_search(self.workspace_id, query, options, cx);
-        }
+        let options = picker.delegate.search_options;
+        store_last_search(self.workspace_id, query, options, cx);
         DismissDecision::Dismiss(true)
     }
 }
@@ -481,6 +532,8 @@ pub struct SearchMatch {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use gpui::{TestAppContext, VisualTestContext};
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -488,12 +541,14 @@ mod tests {
     use util::path;
     use workspace::MultiWorkspace;
 
+    use super::delegate::toggle_search_option;
     use super::*;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
+            cx.set_global(db::AppDatabase::test_new());
 
             theme_settings::init(theme::LoadThemes::JustBase, cx);
 
@@ -522,10 +577,6 @@ mod tests {
             .unwrap();
         let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
-        // Seed a query: the last-search persistence in `on_before_dismiss` (the
-        // code path that read the workspace entity) only runs when the query is
-        // non-empty, which is the common case in practice since the finder seeds
-        // the previous query on open.
         let seed_query = SearchSeed {
             query: "ONE".to_string(),
             options: None,
@@ -547,5 +598,150 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             assert!(workspace.active_modal::<TextFinder>(cx).is_none());
         });
+    }
+
+    #[gpui::test]
+    async fn test_clearing_query_does_not_restore_previous_query(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/dir"), json!({"one.rs": "const ONE: usize = 1;"}))
+            .await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+        let persistence_task = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.flush_serialization(window, cx)
+        });
+        persistence_task.await;
+
+        let initial_query = "unique_search_query";
+        let seed_query = SearchSeed {
+            query: initial_query.to_string(),
+            options: None,
+        };
+        workspace
+            .update_in(cx, |_, window, cx| {
+                TextFinder::open(Some(seed_query), window, cx)
+            })
+            .await;
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.hide_modal(window, cx));
+        });
+        cx.run_until_parked();
+
+        let seed_query = workspace.update_in(cx, |workspace, window, cx| {
+            TextFinder::seed_query(workspace, window, cx)
+        });
+        assert_eq!(
+            seed_query.as_ref().map(|seed| seed.query.as_str()),
+            Some(initial_query)
+        );
+        workspace
+            .update_in(cx, |_, window, cx| TextFinder::open(seed_query, window, cx))
+            .await;
+
+        let picker = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<TextFinder>(cx)
+                .expect("Text Finder should be open")
+                .read(cx)
+                .picker
+                .clone()
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_query("", window, cx);
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.hide_modal(window, cx));
+        });
+        cx.run_until_parked();
+
+        let seed_query = workspace.update_in(cx, |workspace, window, cx| {
+            TextFinder::seed_query(workspace, window, cx)
+        });
+        assert!(seed_query.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_query_highlighted_as_regex_while_regex_filter_is_on(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/dir"), json!({"one.rs": "const ONE: usize = 1;"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "regex".into(),
+                ..Default::default()
+            },
+            None,
+        )));
+
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+        let seed_query = SearchSeed {
+            query: "O.E".to_string(),
+            options: Some(SearchOptions::REGEX),
+        };
+        workspace
+            .update_in(cx, |_, window, cx| {
+                TextFinder::open(Some(seed_query), window, cx)
+            })
+            .await;
+        cx.run_until_parked();
+
+        let picker = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<TextFinder>(cx)
+                .expect("text finder should be open")
+                .read(cx)
+                .picker
+                .clone()
+        });
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(
+                query_language_name(&picker.delegate, cx).as_deref(),
+                Some("regex"),
+                "query should be highlighted as a regex while the regex filter is on"
+            );
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            toggle_search_option(picker, SearchOptions::REGEX, window, cx);
+        });
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(
+                query_language_name(&picker.delegate, cx),
+                None,
+                "highlighting should be dropped once the regex filter is off"
+            );
+        });
+    }
+
+    fn query_language_name(delegate: &Delegate, cx: &App) -> Option<String> {
+        let query_buffer = delegate
+            .query_editor
+            .as_ref()?
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()?;
+        Some(query_buffer.read(cx).language()?.name().to_string())
     }
 }

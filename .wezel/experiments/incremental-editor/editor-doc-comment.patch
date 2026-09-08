@@ -1,0 +1,12 @@
+diff --git a/crates/editor/src/editor.rs b/crates/editor/src/editor.rs
+index 31ddc4b5c4..cd8e8e77e2 100644
+--- a/crates/editor/src/editor.rs
++++ b/crates/editor/src/editor.rs
+@@ -11,6 +11,7 @@
+ //! All other submodules and structs are mostly concerned with holding editor data about the way it displays current buffer region(s).
+ //!
+ //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
++//!
+ pub mod actions;
+ pub mod blink_manager;
+ mod bracket_colorization;

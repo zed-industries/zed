@@ -1,30 +1,32 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::{Stream, StreamExt};
+use http_client::StatusCode;
 use language_model_core::{
-    CompactionContent, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestToolInput,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse,
-    LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role, StopReason,
-    TokenUsage,
+    LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent,
+    ProviderErrorCategory, Role, StopReason, TokenUsage, provider_name_for_id,
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::responses::{
-    ContextManagement, Request as ResponseRequest, ResponseCompactionItem,
-    ResponseCustomToolCallItem, ResponseCustomToolCallOutputItem, ResponseError,
-    ResponseFunctionCallItem, ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem,
-    ResponseIncludable, ResponseInputContent, ResponseInputItem, ResponseMessageItem,
-    ResponseOutputItem, ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
+    ContextManagement, Request as ResponseRequest, ResponseCustomToolCallItem,
+    ResponseCustomToolCallOutputItem, ResponseError, ResponseFunctionCallItem,
+    ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem, ResponseIncludable,
+    ResponseInputContent, ResponseInputItem, ResponseMessageItem, ResponseOutputItem,
+    ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
     ResponseReasoningSummaryPart, ResponseSummary as ResponsesSummary,
     ResponseUsage as ResponsesUsage, StreamEvent as ResponsesStreamEvent,
+    provider_compaction_items, provider_compaction_state_from_items,
 };
 use crate::{
-    FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort,
-    ResponseStreamEvent, ServiceTier, ToolCall, ToolCallContent,
+    FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort, ServiceTier,
+    ToolCall, ToolCallContent,
 };
 
 const RESPONSE_MESSAGE_PHASE_COMMENTARY: &str = "commentary";
@@ -72,6 +74,9 @@ pub fn into_open_ai(
     let mut messages = Vec::new();
     let mut current_reasoning: Option<String> = None;
     for message in request.messages {
+        let reasoning_details = interleaved_reasoning
+            .then(|| message.reasoning_details.clone())
+            .flatten();
         for content in message.content {
             match content {
                 MessageContent::Thinking { text, .. } if interleaved_reasoning => {
@@ -90,6 +95,7 @@ pub fn into_open_ai(
                             MessagePart::Text { text },
                             message.role,
                             &mut messages,
+                            reasoning_details.clone(),
                         );
                         if let Some(reasoning) = current_reasoning.take() {
                             if let Some(crate::RequestMessage::Assistant {
@@ -113,6 +119,7 @@ pub fn into_open_ai(
                         },
                         message.role,
                         &mut messages,
+                        reasoning_details.clone(),
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
@@ -128,12 +135,19 @@ pub fn into_open_ai(
                             function: FunctionContent {
                                 name: tool_use.name.to_string(),
                                 arguments: serde_json::to_string(input).unwrap_or_default(),
+                                thought_signature: interleaved_reasoning
+                                    .then(|| tool_use.thought_signature.clone())
+                                    .flatten(),
                             },
                         },
                     };
 
-                    if let Some(crate::RequestMessage::Assistant { tool_calls, .. }) =
-                        messages.last_mut()
+                    if let Some(crate::RequestMessage::Assistant {
+                        tool_calls,
+                        reasoning_details: existing_reasoning_details,
+                        ..
+                    }) = messages.last_mut()
+                        && existing_reasoning_details == &reasoning_details
                     {
                         tool_calls.push(tool_call);
                     } else {
@@ -141,6 +155,7 @@ pub fn into_open_ai(
                             content: None,
                             tool_calls: vec![tool_call],
                             reasoning_content: current_reasoning.take(),
+                            reasoning_details: reasoning_details.clone(),
                         });
                     }
                 }
@@ -227,6 +242,11 @@ pub fn into_open_ai(
     })
 }
 
+/// `compaction_state_owner` identifies the backend this request will be sent
+/// to for the purpose of replaying provider-native compaction state. Multiple
+/// backends share this conversion, but their encrypted compaction items are
+/// not interchangeable, so only state owned by this id is replayed; state
+/// owned by any other backend falls back to replaying the full transcript.
 pub fn into_open_ai_response(
     request: LanguageModelRequest,
     model_id: &str,
@@ -235,7 +255,8 @@ pub fn into_open_ai_response(
     max_output_tokens: Option<u64>,
     default_reasoning_effort: Option<ReasoningEffort>,
     supports_none_reasoning_effort: bool,
-) -> ResponseRequest {
+    compaction_state_owner: &LanguageModelProviderId,
+) -> Result<ResponseRequest> {
     let stream = !model_id.starts_with("o1-");
 
     let LanguageModelRequest {
@@ -255,17 +276,38 @@ pub fn into_open_ai_response(
 
     let service_tier = service_tier_for(speed);
 
+    let mut provider_items = Vec::new();
     let mut input_items = Vec::new();
     let mut replayed_reasoning_item_indexes = HashMap::default();
     let mut tool_use_kinds_by_id = HashMap::default();
+    let mut system_instructions = Vec::new();
     for (index, message) in messages.into_iter().enumerate() {
+        // System messages go to the top-level `instructions` field rather
+        // than the input item list. `instructions` is applied per request
+        // (the Responses API documents it as a system message inserted into
+        // the model's context), so the current system prompt survives when
+        // replaying provider compaction state replaces the accumulated input
+        // items below. This also matches the Codex backend, which rejects
+        // system-role input items outright.
+        if message.role == Role::System {
+            for content in message.content {
+                if let MessageContent::Text(text) = content
+                    && !text.trim().is_empty()
+                {
+                    system_instructions.push(text);
+                }
+            }
+            continue;
+        }
         append_message_to_response_items(
             message,
             index,
+            compaction_state_owner,
             &mut replayed_reasoning_item_indexes,
             &mut tool_use_kinds_by_id,
+            &mut provider_items,
             &mut input_items,
-        );
+        )?;
     }
 
     let tools: Vec<_> = tools
@@ -328,10 +370,14 @@ pub fn into_open_ai_response(
         Vec::new()
     };
 
-    ResponseRequest {
+    Ok(ResponseRequest {
         model: model_id.into(),
-        instructions: None,
-        input: input_items,
+        instructions: if system_instructions.is_empty() {
+            None
+        } else {
+            Some(system_instructions.join("\n\n"))
+        },
+        input: crate::responses::ResponseInput::new(provider_items, input_items),
         store: Some(false),
         include,
         stream,
@@ -358,16 +404,18 @@ pub fn into_open_ai_response(
         service_tier,
         context_management: compact_at_tokens
             .map(|compact_threshold| vec![ContextManagement::Compaction { compact_threshold }]),
-    }
+    })
 }
 
 fn append_message_to_response_items(
     message: LanguageModelRequestMessage,
     index: usize,
+    compaction_state_owner: &LanguageModelProviderId,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
     tool_use_kinds_by_id: &mut HashMap<LanguageModelToolUseId, ReplayToolKind>,
+    provider_items: &mut Vec<serde_json::Value>,
     input_items: &mut Vec<ResponseInputItem>,
-) {
+) -> Result<()> {
     let mut content_parts: Vec<ResponseInputContent> = Vec::new();
 
     let LanguageModelRequestMessage {
@@ -396,27 +444,26 @@ fn append_message_to_response_items(
                 push_response_text_part(&role, text, &mut content_parts);
             }
             MessageContent::Thinking { .. } | MessageContent::RedactedThinking(_) => {}
-            MessageContent::Compaction(CompactionContent::Encrypted {
-                id,
-                encrypted_content,
-            }) => {
-                flush_response_parts(
-                    &role,
-                    index,
-                    phase.as_deref(),
-                    &mut content_parts,
-                    input_items,
-                );
-                input_items.push(ResponseInputItem::Compaction(ResponseCompactionItem {
-                    id,
-                    encrypted_content,
-                }));
+            MessageContent::Compaction(CompactedContext::ProviderState(state)) => {
+                // The canonical replacement window already encodes all
+                // context retained at the compaction point, so everything
+                // accumulated before it -- earlier input items, earlier parts
+                // of this same message, and replay bookkeeping -- is
+                // superseded and must not be resent. When a transcript
+                // contains multiple compactions, each later window supersedes
+                // the previous one, so the last compaction wins. State owned
+                // by another backend yields `None`, in which case we fall
+                // back to replaying the full transcript.
+                if let Some(items) = provider_compaction_items(&state, compaction_state_owner)? {
+                    content_parts.clear();
+                    input_items.clear();
+                    replayed_reasoning_item_indexes.clear();
+                    tool_use_kinds_by_id.clear();
+                    provider_items.clear();
+                    provider_items.extend(items);
+                }
             }
-            // Summary compaction blocks come from other providers, and a
-            // Pending block is a streaming-only UI signal; neither is replayed.
-            MessageContent::Compaction(
-                CompactionContent::Summary { .. } | CompactionContent::Pending,
-            ) => {}
+            MessageContent::Compaction(CompactedContext::Summary { .. }) => {}
             MessageContent::Image(image) => {
                 push_response_image_part(&role, image, &mut content_parts);
             }
@@ -514,6 +561,7 @@ fn append_message_to_response_items(
         &mut content_parts,
         input_items,
     );
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -645,17 +693,21 @@ fn add_message_content_part(
     new_part: MessagePart,
     role: Role,
     messages: &mut Vec<crate::RequestMessage>,
+    reasoning_details: Option<Arc<serde_json::Value>>,
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(crate::RequestMessage::User { content }))
-        | (
+        | (Role::System, Some(crate::RequestMessage::System { content, .. })) => {
+            content.push_part(new_part);
+        }
+        (
             Role::Assistant,
             Some(crate::RequestMessage::Assistant {
                 content: Some(content),
+                reasoning_details: existing_reasoning_details,
                 ..
             }),
-        )
-        | (Role::System, Some(crate::RequestMessage::System { content, .. })) => {
+        ) if existing_reasoning_details == &reasoning_details => {
             content.push_part(new_part);
         }
         _ => {
@@ -667,6 +719,7 @@ fn add_message_content_part(
                     content: Some(crate::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
                     reasoning_content: None,
+                    reasoning_details,
                 },
                 Role::System => crate::RequestMessage::System {
                     content: crate::MessageContent::from(vec![new_part]),
@@ -676,170 +729,17 @@ fn add_message_content_part(
     }
 }
 
-pub struct OpenAiEventMapper {
-    tool_calls_by_index: HashMap<usize, RawToolCall>,
-}
-
-impl OpenAiEventMapper {
-    pub fn new() -> Self {
-        Self {
-            tool_calls_by_index: HashMap::default(),
-        }
-    }
-
-    pub fn map_stream(
-        mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
-    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
-    {
-        events.flat_map(move |event| {
-            futures::stream::iter(match event {
-                Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
-            })
-        })
-    }
-
-    pub fn map_event(
-        &mut self,
-        event: ResponseStreamEvent,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let mut events = Vec::new();
-        if let Some(usage) = event.usage
-            && let Some(prompt_tokens) = usage.prompt_tokens
-            && let Some(completion_tokens) = usage.completion_tokens
-        {
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: prompt_tokens,
-                output_tokens: completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            })));
-        }
-
-        let Some(choice) = event.choices.first() else {
-            return events;
-        };
-
-        if let Some(delta) = choice.delta.as_ref() {
-            if let Some(reasoning) = delta.reasoning.clone() {
-                push_thinking_event(reasoning, &mut events);
-            }
-            if let Some(reasoning_content) = delta.reasoning_content.clone() {
-                push_thinking_event(reasoning_content, &mut events);
-            }
-            if let Some(content) = delta.content.clone() {
-                if !content.is_empty() {
-                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
-                }
-            }
-
-            if let Some(tool_calls) = delta.tool_calls.as_ref() {
-                for tool_call in tool_calls {
-                    let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
-
-                    if let Some(tool_id) = tool_call.id.clone()
-                        && !tool_id.is_empty()
-                    {
-                        entry.id = tool_id;
-                    }
-
-                    if let Some(function) = tool_call.function.as_ref() {
-                        if let Some(name) = function.name.clone()
-                            && !name.is_empty()
-                        {
-                            entry.name = name;
-                        }
-
-                        if let Some(arguments) = function.arguments.clone() {
-                            entry.arguments.push_str(&arguments);
-                        }
-                    }
-
-                    if !entry.id.is_empty() && !entry.name.is_empty() {
-                        if let Ok(input) = serde_json::from_str::<serde_json::Value>(
-                            &fix_streamed_json(&entry.arguments),
-                        ) {
-                            events.push(Ok(LanguageModelCompletionEvent::ToolUse(
-                                LanguageModelToolUse {
-                                    id: entry.id.clone().into(),
-                                    name: entry.name.as_str().into(),
-                                    is_input_complete: false,
-                                    input: LanguageModelToolUseInput::Json(input),
-                                    raw_input: entry.arguments.clone(),
-                                    thought_signature: None,
-                                },
-                            )));
-                        }
-                    }
-                }
-            }
-        }
-
-        match choice.finish_reason.as_deref() {
-            Some("stop") => {
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            Some("tool_calls") => {
-                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match parse_tool_arguments(&tool_call.arguments) {
-                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
-                                id: tool_call.id.clone().into(),
-                                name: tool_call.name.as_str().into(),
-                                is_input_complete: true,
-                                input: LanguageModelToolUseInput::Json(input),
-                                raw_input: tool_call.arguments.clone(),
-                                thought_signature: None,
-                            },
-                        )),
-                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                            id: tool_call.id.into(),
-                            tool_name: tool_call.name.into(),
-                            raw_input: tool_call.arguments.clone().into(),
-                            json_parse_error: error.to_string(),
-                        }),
-                    }
-                }));
-
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
-            }
-            Some(stop_reason) => {
-                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            None => {}
-        }
-
-        events
-    }
-}
-
-fn push_thinking_event(
-    text: String,
-    events: &mut Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-) {
-    if !text.is_empty() {
-        events.push(Ok(LanguageModelCompletionEvent::Thinking {
-            text,
-            signature: None,
-        }));
-    }
-}
-
-#[derive(Default)]
-struct RawToolCall {
-    id: String,
-    name: String,
-    arguments: String,
-}
-
 pub struct OpenAiResponseEventMapper {
+    /// The backend whose infrastructure produced this stream; stamped on any
+    /// compaction state it emits so replay is limited to the same backend.
+    compaction_state_owner: LanguageModelProviderId,
     function_calls_by_item: HashMap<String, PendingResponseFunctionCall>,
     custom_tool_calls_by_item: HashMap<String, PendingResponseCustomToolCall>,
     reasoning_items: Vec<ResponseReasoningInputItem>,
+    current_reasoning_summary_part: Option<(String, usize)>,
     current_message_phase: Option<String>,
     pending_stop_reason: Option<StopReason>,
+    pending_compaction_items: usize,
 }
 
 #[derive(Default)]
@@ -856,13 +756,16 @@ struct PendingResponseCustomToolCall {
 }
 
 impl OpenAiResponseEventMapper {
-    pub fn new() -> Self {
+    pub fn new(compaction_state_owner: LanguageModelProviderId) -> Self {
         Self {
+            compaction_state_owner,
             function_calls_by_item: HashMap::default(),
             custom_tool_calls_by_item: HashMap::default(),
             reasoning_items: Vec::new(),
+            current_reasoning_summary_part: None,
             current_message_phase: None,
             pending_stop_reason: None,
+            pending_compaction_items: 0,
         }
     }
 
@@ -931,16 +834,33 @@ impl OpenAiResponseEventMapper {
                         }
                     }
                     ResponseOutputItem::Compaction(_) => {
+                        self.pending_compaction_items += 1;
                         events.push(Ok(LanguageModelCompletionEvent::Compaction(
-                            CompactionContent::Pending,
+                            CompactionUpdate::Started,
                         )));
                     }
                     ResponseOutputItem::Reasoning(_) | ResponseOutputItem::Unknown => {}
                 }
                 events
             }
-            ResponsesStreamEvent::ReasoningSummaryTextDelta { delta, .. }
-            | ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id,
+                summary_index,
+                delta,
+                ..
+            } => {
+                if delta.is_empty() {
+                    Vec::new()
+                } else {
+                    let mut events = self.begin_reasoning_summary_part(&item_id, summary_index);
+                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                        text: delta,
+                        signature: None,
+                    }));
+                    events
+                }
+            }
+            ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
                 if delta.is_empty() {
                     Vec::new()
                 } else {
@@ -1080,31 +1000,38 @@ impl OpenAiResponseEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(stop_reason)));
                 events
             }
-            ResponsesStreamEvent::Failed { response } => {
-                let message = response_failure_message(&response);
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(message)))]
-            }
+            ResponsesStreamEvent::Failed { response } => match response.error.as_ref() {
+                Some(error) => vec![Err(completion_error_from_response_error(
+                    error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))],
+                None => vec![Err(LanguageModelCompletionError::from_provider_response(
+                    provider_name_for_id(&self.compaction_state_owner),
+                    None,
+                    Some("response.failed".to_string()),
+                    response_failure_message(&response),
+                    None,
+                    ProviderErrorCategory::Other,
+                ))],
+            },
             ResponsesStreamEvent::Error { error } => {
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    response_error_message(&error)
-                )))]
+                vec![Err(completion_error_from_response_error(
+                    &error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))]
             }
             ResponsesStreamEvent::GenericError { error } => {
                 let error = error.into_response_error();
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    response_error_message(&error)
-                )))]
+                vec![Err(completion_error_from_response_error(
+                    &error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))]
             }
-            ResponsesStreamEvent::ReasoningSummaryPartAdded { summary_index, .. } => {
-                if summary_index > 0 {
-                    vec![Ok(LanguageModelCompletionEvent::Thinking {
-                        text: "\n\n".to_string(),
-                        signature: None,
-                    })]
-                } else {
-                    Vec::new()
-                }
-            }
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id,
+                summary_index,
+                ..
+            } => self.begin_reasoning_summary_part(&item_id, summary_index),
             ResponsesStreamEvent::OutputItemDone { item, .. } => match item {
                 ResponseOutputItem::Reasoning(reasoning) => self.capture_reasoning_item(&reasoning),
                 ResponseOutputItem::Message(message) => self.capture_message_phase(&message),
@@ -1116,12 +1043,20 @@ impl OpenAiResponseEventMapper {
                     }
                 }
                 ResponseOutputItem::Compaction(compaction) => {
-                    vec![Ok(LanguageModelCompletionEvent::Compaction(
-                        CompactionContent::Encrypted {
-                            id: compaction.id,
-                            encrypted_content: compaction.encrypted_content,
-                        },
-                    ))]
+                    self.pending_compaction_items = self.pending_compaction_items.saturating_sub(1);
+                    match serde_json::to_value(ResponseInputItem::Compaction(compaction))
+                        .map_err(anyhow::Error::from)
+                        .and_then(|item| {
+                            provider_compaction_state_from_items(
+                                self.compaction_state_owner.clone(),
+                                vec![item],
+                            )
+                        }) {
+                        Ok(state) => vec![Ok(LanguageModelCompletionEvent::Compaction(
+                            CompactionUpdate::Finished(CompactedContext::ProviderState(state)),
+                        ))],
+                        Err(error) => vec![Err(LanguageModelCompletionError::Other(error))],
+                    }
                 }
                 ResponseOutputItem::FunctionCall(_) | ResponseOutputItem::Unknown => Vec::new(),
             },
@@ -1137,11 +1072,42 @@ impl OpenAiResponseEventMapper {
         }
     }
 
+    fn begin_reasoning_summary_part(
+        &mut self,
+        item_id: &str,
+        summary_index: usize,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let part = (item_id.to_string(), summary_index);
+        if self.current_reasoning_summary_part.as_ref() == Some(&part) {
+            return Vec::new();
+        }
+
+        let separator = self.current_reasoning_summary_part.replace(part).is_some();
+        if separator {
+            vec![Ok(LanguageModelCompletionEvent::Thinking {
+                text: "\n\n".to_string(),
+                signature: None,
+            })]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn handle_completion(
         &mut self,
         response: ResponsesSummary,
         default_reason: StopReason,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        // A compaction item that was added but never done means the server
+        // already pruned its context, but we never received the canonical
+        // replacement window. Continuing as if the turn succeeded would
+        // leave the conversation unable to continue coherently.
+        if self.pending_compaction_items > 0 {
+            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                "response completed with an unfinished compaction item"
+            )))];
+        }
+
         let mut events = Vec::new();
 
         events.extend(self.capture_reasoning_items_from_output(&response.output));
@@ -1386,6 +1352,76 @@ fn response_failure_message(response: &ResponsesSummary) -> String {
         .unwrap_or_else(|| "response.failed".to_string())
 }
 
+fn completion_error_from_response_error(
+    error: &ResponseError,
+    provider: language_model_core::LanguageModelProviderName,
+) -> LanguageModelCompletionError {
+    let category = response_error_category(
+        error.code.as_deref(),
+        error.error_type.as_deref(),
+        None,
+        &error.message,
+    );
+    LanguageModelCompletionError::from_provider_response(
+        provider,
+        None,
+        error.code.clone().or_else(|| error.error_type.clone()),
+        error.message.clone(),
+        None,
+        category,
+    )
+}
+
+pub(crate) fn response_error_category(
+    code: Option<&str>,
+    error_type: Option<&str>,
+    status: Option<StatusCode>,
+    message: &str,
+) -> ProviderErrorCategory {
+    code.and_then(response_error_category_from_discriminator)
+        .or_else(|| error_type.and_then(response_error_category_from_discriminator))
+        .unwrap_or_else(|| {
+            status
+                .map(|status| ProviderErrorCategory::from_http_status(status, message))
+                .unwrap_or(ProviderErrorCategory::Other)
+        })
+}
+
+fn response_error_category_from_discriminator(
+    discriminator: &str,
+) -> Option<ProviderErrorCategory> {
+    let category = match discriminator {
+        "context_length_exceeded" | "request_too_large" => {
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        }
+        "invalid_encrypted_content" => ProviderErrorCategory::InvalidEncryptedContent,
+        "invalid_request_error" => ProviderErrorCategory::InvalidRequest,
+        "authentication_error" => ProviderErrorCategory::Authentication,
+        "billing_error"
+        | "payment_required_error"
+        | "credit_balance_exhausted"
+        | "insufficient_quota"
+        | "organization_spend_limit_exceeded"
+        | "project_spend_limit_exceeded"
+        | "organization_usage_limit_exceeded"
+        | "usage_limit_reached" => ProviderErrorCategory::PaymentRequired,
+        "permission_error" => ProviderErrorCategory::Permission,
+        "cyber_policy" | "invalid_prompt" => ProviderErrorCategory::ContentPolicy,
+        "not_found_error" => ProviderErrorCategory::EndpointNotFound,
+        "conflict_error" => ProviderErrorCategory::Conflict,
+        "rate_limit_error" | "rate_limit_exceeded" => ProviderErrorCategory::RateLimit,
+        "timeout_error" | "request_timed_out" => ProviderErrorCategory::Timeout,
+        "api_error" | "internal_server_error" | "server_error" => {
+            ProviderErrorCategory::InternalServer
+        }
+        "overloaded_error" | "server_is_overloaded" | "slow_down" => {
+            ProviderErrorCategory::Overloaded
+        }
+        _ => return None,
+    };
+    Some(category)
+}
+
 fn response_error_message(error: &ResponseError) -> String {
     let code = error.code.as_deref().filter(|code| !code.trim().is_empty());
     let message = error.message.trim();
@@ -1420,7 +1456,7 @@ fn response_content_is_refusal(content: &serde_json::Value) -> bool {
     content_type == Some("refusal") || !refusal.is_empty()
 }
 
-fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
+pub fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
     let cache_read_input_tokens = usage.input_tokens_details.cached_tokens;
 
     TokenUsage {
@@ -1472,19 +1508,17 @@ mod tests {
         LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
         LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelRequestToolInput,
         LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-        LanguageModelToolUseId, LanguageModelToolUseInput, SharedString, Speed,
+        LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID,
+        OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, SharedString, Speed,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
     use super::*;
-    use crate::{
-        ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamEvent, ToolCallChunk,
-    };
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
-            OpenAiResponseEventMapper::new()
+            OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID)
                 .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
                 .collect::<Vec<_>>()
                 .await
@@ -1492,17 +1526,6 @@ mod tests {
                 .map(Result::unwrap)
                 .collect()
         })
-    }
-
-    fn map_completion_events(
-        events: Vec<ResponseStreamEvent>,
-    ) -> Vec<LanguageModelCompletionEvent> {
-        let mut mapper = OpenAiEventMapper::new();
-        let mut all_events = Vec::new();
-        for event in events {
-            all_events.extend(mapper.map_event(event));
-        }
-        all_events.into_iter().filter_map(|e| e.ok()).collect()
     }
 
     fn response_item_message(id: &str) -> ResponseOutputItem {
@@ -1821,19 +1844,15 @@ mod tests {
             Some(2048),
             Some(ReasoningEffort::Low),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         let expected = json!({
             "model": "custom-model",
+            "instructions": "System context",
             "input": [
-                {
-                    "type": "message",
-                    "role": "system",
-                    "content": [
-                        { "type": "input_text", "text": "System context" }
-                    ]
-                },
                 {
                     "type": "message",
                     "role": "user",
@@ -2003,8 +2022,17 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            false,
+            false,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
         let serialized = serde_json::to_value(response).unwrap();
         assert_eq!(
             serialized,
@@ -2103,7 +2131,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Low),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(
@@ -2178,8 +2208,17 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            false,
+            false,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
         let serialized = serde_json::to_value(&response).unwrap();
 
         assert_eq!(
@@ -2243,7 +2282,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(serialized.get("reasoning"), None);
@@ -2279,7 +2320,17 @@ mod tests {
                 compact_at_tokens: None,
             };
 
-            let response = into_open_ai_response(request, "gpt-5.4", true, true, None, None, true);
+            let response = into_open_ai_response(
+                request,
+                "gpt-5.4",
+                true,
+                true,
+                None,
+                None,
+                true,
+                &OPEN_AI_PROVIDER_ID,
+            )
+            .unwrap();
 
             let serialized = serde_json::to_value(&response)?;
             assert_eq!(
@@ -2413,7 +2464,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             true,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response)?;
         assert_eq!(serialized["reasoning"], json!({ "effort": "none" }));
@@ -2452,7 +2505,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             true,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response)?;
         assert_eq!(
@@ -2503,7 +2558,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(
@@ -2593,7 +2650,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(
@@ -2673,8 +2732,17 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            false,
+            false,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
         let serialized = serde_json::to_value(&response).unwrap();
 
         assert_eq!(
@@ -2796,13 +2864,14 @@ mod tests {
     }
 
     #[test]
-    fn responses_stream_failed_uses_response_error_message() {
-        let mut mapper = OpenAiResponseEventMapper::new();
+    fn responses_stream_failed_preserves_provider_rejection() {
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
             response: ResponseSummary {
                 status: Some("failed".into()),
                 error: Some(ResponseError {
                     code: Some("server_error".into()),
+                    error_type: None,
                     message: "The model failed to generate a response.".into(),
                     param: None,
                 }),
@@ -2812,10 +2881,19 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "server_error: The model failed to generate a response."
-        );
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "server_error"
+                && message == "The model failed to generate a response."
+        ));
     }
 
     #[test]
@@ -2829,19 +2907,145 @@ mod tests {
         }))
         .expect("documented error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(error.to_string(), "ERR_SOMETHING: Something went wrong");
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "ERR_SOMETHING"
+                && message == "Something went wrong"
+        ));
     }
 
     #[test]
-    fn responses_stream_deserializes_nested_error_event() {
+    fn responses_stream_preserves_nested_cyber_policy_rejection() {
         // In practice the Responses API often nests error fields under an
         // `error` object even though the public spec documents them at the top
         // level. Make sure we don't lose the message and code in that case.
+        let event = serde_json::from_value::<ResponsesStreamEvent>(json!({
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "code": "cyber_policy",
+                "message": "This content was flagged as potentially violating our terms of use.",
+                "param": "input"
+            },
+            "sequence_number": 2
+        }))
+        .expect("nested error event");
+
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+        let mapped = mapper.map_event(event);
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                category: ProviderErrorCategory::ContentPolicy,
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "cyber_policy"
+                && message == "This content was flagged as potentially violating our terms of use."
+        ));
+    }
+
+    #[test]
+    fn responses_stream_preserves_and_classifies_type_without_code() {
+        let event = serde_json::from_value::<ResponsesStreamEvent>(json!({
+            "type": "error",
+            "error": {
+                "type": "usage_limit_reached",
+                "message": "The usage limit has been reached",
+                "plan_type": "plus"
+            }
+        }))
+        .expect("nested usage limit error event");
+
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+        let mapped = mapper.map_event(event);
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                code: Some(code),
+                message,
+                category: ProviderErrorCategory::PaymentRequired,
+                ..
+            } if code == "usage_limit_reached"
+                && message == "The usage limit has been reached"
+        ));
+    }
+
+    #[test]
+    fn responses_stream_maps_billing_codes_to_payment_required() {
+        for code in [
+            "billing_error",
+            "payment_required_error",
+            "credit_balance_exhausted",
+            "insufficient_quota",
+            "organization_spend_limit_exceeded",
+            "project_spend_limit_exceeded",
+            "organization_usage_limit_exceeded",
+        ] {
+            assert_eq!(
+                response_error_category(Some(code), None, None, ""),
+                ProviderErrorCategory::PaymentRequired,
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn responses_stream_uses_known_type_when_code_is_unknown() {
+        assert_eq!(
+            response_error_category(
+                Some("provider_specific_code"),
+                Some("usage_limit_reached"),
+                Some(StatusCode::TOO_MANY_REQUESTS),
+                "",
+            ),
+            ProviderErrorCategory::PaymentRequired
+        );
+    }
+
+    #[test]
+    fn responses_stream_maps_invalid_prompt_to_content_policy() {
+        assert_eq!(
+            response_error_category(Some("invalid_prompt"), None, None, ""),
+            ProviderErrorCategory::ContentPolicy
+        );
+    }
+
+    #[test]
+    fn responses_stream_maps_overload_codes_to_overloaded() {
+        for code in ["overloaded_error", "server_is_overloaded", "slow_down"] {
+            assert_eq!(
+                response_error_category(Some(code), None, None, ""),
+                ProviderErrorCategory::Overloaded,
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn responses_stream_maps_context_length_exceeded_to_prompt_too_large() {
         let event = serde_json::from_value::<ResponsesStreamEvent>(json!({
             "type": "error",
             "error": {
@@ -2854,15 +3058,45 @@ mod tests {
         }))
         .expect("nested error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "context_length_exceeded: Your input exceeds the context window of this model. Please adjust your input and try again."
-        );
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn responses_stream_maps_failed_context_length_exceeded_to_prompt_too_large() {
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+        let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
+            response: ResponseSummary {
+                status: Some("failed".into()),
+                error: Some(ResponseError {
+                    code: Some("context_length_exceeded".into()),
+                    error_type: None,
+                    message: "Your input exceeds the context window of this model.".into(),
+                    param: Some("input".into()),
+                }),
+                ..Default::default()
+            },
+        });
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -2876,12 +3110,24 @@ mod tests {
         }))
         .expect("response error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(error.to_string(), "invalid_request_error: Invalid request.");
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "invalid_request_error"
+                && message == "Invalid request."
+        ));
     }
 
     #[test]
@@ -3282,11 +3528,13 @@ mod tests {
             ResponsesStreamEvent::ReasoningSummaryTextDelta {
                 item_id: "rs_123".into(),
                 output_index: 0,
+                summary_index: 0,
                 delta: "Thinking about".into(),
             },
             ResponsesStreamEvent::ReasoningSummaryTextDelta {
                 item_id: "rs_123".into(),
                 output_index: 0,
+                summary_index: 0,
                 delta: " the answer".into(),
             },
             ResponsesStreamEvent::ReasoningSummaryTextDone {
@@ -3299,14 +3547,10 @@ mod tests {
                 output_index: 0,
                 summary_index: 0,
             },
-            ResponsesStreamEvent::ReasoningSummaryPartAdded {
-                item_id: "rs_123".into(),
-                output_index: 0,
-                summary_index: 1,
-            },
             ResponsesStreamEvent::ReasoningSummaryTextDelta {
                 item_id: "rs_123".into(),
                 output_index: 0,
+                summary_index: 1,
                 delta: "Second part".into(),
             },
             ResponsesStreamEvent::ReasoningSummaryTextDone {
@@ -3381,6 +3625,65 @@ mod tests {
         assert!(mapped.iter().any(
             |e| matches!(e, LanguageModelCompletionEvent::Text(t) if t == "The answer is 42")
         ));
+    }
+
+    #[test]
+    fn responses_stream_separates_reasoning_summary_items() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_1",
+                    vec![],
+                    None,
+                    None,
+                )),
+            },
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id: "rs_1".into(),
+                output_index: 0,
+                summary_index: 0,
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id: "rs_1".into(),
+                output_index: 0,
+                summary_index: 0,
+                delta: "**First item**".into(),
+            },
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 1,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_2",
+                    vec![],
+                    None,
+                    None,
+                )),
+            },
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id: "rs_2".into(),
+                output_index: 1,
+                summary_index: 0,
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id: "rs_2".into(),
+                output_index: 1,
+                summary_index: 0,
+                delta: "**Second item**".into(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        let thinking = mapped
+            .into_iter()
+            .filter_map(|event| match event {
+                LanguageModelCompletionEvent::Thinking { text, signature: _ } => Some(text),
+                _ => None,
+            })
+            .collect::<String>();
+
+        assert_eq!(thinking, "**First item**\n\n**Second item**");
     }
 
     #[test]
@@ -3679,7 +3982,7 @@ mod tests {
             raw_input: tool_arguments.clone(),
             input: LanguageModelToolUseInput::Json(tool_input),
             is_input_complete: true,
-            thought_signature: None,
+            thought_signature: Some("thought-signature".into()),
         };
         let tool_result = LanguageModelToolResult {
             tool_use_id: tool_use_id,
@@ -3710,7 +4013,11 @@ mod tests {
                         MessageContent::ToolUse(tool_use),
                     ],
                     cache: false,
-                    reasoning_details: None,
+                    reasoning_details: Some(Arc::new(json!([{
+                        "id": "reasoning-1",
+                        "type": "reasoning.encrypted",
+                        "data": "encrypted"
+                    }]))),
                 },
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
@@ -3747,8 +4054,13 @@ mod tests {
                 {
                     "role": "assistant",
                     "content": "Searching now.",
-                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments}}],
-                    "reasoning_content": "I should search"
+                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments, "thought_signature": "thought-signature"}}],
+                    "reasoning_content": "I should search",
+                    "reasoning_details": [{
+                        "id": "reasoning-1",
+                        "type": "reasoning.encrypted",
+                        "data": "encrypted"
+                    }]
                 },
                 {"role": "tool", "content": "result", "tool_call_id": "call-1"}
             ])
@@ -3783,160 +4095,125 @@ mod tests {
     }
 
     #[test]
-    fn stream_maps_reasoning() {
-        let events = map_completion_events(vec![ResponseStreamEvent {
-            choices: vec![ChoiceDelta {
-                index: 0,
-                delta: Some(ResponseMessageDelta {
-                    role: None,
-                    content: None,
-                    reasoning: Some("thinking".into()),
-                    tool_calls: None,
-                    reasoning_content: None,
-                }),
-                finish_reason: None,
-            }],
-            usage: None,
-        }]);
+    fn into_open_ai_response_prepends_provider_input_unchanged() {
+        let provider_input = json!([
+            {
+                "type": "message",
+                "role": "user",
+                "content": "Retained user context.",
+                "provider_extension": {"preserve": true}
+            },
+            {
+                "type": "compaction",
+                "id": "cmp_manual",
+                "encrypted_content": "opaque-state"
+            }
+        ]);
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Compaction(CompactedContext::ProviderState(
+                        provider_compaction_state_from_items(
+                            OPEN_AI_PROVIDER_ID,
+                            provider_input.as_array().unwrap().clone(),
+                        )
+                        .unwrap(),
+                    ))],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Continue.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.4",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert_eq!(
-            events,
-            vec![LanguageModelCompletionEvent::Thinking {
-                text: "thinking".into(),
-                signature: None,
-            }]
+            serde_json::to_value(&response).unwrap()["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "Retained user context.",
+                    "provider_extension": {"preserve": true}
+                },
+                {
+                    "type": "compaction",
+                    "id": "cmp_manual",
+                    "encrypted_content": "opaque-state"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Continue."}]
+                }
+            ])
         );
     }
 
     #[test]
-    fn stream_maps_preserves_tool_id_and_name_across_empty_deltas() {
-        // DashScope sends id="" and name="" in subsequent tool_calls delta
-        // chunks after the first chunk. OpenAiEventMapper must not overwrite
-        // the accumulated id and name with these empty strings.
+    fn open_ai_response_converts_to_compact_request_with_supported_controls() {
+        let request = LanguageModelRequest {
+            thread_id: Some("thread-123".to_string()),
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Retain this context.".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            speed: Some(Speed::Fast),
+            compact_at_tokens: Some(100_000),
+            ..Default::default()
+        };
 
-        let events = vec![
-            // First chunk: id and name are present
-            ResponseStreamEvent {
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: Some(ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
-                            id: Some("call_dashscope_test".into()),
-                            function: Some(FunctionChunk {
-                                name: Some("list_directory".into()),
-                                arguments: Some("".into()),
-                            }),
-                        }]),
-                        reasoning_content: None,
-                    }),
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            // Subsequent chunks: DashScope sends id="" and name=""
-            ResponseStreamEvent {
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: Some(ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
-                            id: Some("".into()),
-                            function: Some(FunctionChunk {
-                                name: Some("".into()),
-                                arguments: Some("{\"path\": \"".into()),
-                            }),
-                        }]),
-                        reasoning_content: None,
-                    }),
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            ResponseStreamEvent {
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: Some(ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
-                            id: Some("".into()),
-                            function: Some(FunctionChunk {
-                                name: Some("".into()),
-                                arguments: Some("blog-scraper\"}".into()),
-                            }),
-                        }]),
-                        reasoning_content: None,
-                    }),
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            // Final chunk: finish_reason = "tool_calls"
-            ResponseStreamEvent {
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: None,
-                    finish_reason: Some("tool_calls".into()),
-                }],
-                usage: None,
-            },
-        ];
+        let mut response_request = into_open_ai_response(
+            request,
+            "gpt-5.4",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+        response_request.instructions = Some("Preserve implementation details.".to_string());
+        let compact_request = response_request.into_compact_request();
 
-        let mapped = map_completion_events(events);
-
-        // Events emitted:
-        //   1. Partial ToolUse from chunk 1 (fix_json("") → "{}", parseable)
-        //   2. Partial ToolUse from chunk 3 (arguments fully assembled)
-        //   3. Complete ToolUse from finish_reason="tool_calls" drain
-        //   4. Stop(ToolUse)
-        assert_eq!(mapped.len(), 4);
-
-        // Verify the complete ToolUse event (from finish_reason drain)
-        // has the correct id, name, and accumulated arguments.
-        let complete_tool_use = mapped.iter().find_map(|event| {
-            if let LanguageModelCompletionEvent::ToolUse(tool_use) = event {
-                if tool_use.is_input_complete {
-                    return Some(tool_use);
-                }
-            }
-            None
-        });
-        assert!(
-            complete_tool_use.is_some(),
-            "expected a completed ToolUse event"
-        );
-        let tool_use = complete_tool_use.unwrap();
         assert_eq!(
-            tool_use.id.to_string(),
-            "call_dashscope_test",
-            "id must survive empty-string overwrites"
+            serde_json::to_value(compact_request).unwrap(),
+            json!({
+                "model": "gpt-5.4",
+                "instructions": "Preserve implementation details.",
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "Retain this context."
+                    }]
+                }],
+                "prompt_cache_key": "thread-123",
+                "service_tier": "priority"
+            })
         );
-        assert_eq!(
-            tool_use.name.as_ref(),
-            "list_directory",
-            "name must survive empty-string overwrites"
-        );
-        assert_eq!(
-            tool_use.raw_input, "{\"path\": \"blog-scraper\"}",
-            "arguments should accumulate across chunks"
-        );
-
-        // Verify the Stop event
-        assert!(mapped.iter().any(|event| {
-            matches!(
-                event,
-                LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
-            )
-        }));
     }
 
     #[test]
@@ -3952,7 +4229,17 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert_eq!(
             serde_json::to_value(&response).unwrap()["context_management"],
@@ -3972,7 +4259,17 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert!(
             serde_json::to_value(&response)
@@ -3983,15 +4280,21 @@ mod tests {
     }
 
     #[test]
-    fn into_open_ai_response_replays_encrypted_compaction_block() {
+    fn into_open_ai_response_replays_provider_compaction_block() {
+        let state = provider_compaction_state_from_items(
+            OPEN_AI_PROVIDER_ID,
+            vec![json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "encrypted-blob"
+            })],
+        )
+        .unwrap();
         let request = LanguageModelRequest {
             messages: vec![LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![
-                    MessageContent::Compaction(CompactionContent::Encrypted {
-                        id: Some("cmp_1".into()),
-                        encrypted_content: "encrypted-blob".into(),
-                    }),
+                    MessageContent::Compaction(CompactedContext::ProviderState(state)),
                     MessageContent::Text("Done.".into()),
                 ],
                 cache: false,
@@ -4000,7 +4303,17 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert_eq!(
             serde_json::to_value(&response).unwrap()["input"],
@@ -4019,6 +4332,329 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn into_open_ai_response_hoists_system_messages_into_instructions() {
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("You are a coding assistant.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hello.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("Prefer terse answers.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serialized["instructions"],
+            json!("You are a coding assistant.\n\nPrefer terse answers.")
+        );
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "Hello." }
+                    ]
+                }
+            ])
+        );
+    }
+
+    /// Replaying provider compaction state discards all input items
+    /// accumulated before it, but the system prompt must not be lost with
+    /// them: it lives in the per-request `instructions` field, outside the
+    /// compacted window, so the model keeps running on the current prompt
+    /// rather than whatever was frozen into the window at compaction time.
+    #[test]
+    fn into_open_ai_response_preserves_system_prompt_across_compaction_replay() {
+        let state = provider_compaction_state_from_items(
+            OPEN_AI_PROVIDER_ID,
+            vec![json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "encrypted-blob"
+            })],
+        )
+        .unwrap();
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("Current system prompt.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Old context.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Compaction(CompactedContext::ProviderState(
+                        state,
+                    ))],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Continue.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(serialized["instructions"], json!("Current system prompt."));
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "compaction",
+                    "id": "cmp_1",
+                    "encrypted_content": "encrypted-blob"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "Continue." }
+                    ]
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_rejects_malformed_provider_compaction_state() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Compaction(CompactedContext::ProviderState(
+                    language_model_core::ProviderCompactionState::new(
+                        language_model_core::OPEN_AI_PROVIDER_ID,
+                        crate::responses::COMPACTION_STATE_FORMAT,
+                        "not valid JSON",
+                    ),
+                ))],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let error = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("malformed OpenAI compaction state payload")
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_ignores_compaction_state_owned_by_another_backend() {
+        // Several backends share this request conversion (OpenAI itself,
+        // OpenAI-compatible endpoints, Codex, Mantle), but an encrypted
+        // compaction item is only decryptable by the backend that produced
+        // it. Replaying OpenAI-owned state through a different backend would
+        // discard the entire transcript in exchange for an opaque blob that
+        // backend cannot read, so the state must be ignored and the full
+        // transcript replayed instead.
+        let state = provider_compaction_state_from_items(
+            OPEN_AI_PROVIDER_ID,
+            vec![json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "encrypted-blob"
+            })],
+        )
+        .unwrap();
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Set up the project.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![
+                        MessageContent::Compaction(CompactedContext::ProviderState(state)),
+                        MessageContent::Text("Done.".into()),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Continue.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "compatible-model",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &LanguageModelProviderId::new("my-compatible-endpoint"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&response).unwrap()["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "Set up the project." }]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "text": "Done.", "annotations": [] }
+                    ]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "Continue." }]
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn responses_stream_stamps_compaction_state_with_owning_backend() {
+        let owner = LanguageModelProviderId::new("my-compatible-endpoint");
+        let mut mapper = OpenAiResponseEventMapper::new(owner.clone());
+        let item: ResponseOutputItem = serde_json::from_value(json!({
+            "type": "compaction",
+            "id": "cmp_1",
+            "encrypted_content": "encrypted-blob"
+        }))
+        .unwrap();
+
+        let mut events = mapper.map_event(ResponsesStreamEvent::OutputItemDone {
+            output_index: 0,
+            sequence_number: None,
+            item,
+        });
+
+        let Some(Ok(LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+            CompactedContext::ProviderState(state),
+        )))) = events.pop()
+        else {
+            panic!("expected finished provider compaction state");
+        };
+        assert_eq!(state.provider_id(), &owner);
+        assert!(
+            crate::responses::provider_compaction_items(&state, &owner)
+                .unwrap()
+                .is_some()
+        );
+        // OpenAI proper must not attempt to replay a window produced by a
+        // different backend's infrastructure.
+        assert_eq!(
+            crate::responses::provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn responses_stream_rejects_completion_with_unfinished_compaction() {
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+        let item: ResponseOutputItem = serde_json::from_value(json!({
+            "type": "compaction",
+            "id": "cmp_1",
+            "encrypted_content": "encrypted-blob"
+        }))
+        .unwrap();
+
+        let started = mapper.map_event(ResponsesStreamEvent::OutputItemAdded {
+            output_index: 0,
+            sequence_number: None,
+            item,
+        });
+        assert!(matches!(
+            started.as_slice(),
+            [Ok(LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Started
+            ))]
+        ));
+
+        let mut completed = mapper.map_event(ResponsesStreamEvent::Completed {
+            response: ResponseSummary::default(),
+        });
+        let error = completed.pop().unwrap().unwrap_err();
+
+        assert!(error.to_string().contains("unfinished compaction"));
     }
 
     #[test]
@@ -4047,11 +4683,20 @@ mod tests {
         assert_eq!(
             mapped,
             vec![
-                LanguageModelCompletionEvent::Compaction(CompactionContent::Pending),
-                LanguageModelCompletionEvent::Compaction(CompactionContent::Encrypted {
-                    id: Some("cmp_1".into()),
-                    encrypted_content: "encrypted-blob".into(),
-                }),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+                    CompactedContext::ProviderState(
+                        provider_compaction_state_from_items(
+                            OPEN_AI_PROVIDER_ID,
+                            vec![json!({
+                                "type": "compaction",
+                                "id": "cmp_1",
+                                "encrypted_content": "encrypted-blob"
+                            })],
+                        )
+                        .unwrap()
+                    )
+                )),
             ]
         );
     }

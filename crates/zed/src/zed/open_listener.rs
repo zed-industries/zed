@@ -13,7 +13,8 @@ use futures::channel::{mpsc, oneshot};
 use futures::future;
 
 use futures::{FutureExt, StreamExt};
-use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
+use git_ui::multi_diff_view::MultiDiffView;
+use git_ui_core::file_diff_view::FileDiffView;
 use gpui::{App, AsyncApp, Global, TaskExt, WindowHandle};
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
@@ -328,8 +329,7 @@ fn parse_ssh_url(url: &str) -> Result<url::Url> {
     // They are unsupported by Url::parse, but can be normalized into a Url.
     //   SCPUrl("ssh://user@host:~/relpath") => Url("ssh://user@host/~/relpath")
     //   SCPUrl("ssh://user@host:/abs/path") => Url("ssh://user@host/abs/path")
-    //
-    // TODO: Add IPv6 support: "ssh://[2600::]:~/foo"
+    //   SCPUrl("ssh://[2600::]:~/foo") => Url("ssh://[2600::]/~/foo")
     let ssh_target = url
         .strip_prefix("ssh://")
         .with_context(|| format!("invalid ssh url: {url}"))?;
@@ -346,7 +346,7 @@ fn parse_ssh_url(url: &str) -> Result<url::Url> {
         .rsplit_once('@')
         .map_or((None, authority), |(userinfo, host)| (Some(userinfo), host));
     anyhow::ensure!(
-        !host.is_empty() && !host.starts_with('[') && !host.contains(':'),
+        !host.is_empty() && url::Host::parse(host).is_ok(),
         "invalid ssh url: {url}"
     );
 
@@ -486,9 +486,20 @@ pub async fn open_paths_with_positions(
         .await?;
 
     if diff_all && !diff_paths.is_empty() {
+        let mut diff_pairs = Vec::with_capacity(diff_paths.len());
+        for diff_pair in diff_paths {
+            let parsed = derive_paths_with_position(app_state.fs.as_ref(), diff_pair).await;
+            let (Some(old_parsed), Some(new_parsed)) = (parsed.first(), parsed.get(1)) else {
+                continue;
+            };
+            diff_pairs.push([
+                old_parsed.path.to_string_lossy().into_owned(),
+                new_parsed.path.to_string_lossy().into_owned(),
+            ]);
+        }
         if let Ok(diff_view) = multi_workspace.update(cx, |multi_workspace, window, cx| {
             multi_workspace.workspace().update(cx, |workspace, cx| {
-                MultiDiffView::open(diff_paths.to_vec(), workspace, window, cx)
+                MultiDiffView::open(diff_pairs, workspace, window, cx)
             })
         }) {
             if let Some(diff_view) = diff_view.await.log_err() {
@@ -499,16 +510,20 @@ pub async fn open_paths_with_positions(
         let workspace_weak = multi_workspace.read_with(cx, |multi_workspace, _cx| {
             multi_workspace.workspace().downgrade()
         })?;
-        let canonicalize = async |raw: &str| {
+        let canonicalize = async |parsed: &PathWithPosition| {
             app_state
                 .fs
-                .canonicalize(Path::new(raw))
+                .canonicalize(&parsed.path)
                 .await
-                .with_context(|| format!("opening --diff path {raw:?}"))
+                .with_context(|| format!("opening --diff path {:?}", parsed.path))
         };
         for diff_pair in diff_paths {
+            let parsed = derive_paths_with_position(app_state.fs.as_ref(), diff_pair).await;
+            let (Some(old_parsed), Some(new_parsed)) = (parsed.first(), parsed.get(1)) else {
+                continue;
+            };
             let (old_path, new_path) =
-                match futures::join!(canonicalize(&diff_pair[0]), canonicalize(&diff_pair[1])) {
+                match futures::join!(canonicalize(old_parsed), canonicalize(new_parsed)) {
                     (Ok(old), Ok(new)) => (old, new),
                     (old, new) => {
                         for result in [old, new] {
@@ -519,8 +534,21 @@ pub async fn open_paths_with_positions(
                         continue;
                     }
                 };
+            let target_position = new_parsed.row.map(|row| {
+                language::Point::new(
+                    row.saturating_sub(1),
+                    new_parsed.column.unwrap_or(0).saturating_sub(1),
+                )
+            });
             if let Ok(diff_view) = multi_workspace.update(cx, |_multi_workspace, window, cx| {
-                FileDiffView::open(old_path, new_path, workspace_weak.clone(), window, cx)
+                FileDiffView::open(
+                    old_path,
+                    new_path,
+                    target_position,
+                    workspace_weak.clone(),
+                    window,
+                    cx,
+                )
             }) {
                 if let Some(diff_view) = diff_view.await.log_err() {
                     items.push(Some(Ok(Box::new(diff_view))))
@@ -1206,6 +1234,38 @@ mod tests {
                 None,
                 "/project",
             ),
+            (
+                "ssh://[2600::]:~/foo",
+                Some("ssh://[2600::]/~/foo"),
+                "2600::",
+                None,
+                None,
+                "/~/foo",
+            ),
+            (
+                "ssh://me@[2001:db8::1]:~/project",
+                Some("ssh://me@[2001:db8::1]/~/project"),
+                "2001:db8::1",
+                Some("me"),
+                None,
+                "/~/project",
+            ),
+            (
+                "ssh://me@[::1]:/tmp/file",
+                Some("ssh://me@[::1]/tmp/file"),
+                "::1",
+                Some("me"),
+                None,
+                "/tmp/file",
+            ),
+            (
+                "ssh://[2001:db8::2]:2222/tmp",
+                Some("ssh://[2001:db8::2]:2222/tmp"),
+                "2001:db8::2",
+                None,
+                Some(2222),
+                "/tmp",
+            ),
         ];
 
         for (input, expected_url, host, username, port, path) in cases {
@@ -1333,7 +1393,8 @@ mod tests {
         for input in [
             "ssh://me@localhost:code/vibes/mine-bot",
             "ssh://me@localhost:2222:~/project",
-            "ssh://me@[2001:db8::1]:~/project",
+            "ssh://2600:::~/foo",
+            "ssh://[2600::]:2222:~/foo",
         ] {
             let result = cx.update(|cx| {
                 OpenRequest::parse(

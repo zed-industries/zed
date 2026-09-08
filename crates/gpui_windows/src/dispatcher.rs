@@ -12,11 +12,10 @@ use windows::Win32::{
     Foundation::{FILETIME, LPARAM, WPARAM},
     Media::{timeBeginPeriod, timeEndPeriod},
     System::Threading::{
-        CloseThreadpoolTimer, CloseThreadpoolWork, CreateThreadpoolTimer, CreateThreadpoolWork,
-        GetCurrentThread, PTP_CALLBACK_INSTANCE, PTP_TIMER, PTP_WORK, SetThreadPriority,
-        SetThreadpoolTimer, SubmitThreadpoolWork, THREAD_PRIORITY_TIME_CRITICAL,
+        CloseThreadpoolTimer, CreateThreadpoolTimer, GetCurrentThread, PTP_CALLBACK_INSTANCE,
+        PTP_TIMER, SetThreadPriority, SetThreadpoolTimer, THREAD_PRIORITY_TIME_CRITICAL,
         TP_CALLBACK_ENVIRON_V3, TP_CALLBACK_PRIORITY, TP_CALLBACK_PRIORITY_HIGH,
-        TP_CALLBACK_PRIORITY_LOW, TP_CALLBACK_PRIORITY_NORMAL,
+        TP_CALLBACK_PRIORITY_LOW, TP_CALLBACK_PRIORITY_NORMAL, TrySubmitThreadpoolCallback,
     },
     UI::WindowsAndMessaging::PostMessageW,
 };
@@ -66,11 +65,8 @@ impl WindowsDispatcher {
         let context = runnable.into_raw().as_ptr() as *mut c_void;
 
         unsafe {
-            if let Ok(work) =
-                CreateThreadpoolWork(Some(run_work_callback), Some(context), Some(&environ))
-            {
-                SubmitThreadpoolWork(work);
-            }
+            TrySubmitThreadpoolCallback(Some(run_work_callback), Some(context), Some(&environ))
+                .log_err();
         }
     }
 
@@ -179,11 +175,9 @@ impl PlatformDispatcher for WindowsDispatcher {
 unsafe extern "system" fn run_work_callback(
     _instance: PTP_CALLBACK_INSTANCE,
     context: *mut c_void,
-    work: PTP_WORK,
 ) {
     let runnable = unsafe { RunnableVariant::from_raw(NonNull::new_unchecked(context as *mut ())) };
     WindowsDispatcher::execute_runnable(runnable);
-    unsafe { CloseThreadpoolWork(work) };
 }
 
 unsafe extern "system" fn run_timer_callback(

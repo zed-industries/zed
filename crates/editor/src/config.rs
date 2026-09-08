@@ -198,6 +198,16 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_allow_git_diff_scrollbar_markers(&mut self, allow: bool, cx: &mut Context<Self>) {
+        if self.allow_git_diff_scrollbar_markers != allow {
+            self.allow_git_diff_scrollbar_markers = allow;
+            self.scrollbar_marker_state.dirty = true;
+            self.scrollbar_marker_state.markers = Default::default();
+            self.scrollbar_marker_state.pending_refresh = None;
+            cx.notify();
+        }
+    }
+
     pub fn set_show_code_actions(&mut self, show_code_actions: bool, cx: &mut Context<Self>) {
         self.show_code_actions = Some(show_code_actions);
         cx.notify();
@@ -247,7 +257,7 @@ impl Editor {
         wrap_guides
     }
 
-    pub(super) fn soft_wrap_mode(&self, cx: &App) -> SoftWrap {
+    pub fn soft_wrap_mode(&self, cx: &App) -> SoftWrap {
         let settings = self.buffer.read(cx).language_settings(cx);
         let mode = self.soft_wrap_mode_override.unwrap_or(settings.soft_wrap);
         match mode {
@@ -276,12 +286,7 @@ impl Editor {
         }
     }
 
-    pub(super) fn toggle_soft_wrap(
-        &mut self,
-        _: &ToggleSoftWrap,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, _: &mut Window, cx: &mut Context<Self>) {
         if self.soft_wrap_mode_override.is_some() {
             self.soft_wrap_mode_override.take();
         } else {

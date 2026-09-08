@@ -118,7 +118,7 @@ pub struct AmazonBedrockSettingsContent {
     pub available_models: Option<Vec<BedrockAvailableModel>>,
     /// Custom models served through the `bedrock-mantle` endpoint's
     /// OpenAI-compatible APIs, in addition to the built-in Mantle models
-    /// (GPT-5.5, GPT-5.4, Grok 4.3).
+    /// (GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, GPT-5.5, GPT-5.4, Grok 4.3).
     pub mantle_available_models: Option<Vec<BedrockMantleAvailableModel>>,
     pub custom_headers: Option<HashMap<String, String>>,
     pub endpoint_url: Option<String>,
@@ -245,8 +245,6 @@ pub struct OpenCodeSettingsContent {
     pub show_zen_models: Option<bool>,
     /// Whether to show OpenCode Go models. Defaults to true.
     pub show_go_models: Option<bool>,
-    /// Whether to show OpenCode Free models. Defaults to true.
-    pub show_free_models: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -266,7 +264,6 @@ pub enum OpenCodeApiProtocol {
 pub enum OpenCodeModelSubscription {
     Zen,
     Go,
-    Free,
 }
 
 #[with_fallible_options]
@@ -278,7 +275,7 @@ pub struct OpenCodeAvailableModel {
     pub max_output_tokens: Option<u64>,
     /// The API protocol to use for this model: "anthropic", "openai_responses", "openai_chat", or "google". Defaults to "openai_chat".
     pub protocol: Option<OpenCodeApiProtocol>,
-    /// The subscription for this model: "zen", "go", or "free". Defaults to Zen.
+    /// The subscription for this model: "zen" or "go". Defaults to Zen.
     pub subscription: Option<OpenCodeModelSubscription>,
     /// Custom Model API URL to use for this model.
     pub custom_model_api_url: Option<String>,
@@ -593,6 +590,7 @@ pub struct OpenRouterAvailableModel {
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
     pub mode: Option<ModelMode>,
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub provider: Option<OpenRouterProvider>,
 }
 

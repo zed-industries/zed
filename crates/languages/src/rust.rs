@@ -269,7 +269,7 @@ impl RustLspAdapter {
             "{}-{}-{}.{}",
             SERVER_NAME,
             std::env::consts::ARCH,
-            &arch_server_name,
+            arch_server_name,
             extension
         )
     }
@@ -292,7 +292,7 @@ impl ManifestProvider for CargoManifestProvider {
     ) -> Option<Arc<RelPath>> {
         let mut outermost_cargo_toml = None;
         for path in path.ancestors().take(depth) {
-            let p = path.join(RelPath::unix("Cargo.toml").unwrap());
+            let p = path.join(RelPath::from_unix_str("Cargo.toml").unwrap());
             if delegate.exists(&p, Some(false)) {
                 outermost_cargo_toml = Some(Arc::from(path));
             }
@@ -326,7 +326,10 @@ impl LspAdapter for RustLspAdapter {
                 .iter_mut()
                 .flatten()
                 .map(|info| &mut info.message)
-                .chain([&mut diagnostic.message])
+                .chain(match &mut diagnostic.message {
+                    lsp::DiagnosticMessage::String(message) => Some(message),
+                    lsp::DiagnosticMessage::MarkupContent(_) => None,
+                })
             {
                 if let Cow::Owned(sanitized) = REGEX.replace_all(message, "`$1`") {
                     *message = sanitized;
@@ -489,27 +492,56 @@ impl LspAdapter for RustLspAdapter {
                         .collect::<SmallVec<[_; 8]>>();
                     all_stop_ranges.sort_unstable_by_key(|a| (a.start, Reverse(a.end)));
 
+                    // Placeholders may nest, e.g. `$2` inside `${1:"$2"}`
+                    struct OpenPlaceholder {
+                        snippet_text_end: usize,
+                        label_run_start: usize,
+                    }
+                    let mut open_placeholders = SmallVec::<[OpenPlaceholder; 4]>::new();
+
                     for range in &all_stop_ranges {
                         let start_pos = range.start as usize;
                         let end_pos = range.end as usize;
 
+                        while let Some(placeholder) = open_placeholders.last() {
+                            if placeholder.snippet_text_end > start_pos {
+                                break;
+                            }
+                            label.push_str(&snippet.text[text_pos..placeholder.snippet_text_end]);
+                            text_pos = placeholder.snippet_text_end;
+                            runs.push((
+                                placeholder.label_run_start..label.len(),
+                                HighlightId::TABSTOP_REPLACE_ID,
+                            ));
+                            open_placeholders.pop();
+                        }
+
                         label.push_str(&snippet.text[text_pos..start_pos]);
+                        text_pos = start_pos;
 
                         if start_pos == end_pos {
                             let caret_start = label.len();
                             label.push('…');
                             runs.push((caret_start..label.len(), HighlightId::TABSTOP_INSERT_ID));
                         } else {
-                            let label_start = label.len();
-                            label.push_str(&snippet.text[start_pos..end_pos]);
-                            let label_end = label.len();
-                            runs.push((label_start..label_end, HighlightId::TABSTOP_REPLACE_ID));
+                            open_placeholders.push(OpenPlaceholder {
+                                snippet_text_end: end_pos,
+                                label_run_start: label.len(),
+                            });
                         }
+                    }
 
-                        text_pos = end_pos;
+                    while let Some(placeholder) = open_placeholders.pop() {
+                        label.push_str(&snippet.text[text_pos..placeholder.snippet_text_end]);
+                        text_pos = placeholder.snippet_text_end;
+                        runs.push((
+                            placeholder.label_run_start..label.len(),
+                            HighlightId::TABSTOP_REPLACE_ID,
+                        ));
                     }
 
                     label.push_str(&snippet.text[text_pos..]);
+                    runs.sort_unstable_by_key(|(range, _)| (range.start, Reverse(range.end)));
 
                     if detail_left.is_some_and(|detail_left| detail_left == new_text) {
                         // We only include the left detail if it isn't the snippet again
@@ -622,15 +654,15 @@ impl LspAdapter for RustLspAdapter {
     ) -> Option<CodeLabel> {
         let name = &symbol.name;
         let (prefix, suffix) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", "();"),
-            lsp::SymbolKind::STRUCT => ("struct ", ";"),
-            lsp::SymbolKind::ENUM => ("enum ", "{}"),
-            lsp::SymbolKind::INTERFACE => ("trait ", "{}"),
-            lsp::SymbolKind::CONSTANT => ("const ", ":()=();"),
-            lsp::SymbolKind::MODULE => ("mod ", ";"),
-            lsp::SymbolKind::PACKAGE => ("extern crate ", ";"),
-            lsp::SymbolKind::TYPE_PARAMETER => ("type ", "=();"),
-            lsp::SymbolKind::ENUM_MEMBER => {
+            language::SymbolKind::Method | language::SymbolKind::Function => ("fn ", "();"),
+            language::SymbolKind::Struct => ("struct ", ";"),
+            language::SymbolKind::Enum => ("enum ", "{}"),
+            language::SymbolKind::Interface => ("trait ", "{}"),
+            language::SymbolKind::Constant => ("const ", ":()=();"),
+            language::SymbolKind::Module => ("mod ", ";"),
+            language::SymbolKind::Package => ("extern crate ", ";"),
+            language::SymbolKind::TypeParameter => ("type ", "=();"),
+            language::SymbolKind::EnumMember => {
                 let prefix = "enum E {";
                 return Some(CodeLabel::new(
                     name.to_string(),
@@ -663,31 +695,23 @@ impl LspAdapter for RustLspAdapter {
             .get(&SERVER_NAME)
             .is_some_and(|s| s.enable_lsp_tasks);
 
+        let mut commands = vec![
+            "rust-analyzer.showReferences",
+            "rust-analyzer.gotoLocation",
+            "rust-analyzer.triggerParameterHints",
+            "rust-analyzer.rename",
+        ];
+        if enable_lsp_tasks {
+            commands.push("rust-analyzer.runSingle");
+        }
+
         let mut experimental = json!({
             "commands": {
-                "commands": [
-                    "rust-analyzer.showReferences",
-                    "rust-analyzer.gotoLocation",
-                    "rust-analyzer.triggerParameterHints",
-                    "rust-analyzer.rename",
-                ]
+                "commands": commands,
             }
         });
-
         if enable_lsp_tasks {
-            merge_json_value_into(
-                json!({
-                    "runnables": {
-                        "kinds": [ "cargo", "shell" ],
-                    },
-                    "commands": {
-                        "commands": [
-                            "rust-analyzer.runSingle",
-                        ]
-                    }
-                }),
-                &mut experimental,
-            );
+            experimental["runnables"] = json!({ "kinds": ["cargo", "shell"] });
         }
 
         if let Some(original_experimental) = &mut original.capabilities.experimental {
@@ -1453,48 +1477,82 @@ mod tests {
     use crate::language;
     use gpui::{BorrowAppContext, Hsla, TestAppContext};
     use lsp::CompletionItemLabelDetails;
+    use pretty_assertions::assert_eq;
     use settings::SettingsStore;
     use theme::SyntaxTheme;
     use util::path;
 
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
+        let markdown_message = lsp::MarkupContent {
+            kind: lsp::MarkupKind::Markdown,
+            value: "consider importing this struct: `use b::c;\n`".to_string(),
+        };
+        let plain_text_message = lsp::MarkupContent {
+            kind: lsp::MarkupKind::PlainText,
+            value: "consider importing this struct: `use b::c;\n`".to_string(),
+        };
         let mut params = lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a")).unwrap(),
             version: None,
             diagnostics: vec![
                 // no newlines
                 lsp::Diagnostic {
-                    message: "use of moved value `a`".to_string(),
+                    message: lsp::DiagnosticMessage::from("use of moved value `a`"),
                     ..Default::default()
                 },
                 // newline at the end of a code span
                 lsp::Diagnostic {
-                    message: "consider importing this struct: `use b::c;\n`".to_string(),
+                    message: lsp::DiagnosticMessage::from(
+                        "consider importing this struct: `use b::c;\n`",
+                    ),
                     ..Default::default()
                 },
                 // code span starting right after a newline
                 lsp::Diagnostic {
-                    message: "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
-                        .to_string(),
+                    message: lsp::DiagnosticMessage::from(
+                        "cannot borrow `self.d` as mutable\n`self` is a `&` reference".to_string(),
+                    ),
+                    ..Default::default()
+                },
+                lsp::Diagnostic {
+                    message: lsp::DiagnosticMessage::from(markdown_message.clone()),
+                    ..Default::default()
+                },
+                lsp::Diagnostic {
+                    message: lsp::DiagnosticMessage::from(plain_text_message.clone()),
                     ..Default::default()
                 },
             ],
         };
         RustLspAdapter.process_diagnostics(&mut params, LanguageServerId(0));
 
-        assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
+        assert_eq!(
+            params.diagnostics[0].message,
+            lsp::DiagnosticMessage::from("use of moved value `a`")
+        );
 
         // remove trailing newline from code span
         assert_eq!(
             params.diagnostics[1].message,
-            "consider importing this struct: `use b::c;`"
+            lsp::DiagnosticMessage::from("consider importing this struct: `use b::c;`")
         );
 
         // do not remove newline before the start of code span
         assert_eq!(
             params.diagnostics[2].message,
-            "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
+            lsp::DiagnosticMessage::from(
+                "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
+            )
+        );
+
+        assert_eq!(
+            params.diagnostics[3].message,
+            lsp::DiagnosticMessage::from(markdown_message)
+        );
+        assert_eq!(
+            params.diagnostics[4].message,
+            lsp::DiagnosticMessage::from(plain_text_message)
         );
     }
 
@@ -1876,6 +1934,34 @@ mod tests {
             ))
         );
 
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::SNIPPET),
+                        label: "unimplemented".to_string(),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::default(),
+                            new_text: "unimplemented!(${1:\"$2\"})".to_string(),
+                        })),
+                        ..lsp::CompletionItem::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel::new(
+                "unimplemented!(\"…\")".to_string(),
+                0..13,
+                vec![
+                    (15..20, HighlightId::TABSTOP_REPLACE_ID),
+                    (16..19, HighlightId::TABSTOP_INSERT_ID),
+                    (0..13, HighlightId::new(2)),
+                    (13..14, HighlightId::new(2)),
+                ],
+            ))
+        );
+
         // Postfix completion without actual tabstops (only implicit final $0)
         // The label should use completion.label so it can be filtered by "ref"
         let ref_completion = adapter
@@ -1972,7 +2058,7 @@ mod tests {
                 .label_for_symbol(
                     &language::Symbol {
                         name: "hello".to_string(),
-                        kind: lsp::SymbolKind::FUNCTION,
+                        kind: language::SymbolKind::Function,
                         container_name: None,
                     },
                     &language
@@ -1990,7 +2076,7 @@ mod tests {
                 .label_for_symbol(
                     &language::Symbol {
                         name: "World".to_string(),
-                        kind: lsp::SymbolKind::TYPE_PARAMETER,
+                        kind: language::SymbolKind::TypeParameter,
                         container_name: None,
                     },
                     &language
@@ -2008,7 +2094,7 @@ mod tests {
                 .label_for_symbol(
                     &language::Symbol {
                         name: "zed".to_string(),
-                        kind: lsp::SymbolKind::PACKAGE,
+                        kind: language::SymbolKind::Package,
                         container_name: None,
                     },
                     &language
@@ -2026,7 +2112,7 @@ mod tests {
                 .label_for_symbol(
                     &language::Symbol {
                         name: "Variant".to_string(),
-                        kind: lsp::SymbolKind::ENUM_MEMBER,
+                        kind: language::SymbolKind::EnumMember,
                         container_name: None,
                     },
                     &language
