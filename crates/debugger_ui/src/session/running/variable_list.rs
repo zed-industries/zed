@@ -8,8 +8,9 @@ use dap::{
 use editor::Editor;
 use gpui::{
     Action, AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Empty, Entity,
-    FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription, TextStyleRefinement,
-    UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
+    FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription, TaskExt,
+    TextStyleRefinement, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
+    uniform_list,
 };
 use itertools::Itertools;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -297,9 +298,10 @@ impl VariableList {
                     contains_local_scope = true;
                 }
 
-                self.session.update(cx, |session, cx| {
-                    !session.variables(scope.variables_reference, cx).is_empty()
-                })
+                scope.expensive
+                    || self.session.update(cx, |session, cx| {
+                        !session.variables(scope.variables_reference, cx).is_empty()
+                    })
             })
             .map(|scope| {
                 (
@@ -346,12 +348,13 @@ impl VariableList {
                 .or_insert(EntryState {
                     depth: path.indices.len(),
                     is_expanded: dap_kind.as_scope().is_some_and(|scope| {
-                        (scopes_count == 1 && !contains_local_scope)
-                            || scope
-                                .presentation_hint
-                                .as_ref()
-                                .map(|hint| *hint == ScopePresentationHint::Locals)
-                                .unwrap_or(scope.name.to_lowercase().starts_with("local"))
+                        !scope.expensive
+                            && ((scopes_count == 1 && !contains_local_scope)
+                                || scope
+                                    .presentation_hint
+                                    .as_ref()
+                                    .map(|hint| *hint == ScopePresentationHint::Locals)
+                                    .unwrap_or(scope.name.to_lowercase().starts_with("local")))
                     }),
                     parent_reference: container_reference,
                     has_children: variables_reference != 0,
@@ -886,13 +889,30 @@ impl VariableList {
             return;
         };
 
-        let variable_value = match &entry.entry {
-            DapEntry::Variable(dap) => dap.value.clone(),
-            DapEntry::Watcher(watcher) => watcher.value.to_string(),
+        match &entry.entry {
+            DapEntry::Variable(dap) => {
+                let fallback_value = dap.value.clone();
+                let expression = dap
+                    .evaluate_name
+                    .clone()
+                    .unwrap_or_else(|| dap.name.clone());
+                let frame_id = self.selected_stack_frame_id;
+                let task = self.session.update(cx, |session, cx| {
+                    session.evaluate_variable_value(expression, frame_id, cx)
+                });
+                cx.spawn(async move |_, cx| {
+                    let value = task.await.unwrap_or(fallback_value);
+                    cx.update(|cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(value));
+                    });
+                })
+                .detach();
+            }
+            DapEntry::Watcher(watcher) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(watcher.value.to_string()));
+            }
             DapEntry::Scope(_) => return,
-        };
-
-        cx.write_to_clipboard(ClipboardItem::new_string(variable_value));
+        }
     }
 
     fn edit_variable(&mut self, _: &EditVariable, window: &mut Window, cx: &mut Context<Self>) {
@@ -1155,7 +1175,7 @@ impl VariableList {
                                 },
                             )
                             .child(
-                                Label::new(format!("=  {}", &value))
+                                Label::new(format!("=  {value}"))
                                     .single_line()
                                     .truncate()
                                     .size(LabelSize::Small)
@@ -1573,13 +1593,13 @@ impl Render for VariableList {
                 .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
                 .gap_1_5()
                 .size_full()
-                .flex_grow(),
+                .flex_grow_1(),
             )
             .children(self.open_context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::Corner::TopLeft)
+                        .anchor(gpui::Anchor::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)

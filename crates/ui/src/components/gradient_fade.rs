@@ -9,6 +9,7 @@ pub struct GradientFade {
     hover_bg: Hsla,
     active_bg: Hsla,
     width: Pixels,
+    width_hovered: Option<Pixels>,
     right: Pixels,
     gradient_stop: f32,
     group_name: Option<SharedString>,
@@ -24,11 +25,17 @@ impl GradientFade {
             right: px(0.0),
             gradient_stop: 0.6,
             group_name: None,
+            width_hovered: None,
         }
     }
 
     pub fn width(mut self, width: Pixels) -> Self {
         self.width = width;
+        self
+    }
+
+    pub fn width_hovered(mut self, width: Pixels) -> Self {
+        self.width_hovered = Some(width);
         self
     }
 
@@ -77,6 +84,7 @@ impl RenderOnce for GradientFade {
                         linear_color_stop(hover_bg, stop),
                         linear_color_stop(hover_bg.opacity(0.0), 0.),
                     ))
+                    .w(self.width_hovered.unwrap_or(self.width))
                 })
             })
             .when_some(self.group_name, |element, group_name| {

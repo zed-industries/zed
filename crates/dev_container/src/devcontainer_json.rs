@@ -4,6 +4,7 @@ use crate::{command_json::CommandRunner, devcontainer_api::DevContainerError};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json_lenient::Value;
 use util::command::Command;
+use util::redact::is_valid_environment_name;
 
 #[derive(Debug, Deserialize, Serialize, Eq, PartialEq, Clone)]
 #[serde(untagged)]
@@ -19,9 +20,10 @@ pub(crate) enum PortAttributeProtocol {
     Http,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum OnAutoForward {
+    #[default]
     Notify,
     OpenBrowser,
     OpenBrowserOnce,
@@ -33,11 +35,16 @@ pub(crate) enum OnAutoForward {
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PortAttributes {
-    label: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
     on_auto_forward: OnAutoForward,
+    #[serde(default)]
     elevate_if_needed: bool,
+    #[serde(default)]
     require_local_port: bool,
-    protocol: PortAttributeProtocol,
+    #[serde(default)]
+    protocol: Option<PortAttributeProtocol>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -135,12 +142,12 @@ pub(crate) struct ZedCustomization {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ContainerBuild {
     pub(crate) dockerfile: String,
-    context: Option<String>,
+    pub(crate) context: Option<String>,
     pub(crate) args: Option<HashMap<String, String>>,
-    options: Option<Vec<String>>,
+    pub(crate) options: Option<Vec<String>>,
     pub(crate) target: Option<String>,
     #[serde(default, deserialize_with = "deserialize_string_or_array")]
-    cache_from: Option<Vec<String>>,
+    pub(crate) cache_from: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
@@ -205,12 +212,12 @@ pub(crate) struct DevContainer {
     #[serde(rename = "updateRemoteUserUID")]
     pub(crate) update_remote_user_uid: Option<bool>,
     user_env_probe: Option<UserEnvProbe>,
-    override_command: Option<bool>,
+    pub(crate) override_command: Option<bool>,
     shutdown_action: Option<ShutdownAction>,
-    init: Option<bool>,
+    pub(crate) init: Option<bool>,
     pub(crate) privileged: Option<bool>,
-    cap_add: Option<Vec<String>>,
-    security_opt: Option<Vec<String>>,
+    pub(crate) cap_add: Option<Vec<String>>,
+    pub(crate) security_opt: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_mount_definitions")]
     pub(crate) mounts: Option<Vec<MountDefinition>>,
     pub(crate) features: Option<HashMap<String, FeatureOptions>>,
@@ -226,7 +233,7 @@ pub(crate) struct DevContainer {
     #[serde(default, deserialize_with = "deserialize_string_or_array")]
     pub(crate) docker_compose_file: Option<Vec<String>>,
     pub(crate) service: Option<String>,
-    run_services: Option<Vec<String>>,
+    pub(crate) run_services: Option<Vec<String>>,
     pub(crate) initialize_command: Option<LifecycleScript>,
     pub(crate) on_create_command: Option<LifecycleScript>,
     pub(crate) update_content_command: Option<LifecycleScript>,
@@ -237,14 +244,26 @@ pub(crate) struct DevContainer {
     host_requirements: Option<HostRequirements>,
 }
 
+pub(crate) fn deserialize_devcontainer_json_to_value(
+    json: &str,
+) -> Result<serde_json_lenient::Value, DevContainerError> {
+    serde_json_lenient::from_str(json).map_err(|e| {
+        log::error!("Unable to deserialize json values: {e}");
+        DevContainerError::DevContainerParseFailed
+    })
+}
+
+pub(crate) fn deserialize_devcontainer_json_from_value(
+    json: serde_json_lenient::Value,
+) -> Result<DevContainer, DevContainerError> {
+    serde_json_lenient::from_value(json).map_err(|e| {
+        log::error!("Unable to deserialize devcontainer from json values: {e}");
+        DevContainerError::DevContainerParseFailed
+    })
+}
+
 pub(crate) fn deserialize_devcontainer_json(json: &str) -> Result<DevContainer, DevContainerError> {
-    match serde_json_lenient::from_str(json) {
-        Ok(devcontainer) => Ok(devcontainer),
-        Err(e) => {
-            log::error!("Unable to deserialize devcontainer from json: {e}");
-            Err(DevContainerError::DevContainerParseFailed)
-        }
-    }
+    deserialize_devcontainer_json_to_value(json).and_then(deserialize_devcontainer_json_from_value)
 }
 
 impl DevContainer {
@@ -260,7 +279,35 @@ impl DevContainer {
         }
     }
 
+    pub(crate) fn override_command(&self) -> bool {
+        self.override_command.unwrap_or(!matches!(
+            self.build_type(),
+            DevContainerBuildType::DockerCompose
+        ))
+    }
+
+    pub(crate) fn validate_environment_names(&self) -> Result<(), DevContainerError> {
+        for (property, environment) in [
+            ("containerEnv", self.container_env.as_ref()),
+            ("remoteEnv", self.remote_env.as_ref()),
+        ] {
+            if environment.is_some_and(|environment| {
+                environment
+                    .keys()
+                    .any(|name| !is_valid_environment_name(name))
+            }) {
+                return Err(DevContainerError::DevContainerValidationFailed(format!(
+                    "{property} contains an invalid environment variable name"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn validate_devcontainer_contents(&self) -> Result<(), DevContainerError> {
+        self.validate_environment_names()?;
+
         match self.build_type() {
             DevContainerBuildType::Image(_) => Ok(()),
             DevContainerBuildType::Dockerfile(_) => {
@@ -316,10 +363,11 @@ impl LifecycleScript {
                 .collect(),
         }
     }
+    fn shell_command(script: &str) -> Vec<String> {
+        vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()]
+    }
     fn from_str(args: &str) -> Self {
-        let script: Vec<String> = args.split(" ").map(|a| a.to_string()).collect();
-
-        Self::from_args(script)
+        Self::from_args(Self::shell_command(args))
     }
     fn from_args(args: Vec<String>) -> Self {
         Self::from_map(HashMap::from([("default".to_string(), args)]))
@@ -416,9 +464,7 @@ impl<'de> Deserialize<'de> for LifecycleScript {
                 while let Some(key) = map.next_key::<String>()? {
                     let value: Value = map.next_value()?;
                     let script_args = match value {
-                        Value::String(s) => {
-                            s.split(" ").map(|s| s.to_string()).collect::<Vec<String>>()
-                        }
+                        Value::String(s) => LifecycleScript::shell_command(&s),
                         Value::Array(arr) => {
                             let strings: Vec<String> = arr
                                 .into_iter()
@@ -617,6 +663,39 @@ mod test {
     };
 
     #[test]
+    fn override_command_defaults_depend_on_build_type() {
+        let image = deserialize_devcontainer_json(r#"{"image":"ubuntu"}"#).expect("image config");
+        assert!(image.override_command());
+
+        let dockerfile = deserialize_devcontainer_json(r#"{"build":{"dockerfile":"Dockerfile"}}"#)
+            .expect("Dockerfile config");
+        assert!(dockerfile.override_command());
+
+        let compose = deserialize_devcontainer_json(
+            r#"{"dockerComposeFile":"compose.yaml","service":"app"}"#,
+        )
+        .expect("Compose config");
+        assert!(!compose.override_command());
+    }
+
+    #[test]
+    fn explicit_override_command_takes_precedence_over_build_type_default() {
+        let image = deserialize_devcontainer_json(r#"{"image":"ubuntu","overrideCommand":false}"#)
+            .expect("image config");
+        assert!(!image.override_command());
+
+        let compose = deserialize_devcontainer_json(
+            r#"{
+                "dockerComposeFile":"compose.yaml",
+                "service":"app",
+                "overrideCommand":true
+            }"#,
+        )
+        .expect("Compose config");
+        assert!(compose.override_command());
+    }
+
+    #[test]
     fn should_deserialize_customizations_with_unknown_keys() {
         let json_with_other_customizations = r#"
             {
@@ -759,7 +838,7 @@ mod test {
                 "userEnvProbe": "loginShell",
                 "features": {
               		"ghcr.io/devcontainers/features/aws-cli:1": {},
-              		"ghcr.io/devcontainers/features/anaconda:1": {}
+               "ghcr.io/devcontainers/features/anaconda:1": {}
                	},
                 "overrideFeatureInstallOrder": [
                     "ghcr.io/devcontainers/features/anaconda:1",
@@ -824,30 +903,30 @@ mod test {
                     (
                         "3000".to_string(),
                         PortAttributes {
-                            label: "This Port".to_string(),
+                            label: Some("This Port".to_string()),
                             on_auto_forward: OnAutoForward::Notify,
                             elevate_if_needed: false,
                             require_local_port: true,
-                            protocol: PortAttributeProtocol::Https
+                            protocol: Some(PortAttributeProtocol::Https)
                         }
                     ),
                     (
                         "db:5432".to_string(),
                         PortAttributes {
-                            label: "This Port too".to_string(),
+                            label: Some("This Port too".to_string()),
                             on_auto_forward: OnAutoForward::Silent,
                             elevate_if_needed: true,
                             require_local_port: false,
-                            protocol: PortAttributeProtocol::Http
+                            protocol: Some(PortAttributeProtocol::Http)
                         }
                     )
                 ])),
                 other_ports_attributes: Some(PortAttributes {
-                    label: "Other Ports".to_string(),
+                    label: Some("Other Ports".to_string()),
                     on_auto_forward: OnAutoForward::OpenBrowser,
                     elevate_if_needed: true,
                     require_local_port: true,
-                    protocol: PortAttributeProtocol::Https
+                    protocol: Some(PortAttributeProtocol::Https)
                 }),
                 update_remote_user_uid: Some(true),
                 remote_env: Some(HashMap::from([
@@ -858,33 +937,42 @@ mod test {
                     "echo".to_string(),
                     "initialize_command".to_string()
                 ])),
+                // String-form lifecycle commands run in /bin/sh -c per the dev container spec.
                 on_create_command: Some(LifecycleScript::from_str("echo on_create_command")),
                 update_content_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "first".to_string(),
-                        vec!["echo".to_string(), "update_content_command".to_string()]
+                        vec![
+                            "/bin/sh".to_string(),
+                            "-c".to_string(),
+                            "echo update_content_command".to_string()
+                        ]
                     ),
                     (
                         "second".to_string(),
                         vec!["echo".to_string(), "update_content_command".to_string()]
                     )
                 ]))),
-                post_create_command: Some(LifecycleScript::from_str("echo post_create_command")),
-                post_start_command: Some(LifecycleScript::from_args(vec![
+                post_create_command: Some(LifecycleScript::from_args(vec![
                     "echo".to_string(),
-                    "post_start_command".to_string()
+                    "post_create_command".to_string()
                 ])),
+                post_start_command: Some(LifecycleScript::from_str("echo post_start_command")),
                 post_attach_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "something".to_string(),
-                        vec!["echo".to_string(), "post_attach_command".to_string()]
+                        vec![
+                            "/bin/sh".to_string(),
+                            "-c".to_string(),
+                            "echo post_attach_command".to_string()
+                        ]
                     ),
                     (
                         "something1".to_string(),
                         vec![
-                            "echo".to_string(),
-                            "something".to_string(),
-                            "else".to_string()
+                            "/bin/sh".to_string(),
+                            "-c".to_string(),
+                            "echo something else".to_string()
                         ]
                     )
                 ]))),
@@ -1003,7 +1091,7 @@ mod test {
                 "features": {
               		"ghcr.io/devcontainers/features/aws-cli:1": {},
               		"ghcr.io/devcontainers/features/anaconda:1": {}
-               	},
+                	},
                 "overrideFeatureInstallOrder": [
                     "ghcr.io/devcontainers/features/anaconda:1",
                     "ghcr.io/devcontainers/features/aws-cli:1"
@@ -1043,30 +1131,30 @@ mod test {
                     (
                         "3000".to_string(),
                         PortAttributes {
-                            label: "This Port".to_string(),
+                            label: Some("This Port".to_string()),
                             on_auto_forward: OnAutoForward::Notify,
                             elevate_if_needed: false,
                             require_local_port: true,
-                            protocol: PortAttributeProtocol::Https
+                            protocol: Some(PortAttributeProtocol::Https)
                         }
                     ),
                     (
                         "db:5432".to_string(),
                         PortAttributes {
-                            label: "This Port too".to_string(),
+                            label: Some("This Port too".to_string()),
                             on_auto_forward: OnAutoForward::Silent,
                             elevate_if_needed: true,
                             require_local_port: false,
-                            protocol: PortAttributeProtocol::Http
+                            protocol: Some(PortAttributeProtocol::Http)
                         }
                     )
                 ])),
                 other_ports_attributes: Some(PortAttributes {
-                    label: "Other Ports".to_string(),
+                    label: Some("Other Ports".to_string()),
                     on_auto_forward: OnAutoForward::OpenBrowser,
                     elevate_if_needed: true,
                     require_local_port: true,
-                    protocol: PortAttributeProtocol::Https
+                    protocol: Some(PortAttributeProtocol::Https)
                 }),
                 update_remote_user_uid: Some(true),
                 remote_env: Some(HashMap::from([
@@ -1077,33 +1165,42 @@ mod test {
                     "echo".to_string(),
                     "initialize_command".to_string()
                 ])),
+                // String-form lifecycle commands run in /bin/sh -c per the dev container spec.
                 on_create_command: Some(LifecycleScript::from_str("echo on_create_command")),
                 update_content_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "first".to_string(),
-                        vec!["echo".to_string(), "update_content_command".to_string()]
+                        vec![
+                            "/bin/sh".to_string(),
+                            "-c".to_string(),
+                            "echo update_content_command".to_string()
+                        ]
                     ),
                     (
                         "second".to_string(),
                         vec!["echo".to_string(), "update_content_command".to_string()]
                     )
                 ]))),
-                post_create_command: Some(LifecycleScript::from_str("echo post_create_command")),
-                post_start_command: Some(LifecycleScript::from_args(vec![
+                post_create_command: Some(LifecycleScript::from_args(vec![
                     "echo".to_string(),
-                    "post_start_command".to_string()
+                    "post_create_command".to_string()
                 ])),
+                post_start_command: Some(LifecycleScript::from_str("echo post_start_command")),
                 post_attach_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "something".to_string(),
-                        vec!["echo".to_string(), "post_attach_command".to_string()]
+                        vec![
+                            "/bin/sh".to_string(),
+                            "-c".to_string(),
+                            "echo post_attach_command".to_string()
+                        ]
                     ),
                     (
                         "something1".to_string(),
                         vec![
-                            "echo".to_string(),
-                            "something".to_string(),
-                            "else".to_string()
+                            "/bin/sh".to_string(),
+                            "-c".to_string(),
+                            "echo something else".to_string()
                         ]
                     )
                 ]))),
@@ -1204,7 +1301,7 @@ mod test {
                 "features": {
               		"ghcr.io/devcontainers/features/aws-cli:1": {},
               		"ghcr.io/devcontainers/features/anaconda:1": {}
-               	},
+                	},
                 "overrideFeatureInstallOrder": [
                     "ghcr.io/devcontainers/features/anaconda:1",
                     "ghcr.io/devcontainers/features/aws-cli:1"
@@ -1271,30 +1368,30 @@ mod test {
                     (
                         "3000".to_string(),
                         PortAttributes {
-                            label: "This Port".to_string(),
+                            label: Some("This Port".to_string()),
                             on_auto_forward: OnAutoForward::Notify,
                             elevate_if_needed: false,
                             require_local_port: true,
-                            protocol: PortAttributeProtocol::Https
+                            protocol: Some(PortAttributeProtocol::Https)
                         }
                     ),
                     (
                         "db:5432".to_string(),
                         PortAttributes {
-                            label: "This Port too".to_string(),
+                            label: Some("This Port too".to_string()),
                             on_auto_forward: OnAutoForward::Silent,
                             elevate_if_needed: true,
                             require_local_port: false,
-                            protocol: PortAttributeProtocol::Http
+                            protocol: Some(PortAttributeProtocol::Http)
                         }
                     )
                 ])),
                 other_ports_attributes: Some(PortAttributes {
-                    label: "Other Ports".to_string(),
+                    label: Some("Other Ports".to_string()),
                     on_auto_forward: OnAutoForward::OpenBrowser,
                     elevate_if_needed: true,
                     require_local_port: true,
-                    protocol: PortAttributeProtocol::Https
+                    protocol: Some(PortAttributeProtocol::Https)
                 }),
                 update_remote_user_uid: Some(true),
                 remote_env: Some(HashMap::from([
@@ -1305,33 +1402,42 @@ mod test {
                     "echo".to_string(),
                     "initialize_command".to_string()
                 ])),
+                // String-form lifecycle commands run in /bin/sh -c per the dev container spec.
                 on_create_command: Some(LifecycleScript::from_str("echo on_create_command")),
                 update_content_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "first".to_string(),
-                        vec!["echo".to_string(), "update_content_command".to_string()]
+                        vec![
+                            "/bin/sh".to_string(),
+                            "-c".to_string(),
+                            "echo update_content_command".to_string()
+                        ]
                     ),
                     (
                         "second".to_string(),
                         vec!["echo".to_string(), "update_content_command".to_string()]
                     )
                 ]))),
-                post_create_command: Some(LifecycleScript::from_str("echo post_create_command")),
-                post_start_command: Some(LifecycleScript::from_args(vec![
+                post_create_command: Some(LifecycleScript::from_args(vec![
                     "echo".to_string(),
-                    "post_start_command".to_string()
+                    "post_create_command".to_string()
                 ])),
+                post_start_command: Some(LifecycleScript::from_str("echo post_start_command")),
                 post_attach_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "something".to_string(),
-                        vec!["echo".to_string(), "post_attach_command".to_string()]
+                        vec![
+                            "/bin/sh".to_string(),
+                            "-c".to_string(),
+                            "echo post_attach_command".to_string()
+                        ]
                     ),
                     (
                         "something1".to_string(),
                         vec![
-                            "echo".to_string(),
-                            "something".to_string(),
-                            "else".to_string()
+                            "/bin/sh".to_string(),
+                            "-c".to_string(),
+                            "echo something else".to_string()
                         ]
                     )
                 ]))),
@@ -1505,6 +1611,60 @@ mod test {
     }
 
     #[test]
+    fn should_deserialize_port_attributes_with_missing_optional_fields() {
+        let json = r#"
+        {
+            "image": "nginx",
+            "portsAttributes": {
+                "8080": {
+                    "label": "app",
+                    "onAutoForward": "silent"
+                }
+            }
+        }
+        "#;
+
+        let result = deserialize_devcontainer_json(json);
+        assert!(
+            result.is_ok(),
+            "Expected deserialization to succeed with partial portsAttributes, got: {:?}",
+            result.err()
+        );
+
+        let devcontainer = result.unwrap();
+        let port_attrs = devcontainer.ports_attributes.unwrap();
+        let attrs = port_attrs.get("8080").unwrap();
+        assert_eq!(attrs.elevate_if_needed, false);
+        assert_eq!(attrs.require_local_port, false);
+    }
+
+    #[test]
+    fn should_deserialize_port_attributes_with_all_fields_omitted() {
+        let json = r#"
+        {
+            "image": "nginx",
+            "portsAttributes": {
+                "3000": {}
+            }
+        }
+        "#;
+
+        let result = deserialize_devcontainer_json(json);
+        assert!(
+            result.is_ok(),
+            "Expected deserialization to succeed with empty portsAttributes, got: {:?}",
+            result.err()
+        );
+
+        let devcontainer = result.unwrap();
+        let port_attrs = devcontainer.ports_attributes.unwrap();
+        let attrs = port_attrs.get("3000").unwrap();
+        assert_eq!(attrs.on_auto_forward, OnAutoForward::Notify);
+        assert_eq!(attrs.elevate_if_needed, false);
+        assert_eq!(attrs.require_local_port, false);
+    }
+
+    #[test]
     fn should_fail_validation_with_workspace_mount_only() {
         let given_image_container_json = r#"
             // These are some external comments. serde_lenient should handle them
@@ -1579,6 +1739,38 @@ mod test {
             ))
         );
     }
+
+    #[test]
+    fn should_reject_invalid_environment_names() {
+        for (json, property) in [
+            (
+                r#"{"image":"ubuntu","containerEnv":{"":"secret"}}"#,
+                "containerEnv",
+            ),
+            (
+                r#"{"image":"ubuntu","containerEnv":{"NAME=VALUE":"secret"}}"#,
+                "containerEnv",
+            ),
+            (
+                r#"{"image":"ubuntu","remoteEnv":{"LINE\nBREAK":"secret"}}"#,
+                "remoteEnv",
+            ),
+            (
+                r#"{"image":"ubuntu","remoteEnv":{"NAME\u0000NUL":"secret"}}"#,
+                "remoteEnv",
+            ),
+        ] {
+            let devcontainer = deserialize_devcontainer_json(json).expect("valid JSON");
+
+            assert_eq!(
+                devcontainer.validate_environment_names(),
+                Err(DevContainerError::DevContainerValidationFailed(format!(
+                    "{property} contains an invalid environment variable name"
+                )))
+            );
+        }
+    }
+
     #[test]
     fn should_pass_validation_with_workspace_folder_for_docker_compose() {
         let given_image_container_json = r#"
@@ -1608,5 +1800,93 @@ mod test {
         let devcontainer = result.expect("ok");
 
         assert!(devcontainer.validate_devcontainer_contents().is_ok());
+    }
+
+    #[test]
+    fn string_lifecycle_command_runs_in_a_shell() {
+        // Per the dev container spec, string-form lifecycle commands MUST run in /bin/sh -c.
+        // This regression test guards against #60228, where `from_str("echo $HOME")` was
+        // naively split on spaces, exec-ing `["echo", "$HOME"]` directly without a shell,
+        // so `$HOME` would not be expanded (the spec mandates shell expansion).
+        let json = r#"
+        {
+            "image": "nginx",
+            "postCreateCommand": "echo $HOME"
+        }
+        "#;
+
+        let result = deserialize_devcontainer_json(json);
+        assert!(
+            result.is_ok(),
+            "Deserialization should succeed: {:?}",
+            result.err()
+        );
+
+        let dc = result.unwrap();
+        if let Some(script) = dc.post_create_command {
+            let cmds = script.script_commands();
+            let cmd = cmds
+                .get("default")
+                .expect("String command should have a 'default' key");
+            let args: Vec<std::ffi::OsString> = cmd.get_args().map(|a| a.to_os_string()).collect();
+            assert_eq!(
+                cmd.get_program(),
+                std::ffi::OsStr::new("/bin/sh"),
+                "String-form lifecycle command program must be /bin/sh"
+            );
+            assert_eq!(
+                args,
+                vec![
+                    std::ffi::OsString::from("-c"),
+                    std::ffi::OsString::from("echo $HOME"),
+                ],
+                "String-form lifecycle command args must be -c <script> so the shell expands $HOME"
+            );
+        } else {
+            panic!("Expected post_create_command to be Some");
+        }
+    }
+
+    #[test]
+    fn array_lifecycle_command_runs_directly() {
+        // Per the dev container spec, array-form lifecycle commands MUST exec directly
+        // without a shell wrapper.
+        let json = r#"
+        {
+            "image": "nginx",
+            "postCreateCommand": ["/usr/bin/env", "echo", "hello"]
+        }
+        "#;
+
+        let result = deserialize_devcontainer_json(json);
+        assert!(
+            result.is_ok(),
+            "Deserialization should succeed: {:?}",
+            result.err()
+        );
+
+        let dc = result.unwrap();
+        if let Some(script) = dc.post_create_command {
+            let cmds = script.script_commands();
+            let cmd = cmds
+                .get("default")
+                .expect("Array command should have a 'default' key");
+            let args: Vec<std::ffi::OsString> = cmd.get_args().map(|a| a.to_os_string()).collect();
+            assert_eq!(
+                cmd.get_program(),
+                std::ffi::OsStr::new("/usr/bin/env"),
+                "Array-form lifecycle command must exec the first element directly"
+            );
+            assert_eq!(
+                args,
+                vec![
+                    std::ffi::OsString::from("echo"),
+                    std::ffi::OsString::from("hello"),
+                ],
+                "Array-form lifecycle command must pass remaining elements as args without a shell wrapper"
+            );
+        } else {
+            panic!("Expected post_create_command to be Some");
+        }
     }
 }

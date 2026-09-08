@@ -28,7 +28,7 @@ proptest.workspace = true
 zlog.workspace = true
 
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]
 
 [features]

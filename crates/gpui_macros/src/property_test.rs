@@ -23,6 +23,7 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let test_name = func.sig.ident.clone();
+    let test_ret_ty = func.sig.output.clone();
     let inner_fn_name = format_ident!("__{test_name}");
     let outer_fn_attributes = &func.attrs;
 
@@ -50,14 +51,16 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     let run_test_body = match &asyncness {
         None => quote! {
             #cx_vars
-            #inner_fn_name(#inner_args);
+            let result = #inner_fn_name(#inner_args);
             #cx_teardowns
+            result
         },
         Some(_) => quote! {
             let foreground_executor = gpui::ForegroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
             #cx_vars
-            foreground_executor.block_test(#inner_fn_name(#inner_args));
+            let result = foreground_executor.block_test(#inner_fn_name(#inner_args));
             #cx_teardowns
+            result
         },
     };
 
@@ -68,12 +71,12 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
 
         #fixed_macro_invocation
         #(#outer_fn_attributes)*
-        fn #test_name(#proptest_args) {
+        fn #test_name(#proptest_args) #test_ret_ty {
             #inner_fn
 
             ::gpui::run_test_once(
                 __seed,
-                Box::new(move |dispatcher| {
+                Box::new(move |dispatcher| #test_ret_ty {
                     #run_test_body
                 }),
             )

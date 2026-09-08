@@ -5,8 +5,7 @@ use remote::RemoteClient;
 use rpc::proto::{self, REMOTE_SERVER_PROJECT_ID};
 use std::{collections::VecDeque, path::Path, sync::Arc};
 use task::{Shell, shell_to_proto};
-use terminal::terminal_settings::TerminalSettings;
-use util::{ResultExt, command::new_command, rel_path::RelPath};
+use util::{ResultExt, command::new_command};
 use worktree::Worktree;
 
 use collections::HashMap;
@@ -134,19 +133,7 @@ impl ProjectEnvironment {
             None if self.is_remote_project => {
                 Some(self.local_directory_environment(&Shell::System, abs_path, cx))
             }
-            None => Some({
-                let shell = TerminalSettings::get(
-                    Some(settings::SettingsLocation {
-                        worktree_id: worktree.id(),
-                        path: RelPath::empty(),
-                    }),
-                    cx,
-                )
-                .shell
-                .clone();
-
-                self.local_directory_environment(&shell, abs_path, cx)
-            }),
+            None => Some(self.local_directory_environment(&Shell::System, abs_path, cx)),
         }
         .unwrap_or_else(|| Task::ready(None).shared())
     }
@@ -175,21 +162,7 @@ impl ProjectEnvironment {
                     worktree_store.find_worktree(&abs_path, cx)
                 })
                 .ok()
-                .map(|worktree| {
-                    let shell = terminal::terminal_settings::TerminalSettings::get(
-                        worktree
-                            .as_ref()
-                            .map(|(worktree, path)| settings::SettingsLocation {
-                                worktree_id: worktree.read(cx).id(),
-                                path: &path,
-                            }),
-                        cx,
-                    )
-                    .shell
-                    .clone();
-
-                    self.local_directory_environment(&shell, abs_path, cx)
-                }),
+                .map(|_| self.local_directory_environment(&Shell::System, abs_path, cx)),
         }
         .unwrap_or_else(|| Task::ready(None).shared())
     }

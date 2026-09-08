@@ -13,7 +13,7 @@
     arguments: (argument_list
       (comment) @_comment
       (string
-        (string_content) @injection.content))) @injection.host
+        (string_content) @injection.content) @injection.host))
   ; string variables
   ((comment) @_comment
     .

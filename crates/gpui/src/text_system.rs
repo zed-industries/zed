@@ -45,11 +45,7 @@ pub struct FontFamilyId(pub usize);
 pub const SUBPIXEL_VARIANTS_X: u8 = 4;
 
 /// Number of subpixel glyph variants along the Y axis.
-pub const SUBPIXEL_VARIANTS_Y: u8 = if cfg!(target_os = "windows") || cfg!(target_os = "linux") {
-    1
-} else {
-    SUBPIXEL_VARIANTS_X
-};
+pub const SUBPIXEL_VARIANTS_Y: u8 = 1;
 
 /// The GPUI text rendering sub system.
 pub struct TextSystem {
@@ -97,7 +93,7 @@ impl TextSystem {
                 .map(|font| font.family.to_string()),
         );
         names.push(".SystemUIFont".to_string());
-        names.sort();
+        names.sort_unstable();
         names.dedup();
         names
     }
@@ -169,6 +165,22 @@ impl TextSystem {
         );
     }
 
+    /// Prewarm any system font caches needed to shape text.
+    ///
+    /// This may be expensive, so callers should generally invoke it on a
+    /// background executor. Missing entries are still populated on demand by
+    /// the normal shaping path.
+    pub fn prewarm_fonts(&self, fonts: &[Font]) {
+        let mut font_ids = SmallVec::<[FontId; 8]>::new();
+        for font in fonts {
+            let font_id = self.resolve_font(font);
+            if !font_ids.contains(&font_id) {
+                font_ids.push(font_id);
+            }
+        }
+        self.platform_text_system.prewarm_fonts(&font_ids);
+    }
+
     /// Get the bounding box for the given font and font size.
     /// A font's bounding box is the smallest rectangle that could enclose all glyphs
     /// in the font. superimposed over one another.
@@ -236,12 +248,6 @@ impl TextSystem {
     /// Uses the advance width of the `m` character in the given font and size.
     pub fn em_advance(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
         Ok(self.advance(font_id, font_size, 'm')?.width)
-    }
-
-    // Consider removing this?
-    /// Returns the shaped layout width of an `em`.
-    pub fn em_layout_width(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.layout_width(font_id, font_size, 'm')
     }
 
     /// Returns the width of an `ch`.
@@ -350,6 +356,11 @@ impl TextSystem {
         let raster_bounds = self.raster_bounds(params)?;
         self.platform_text_system
             .rasterize_glyph(params, raster_bounds)
+    }
+
+    /// Returns the dilation level to use for a glyph painted in the given color.
+    pub(crate) fn glyph_dilation_for_color(&self, color: Hsla) -> u8 {
+        self.platform_text_system.glyph_dilation_for_color(color)
     }
 
     /// Returns the text rendering mode recommended by the platform for the given font and size.
@@ -698,6 +709,28 @@ impl WindowTextSystem {
         layout
     }
 
+    /// Returns the shaped layout width of for the given character, in the given font and size.
+    pub fn layout_width(&self, font_id: FontId, font_size: Pixels, ch: char) -> Pixels {
+        let mut buffer = [0; 4];
+        let buffer: &_ = ch.encode_utf8(&mut buffer);
+        self.line_layout_cache
+            .layout_line(
+                buffer,
+                font_size,
+                &[FontRun {
+                    len: buffer.len(),
+                    font_id,
+                }],
+                None,
+            )
+            .width
+    }
+
+    /// Returns the shaped layout width of an `em`.
+    pub fn em_layout_width(&self, font_id: FontId, font_size: Pixels) -> Pixels {
+        self.layout_width(font_id, font_size, 'm')
+    }
+
     /// Probe the line layout cache using a caller-provided content hash, without allocating.
     ///
     /// Returns `Some(layout)` if the layout is already cached in either the current frame
@@ -1011,6 +1044,7 @@ pub struct RenderGlyphParams {
     pub scale_factor: f32,
     pub is_emoji: bool,
     pub subpixel_rendering: bool,
+    pub dilation: u8,
 }
 
 impl Eq for RenderGlyphParams {}
@@ -1024,6 +1058,7 @@ impl Hash for RenderGlyphParams {
         self.scale_factor.to_bits().hash(state);
         self.is_emoji.hash(state);
         self.subpixel_rendering.hash(state);
+        self.dilation.hash(state);
     }
 }
 

@@ -7,7 +7,7 @@ description: "Configure Terraform language support in Zed, including language se
 
 Terraform support is available through the [Terraform extension](https://github.com/zed-extensions/terraform).
 
-- Tree-sitter: [MichaHoffmann/tree-sitter-hcl](https://github.com/MichaHoffmann/tree-sitter-hcl)
+- Tree-sitter: [tree-sitter-grammars/tree-sitter-hcl](https://github.com/tree-sitter-grammars/tree-sitter-hcl)
 - Language Server: [hashicorp/terraform-ls](https://github.com/hashicorp/terraform-ls)
 
 ## Configuration

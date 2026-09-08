@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use acp_thread::{AgentConnection, LoadError};
+use agent_servers::AcpConnection;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
 use collections::HashMap;
@@ -10,7 +11,7 @@ use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Subscri
 use project::{AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
 
-use crate::{Agent, ThreadHistory};
+use crate::Agent;
 
 pub enum AgentConnectionEntry {
     Connecting {
@@ -25,7 +26,6 @@ pub enum AgentConnectionEntry {
 #[derive(Clone)]
 pub struct AgentConnectedState {
     pub connection: Rc<dyn AgentConnection>,
-    pub history: Option<Entity<ThreadHistory>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,13 +44,6 @@ impl AgentConnectionEntry {
         }
     }
 
-    pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
-        match self {
-            AgentConnectionEntry::Connected(state) => state.history.as_ref(),
-            _ => None,
-        }
-    }
-
     pub fn status(&self) -> AgentConnectionStatus {
         match self {
             AgentConnectionEntry::Connecting { .. } => AgentConnectionStatus::Connecting,
@@ -62,9 +55,16 @@ impl AgentConnectionEntry {
 
 pub enum AgentConnectionEntryEvent {
     NewVersionAvailable(SharedString),
+    LoadingStatusChanged(Option<SharedString>),
 }
 
 impl EventEmitter<AgentConnectionEntryEvent> for AgentConnectionEntry {}
+
+#[derive(Clone)]
+pub struct ActiveAcpConnection {
+    pub agent_id: project::AgentId,
+    pub connection: Rc<AcpConnection>,
+}
 
 pub struct AgentConnectionStore {
     project: Entity<Project>,
@@ -98,6 +98,32 @@ impl AgentConnectionStore {
             .unwrap_or(AgentConnectionStatus::Disconnected)
     }
 
+    pub fn agent_version(&self, key: &Agent, cx: &App) -> Option<SharedString> {
+        match self.entries.get(key)?.read(cx) {
+            AgentConnectionEntry::Connected(state) => state.connection.agent_version(),
+            AgentConnectionEntry::Connecting { .. } | AgentConnectionEntry::Error { .. } => None,
+        }
+    }
+
+    pub fn active_acp_connections(&self, cx: &App) -> Vec<ActiveAcpConnection> {
+        self.entries
+            .values()
+            .filter_map(|entry| match entry.read(cx) {
+                AgentConnectionEntry::Connected(state) => state
+                    .connection
+                    .clone()
+                    .downcast::<AcpConnection>()
+                    .map(|connection| ActiveAcpConnection {
+                        agent_id: state.connection.agent_id(),
+                        connection,
+                    }),
+                AgentConnectionEntry::Connecting { .. } | AgentConnectionEntry::Error { .. } => {
+                    None
+                }
+            })
+            .collect()
+    }
+
     pub fn restart_connection(
         &mut self,
         key: Agent,
@@ -124,7 +150,8 @@ impl AgentConnectionStore {
             return entry.clone();
         }
 
-        let (mut new_version_rx, connect_task) = self.start_connection(server, cx);
+        let (mut new_version_rx, mut loading_status_rx, connect_task) =
+            self.start_connection(server, cx);
         let connect_task = connect_task.shared();
 
         let entry = cx.new(|_cx| AgentConnectionEntry::Connecting {
@@ -152,6 +179,7 @@ impl AgentConnectionStore {
                                 }
                             })
                             .ok();
+                        cx.notify();
                     })
                     .ok();
                 }
@@ -179,6 +207,7 @@ impl AgentConnectionStore {
         .detach();
 
         cx.spawn({
+            let key = key.clone();
             let entry = entry.downgrade();
             async move |this, cx| {
                 while let Ok(version) = new_version_rx.recv().await {
@@ -203,6 +232,31 @@ impl AgentConnectionStore {
                     })
                     .ok();
                     break;
+                }
+            }
+        })
+        .detach();
+
+        cx.spawn({
+            let entry = entry.downgrade();
+            async move |this, cx| {
+                while let Ok(status) = loading_status_rx.recv().await {
+                    let status = status.map(SharedString::from);
+                    let key = key.clone();
+                    let entry = entry.clone();
+                    this.update(cx, move |this, cx| {
+                        if this.entries.get(&key) != entry.upgrade().as_ref() {
+                            return;
+                        }
+
+                        entry
+                            .update(cx, move |_entry, cx| {
+                                cx.emit(AgentConnectionEntryEvent::LoadingStatusChanged(status));
+                            })
+                            .ok();
+                        cx.notify();
+                    })
+                    .ok();
                 }
             }
         })
@@ -233,29 +287,27 @@ impl AgentConnectionStore {
         cx: &mut Context<Self>,
     ) -> (
         Receiver<Option<String>>,
+        Receiver<Option<String>>,
         Task<Result<AgentConnectedState, LoadError>>,
     ) {
         let (new_version_tx, new_version_rx) = watch::channel::<Option<String>>(None);
+        let (loading_status_tx, loading_status_rx) = watch::channel::<Option<String>>(None);
 
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
-        let delegate = AgentServerDelegate::new(agent_server_store, Some(new_version_tx));
+        let delegate = AgentServerDelegate::new(
+            agent_server_store,
+            Some(new_version_tx),
+            Some(loading_status_tx),
+        );
 
         let connect_task = server.connect(delegate, self.project.clone(), cx);
-        let connect_task = cx.spawn(async move |_this, cx| match connect_task.await {
-            Ok(connection) => cx.update(|cx| {
-                let history = connection
-                    .session_list(cx)
-                    .map(|session_list| cx.new(|cx| ThreadHistory::new(session_list, cx)));
-                Ok(AgentConnectedState {
-                    connection,
-                    history,
-                })
-            }),
+        let connect_task = cx.spawn(async move |_this, _cx| match connect_task.await {
+            Ok(connection) => Ok(AgentConnectedState { connection }),
             Err(err) => match err.downcast::<LoadError>() {
                 Ok(load_error) => Err(load_error),
                 Err(err) => Err(LoadError::Other(SharedString::from(err.to_string()))),
             },
         });
-        (new_version_rx, connect_task)
+        (new_version_rx, loading_status_rx, connect_task)
     }
 }

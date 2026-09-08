@@ -11,14 +11,15 @@ use futures::{
 };
 use gpui::{
     App, AppContext, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window, actions, div,
+    ParentElement, Render, SharedString, Styled, Subscription, TaskExt, WeakEntity, Window,
+    actions, div,
 };
 use project::{
     Project,
     debugger::{dap_store, session::Session},
     search::SearchQuery,
 };
-use settings::Settings as _;
+use settings::{SeedQuerySetting, Settings as _};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap, VecDeque},
@@ -518,7 +519,7 @@ impl Render for DapLogToolbarItemView {
             .and_then(|session_id| menu_rows.iter().find(|row| row.session_id == session_id));
 
         let dap_menu: PopoverMenu<_> = PopoverMenu::new("DapLogView")
-            .anchor(gpui::Corner::TopLeft)
+            .anchor(gpui::Anchor::TopLeft)
             .trigger(Button::new(
                 "debug_client_menu_header",
                 current_client
@@ -1028,9 +1029,15 @@ impl SearchableItem for DapLogView {
         })
     }
 
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
-        self.editor
-            .update(cx, |e, cx| e.query_suggestion(window, cx))
+    fn query_suggestion(
+        &mut self,
+        seed_query_override: Option<SeedQuerySetting>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
+        self.editor.update(cx, |e, cx| {
+            e.query_suggestion(seed_query_override, window, cx)
+        })
     }
 
     fn activate_match(

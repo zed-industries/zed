@@ -795,14 +795,13 @@ impl<T: 'static> WeakEntity<T> {
         update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> Result<R>
     where
-        C: VisualContext,
+        C: AppContext,
     {
-        let window = cx.window_handle();
         let entity = self.upgrade().context("entity released")?;
-
-        window.update(cx, |_, window, cx| {
-            entity.update(cx, |entity, cx| update(entity, window, cx))
+        cx.with_window(entity.entity_id(), |window, app| {
+            entity.update(app, |entity, cx| update(entity, window, cx))
         })
+        .context("entity has no current window")
     }
 
     /// Reads the entity referenced by this handle with the given function if

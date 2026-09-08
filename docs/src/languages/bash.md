@@ -5,14 +5,14 @@ description: "Configure Bash language support in Zed, including language servers
 
 # Bash
 
-Bash support is available through the [Bash extension](https://github.com/zed-extensions/bash).
+Bash support is available natively in Zed.
 
 - Tree-sitter: [tree-sitter/tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash)
 - Language Server: [bash-lsp/bash-language-server](https://github.com/bash-lsp/bash-language-server)
 
 ## Configuration
 
-When `shellcheck` is available `bash-language-server` will use it internally to provide diagnostics.
+It is highly recommended to install `shellcheck`, as `bash-language-server` depends on it to provide diagnostics.
 
 ### Install `shellcheck`:
 

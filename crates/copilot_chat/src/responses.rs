@@ -4,9 +4,9 @@ use super::{ChatLocation, copilot_request_headers};
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
+pub use language_model::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-pub use settings::OpenAiReasoningEffort as ReasoningEffort;
 
 #[derive(Serialize, Debug)]
 pub struct Request {
@@ -139,12 +139,7 @@ pub enum ResponseInputItem {
         #[serde(skip_serializing_if = "Option::is_none")]
         status: Option<ItemStatus>,
     },
-    Reasoning {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        summary: Vec<ResponseReasoningItem>,
-        encrypted_content: String,
-    },
+    Reasoning(ResponseReasoningInputItem),
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -162,7 +157,17 @@ pub struct IncompleteDetails {
     pub reason: Option<IncompleteReason>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ResponseReasoningInputItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub summary: Vec<ResponseReasoningItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted_content: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ResponseReasoningItem {
     #[serde(rename = "type")]
     pub kind: String,

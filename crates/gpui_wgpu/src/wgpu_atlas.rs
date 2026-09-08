@@ -82,6 +82,15 @@ impl WgpuAtlas {
         }
     }
 
+    /// Clears all cached textures and tiles, forcing them to be recreated.
+    /// Use this for incremental recovery when the device is still valid.
+    pub fn clear(&self) {
+        let mut lock = self.0.lock();
+        lock.storage = WgpuAtlasStorage::default();
+        lock.tiles_by_key.clear();
+        lock.pending_uploads.clear();
+    }
+
     /// Handles device lost by clearing all textures and cached tiles.
     /// The atlas will lazily recreate textures as needed on subsequent frames.
     pub fn handle_device_lost(&self, context: &WgpuContext) {
@@ -103,7 +112,7 @@ impl PlatformAtlas for WgpuAtlas {
     ) -> Result<Option<AtlasTile>> {
         let mut lock = self.0.lock();
         if let Some(tile) = lock.tiles_by_key.get(key) {
-            Ok(Some(tile.clone()))
+            Ok(Some(*tile))
         } else {
             profiling::scope!("new tile");
             let Some((size, bytes)) = build()? else {
@@ -113,7 +122,7 @@ impl PlatformAtlas for WgpuAtlas {
                 .allocate(size, key.texture_kind())
                 .context("failed to allocate")?;
             lock.upload_texture(tile.texture_id, tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile.clone());
+            lock.tiles_by_key.insert(key.clone(), tile);
             Ok(Some(tile))
         }
     }
@@ -121,15 +130,17 @@ impl PlatformAtlas for WgpuAtlas {
     fn remove(&self, key: &AtlasKey) {
         let mut lock = self.0.lock();
 
-        let Some(id) = lock.tiles_by_key.remove(key).map(|tile| tile.texture_id) else {
+        let Some(tile) = lock.tiles_by_key.remove(key) else {
             return;
         };
+        let id = tile.texture_id;
 
         let Some(texture_slot) = lock.storage[id.kind].textures.get_mut(id.index as usize) else {
             return;
         };
 
         if let Some(mut texture) = texture_slot.take() {
+            texture.allocator.deallocate(tile.tile_id.into());
             texture.decrement_ref_count();
             if texture.is_unreferenced() {
                 lock.pending_uploads
@@ -390,8 +401,8 @@ fn swizzle_upload_data(bytes: &[u8], format: wgpu::TextureFormat) -> Vec<u8> {
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
+    use gpui::block_on;
     use gpui::{ImageId, RenderImageParams};
-    use pollster::block_on;
     use std::sync::Arc;
 
     fn test_device_and_queue() -> anyhow::Result<(Arc<wgpu::Device>, Arc<wgpu::Queue>)> {
@@ -449,6 +460,50 @@ mod tests {
             .expect("tile should be created");
         atlas.remove(&key);
         atlas.before_frame();
+        Ok(())
+    }
+
+    #[test]
+    fn remove_deallocates_tile_space_for_reuse() -> anyhow::Result<()> {
+        let (device, queue) = test_device_and_queue()?;
+        let atlas = WgpuAtlas::new(device, queue, wgpu::TextureFormat::Bgra8Unorm);
+
+        let small = Size {
+            width: DevicePixels(64),
+            height: DevicePixels(64),
+        };
+        let big = Size {
+            width: DevicePixels(700),
+            height: DevicePixels(700),
+        };
+
+        let make_key = |image_id: usize| {
+            AtlasKey::Image(RenderImageParams {
+                image_id: ImageId(image_id),
+                frame_index: 0,
+            })
+        };
+        let insert = |key: &AtlasKey, size: Size<DevicePixels>| {
+            let byte_count = (size.width.0 as usize) * (size.height.0 as usize) * 4;
+            atlas
+                .get_or_insert_with(key, &mut || {
+                    Ok(Some((size, Cow::Owned(vec![0u8; byte_count]))))
+                })
+                .expect("allocation should succeed")
+                .expect("callback returns Some")
+        };
+
+        let keeper_key = make_key(1);
+        let big_key_a = make_key(2);
+        let big_key_b = make_key(3);
+
+        let keeper_tile = insert(&keeper_key, small);
+        let tile_a = insert(&big_key_a, big);
+        assert_eq!(keeper_tile.texture_id, tile_a.texture_id);
+
+        atlas.remove(&big_key_a);
+        let tile_b = insert(&big_key_b, big);
+        assert_eq!(tile_b.texture_id, keeper_tile.texture_id);
         Ok(())
     }
 

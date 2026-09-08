@@ -47,10 +47,12 @@ pub fn language_model_selector(
     if popover_styles {
         Picker::list(delegate, window, cx)
             .show_scrollbar(true)
-            .width(rems(20.))
-            .max_height(Some(rems(20.).into()))
+            .initial_width(rems(20.))
+            .popover()
     } else {
-        Picker::list(delegate, window, cx).show_scrollbar(true)
+        Picker::list(delegate, window, cx)
+            .show_scrollbar(true)
+            .embedded()
     }
 }
 
@@ -376,11 +378,7 @@ impl ModelMatcher {
             .map(|(index, model)| {
                 StringMatchCandidate::new(
                     index,
-                    &format!(
-                        "{}/{}",
-                        &model.model.provider_name().0,
-                        &model.model.name().0
-                    ),
+                    &format!("{}/{}", model.model.provider_name().0, model.model.name().0),
                 )
             })
             .collect::<Vec<_>>()
@@ -389,6 +387,10 @@ impl ModelMatcher {
 
 impl PickerDelegate for LanguageModelPickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "language model selector"
+    }
 
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
@@ -566,7 +568,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 mod tests {
     use super::*;
     use futures::{future::BoxFuture, stream::BoxStream};
-    use gpui::{AsyncApp, TestAppContext, http_client};
+    use gpui::{AsyncApp, TestAppContext};
     use language_model::{
         LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
         LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
@@ -628,14 +630,6 @@ mod tests {
 
         fn max_token_count(&self) -> u64 {
             1000
-        }
-
-        fn count_tokens(
-            &self,
-            _: LanguageModelRequest,
-            _: &App,
-        ) -> BoxFuture<'static, http_client::Result<u64>> {
-            unimplemented!()
         }
 
         fn stream_completion(

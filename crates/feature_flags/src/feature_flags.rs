@@ -215,6 +215,10 @@ pub trait FeatureFlagAppExt {
     fn flag_value<T: FeatureFlag>(&self) -> T::Value;
     fn is_staff(&self) -> bool;
 
+    /// Whether feature flag overrides from settings are honored for the
+    /// current user. Overrides are a staff-only affordance.
+    fn feature_flag_overrides_enabled(&self) -> bool;
+
     fn on_flags_ready<F>(&mut self, callback: F) -> Subscription
     where
         F: FnMut(OnFlagsReady, &mut App) + 'static;
@@ -253,18 +257,25 @@ impl FeatureFlagAppExt for App {
             .unwrap_or(false)
     }
 
+    fn feature_flag_overrides_enabled(&self) -> bool {
+        self.try_global::<FeatureFlagStore>()
+            .map_or(false, |store| store.overrides_enabled())
+    }
+
     fn on_flags_ready<F>(&mut self, mut callback: F) -> Subscription
     where
         F: FnMut(OnFlagsReady, &mut App) + 'static,
     {
         self.observe_global::<FeatureFlagStore>(move |cx| {
             let store = cx.global::<FeatureFlagStore>();
-            callback(
-                OnFlagsReady {
-                    is_staff: store.is_staff(),
-                },
-                cx,
-            );
+            if store.server_flags_received() {
+                callback(
+                    OnFlagsReady {
+                        is_staff: store.is_staff(),
+                    },
+                    cx,
+                );
+            }
         })
     }
 

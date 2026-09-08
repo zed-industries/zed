@@ -795,7 +795,7 @@ impl Session {
         if move_down {
             editor.update(cx, move |editor, cx| {
                 editor.change_selections(
-                    SelectionEffects::scroll(Autoscroll::top_relative(8)),
+                    SelectionEffects::scroll(Autoscroll::top_relative(8.0)),
                     window,
                     cx,
                     |selections| {

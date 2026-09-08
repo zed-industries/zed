@@ -1,14 +1,28 @@
-Design notes:
+# Terminal View
+
+## Design Notes
 
 This crate is split into two conceptual halves:
-- The terminal.rs file and the src/mappings/ folder, these contain the code for interacting with Alacritty and maintaining the pty event loop. Some behavior in this file is constrained by terminal protocols and standards. The Zed init function is also placed here.
+- The terminal.rs file and the src/mappings/ folder, these contain the code for interacting with terminal emulator backends and maintaining the pty event loop. Some behavior in this file is constrained by terminal protocols and standards. The Zed init function is also placed here.
 - Everything else. These other files integrate the `Terminal` struct created in terminal.rs into the rest of GPUI. The main entry point for GPUI is the terminal_view.rs file and the modal.rs file.
 
 ttys are created externally, and so can fail in unexpected ways. However, GPUI currently does not have an API for models than can fail to instantiate. `TerminalBuilder` solves this by using Rust's type system to split tty instantiation into a 2 step process: first attempt to create the file handles with `TerminalBuilder::new()`, check the result, then call `TerminalBuilder::subscribe(cx)` from within a model context.
 
 The TerminalView struct abstracts over failed and successful terminals, passing focus through to the associated view and allowing clients to build a terminal without worrying about errors.
 
-#Input
+## Backend Boundary
+
+`terminal.rs` exposes backend-neutral domain types such as terminal content, cells, modes, points, ranges, scroll commands, vi motions, hyperlinks, and search matches. UI code should depend on those types instead of importing backend-specific terminal types directly.
+
+The current implementation is still Alacritty-backed, but the abstraction boundary keeps backend details concentrated in the terminal crate:
+
+- `terminal_view` renders `TerminalContent` and dispatches backend-neutral actions.
+- Panels and tools use terminal-domain types for mode, cursor, range, hyperlink, and search behavior.
+- Backend-specific conversions stay near the terminal event loop and render snapshot code.
+
+This keeps the user-facing terminal behavior unchanged while making future backend experiments reviewable as backend implementations instead of UI-wide refactors.
+
+## Input
 
 There are currently many distinct paths for getting keystrokes to the terminal:
 

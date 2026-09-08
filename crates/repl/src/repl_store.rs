@@ -4,7 +4,9 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{App, Context, Entity, EntityId, Global, SharedString, Subscription, Task, prelude::*};
+use gpui::{
+    App, Context, Entity, EntityId, Global, SharedString, Subscription, Task, TaskExt, prelude::*,
+};
 use jupyter_websocket_client::RemoteServer;
 use language::{Language, LanguageName};
 use project::{Fs, Project, ProjectPath, WorktreeId};
@@ -176,7 +178,7 @@ impl ReplStore {
         let active_toolchain = project.read(cx).active_toolchain(
             ProjectPath {
                 worktree_id,
-                path: RelPath::empty().into(),
+                path: RelPath::empty_arc(),
             },
             LanguageName::new_static("Python"),
             cx,

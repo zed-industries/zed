@@ -5,6 +5,9 @@
 {"Get":{"state":"ˇ/*\n  this is a comment\n*/","mode":"Normal"}}
 {"Key":"%"}
 {"Get":{"state":"/*\n  this is a comment\nˇ*/","mode":"Normal"}}
+{"Key":"k"}
+{"Key":"%"}
+{"Get":{"state":"/*\nˇ  this is a comment\n*/","mode":"Normal"}}
 {"Put":{"state":"ˇ// comment"}}
 {"Key":"%"}
 {"Get":{"state":"ˇ// comment","mode":"Normal"}}

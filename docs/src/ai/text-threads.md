@@ -8,6 +8,6 @@ redirect_to: ./agent-panel.md
 
 Text threads have been removed from Zed.
 
-All AI conversations now happen through the [Agent Panel](./agent-panel.md), which supports agentic workflows including tool calls, file editing, terminal access, and [external agents](./external-agents.md).
+All AI conversations now happen through the [Agent Panel](./agent-panel.md), which supports agentic workflows including tool calls, file editing, terminal access, and [External Agents](./external-agents.md).
 
 See the [Agent Panel documentation](./agent-panel.md) to get started.

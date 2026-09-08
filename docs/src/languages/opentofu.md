@@ -7,7 +7,7 @@ description: "Configure OpenTofu language support in Zed, including language ser
 
 OpenTofu support is available through the [OpenTofu extension](https://github.com/ashpool37/zed-extension-opentofu).
 
-- Tree-sitter: [MichaHoffmann/tree-sitter-hcl](https://github.com/MichaHoffmann/tree-sitter-hcl)
+- Tree-sitter: [tree-sitter-grammars/tree-sitter-hcl](https://github.com/tree-sitter-grammars/tree-sitter-hcl)
 - Language Server: [opentofu/tofu-ls](https://github.com/opentofu/tofu-ls)
 
 ## Configuration

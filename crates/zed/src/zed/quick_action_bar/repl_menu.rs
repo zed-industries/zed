@@ -1,4 +1,5 @@
 use gpui::ElementId;
+use gpui::TaskExt;
 use gpui::{AnyElement, Entity};
 use picker::Picker;
 use repl::{
@@ -343,7 +344,7 @@ impl QuickActionBar {
                         .child(
                             div()
                                 .overflow_x_hidden()
-                                .flex_grow()
+                                .flex_grow_1()
                                 .whitespace_nowrap()
                                 .child(
                                     Label::new(if let Some(name) = current_kernel_name {

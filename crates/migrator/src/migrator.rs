@@ -42,7 +42,7 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
         }
     }
 
-    edits.sort_by_key(|(range, _)| (range.start, Reverse(range.end)));
+    edits.sort_unstable_by_key(|(range, _)| (range.start, Reverse(range.end)));
     edits.dedup_by(|(range_b, _), (range_a, _)| {
         range_a.contains(&range_b.start) || range_a.contains(&range_b.end)
     });
@@ -195,10 +195,6 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2025_05_08,
         ),
         MigrationType::TreeSitter(
-            migrations::m_2025_06_16::SETTINGS_PATTERNS,
-            &SETTINGS_QUERY_2025_06_16,
-        ),
-        MigrationType::TreeSitter(
             migrations::m_2025_06_25::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_06_25,
         ),
@@ -250,6 +246,16 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum),
         MigrationType::Json(migrations::m_2026_04_01::restructure_profiles_with_settings_key),
         MigrationType::Json(migrations::m_2026_04_10::rename_web_search_to_search_web),
+        MigrationType::Json(
+            migrations::m_2026_04_17::promote_show_branch_icon_true_to_show_branch_status_icon,
+        ),
+        MigrationType::TreeSitter(
+            migrations::m_2026_05_04::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2026_05_04,
+        ),
+        MigrationType::Json(migrations::m_2026_08_17::make_git_gutter_width_an_enum),
+        MigrationType::Json(migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator),
+        MigrationType::Json(migrations::m_2026_08_30::nest_markdown_preview_settings),
     ];
     run_migrations(text, migrations)
 }
@@ -345,10 +351,6 @@ define_query!(
     migrations::m_2025_05_08::SETTINGS_PATTERNS
 );
 define_query!(
-    SETTINGS_QUERY_2025_06_16,
-    migrations::m_2025_06_16::SETTINGS_PATTERNS
-);
-define_query!(
     SETTINGS_QUERY_2025_06_25,
     migrations::m_2025_06_25::SETTINGS_PATTERNS
 );
@@ -392,6 +394,10 @@ define_query!(
     KEYMAP_QUERY_2026_03_23,
     migrations::m_2026_03_23::KEYMAP_PATTERNS
 );
+define_query!(
+    SETTINGS_QUERY_2026_05_04,
+    migrations::m_2026_05_04::SETTINGS_PATTERNS
+);
 
 // custom query
 static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
@@ -405,6 +411,7 @@ static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indoc::indoc;
     use unindent::Unindent as _;
 
     #[track_caller]
@@ -985,207 +992,6 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_settings_migration() {
-        assert_migrate_with_migrations(
-            &[MigrationType::TreeSitter(
-                migrations::m_2025_06_16::SETTINGS_PATTERNS,
-                &SETTINGS_QUERY_2025_06_16,
-            )],
-            r#"{
-    "context_servers": {
-        "empty_server": {},
-        "extension_server": {
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "custom_server": {
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            }
-        },
-        "invalid_server": {
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "empty_server2": {},
-        "extension_server2": {
-            "foo": "bar",
-            "settings": {
-                "foo": "bar"
-            },
-            "bar": "foo"
-        },
-        "custom_server2": {
-            "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "bar": "foo"
-        },
-        "invalid_server2": {
-            "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "bar": "foo",
-            "settings": {
-                "foo": "bar"
-            }
-        }
-    }
-}"#,
-            Some(
-                r#"{
-    "context_servers": {
-        "empty_server": {
-            "source": "extension",
-            "settings": {}
-        },
-        "extension_server": {
-            "source": "extension",
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "custom_server": {
-            "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            }
-        },
-        "invalid_server": {
-            "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "empty_server2": {
-            "source": "extension",
-            "settings": {}
-        },
-        "extension_server2": {
-            "source": "extension",
-            "foo": "bar",
-            "settings": {
-                "foo": "bar"
-            },
-            "bar": "foo"
-        },
-        "custom_server2": {
-            "source": "custom",
-            "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "bar": "foo"
-        },
-        "invalid_server2": {
-            "source": "custom",
-            "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "bar": "foo",
-            "settings": {
-                "foo": "bar"
-            }
-        }
-    }
-}"#,
-            ),
-        );
-    }
-
-    #[test]
-    fn test_mcp_settings_migration_doesnt_change_valid_settings() {
-        let settings = r#"{
-    "context_servers": {
-        "empty_server": {
-            "source": "extension",
-            "settings": {}
-        },
-        "extension_server": {
-            "source": "extension",
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "custom_server": {
-            "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            }
-        },
-        "invalid_server": {
-            "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "settings": {
-                "foo": "bar"
-            }
-        }
-    }
-}"#;
-        assert_migrate_with_migrations(
-            &[MigrationType::TreeSitter(
-                migrations::m_2025_06_16::SETTINGS_PATTERNS,
-                &SETTINGS_QUERY_2025_06_16,
-            )],
-            settings,
-            None,
-        );
-    }
-
-    #[test]
     fn test_custom_agent_server_settings_migration() {
         assert_migrate_with_migrations(
             &[MigrationType::TreeSitter(
@@ -1308,6 +1114,44 @@ mod tests {
     }
 }"#,
             None,
+        );
+    }
+
+    #[test]
+    fn test_flatten_context_server_command_alongside_source() {
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "context_servers": {
+                        "custom_server": {
+                            "source": "custom",
+                            "command": {
+                                "path": "npx",
+                                "args": ["-y", "some-mcp-server"]
+                            }
+                        },
+                        "hand_edited_server": {
+                            "source": "extension",
+                            "command": {
+                                "path": "other-server"
+                            }
+                        }
+                    }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "context_servers": {
+                        "custom_server": {
+                            "command": "npx",
+                            "args": ["-y", "some-mcp-server"]
+                        },
+                        "hand_edited_server": {
+                            "command": "other-server"
+                        }
+                    }
+                }
+            "#}),
         );
     }
 
@@ -3196,7 +3040,16 @@ mod tests {
             }
             "#
             .unindent(),
-            None,
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "zed"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
         );
 
         // Platform key: settings nested inside "linux" should be migrated
@@ -4931,6 +4784,98 @@ mod tests {
     }
 
     #[test]
+    fn test_migration_helpers_handle_various_profile_forms() {
+        let setting = "a_setting";
+        let old_value = "old_value";
+        let new_value = "new_value";
+
+        fn language_setting_fn(value: &mut serde_json::Value, _: &[&str]) -> anyhow::Result<()> {
+            if let Some(obj) = value.as_object_mut() {
+                if let Some(v) = obj.get_mut("a_setting") {
+                    *v = serde_json::json!("new_value");
+                }
+            }
+            Ok(())
+        }
+
+        let mut settings_fn = |map: &mut serde_json::Map<String, serde_json::Value>| {
+            if let Some(v) = map.get_mut(setting) {
+                *v = serde_json::json!(new_value);
+            }
+            Ok(())
+        };
+
+        // Legacy form
+        let input = serde_json::json!({
+            "profiles": {
+                "work": {
+                    setting: old_value
+                }
+            }
+        });
+        let expected = serde_json::json!({
+            "profiles": {
+                "work": {
+                    setting: new_value
+                }
+            }
+        });
+
+        let mut value = input.clone();
+        migrations::migrate_settings(&mut value, &mut settings_fn).unwrap();
+        assert_eq!(value, expected);
+
+        let mut value = input;
+        migrations::migrate_language_setting(&mut value, language_setting_fn).unwrap();
+        assert_eq!(value, expected);
+
+        // Form after migration: `m_2026_04_01`
+        let input = serde_json::json!({
+            "profiles": {
+                "work": {
+                    "settings": {
+                        setting: old_value
+                    }
+                }
+            }
+        });
+        let expected = serde_json::json!({
+            "profiles": {
+                "work": {
+                    "settings": {
+                        setting: new_value
+                    }
+                }
+            }
+        });
+
+        let mut value = input.clone();
+        migrations::migrate_settings(&mut value, &mut settings_fn).unwrap();
+        assert_eq!(value, expected);
+
+        let mut value = input;
+        migrations::migrate_language_setting(&mut value, language_setting_fn).unwrap();
+        assert_eq!(value, expected);
+
+        // Base-only form after migration: `m_2026_04_01` (no settings to migrate)
+        let input = serde_json::json!({
+            "profiles": {
+                "work": {
+                    "base": "default"
+                }
+            }
+        });
+
+        let mut value = input.clone();
+        migrations::migrate_settings(&mut value, &mut settings_fn).unwrap();
+        assert_eq!(value, input);
+
+        let mut value = input.clone();
+        migrations::migrate_language_setting(&mut value, language_setting_fn).unwrap();
+        assert_eq!(value, input);
+    }
+
+    #[test]
     fn test_rename_web_search_to_search_web_root_level_profile() {
         assert_migrate_with_migrations(
             &[MigrationType::Json(
@@ -4982,47 +4927,814 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_settings_migration_adds_settings_to_extension_servers() {
+    fn test_context_server_types_report_no_migration() {
         assert_migrate_settings(
-            r#"{
-    "context_servers": {
-        "extension_server": {},
-        "stdio_server": {
-            "command": "npx",
-            "args": ["-y", "some-server"]
-        },
-        "http_server": {
-            "url": "https://example.com/mcp"
-        },
-        "http_server_with_headers": {
-            "url": "https://example.com/mcp",
-            "headers": {
-                "Authorization": "Bearer token"
-            }
-        }
+            indoc! {r#"
+                {
+                    "context_servers": {
+                        "extension_server": {},
+                        "disabled_extension_server": {
+                            "enabled": false
+                        },
+                        "stdio_server": {
+                            "command": "npx",
+                            "args": ["-y", "some-server"]
+                        },
+                        "http_server": {
+                            "url": "https://example.com/mcp"
+                        },
+                        "http_server_with_headers": {
+                            "url": "https://example.com/mcp",
+                            "headers": {
+                                "Authorization": "Bearer token"
+                            }
+                        }
+                    }
+                }
+            "#},
+            None,
+        );
     }
-}"#,
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_at_root() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "title_bar": {
+                    "show_branch_icon": true,
+                    "show_branch_name": true
+                }
+            }
+            "#
+            .unindent(),
             Some(
-                r#"{
-    "context_servers": {
-        "extension_server": {
-            "settings": {}
-        },
-        "stdio_server": {
-            "command": "npx",
-            "args": ["-y", "some-server"]
-        },
-        "http_server": {
-            "url": "https://example.com/mcp"
-        },
-        "http_server_with_headers": {
-            "url": "https://example.com/mcp",
-            "headers": {
-                "Authorization": "Bearer token"
-            }
-        }
+                &r#"
+                {
+                    "title_bar": {
+                        "show_branch_status_icon": true,
+                        "show_branch_name": true
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
     }
-}"#,
+
+    #[test]
+    fn test_drop_show_branch_icon_false_without_setting_status_icon() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "title_bar": {
+                    "show_branch_icon": false,
+                    "show_branch_name": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "title_bar": {
+                        "show_branch_name": true
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_in_platform_override() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "macos": {
+                    "title_bar": {
+                        "show_branch_icon": true,
+                        "show_branch_name": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "title_bar": {
+                            "show_branch_status_icon": true,
+                            "show_branch_name": true
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_in_release_override() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "preview": {
+                    "title_bar": {
+                        "show_branch_icon": true,
+                        "show_branch_name": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "preview": {
+                        "title_bar": {
+                            "show_branch_status_icon": true,
+                            "show_branch_name": true
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_in_profiles() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "title_bar": {
+                            "show_branch_icon": true,
+                            "show_branch_name": true
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "settings": {
+                                "title_bar": {
+                                    "show_branch_status_icon": true,
+                                    "show_branch_name": true
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_across_all_scopes() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "title_bar": {
+                    "show_branch_icon": true,
+                    "show_branch_name": true
+                },
+                "macos": {
+                    "title_bar": {
+                        "show_branch_icon": true,
+                        "show_branch_name": true
+                    }
+                },
+                "preview": {
+                    "title_bar": {
+                        "show_branch_icon": true,
+                        "show_branch_name": true
+                    }
+                },
+                "profiles": {
+                    "work": {
+                        "title_bar": {
+                            "show_branch_icon": true,
+                            "show_branch_name": true
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "title_bar": {
+                        "show_branch_status_icon": true,
+                        "show_branch_name": true
+                    },
+                    "macos": {
+                        "title_bar": {
+                            "show_branch_status_icon": true,
+                            "show_branch_name": true
+                        }
+                    },
+                    "preview": {
+                        "title_bar": {
+                            "show_branch_status_icon": true,
+                            "show_branch_name": true
+                        }
+                    },
+                    "profiles": {
+                        "work": {
+                            "settings": {
+                                "title_bar": {
+                                    "show_branch_status_icon": true,
+                                    "show_branch_name": true
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_hide_mouse_on_typing_and_movement_to_on_typing_and_action() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "hide_mouse": "on_typing_and_movement"
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "hide_mouse": "on_typing_and_action"
+                }
+            "#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_chain_hide_mouse_while_typing_to_on_typing_and_action() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "hide_mouse_while_typing": true
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "hide_mouse": "on_typing_and_action"
+                }
+            "#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_no_change_when_already_migrated()
+     {
+        assert_migrate_settings(
+            &r#"
+            {
+                "title_bar": {
+                    "show_branch_status_icon": true,
+                    "show_branch_name": true
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // No title_bar key — should be unchanged
+        assert_migrate_settings(&r#"{ "theme": "One Dark" }"#.unindent(), None);
+
+        // title_bar without show_branch_icon — should be unchanged
+        assert_migrate_settings(
+            &r#"
+            {
+                "title_bar": {
+                    "show_branch_name": true
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_make_git_gutter_width_an_enum_from_number() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "gutter": {
+                    "git_gutter_width": 4.0
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "gutter": {
+                        "git_gutter_width": {
+                            "custom": 4.0
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_make_git_gutter_width_an_enum_no_change_when_already_migrated() {
+        // already "default" string — no change
+        assert_migrate_settings(
+            &r#"
+            {
+                "gutter": {
+                    "git_gutter_width": "default"
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // already custom object — no change
+        assert_migrate_settings(
+            &r#"
+            {
+                "gutter": {
+                    "git_gutter_width": { "custom": 4.0 }
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // no gutter key — no change
+        assert_migrate_settings(&r#"{ "theme": "One Dark" }"#.unindent(), None);
+    }
+
+    #[test]
+    fn test_url_only_context_servers_are_left_alone() {
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
+                }
+            "#},
+            None,
+        );
+
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "context_servers": {
+                        "grep": { "url": "https://mcp.grep.app" },
+                        "local": {
+                            "source": "custom",
+                            "command": {
+                                "path": "npx",
+                                "args": ["-y", "some-mcp-server"]
+                            }
+                        }
+                    }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "context_servers": {
+                        "grep": { "url": "https://mcp.grep.app" },
+                        "local": {
+                            "command": "npx",
+                            "args": ["-y", "some-mcp-server"]
+                        }
+                    }
+                }
+            "#}),
+        )
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_in_all_panels() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
+            )],
+            &r#"
+            {
+                "project_panel": {
+                    "folder_icons": true
+                },
+                "outline_panel": {
+                    "folder_icons": false
+                },
+                "git_panel": {
+                    "folder_icons": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "folder_indicator": "icon"
+                    },
+                    "outline_panel": {
+                        "folder_indicator": "chevron"
+                    },
+                    "git_panel": {
+                        "folder_indicator": "icon"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    // The shared JSON migration driver applies a rename as a delete plus an add, and
+    // added keys are written to the front of their object. Comments and sibling values
+    // survive; only the renamed key's position moves.
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_preserves_comments_and_siblings() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
+            )],
+            &r#"
+            {
+                // Keep this comment.
+                "project_panel": {
+                    "file_icons": true,
+                    "folder_icons": false,
+                    "indent_size": 20
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    // Keep this comment.
+                    "project_panel": {
+                        "folder_indicator": "chevron",
+                        "file_icons": true,
+                        "indent_size": 20
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_in_platform_overrides() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
+            )],
+            &r#"
+            {
+                "macos": {
+                    "project_panel": {
+                        "folder_icons": false
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "project_panel": {
+                            "folder_indicator": "chevron"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_does_not_clobber_new_key() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
+            )],
+            &r#"
+            {
+                "project_panel": {
+                    "folder_icons": true,
+                    "folder_indicator": "both"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "folder_indicator": "both"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_no_change_cases() {
+        let migrations = &[MigrationType::Json(
+            migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
+        )];
+
+        // Already migrated.
+        assert_migrate_with_migrations(
+            migrations,
+            &r#"
+            {
+                "project_panel": {
+                    "folder_indicator": "both"
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // A non-boolean value is already invalid; leave it rather than guess.
+        assert_migrate_with_migrations(
+            migrations,
+            &r#"
+            {
+                "project_panel": {
+                    "folder_icons": 3
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // `folder_icons` outside the three panels is not ours to rename.
+        assert_migrate_with_migrations(
+            migrations,
+            &r#"
+            {
+                "terminal": {
+                    "folder_icons": true
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_is_registered() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "project_panel": {
+                    "folder_icons": false
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "folder_indicator": "chevron"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_nest_markdown_preview_settings_across_all_scopes() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_markdown_preview_settings,
+            )],
+            &r#"
+            {
+                "markdown_preview_font_size": 14,
+                "macos": {
+                    "markdown_preview_font_size": 15
+                },
+                "preview": {
+                    "markdown_preview_font_size": 16
+                },
+                "profiles": {
+                    "work": {
+                        "settings": {
+                            "markdown_preview_font_size": 17
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "markdown_preview": {
+                        "font_size": 14
+                    },
+                    "macos": {
+                        "markdown_preview": {
+                            "font_size": 15
+                        }
+                    },
+                    "preview": {
+                        "markdown_preview": {
+                            "font_size": 16
+                        }
+                    },
+                    "profiles": {
+                        "work": {
+                            "settings": {
+                                "markdown_preview": {
+                                    "font_size": 17
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_nest_markdown_preview_settings_merges_without_clobbering() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_markdown_preview_settings,
+            )],
+            &r#"
+            {
+                "markdown_preview_font_size": 15,
+                "markdown_preview_font_family": "Zed Sans",
+                "markdown_preview_code_font_family": "Zed Mono",
+                "markdown_preview_theme": "One Dark",
+                "markdown_preview": {
+                    "font_size": 18,
+                    "limit_content_width": false,
+                    "max_width": 900
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "markdown_preview": {
+                        "theme": "One Dark",
+                        "code_font_family": "Zed Mono",
+                        "font_family": "Zed Sans",
+                        "font_size": 18,
+                        "limit_content_width": false,
+                        "max_width": 900
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_nest_markdown_preview_settings_leaves_malformed_object() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_markdown_preview_settings,
+            )],
+            &r#"
+            {
+                "markdown_preview_font_size": 15,
+                "markdown_preview": false
+            }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_nest_markdown_preview_settings_replaces_null_when_legacy_settings_exist() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_markdown_preview_settings,
+            )],
+            &r#"
+            {
+                "markdown_preview": null,
+                "markdown_preview_font_size": 15,
+                "preview": {
+                    "markdown_preview": null,
+                    "markdown_preview_theme": "One Dark"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "markdown_preview": {
+                        "font_size": 15
+                    },
+                    "preview": {
+                        "markdown_preview": {
+                            "theme": "One Dark"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_nest_markdown_preview_settings_leaves_null_without_legacy_settings() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_30::nest_markdown_preview_settings,
+            )],
+            &r#"
+            {
+                "markdown_preview": null,
+                "preview": {
+                    "markdown_preview": null
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_nest_markdown_preview_settings_is_registered() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "markdown_preview_font_size": 15,
+                "markdown_preview_font_family": "Zed Sans",
+                "markdown_preview_code_font_family": "Zed Mono",
+                "markdown_preview_theme": "One Dark"
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "markdown_preview": {
+                        "font_size": 15,
+                        "font_family": "Zed Sans",
+                        "code_font_family": "Zed Mono",
+                        "theme": "One Dark"
+                    }
+                }
+                "#
+                .unindent(),
             ),
         );
     }

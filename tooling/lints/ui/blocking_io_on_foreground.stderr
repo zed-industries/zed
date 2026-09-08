@@ -1,0 +1,395 @@
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:18:13
+   |
+LL |     let _ = std::fs::read_to_string("config.toml");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `-D blocking-io-on-foreground` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(blocking_io_on_foreground)]`
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:22:13
+   |
+LL |     let _ = std::fs::write("out.txt", b"data");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:26:13
+   |
+LL |     let _ = std::fs::read("data.bin");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:30:13
+   |
+LL |     let _ = std::fs::metadata("file.txt");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:34:13
+   |
+LL |     let _ = std::fs::create_dir_all("some/path");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:38:13
+   |
+LL |     let _ = std::fs::remove_file("old.txt");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:42:13
+   |
+LL |     let _ = std::fs::canonicalize("./relative");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:46:13
+   |
+LL |     let _ = std::fs::read_dir("some/dir");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:50:13
+   |
+LL |     let _ = std::fs::read_link("some/link");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:54:13
+   |
+LL |     let _ = std::fs::symlink_metadata("file.txt");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:58:23
+   |
+LL |     if let Ok(meta) = std::fs::metadata("file.txt") {
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:59:17
+   |
+LL |         let _ = std::fs::set_permissions("file.txt", meta.permissions());
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:64:13
+   |
+LL |     let _ = std::fs::copy("a.txt", "b.txt");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:68:13
+   |
+LL |     let _ = std::fs::rename("old.txt", "new.txt");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:72:13
+   |
+LL |     let _ = std::fs::hard_link("original", "link");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:76:13
+   |
+LL |     let _ = std::fs::create_dir("one_dir");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:80:13
+   |
+LL |     let _ = std::fs::remove_dir("empty_dir");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:84:13
+   |
+LL |     let _ = std::fs::remove_dir_all("dir_tree");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:90:13
+   |
+LL |     let _ = std::fs::File::open("data.bin");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:94:13
+   |
+LL |     let _ = std::fs::File::create("out.bin");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:98:13
+   |
+LL |     let _ = std::fs::File::create_new("new.bin");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:104:20
+   |
+LL |     if let Ok(f) = std::fs::File::open("x") {
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:105:17
+   |
+LL |         let _ = f.sync_all();
+   |                 ^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:110:20
+   |
+LL |     if let Ok(f) = std::fs::File::open("x") {
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:111:17
+   |
+LL |         let _ = f.sync_data();
+   |                 ^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:116:20
+   |
+LL |     if let Ok(f) = std::fs::File::open("x") {
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:117:17
+   |
+LL |         let _ = f.set_len(0);
+   |                 ^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:122:20
+   |
+LL |     if let Ok(f) = std::fs::File::open("x") {
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:123:17
+   |
+LL |         let _ = f.metadata();
+   |                 ^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:128:20
+   |
+LL |     if let Ok(f) = std::fs::File::open("x") {
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:129:17
+   |
+LL |         let _ = f.try_clone();
+   |                 ^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:136:5
+   |
+LL |     std::thread::sleep(std::time::Duration::from_millis(100));
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:142:13
+   |
+LL |     let _ = std::path::Path::new("file.txt").metadata();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:146:13
+   |
+LL |     let _ = std::path::Path::new("link").symlink_metadata();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:150:13
+   |
+LL |     let _ = std::path::Path::new("link").read_link();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:154:13
+   |
+LL |     let _ = std::path::Path::new("dir").read_dir();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:158:13
+   |
+LL |     let _ = std::path::Path::new("file.txt").exists();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:162:13
+   |
+LL |     let _ = std::path::Path::new("file.txt").try_exists();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:166:13
+   |
+LL |     let _ = std::path::Path::new("file.txt").is_file();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:170:13
+   |
+LL |     let _ = std::path::Path::new("dir").is_dir();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:174:13
+   |
+LL |     let _ = std::path::Path::new("link").is_symlink();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:178:13
+   |
+LL |     let _ = std::path::Path::new("./relative").canonicalize();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:183:13
+   |
+LL |     let _ = std::path::PathBuf::from("file.txt").exists();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:189:13
+   |
+LL |     let _ = std::net::TcpListener::bind("127.0.0.1:0");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:193:13
+   |
+LL |     let _ = std::net::TcpStream::connect("127.0.0.1:80");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:198:13
+   |
+LL |     let _ = std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(1));
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:202:27
+   |
+LL |     if let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0") {
+   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:203:17
+   |
+LL |         let _ = listener.accept();
+   |                 ^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:208:13
+   |
+LL |     let _ = std::net::UdpSocket::bind("127.0.0.1:0");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:212:25
+   |
+LL |     if let Ok(socket) = std::net::UdpSocket::bind("127.0.0.1:0") {
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:214:17
+   |
+LL |         let _ = socket.recv_from(&mut buf);
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:221:13
+   |
+LL |     let _ = std::process::Command::new("echo").output();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:225:13
+   |
+LL |     let _ = std::process::Command::new("echo").status();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:229:13
+   |
+LL |     let _ = std::process::Command::new("echo").spawn();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:233:28
+   |
+LL |     if let Ok(mut child) = std::process::Command::new("echo").spawn() {
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:234:17
+   |
+LL |         let _ = child.wait();
+   |                 ^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:239:24
+   |
+LL |     if let Ok(child) = std::process::Command::new("echo").spawn() {
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:240:17
+   |
+LL |         let _ = child.wait_with_output();
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:248:13
+   |
+LL |     let _ = m.lock();
+   |             ^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:253:13
+   |
+LL |     let _ = rw.read();
+   |             ^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:258:13
+   |
+LL |     let _ = rw.write();
+   |             ^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:263:5
+   |
+LL |     b.wait();
+   |     ^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:268:13
+   |
+LL |     let _ = rx.recv();
+   |             ^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:273:13
+   |
+LL |     let _ = tx.send(42);
+   |             ^^^^^^^^^^^
+
+error: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:282:17
+   |
+LL |         let _ = std::fs::read_to_string("layout.toml");
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: aborting due to 65 previous errors
+

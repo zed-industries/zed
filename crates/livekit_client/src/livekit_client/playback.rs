@@ -22,9 +22,6 @@ use livekit::webrtc::{
 };
 use log::info;
 use parking_lot::Mutex;
-use rodio::Source;
-use rodio::conversions::SampleTypeConverter;
-use rodio::source::{AutomaticGainControlSettings, LimitSettings};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::cell::RefCell;
@@ -33,6 +30,8 @@ use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::{borrow::Cow, collections::VecDeque, sync::Arc};
 use util::{ResultExt as _, maybe};
+
+use crate::RemoteAudioPlaybackStats;
 
 struct TimestampedFrame {
     frame: AudioFrame<'static>,
@@ -49,8 +48,27 @@ pub(crate) struct AudioStack {
 
 impl AudioStack {
     pub(crate) fn new(executor: BackgroundExecutor) -> Self {
+        // AGC2's `adaptive_digital` is what actually levels speech toward a target;
+        // the `gain_controller2.enabled` master switch alone leaves it off, which
+        // historically meant capture was effectively unleveled. Defaults match
+        // what Chrome/Meet ship with -- in particular `max_gain_db = 50` paired
+        // with `max_output_noise_level_dbfs = -50`, which lets the AGC reach
+        // very quiet talkers while the noise-level estimator backs off before
+        // boosting amplifies the noise floor.
         let apm = Arc::new(Mutex::new(apm::AudioProcessingModule::new(
-            true, true, true, true,
+            apm::AudioProcessingConfig {
+                echo_canceller_enabled: true,
+                gain_controller2: apm::GainController2Config {
+                    enabled: true,
+                    adaptive_digital: apm::AdaptiveDigitalConfig {
+                        enabled: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                high_pass_filter_enabled: true,
+                noise_suppression_enabled: true,
+            },
         )));
         let mixer = Arc::new(Mutex::new(audio_mixer::AudioMixer::new()));
         Self {
@@ -75,6 +93,7 @@ impl AudioStack {
             sample_rate: SAMPLE_RATE.get(),
             num_channels: CHANNEL_COUNT.get() as u32,
             buffer: Arc::default(),
+            diagnostics: Arc::default(),
         };
         self.mixer.lock().add_source(source.clone());
 
@@ -93,6 +112,7 @@ impl AudioStack {
             }
         });
 
+        let diagnostics = source.diagnostics.clone();
         let mixer = self.mixer.clone();
         let on_drop = util::defer(move || {
             mixer.lock().remove_source(source.ssrc);
@@ -100,8 +120,9 @@ impl AudioStack {
             drop(output_task);
         });
 
-        AudioStream::Output {
+        AudioStream {
             _drop: Box::new(on_drop),
+            remote_playback_diagnostics: Some(diagnostics),
         }
     }
 
@@ -195,8 +216,9 @@ impl AudioStack {
         });
         Ok((
             super::LocalAudioTrack(track),
-            AudioStream::Output {
+            AudioStream {
                 _drop: Box::new(on_drop),
+                remote_playback_diagnostics: None,
             },
             input_lag_us,
         ))
@@ -318,14 +340,6 @@ impl AudioStack {
                         let ten_ms_buffer_size =
                             (config.channels() as u32 * config.sample_rate() / 100) as usize;
                         let mut buf: Vec<i16> = Vec::with_capacity(ten_ms_buffer_size);
-                        let mut rodio_effects = RodioEffectsAdaptor::new(buf.len())
-                            .automatic_gain_control(AutomaticGainControlSettings {
-                                target_level: 0.50,
-                                attack_time: Duration::from_secs(1),
-                                release_time: Duration::from_secs(0),
-                                absolute_max_gain: 5.0,
-                            })
-                            .limit(LimitSettings::live_performance());
 
                         let stream = device
                             .build_input_stream_raw(
@@ -357,20 +371,6 @@ impl AudioStack {
                                                     sample_rate,
                                                 )
                                                 .to_owned();
-
-                                            if audio::LIVE_SETTINGS
-                                                .auto_microphone_volume
-                                                .load(Ordering::Relaxed)
-                                            {
-                                                rodio_effects
-                                                    .inner_mut()
-                                                    .inner_mut()
-                                                    .fill_buffer_with(&sampled);
-                                                sampled.clear();
-                                                sampled.extend(SampleTypeConverter::<_, i16>::new(
-                                                    rodio_effects.by_ref(),
-                                                ));
-                                            }
 
                                             apm.lock()
                                                 .process_stream(
@@ -415,69 +415,6 @@ impl AudioStack {
     }
 }
 
-/// This allows using of Rodio's effects library within our home brewn audio
-/// pipeline. The alternative would be inlining Rodio's effects which is
-/// problematic from a legal stance. We would then have to make clear that code
-/// is not owned by zed-industries while the code would be surrounded by
-/// zed-industries owned code.
-///
-/// This adaptor does incur a slight performance penalty (copying into a
-/// pre-allocated vec and back) however the impact will be immeasurably low.
-///
-/// There is no latency impact.
-pub struct RodioEffectsAdaptor {
-    input: Vec<rodio::Sample>,
-    pos: usize,
-}
-
-impl RodioEffectsAdaptor {
-    // This implementation incorrect terminology confusing everyone. A normal
-    // audio frame consists of all samples for one moment in time (one for mono,
-    // two for stereo). Here a frame of audio refers to a 10ms buffer of samples.
-    fn new(samples_per_frame: usize) -> Self {
-        Self {
-            input: Vec::with_capacity(samples_per_frame),
-            pos: 0,
-        }
-    }
-
-    fn fill_buffer_with(&mut self, integer_samples: &[i16]) {
-        self.input.clear();
-        self.input.extend(SampleTypeConverter::<_, f32>::new(
-            integer_samples.iter().copied(),
-        ));
-        self.pos = 0;
-    }
-}
-
-impl Iterator for RodioEffectsAdaptor {
-    type Item = rodio::Sample;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let sample = self.input.get(self.pos)?;
-        self.pos += 1;
-        Some(*sample)
-    }
-}
-
-impl rodio::Source for RodioEffectsAdaptor {
-    fn current_span_len(&self) -> Option<usize> {
-        None
-    }
-
-    fn channels(&self) -> rodio::ChannelCount {
-        rodio::nz!(2)
-    }
-
-    fn sample_rate(&self) -> rodio::SampleRate {
-        rodio::nz!(48000)
-    }
-
-    fn total_duration(&self) -> Option<Duration> {
-        None
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Speaker {
     pub name: String,
@@ -486,9 +423,17 @@ pub struct Speaker {
 
 use super::LocalVideoTrack;
 
-pub enum AudioStream {
-    Input { _task: Task<()> },
-    Output { _drop: Box<dyn std::any::Any> },
+pub struct AudioStream {
+    _drop: Box<dyn std::any::Any>,
+    remote_playback_diagnostics: Option<Arc<RemoteAudioPlaybackCounters>>,
+}
+
+impl AudioStream {
+    pub fn remote_playback_stats(&self) -> Option<RemoteAudioPlaybackStats> {
+        self.remote_playback_diagnostics
+            .as_ref()
+            .map(|diagnostics| diagnostics.snapshot())
+    }
 }
 
 pub(crate) async fn capture_local_video_track(
@@ -537,6 +482,28 @@ struct AudioMixerSource {
     sample_rate: u32,
     num_channels: u32,
     buffer: Arc<Mutex<VecDeque<Vec<i16>>>>,
+    diagnostics: Arc<RemoteAudioPlaybackCounters>,
+}
+
+#[derive(Default)]
+struct RemoteAudioPlaybackCounters {
+    frames_received: AtomicU64,
+    frames_dropped: AtomicU64,
+    queue_underflows: AtomicU64,
+    current_queue_depth: AtomicU64,
+    maximum_queue_depth: AtomicU64,
+}
+
+impl RemoteAudioPlaybackCounters {
+    fn snapshot(&self) -> RemoteAudioPlaybackStats {
+        RemoteAudioPlaybackStats {
+            frames_received: self.frames_received.load(Ordering::Relaxed),
+            frames_dropped: self.frames_dropped.load(Ordering::Relaxed),
+            queue_underflows: self.queue_underflows.load(Ordering::Relaxed),
+            current_queue_depth: self.current_queue_depth.load(Ordering::Relaxed),
+            maximum_queue_depth: self.maximum_queue_depth.load(Ordering::Relaxed),
+        }
+    }
 }
 
 impl AudioMixerSource {
@@ -548,8 +515,23 @@ impl AudioMixerSource {
 
         let mut buffer = self.buffer.lock();
         buffer.push_back(frame.data.to_vec());
+        self.diagnostics
+            .frames_received
+            .fetch_add(1, Ordering::Relaxed);
         while buffer.len() > 10 {
             buffer.pop_front();
+            self.diagnostics
+                .frames_dropped
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        let queue_depth = buffer.len() as u64;
+        self.diagnostics
+            .current_queue_depth
+            .store(queue_depth, Ordering::Relaxed);
+        if queue_depth > self.diagnostics.maximum_queue_depth.load(Ordering::Relaxed) {
+            self.diagnostics
+                .maximum_queue_depth
+                .fetch_max(queue_depth, Ordering::Relaxed);
         }
     }
 }
@@ -565,7 +547,16 @@ impl libwebrtc::native::audio_mixer::AudioMixerSource for AudioMixerSource {
 
     fn get_audio_frame_with_info<'a>(&self, target_sample_rate: u32) -> Option<AudioFrame<'_>> {
         assert_eq!(self.sample_rate, target_sample_rate);
-        let buf = self.buffer.lock().pop_front()?;
+        let mut buffer = self.buffer.lock();
+        let Some(buf) = buffer.pop_front() else {
+            self.diagnostics
+                .queue_underflows
+                .fetch_add(1, Ordering::Relaxed);
+            return None;
+        };
+        self.diagnostics
+            .current_queue_depth
+            .store(buffer.len() as u64, Ordering::Relaxed);
         Some(AudioFrame {
             data: Cow::Owned(buf),
             sample_rate: self.sample_rate,

@@ -70,6 +70,7 @@ macro_rules! register_feature_flag {
 pub struct FeatureFlagStore {
     staff: bool,
     server_flags: HashMap<String, String>,
+    server_flags_received: bool,
 
     _settings_subscription: Option<Subscription>,
 }
@@ -95,12 +96,27 @@ impl FeatureFlagStore {
         self.staff
     }
 
+    /// Whether feature flag overrides from settings should be honored.
+    ///
+    /// Overrides are a staff-only affordance, so non-staff users in release
+    /// builds can't flip flags through `settings.json` or the settings UI.
+    /// Debug builds are always treated as staff, and `ZED_DISABLE_STAFF`
+    /// forces the user to be treated as non-staff for testing.
+    pub fn overrides_enabled(&self) -> bool {
+        (cfg!(debug_assertions) || self.staff) && !*ZED_DISABLE_STAFF
+    }
+
+    pub fn server_flags_received(&self) -> bool {
+        self.server_flags_received
+    }
+
     pub fn set_staff(&mut self, staff: bool) {
         self.staff = staff;
     }
 
     pub fn update_server_flags(&mut self, staff: bool, flags: Vec<String>) {
         self.staff = staff;
+        self.server_flags_received = true;
         self.server_flags.clear();
         for flag in flags {
             self.server_flags.insert(flag.clone(), flag);
@@ -152,8 +168,12 @@ impl FeatureFlagStore {
             return Some(T::Value::on_variant());
         }
 
-        if let Some(override_key) = FeatureFlagsSettings::get_global(cx).overrides.get(T::NAME) {
-            return variant_from_key::<T::Value>(override_key);
+        // Only apply overrides when they are specifically enabled.
+        if self.overrides_enabled() {
+            if let Some(override_key) = FeatureFlagsSettings::get_global(cx).overrides.get(T::NAME)
+            {
+                return variant_from_key::<T::Value>(override_key);
+            }
         }
 
         // Staff default: resolve to the enabled variant.
@@ -188,15 +208,18 @@ impl FeatureFlagStore {
             return on_variant_key;
         }
 
-        if let Some(requested) = FeatureFlagsSettings::get_global(cx)
-            .overrides
-            .get(descriptor.name)
-        {
-            if let Some(variant) = (descriptor.variants)()
-                .into_iter()
-                .find(|v| v.override_key == requested.as_str())
+        // Only apply overrides when they are specifically enabled.
+        if self.overrides_enabled() {
+            if let Some(requested) = FeatureFlagsSettings::get_global(cx)
+                .overrides
+                .get(descriptor.name)
             {
-                return variant.override_key;
+                if let Some(variant) = (descriptor.variants)()
+                    .into_iter()
+                    .find(|v| v.override_key == requested.as_str())
+                {
+                    return variant.override_key;
+                }
             }
         }
 
@@ -370,5 +393,33 @@ mod tests {
         let store = FeatureFlagStore::default();
         assert_eq!(store.try_flag_value::<DemoFlag>(cx), None);
         assert_eq!(PresenceFlag::default(), PresenceFlag::Off);
+    }
+
+    #[gpui::test]
+    fn on_flags_ready_waits_for_server_flags(cx: &mut gpui::TestAppContext) {
+        use crate::FeatureFlagAppExt;
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        cx.update(|cx| {
+            init_settings_store(cx);
+            FeatureFlagStore::init(cx);
+        });
+
+        let fired = Rc::new(Cell::new(false));
+        cx.update({
+            let fired = fired.clone();
+            |cx| cx.on_flags_ready(move |_, _| fired.set(true)).detach()
+        });
+
+        // Settings-triggered no-op touch must not fire on_flags_ready.
+        cx.update(|cx| cx.update_default_global::<FeatureFlagStore, _>(|_, _| {}));
+        cx.run_until_parked();
+        assert!(!fired.get());
+
+        // Server flags arrive — now it should fire.
+        cx.update(|cx| cx.update_flags(true, vec![]));
+        cx.run_until_parked();
+        assert!(fired.get());
     }
 }

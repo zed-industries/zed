@@ -309,26 +309,7 @@ async fn resolve_dynamic_schema(
             })
         }
         "settings" => {
-            let mut lsp_adapter_names: Vec<String> = languages
-                .all_lsp_adapters()
-                .into_iter()
-                .map(|adapter| adapter.name())
-                .chain(languages.available_lsp_adapter_names().into_iter())
-                .map(|name| name.to_string())
-                .collect();
-
-            let mut i = 0;
-            while i < lsp_adapter_names.len() {
-                let mut j = i + 1;
-                while j < lsp_adapter_names.len() {
-                    if lsp_adapter_names[i] == lsp_adapter_names[j] {
-                        lsp_adapter_names.swap_remove(j);
-                    } else {
-                        j += 1;
-                    }
-                }
-                i += 1;
-            }
+            let lsp_adapter_names = all_lsp_adapter_names(&languages);
 
             cx.update(|cx| {
                 let font_names = &cx.text_system().all_font_names();
@@ -352,6 +333,11 @@ async fn resolve_dynamic_schema(
                 let icon_theme_names = icon_theme_names.as_slice();
                 let theme_names = theme_names.as_slice();
 
+                let action_names = cx.all_action_names();
+                let action_documentation = cx.action_documentation();
+                let deprecations = cx.deprecated_actions_to_preferred_actions();
+                let deprecation_messages = cx.action_deprecation_messages();
+
                 let mut schema =
                     settings::SettingsStore::json_schema(&settings::SettingsJsonSchemaParams {
                         language_names,
@@ -359,17 +345,17 @@ async fn resolve_dynamic_schema(
                         theme_names,
                         icon_theme_names,
                         lsp_adapter_names: &lsp_adapter_names,
+                        action_names,
+                        action_documentation,
+                        deprecations,
+                        deprecation_messages,
                     });
                 inject_feature_flags_schema(&mut schema);
                 schema
             })
         }
         "project_settings" => {
-            let lsp_adapter_names = languages
-                .all_lsp_adapters()
-                .into_iter()
-                .map(|adapter| adapter.name().to_string())
-                .collect::<Vec<_>>();
+            let lsp_adapter_names = all_lsp_adapter_names(&languages);
 
             let language_names = &languages
                 .language_names()
@@ -387,6 +373,10 @@ async fn resolve_dynamic_schema(
                     font_names: &[],
                     theme_names: &[],
                     icon_theme_names: &[],
+                    action_names: &[],
+                    action_documentation: &HashMap::default(),
+                    deprecations: &HashMap::default(),
+                    deprecation_messages: &HashMap::default(),
                 });
             inject_feature_flags_schema(&mut schema);
             schema
@@ -606,6 +596,19 @@ fn root_schema_from_action_schema(
     schema
 }
 
+fn all_lsp_adapter_names(languages: &LanguageRegistry) -> Vec<String> {
+    let mut names = languages
+        .all_lsp_adapters()
+        .into_iter()
+        .map(|adapter| adapter.name())
+        .chain(languages.available_lsp_adapter_names())
+        .map(|name| name.to_string())
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 #[inline]
 fn schema_file_match(path: &std::path::Path) -> String {
     path.strip_prefix(path.parent().unwrap().parent().unwrap())
@@ -613,4 +616,47 @@ fn schema_file_match(path: &std::path::Path) -> String {
         .display()
         .to_string()
         .replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use language::FakeLspAdapter;
+    use project::Project;
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn test_project_settings_schema_includes_available_lsp_adapters(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (lsp_store, languages) = project.read_with(cx, |project, _| {
+            (project.lsp_store(), project.languages().clone())
+        });
+
+        languages.register_available_lsp_adapter(
+            LanguageServerName("extension-provided-lsp".into()),
+            Arc::new(FakeLspAdapter::default()),
+        );
+
+        let schema = resolve_dynamic_schema(lsp_store, "project_settings", &mut cx.to_async())
+            .await
+            .unwrap();
+
+        let lsp_properties = schema
+            .pointer("/$defs/LspSettingsMap/properties")
+            .expect("LspSettingsMap should have properties")
+            .as_object()
+            .unwrap();
+        assert_eq!(
+            lsp_properties.keys().cloned().collect::<Vec<_>>(),
+            vec!["extension-provided-lsp".to_string()],
+        );
+    }
 }

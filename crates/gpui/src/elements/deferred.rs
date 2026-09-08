@@ -94,3 +94,113 @@ impl Deferred {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        Context, Entity, StyleRefinement, TestAppContext, Window, anchored, deferred, div, point,
+        prelude::*, px, size,
+    };
+
+    /// A stand-in for a dock panel hosting a popover (deferred draw) whose
+    /// content opens another popover (a deferred draw created while
+    /// prepainting the first one's content).
+    struct PanelView;
+
+    impl Render for PanelView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().key_context("Panel").size_full().child(
+                deferred(
+                    anchored().position(point(px(10.), px(10.))).child(
+                        div().key_context("Popover").w(px(200.)).h(px(200.)).child(
+                            deferred(
+                                anchored().position(point(px(30.), px(30.))).child(
+                                    div()
+                                        .key_context("NestedMenu")
+                                        .debug_selector(|| "NESTED_MENU".into())
+                                        .w(px(50.))
+                                        .h(px(50.)),
+                                ),
+                            )
+                            .with_priority(2),
+                        ),
+                    ),
+                )
+                .with_priority(1),
+            )
+        }
+    }
+
+    struct RootView {
+        panel: Entity<PanelView>,
+    }
+
+    impl Render for RootView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().key_context("Root").size_full().child(
+                self.panel
+                    .clone()
+                    .cached(StyleRefinement::default().size_full()),
+            )
+        }
+    }
+
+    /// Regression test for a crash with nested deferred draws (e.g. a popover
+    /// menu inside a popover hosted by a cached dock panel). Prepaint indices
+    /// recorded during the deferred draw rounds must index the same
+    /// `deferred_draws` vector that `reuse_prepaint` slices on the next frame;
+    /// previously they were measured against a transient per-round vector, so
+    /// reusing the panel's subtree grafted the wrong deferred draws and
+    /// panicked in the dispatch tree.
+    #[gpui::test]
+    fn test_nested_deferred_draws_with_reused_views(cx: &mut TestAppContext) {
+        let window = cx.open_window(size(px(800.), px(600.)), |_, cx| {
+            let panel = cx.new(|_| PanelView);
+            RootView { panel }
+        });
+        cx.run_until_parked();
+
+        let menu_bounds = window
+            .update(cx, |_, window, _| {
+                window
+                    .rendered_frame
+                    .debug_bounds
+                    .get("NESTED_MENU")
+                    .copied()
+            })
+            .unwrap()
+            .expect("NESTED_MENU debug bounds not found");
+        assert_eq!(menu_bounds.size, size(px(50.), px(50.)));
+
+        // Re-render only the root view; the panel is cached, so its subtree -
+        // including both deferred draw records - is reused from the previous
+        // frame.
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.run_until_parked();
+
+        // Reuse the subtree a second time, exercising ranges that were
+        // themselves recorded during a reused frame.
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.run_until_parked();
+
+        // Re-render the panel itself again to prove the popovers still draw.
+        window
+            .update(cx, |root, _, cx| {
+                root.panel.update(cx, |_, cx| cx.notify());
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |_, window, _| {
+                assert_eq!(window.rendered_frame.deferred_draws.len(), 2);
+                assert!(
+                    window
+                        .rendered_frame
+                        .debug_bounds
+                        .contains_key("NESTED_MENU")
+                );
+            })
+            .unwrap();
+    }
+}

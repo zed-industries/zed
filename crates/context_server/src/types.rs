@@ -5,8 +5,16 @@ use url::Url;
 
 use crate::client::RequestId;
 
-pub const LATEST_PROTOCOL_VERSION: &str = "2025-03-26";
 pub const VERSION_2024_11_05: &str = "2024-11-05";
+pub const VERSION_2025_03_26: &str = "2025-03-26";
+pub const VERSION_2025_06_18: &str = "2025-06-18";
+pub const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+
+/// Protocol versions that include the streamable HTTP transport's
+/// `MCP-Protocol-Version` header requirement on post-initialize requests.
+pub fn requires_protocol_version_header(version: &str) -> bool {
+    matches!(version, VERSION_2025_06_18 | LATEST_PROTOCOL_VERSION)
+}
 
 pub mod requests {
     use super::*;
@@ -209,8 +217,19 @@ pub struct CompletionCompleteParams {
     #[serde(rename = "ref")]
     pub reference: CompletionReference,
     pub argument: CompletionArgument,
+    /// Previously-resolved argument values so the server can provide
+    /// context-sensitive completions (added in MCP 2025-06-18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<CompletionContext>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionContext {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -421,6 +440,9 @@ pub struct CompletionResult {
 #[serde(rename_all = "camelCase")]
 pub struct Prompt {
     pub name: String,
+    /// Human-readable display name (added in MCP 2025-06-18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -431,6 +453,9 @@ pub struct Prompt {
 #[serde(rename_all = "camelCase")]
 pub struct PromptArgument {
     pub name: String,
+    /// Human-readable display name (added in MCP 2025-06-18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -499,6 +524,9 @@ pub struct RootsCapabilities {
 #[serde(rename_all = "camelCase")]
 pub struct Tool {
     pub name: String,
+    /// Human-readable display name (added in MCP 2025-06-18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub input_schema: serde_json::Value,
@@ -532,7 +560,13 @@ pub struct ToolAnnotations {
 #[serde(rename_all = "camelCase")]
 pub struct Implementation {
     pub name: String,
+    /// Human-readable display name (added in MCP 2025-06-18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub version: String,
+    /// Human-readable description of the implementation (added in MCP 2025-11-25).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -540,6 +574,9 @@ pub struct Implementation {
 pub struct Resource {
     pub uri: Url,
     pub name: String,
+    /// Human-readable display name (added in MCP 2025-06-18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -577,6 +614,9 @@ pub struct BlobResourceContents {
 pub struct ResourceTemplate {
     pub uri_template: String,
     pub name: String,
+    /// Human-readable display name (added in MCP 2025-06-18).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -709,6 +749,19 @@ pub enum ToolResponseContent {
     Audio { data: String, mime_type: String },
     #[serde(rename = "resource")]
     Resource { resource: ResourceContents },
+    /// Link to an MCP resource on the server, without inlining its contents.
+    /// Added in MCP 2025-06-18.
+    #[serde(rename = "resource_link", rename_all = "camelCase")]
+    ResourceLink {
+        uri: Url,
+        name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+    },
 }
 
 impl ToolResponseContent {

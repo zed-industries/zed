@@ -7,18 +7,18 @@ use gpui::{
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, px,
+    WindowDecorations, WindowKind, WindowParams, popup::PopupNotSupportedError, px,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
 use collections::FxHashSet;
+use gpui_util::{ResultExt, maybe};
 use raw_window_handle as rwh;
-use util::{ResultExt, maybe};
 use x11rb::{
     connection::Connection,
     cookie::{Cookie, VoidCookie},
     errors::ConnectionError,
-    properties::WmSizeHints,
+    properties::{WmHints, WmSizeHints},
     protocol::{
         sync,
         xinput::{self, ConnectionExt as _},
@@ -285,6 +285,7 @@ pub struct X11WindowState {
     edge_constraints: Option<EdgeConstraints>,
     pub handle: AnyWindowHandle,
     last_insets: [u32; 4],
+    accesskit_adapter: Option<accesskit_unix::Adapter>,
 }
 
 impl X11WindowState {
@@ -343,7 +344,7 @@ impl rwh::HasDisplayHandle for X11Window {
         };
         let screen_id = {
             let state = self.0.state.borrow();
-            u32::from(state.display.id()) as i32
+            u64::from(state.display.id()) as i32
         };
         let handle = rwh::XcbDisplayHandle::new(Some(non_zero), screen_id);
         Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
@@ -388,6 +389,39 @@ where
         .with_context(failure_context)
 }
 
+/// Sets or clears the ICCCM WM_HINTS urgency flag, preserving the other hints.
+///
+/// Clearing when the flag isn't set is skipped: writing it back would create a
+/// WM_HINTS property on windows that never requested attention, and would add an
+/// X round trip to every window state change.
+fn set_wm_hints_urgency(xcb: &XCBConnection, x_window: xproto::Window, urgent: bool) {
+    let mut hints = WmHints::new();
+    match WmHints::get(xcb, x_window) {
+        Ok(cookie) => match cookie.reply() {
+            Ok(Some(existing_hints)) => hints = existing_hints,
+            Ok(None) => {}
+            Err(error) => {
+                log::debug!("failed to read X11 WM_HINTS before setting urgency: {error}")
+            }
+        },
+        Err(error) => {
+            log::debug!("failed to request X11 WM_HINTS before setting urgency: {error}")
+        }
+    }
+
+    if !urgent && !hints.urgent {
+        return;
+    }
+
+    hints.urgent = urgent;
+    check_reply(
+        || "X11 ChangeProperty for WM_HINTS urgency failed.",
+        hints.set(xcb, x_window),
+    )
+    .log_err();
+    xcb_flush(xcb);
+}
+
 /// Convert X11 connection errors to `anyhow::Error` and panic for unrecoverable errors.
 pub(crate) fn handle_connection_error(err: ConnectionError) -> anyhow::Error {
     match err {
@@ -425,10 +459,17 @@ impl X11WindowState {
         appearance: WindowAppearance,
         parent_window: Option<X11WindowStatePtr>,
         supports_xinput_gestures: bool,
+        is_bgr: bool,
     ) -> anyhow::Result<Self> {
+        // Native popups are not implemented on X11 yet. Rejecting lets callers fall back to
+        // gpui's in-window popovers.
+        if let WindowKind::AnchoredPopup(_) = params.kind {
+            return Err(PopupNotSupportedError.into());
+        }
+
         let x_screen_index = params
             .display_id
-            .map_or(x_main_screen_index, |did| u32::from(did) as usize);
+            .map_or(x_main_screen_index, |did| u64::from(did) as usize);
 
         let visual_set = find_visuals(xcb, x_screen_index);
 
@@ -702,7 +743,7 @@ impl X11WindowState {
 
             xcb_flush(xcb);
 
-            let renderer = {
+            let mut renderer = {
                 let raw_window = RawWindow {
                     connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
                         xcb,
@@ -724,6 +765,8 @@ impl X11WindowState {
                 };
                 WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
             };
+
+            renderer.set_subpixel_layout(is_bgr);
 
             // Set max window size hints based on the GPU's maximum texture dimension.
             // This prevents the window from being resized larger than what the GPU can render.
@@ -798,6 +841,7 @@ impl X11WindowState {
                 decorations: WindowDecorations::Server,
                 last_insets: [0, 0, 0, 0],
                 edge_constraints: None,
+                accesskit_adapter: None,
                 counter_id: sync_request_counter,
                 last_sync_counter: None,
             })
@@ -883,6 +927,7 @@ impl X11Window {
         appearance: WindowAppearance,
         parent_window: Option<X11WindowStatePtr>,
         supports_xinput_gestures: bool,
+        is_bgr: bool,
     ) -> anyhow::Result<Self> {
         let ptr = X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -901,6 +946,7 @@ impl X11Window {
                 appearance,
                 parent_window,
                 supports_xinput_gestures,
+                is_bgr,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb: xcb.clone(),
@@ -1067,6 +1113,7 @@ impl X11WindowStatePtr {
             .chunks_exact(4)
             .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
 
+        let was_active = state.active;
         state.active = false;
         state.fullscreen = false;
         state.maximized_vertical = false;
@@ -1085,6 +1132,12 @@ impl X11WindowStatePtr {
             } else if atom == state.atoms._NET_WM_STATE_HIDDEN {
                 state.hidden = true;
             }
+        }
+
+        // The urgency hint has no withdrawal signal of its own; ICCCM leaves that to
+        // the client, and focus is the conventional means for the user to zero it.
+        if state.active && !was_active {
+            set_wm_hints_urgency(&self.xcb, self.x_window, false);
         }
 
         Ok(())
@@ -1272,6 +1325,9 @@ impl X11WindowStatePtr {
             fun(focus);
             self.callbacks.borrow_mut().active_status_change = Some(fun);
         }
+        if let Some(adapter) = self.state.borrow_mut().accesskit_adapter.as_mut() {
+            adapter.update_window_focus_state(focus);
+        }
     }
 
     pub fn set_hovered(&self, focus: bool) {
@@ -1400,7 +1456,11 @@ impl PlatformWindow for X11Window {
         )
         .log_err()
         .map_or(Point::new(Pixels::ZERO, Pixels::ZERO), |reply| {
-            Point::new((reply.root_x as u32).into(), (reply.root_y as u32).into())
+            let scale_factor = self.0.state.borrow().scale_factor;
+            Point::new(
+                px(reply.win_x as f32 / scale_factor),
+                px(reply.win_y as f32 / scale_factor),
+            )
         })
     }
 
@@ -1461,15 +1521,15 @@ impl PlatformWindow for X11Window {
                 message,
             )
             .log_err();
-        self.0
-            .xcb
-            .set_input_focus(
-                xproto::InputFocus::POINTER_ROOT,
-                self.0.x_window,
-                xproto::Time::CURRENT_TIME,
-            )
-            .log_err();
         xcb_flush(&self.0.xcb);
+    }
+
+    fn request_attention(&self) {
+        if self.is_active() {
+            return;
+        }
+
+        set_wm_hints_urgency(&self.0.xcb, self.0.x_window, true);
     }
 
     fn is_active(&self) -> bool {
@@ -1508,10 +1568,11 @@ impl PlatformWindow for X11Window {
     }
 
     fn set_app_id(&mut self, app_id: &str) {
-        let mut data = Vec::with_capacity(app_id.len() * 2 + 1);
+        let mut data = Vec::with_capacity(app_id.len() * 2 + 2);
         data.extend(app_id.bytes()); // instance https://unix.stackexchange.com/a/494170
         data.push(b'\0');
         data.extend(app_id.bytes()); // class
+        data.push(b'\0');
 
         check_reply(
             || "X11 ChangeProperty8 for WM_CLASS failed.",
@@ -1665,21 +1726,22 @@ impl PlatformWindow for X11Window {
                 window_id: self.0.x_window,
                 visual_id: inner.visual_id,
             };
-            inner.renderer.recover(&raw_window).unwrap_or_else(|err| {
-                panic!(
-                    "GPU device lost and recovery failed. \
-                        This may happen after system suspend/resume. \
-                        Please restart the application.\n\nError: {err}"
-                )
-            });
+            match inner.renderer.recover(&raw_window) {
+                Ok(()) => {}
+                Err(err) => {
+                    log::warn!("GPU recovery failed, will retry on next frame: {err}");
+                }
+            }
 
-            // The current scene references atlas textures that were cleared during recovery.
-            // Skip this frame and let the next frame rebuild the scene with fresh textures.
             inner.force_render_after_recovery = true;
             return;
         }
 
         inner.renderer.draw(scene);
+
+        if inner.renderer.needs_redraw() {
+            inner.force_render_after_recovery = true;
+        }
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -1879,5 +1941,85 @@ impl PlatformWindow for X11Window {
     fn play_system_bell(&self) {
         // Volume 0% means don't increase or decrease from system volume
         let _ = self.0.xcb.bell(0);
+    }
+
+    fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
+        let activation_handler = TrivialActivationHandler {
+            callback: callbacks.activation,
+        };
+        let action_handler = TrivialActionHandler(callbacks.action);
+        let deactivation_handler = TrivialDeactivationHandler {
+            callback: callbacks.deactivation,
+        };
+
+        let adapter =
+            accesskit_unix::Adapter::new(activation_handler, action_handler, deactivation_handler);
+
+        self.0.state.borrow_mut().accesskit_adapter = Some(adapter);
+    }
+
+    fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
+        let mut state = self.0.state.borrow_mut();
+        if let Some(adapter) = state.accesskit_adapter.as_mut() {
+            adapter.update_if_active(|| tree_update);
+        }
+    }
+
+    fn a11y_update_window_bounds(&self) {
+        let mut state = self.0.state.borrow_mut();
+        let scale = state.scale_factor;
+        let bounds = state.bounds;
+        let [left, right, top, bottom] = state.last_insets;
+
+        let x = f32::from(bounds.origin.x);
+        let y = f32::from(bounds.origin.y);
+        let width = f32::from(bounds.size.width);
+        let height = f32::from(bounds.size.height);
+
+        let outer = accesskit::Rect {
+            x0: (x * scale) as f64,
+            y0: (y * scale) as f64,
+            x1: ((x + width) * scale) as f64,
+            y1: ((y + height) * scale) as f64,
+        };
+
+        let inner = accesskit::Rect {
+            x0: (x * scale) as f64 + left as f64,
+            y0: (y * scale) as f64 + top as f64,
+            x1: ((x + width) * scale) as f64 - right as f64,
+            y1: ((y + height) * scale) as f64 - bottom as f64,
+        };
+
+        if let Some(adapter) = state.accesskit_adapter.as_mut() {
+            adapter.set_root_window_bounds(outer, inner);
+        }
+    }
+}
+
+struct TrivialActivationHandler {
+    callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+}
+
+impl accesskit::ActivationHandler for TrivialActivationHandler {
+    fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
+        (self.callback)()
+    }
+}
+
+struct TrivialActionHandler(Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>);
+
+impl accesskit::ActionHandler for TrivialActionHandler {
+    fn do_action(&mut self, request: accesskit::ActionRequest) {
+        (self.0)(request);
+    }
+}
+
+struct TrivialDeactivationHandler {
+    callback: Box<dyn Fn() + Send + 'static>,
+}
+
+impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
+    fn deactivate_accessibility(&mut self) {
+        (self.callback)();
     }
 }

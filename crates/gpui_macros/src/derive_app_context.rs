@@ -79,6 +79,15 @@ pub fn derive_app_context(input: TokenStream) -> TokenStream {
                 self.#app_variable.update_window(window, f)
             }
 
+            fn with_window<R>(
+                &mut self,
+                entity_id: gpui::EntityId,
+                f: impl FnOnce(&mut gpui::Window, &mut gpui::App) -> R,
+            ) -> Option<R>
+            {
+                self.#app_variable.with_window(entity_id, f)
+            }
+
             fn read_window<T, R>(
                 &self,
                 window: &gpui::WindowHandle<T>,
