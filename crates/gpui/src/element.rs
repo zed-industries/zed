@@ -264,12 +264,16 @@ enum ElementDrawPhase<RequestLayoutState, PrepaintState> {
     RequestLayout {
         layout_id: LayoutId,
         global_id: Option<GlobalElementId>,
+        /// The window's running path hash with the element's id pushed, so the later
+        /// phases push the id again without rehashing.
+        path_hash: u64,
         inspector_id: Option<InspectorElementId>,
         request_layout: RequestLayoutState,
     },
     LayoutComputed {
         layout_id: LayoutId,
         global_id: Option<GlobalElementId>,
+        path_hash: u64,
         inspector_id: Option<InspectorElementId>,
         available_space: Size<AvailableSpace>,
         request_layout: RequestLayoutState,
@@ -277,6 +281,7 @@ enum ElementDrawPhase<RequestLayoutState, PrepaintState> {
     Prepaint {
         node_id: DispatchNodeId,
         global_id: Option<GlobalElementId>,
+        path_hash: u64,
         inspector_id: Option<InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: RequestLayoutState,
@@ -301,6 +306,7 @@ impl<E: Element> Drawable<E> {
                     window.push_element_id(element_id);
                     GlobalElementId(Arc::from(&*window.element_id_stack))
                 });
+                let path_hash = window.element_path_hash();
 
                 let inspector_id;
                 #[cfg(any(feature = "inspector", debug_assertions))]
@@ -332,6 +338,7 @@ impl<E: Element> Drawable<E> {
                 self.phase = ElementDrawPhase::RequestLayout {
                     layout_id,
                     global_id,
+                    path_hash,
                     inspector_id,
                     request_layout,
                 };
@@ -346,18 +353,20 @@ impl<E: Element> Drawable<E> {
             ElementDrawPhase::RequestLayout {
                 layout_id,
                 global_id,
+                path_hash,
                 inspector_id,
                 mut request_layout,
             }
             | ElementDrawPhase::LayoutComputed {
                 layout_id,
                 global_id,
+                path_hash,
                 inspector_id,
                 mut request_layout,
                 ..
             } => {
                 if let Some(element_id) = self.element.id() {
-                    window.push_element_id(element_id);
+                    window.push_element_id_hashed(element_id, path_hash);
                     debug_assert_eq!(&*global_id.as_ref().unwrap().0, &*window.element_id_stack);
                 }
 
@@ -444,6 +453,7 @@ impl<E: Element> Drawable<E> {
                 self.phase = ElementDrawPhase::Prepaint {
                     node_id,
                     global_id,
+                    path_hash,
                     inspector_id,
                     bounds,
                     request_layout,
@@ -463,6 +473,7 @@ impl<E: Element> Drawable<E> {
             ElementDrawPhase::Prepaint {
                 node_id,
                 global_id,
+                path_hash,
                 inspector_id,
                 bounds,
                 mut request_layout,
@@ -470,7 +481,7 @@ impl<E: Element> Drawable<E> {
                 ..
             } => {
                 if let Some(element_id) = self.element.id() {
-                    window.push_element_id(element_id);
+                    window.push_element_id_hashed(element_id, path_hash);
                     debug_assert_eq!(&*global_id.as_ref().unwrap().0, &*window.element_id_stack);
                 }
 
@@ -510,6 +521,7 @@ impl<E: Element> Drawable<E> {
             ElementDrawPhase::RequestLayout {
                 layout_id,
                 global_id,
+                path_hash,
                 inspector_id,
                 request_layout,
             } => {
@@ -517,6 +529,7 @@ impl<E: Element> Drawable<E> {
                 self.phase = ElementDrawPhase::LayoutComputed {
                     layout_id,
                     global_id,
+                    path_hash,
                     inspector_id,
                     available_space,
                     request_layout,
@@ -526,6 +539,7 @@ impl<E: Element> Drawable<E> {
             ElementDrawPhase::LayoutComputed {
                 layout_id,
                 global_id,
+                path_hash,
                 inspector_id,
                 available_space: prev_available_space,
                 request_layout,
@@ -536,6 +550,7 @@ impl<E: Element> Drawable<E> {
                 self.phase = ElementDrawPhase::LayoutComputed {
                     layout_id,
                     global_id,
+                    path_hash,
                     inspector_id,
                     available_space,
                     request_layout,

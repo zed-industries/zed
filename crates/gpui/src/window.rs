@@ -2773,6 +2773,20 @@ impl Window {
         self.element_id_stack.push(element_id);
     }
 
+    /// Pushes an id whose path hash is already known from an earlier phase of the same
+    /// element, so it is not hashed again.
+    pub(crate) fn push_element_id_hashed(&mut self, element_id: ElementId, path_hash: u64) {
+        debug_assert_eq!(path_hash, {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = collections::FxHasher::default();
+            hasher.write_u64(self.element_path_hash());
+            element_id.hash(&mut hasher);
+            hasher.finish()
+        });
+        self.element_id_hashes.push(path_hash);
+        self.element_id_stack.push(element_id);
+    }
+
     pub(crate) fn pop_element_id(&mut self) {
         self.element_id_stack.pop();
         self.element_id_hashes.pop();
