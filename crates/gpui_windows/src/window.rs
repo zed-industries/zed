@@ -71,6 +71,7 @@ pub struct WindowsWindowState {
     /// and when a forced render was requested while another draw was in
     /// progress and had to be deferred.
     pub force_render_pending: Cell<bool>,
+    pub destroyed: Cell<bool>,
 
     pub click_state: ClickState,
     pub current_cursor: Cell<Option<HCURSOR>>,
@@ -110,7 +111,8 @@ pub(crate) struct WindowsWindowInner {
 impl WindowsWindowState {
     fn new(
         hwnd: HWND,
-        directx_devices: &DirectXDevices,
+        directx_devices: Option<&DirectXDevices>,
+        recovery_generation: u64,
         window_params: &CREATESTRUCTW,
         current_cursor: Option<HCURSOR>,
         cursor_visible: Arc<AtomicBool>,
@@ -139,8 +141,12 @@ impl WindowsWindowState {
         };
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
-        let renderer = DirectXRenderer::new(hwnd, directx_devices, disable_direct_composition)
-            .context("Creating DirectX renderer")?;
+        let renderer = if let Some(directx_devices) = directx_devices {
+            DirectXRenderer::new(hwnd, directx_devices, disable_direct_composition)
+                .context("Creating DirectX renderer")?
+        } else {
+            DirectXRenderer::new_suspended(hwnd, disable_direct_composition, recovery_generation)
+        };
         let callbacks = Callbacks::default();
         let input_handler = None;
         let pending_surrogate = None;
@@ -174,6 +180,7 @@ impl WindowsWindowState {
             hovered: Cell::new(hovered),
             renderer: RefCell::new(renderer),
             force_render_pending: Cell::new(false),
+            destroyed: Cell::new(false),
             click_state,
             current_cursor: Cell::new(current_cursor),
             cursor_visible,
@@ -252,7 +259,8 @@ impl WindowsWindowInner {
     fn new(context: &mut WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
         let state = WindowsWindowState::new(
             hwnd,
-            &context.directx_devices,
+            context.directx_devices.as_ref(),
+            context.recovery_generation,
             cs,
             context.current_cursor,
             context.cursor_visible.clone(),
@@ -407,7 +415,8 @@ struct WindowCreateContext {
     platform_window_handle: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
-    directx_devices: DirectXDevices,
+    directx_devices: Option<DirectXDevices>,
+    recovery_generation: u64,
     invalidate_devices: Arc<AtomicBool>,
     draw_coordinator: Rc<DrawCoordinator>,
     parent_hwnd: Option<HWND>,
@@ -436,6 +445,7 @@ impl WindowsWindow {
             platform_window_handle,
             disable_direct_composition,
             directx_devices,
+            recovery_generation,
             invalidate_devices,
             draw_coordinator,
         } = creation_info;
@@ -521,6 +531,7 @@ impl WindowsWindow {
             appearance,
             disable_direct_composition,
             directx_devices,
+            recovery_generation,
             invalidate_devices,
             draw_coordinator,
             parent_hwnd,

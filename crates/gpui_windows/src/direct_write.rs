@@ -60,7 +60,7 @@ impl Drop for DirectWriteComponents {
     }
 }
 
-struct GPUState {
+pub(crate) struct GPUState {
     device: ID3D11Device,
     device_context: ID3D11DeviceContext,
     sampler: Option<ID3D11SamplerState>,
@@ -110,7 +110,7 @@ impl GPUState {
                 ],
             };
             unsafe { device.CreateBlendState(&desc, Some(&mut blend_state)) }?;
-            blend_state.unwrap()
+            blend_state.context("CreateBlendState returned no DirectWrite blend state")?
         };
 
         let sampler = {
@@ -138,7 +138,7 @@ impl GPUState {
             )?;
             let mut shader = None;
             unsafe { device.CreateVertexShader(source.as_bytes(), None, Some(&mut shader)) }?;
-            shader.unwrap()
+            shader.context("CreateVertexShader returned no DirectWrite vertex shader")?
         };
 
         let pixel_shader = {
@@ -148,7 +148,7 @@ impl GPUState {
             )?;
             let mut shader = None;
             unsafe { device.CreatePixelShader(source.as_bytes(), None, Some(&mut shader)) }?;
-            shader.unwrap()
+            shader.context("CreatePixelShader returned no DirectWrite pixel shader")?
         };
 
         Ok(Self {
@@ -218,8 +218,14 @@ impl DirectWriteTextSystem {
         })
     }
 
-    pub(crate) fn handle_gpu_lost(&self, directx_devices: &DirectXDevices) -> Result<()> {
-        self.state.write().handle_gpu_lost(directx_devices)
+    pub(crate) fn build_gpu_recovery_candidate(
+        directx_devices: &DirectXDevices,
+    ) -> Result<GPUState> {
+        GPUState::new(directx_devices).context("Recreating GPU state for DirectWrite")
+    }
+
+    pub(crate) fn commit_gpu_recovery(&self, gpu_state: GPUState) {
+        self.state.write().gpu_state = gpu_state;
     }
 }
 
@@ -1278,13 +1284,6 @@ impl DirectWriteState {
             &components.locale,
         ));
         result
-    }
-
-    fn handle_gpu_lost(&mut self, directx_devices: &DirectXDevices) -> Result<()> {
-        try_to_recover_from_device_lost(|| {
-            GPUState::new(directx_devices).context("Recreating GPU state for DirectWrite")
-        })
-        .map(|gpu_state| self.gpu_state = gpu_state)
     }
 }
 

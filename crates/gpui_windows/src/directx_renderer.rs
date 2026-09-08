@@ -3,6 +3,9 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+#[cfg(debug_assertions)]
+use std::sync::Mutex as StdMutex;
+
 use anyhow::{Context, Result};
 use gpui_util::ResultExt;
 use windows::{
@@ -28,6 +31,139 @@ const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 // This configuration is used for MSAA rendering on paths only, and it's guaranteed to be supported by DirectX 11.
 const PATH_MULTISAMPLE_COUNT: u32 = 4;
 const MAX_INSTANCE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
+#[cfg(any(debug_assertions, test))]
+const DEVICE_RECOVERY_FAILURE_STAGES: [&str; 7] = [
+    "renderer-devices",
+    "resources",
+    "global-elements",
+    "pipelines",
+    "direct-composition",
+    "composition-swapchain",
+    "atlas-commit",
+];
+
+#[cfg(any(debug_assertions, test))]
+struct InjectedDeviceRecoveryFailure {
+    stage: String,
+    count: usize,
+}
+
+#[cfg(any(debug_assertions, test))]
+#[derive(Default)]
+struct InjectedDeviceRecoveryAttempts {
+    generation: Option<u64>,
+    attempts: usize,
+}
+
+#[cfg(any(debug_assertions, test))]
+impl InjectedDeviceRecoveryAttempts {
+    fn next_failure(&mut self, generation: u64, failure_count: usize) -> Option<usize> {
+        if self.generation != Some(generation) {
+            self.generation = Some(generation);
+            self.attempts = 0;
+        }
+        self.attempts += 1;
+        (self.attempts <= failure_count).then_some(self.attempts)
+    }
+}
+
+#[cfg(any(debug_assertions, test))]
+fn parse_injected_device_recovery_failure(value: &str) -> Option<InjectedDeviceRecoveryFailure> {
+    let (stage, count) = value.rsplit_once(':')?;
+    if !DEVICE_RECOVERY_FAILURE_STAGES.contains(&stage) {
+        return None;
+    }
+    Some(InjectedDeviceRecoveryFailure {
+        stage: stage.to_owned(),
+        count: count.parse().ok()?,
+    })
+}
+
+#[cfg(debug_assertions)]
+fn maybe_inject_device_recovery_failure(stage: &str, generation: u64) -> Result<()> {
+    static CONFIG: OnceLock<Option<InjectedDeviceRecoveryFailure>> = OnceLock::new();
+    static MATCHING_ATTEMPTS: OnceLock<StdMutex<InjectedDeviceRecoveryAttempts>> = OnceLock::new();
+
+    let Some(config) = CONFIG
+        .get_or_init(|| {
+            let value = std::env::var("GPUI_TEST_DEVICE_RECOVERY_FAILURE").ok()?;
+            let config = parse_injected_device_recovery_failure(&value);
+            if config.is_none() {
+                eprintln!(
+                    "gpui_device_loss_test invalid GPUI_TEST_DEVICE_RECOVERY_FAILURE={value:?}; expected <stage>:<count>, stage one of {}",
+                    DEVICE_RECOVERY_FAILURE_STAGES.join(",")
+                );
+            }
+            config
+        })
+        .as_ref()
+    else {
+        return Ok(());
+    };
+
+    if config.stage != stage {
+        return Ok(());
+    }
+
+    let mut matching_attempts = MATCHING_ATTEMPTS
+        .get_or_init(|| StdMutex::new(InjectedDeviceRecoveryAttempts::default()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(attempt) = matching_attempts.next_failure(generation, config.count) else {
+        return Ok(());
+    };
+    eprintln!(
+        "gpui_device_loss_test generation={generation} stage={stage} attempt={attempt} result=injected_failure"
+    );
+    anyhow::bail!(
+        "injected DirectX device recovery failure at stage {stage} ({attempt}/{})",
+        config.count
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn maybe_inject_device_recovery_failure(_stage: &str, _generation: u64) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod device_recovery_injection_tests {
+    use super::{
+        DEVICE_RECOVERY_FAILURE_STAGES, InjectedDeviceRecoveryAttempts,
+        parse_injected_device_recovery_failure,
+    };
+
+    #[test]
+    fn parses_stage_and_count_from_the_right() {
+        let config = parse_injected_device_recovery_failure("resources:7").unwrap();
+        assert_eq!(config.stage, "resources");
+        assert_eq!(config.count, 7);
+        assert!(parse_injected_device_recovery_failure(":7").is_none());
+        assert!(parse_injected_device_recovery_failure("unknown:7").is_none());
+        assert!(parse_injected_device_recovery_failure("resources:nope").is_none());
+        assert!(parse_injected_device_recovery_failure("resources").is_none());
+    }
+
+    #[test]
+    fn accepts_every_recovery_candidate_stage() {
+        for stage in DEVICE_RECOVERY_FAILURE_STAGES {
+            let config = parse_injected_device_recovery_failure(&format!("{stage}:1")).unwrap();
+            assert_eq!(config.stage, stage);
+            assert_eq!(config.count, 1);
+        }
+    }
+
+    #[test]
+    fn failure_budget_resets_for_each_generation() {
+        let mut attempts = InjectedDeviceRecoveryAttempts::default();
+        assert_eq!(attempts.next_failure(7, 2), Some(1));
+        assert_eq!(attempts.next_failure(7, 2), Some(2));
+        assert_eq!(attempts.next_failure(7, 2), None);
+        assert_eq!(attempts.next_failure(8, 2), Some(1));
+        assert_eq!(attempts.next_failure(8, 2), Some(2));
+        assert_eq!(attempts.next_failure(8, 2), None);
+    }
+}
 
 pub(crate) struct FontInfo {
     pub gamma_ratios: [f32; 4],
@@ -39,21 +175,64 @@ pub(crate) struct FontInfo {
 pub(crate) struct DirectXRenderer {
     hwnd: HWND,
     atlas: Arc<DirectXAtlas>,
-    devices: Option<DirectXRendererDevices>,
-    resources: Option<DirectXResources>,
-    globals: DirectXGlobalElements,
-    pipelines: DirectXRenderPipelines,
-    direct_composition: Option<DirectComposition>,
+    active: Option<DirectXRendererState>,
     font_info: &'static FontInfo,
-
     width: u32,
     height: u32,
+    disable_direct_composition: bool,
+    recovery_generation: u64,
+    drawable: bool,
+    #[cfg(debug_assertions)]
+    test_recovery_present_generation: Option<u64>,
+}
 
-    /// Whether we want to skip drwaing due to device lost events.
-    ///
-    /// In that case we want to discard the first frame that we draw as we got reset in the middle of a frame
-    /// meaning we lost all the allocated gpu textures and scene resources.
-    skip_draws: bool,
+struct DirectXRendererState {
+    devices: DirectXRendererDevices,
+    resources: DirectXResources,
+    globals: DirectXGlobalElements,
+    pipelines: DirectXRenderPipelines,
+    _direct_composition: Option<DirectComposition>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct DirectXRendererRecoverySnapshot {
+    pub(crate) generation: u64,
+    pub(crate) hwnd: HWND,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) disable_direct_composition: bool,
+}
+
+pub(crate) struct DirectXRendererRecoveryCandidate {
+    snapshot: DirectXRendererRecoverySnapshot,
+    state: DirectXRendererState,
+}
+
+pub(crate) struct DirectXRendererSuspendedState(Option<DirectXRendererState>);
+
+impl DirectXRendererSuspendedState {
+    pub(crate) fn release(self) {
+        let Some(state) = self.0 else {
+            return;
+        };
+        // SAFETY: this detached state owns every COM object below, and the
+        // window renderer can no longer issue commands through its context.
+        unsafe {
+            state.devices.device_context.OMSetRenderTargets(None, None);
+            state.devices.device_context.ClearState();
+            state.devices.device_context.Flush();
+        }
+        #[cfg(debug_assertions)]
+        report_live_objects(&state.devices.device)
+            .context("Failed to report live objects after device loss")
+            .log_err();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DirectXRendererRecoveryCommit {
+    Active,
+    Stale,
 }
 
 /// Direct3D objects
@@ -174,8 +353,14 @@ impl DirectXRenderer {
         let direct_composition = if disable_direct_composition {
             None
         } else {
-            let composition = DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), hwnd)
-                .context("Creating DirectComposition")?;
+            let composition = DirectComposition::new(
+                devices
+                    .dxgi_device
+                    .as_ref()
+                    .context("DXGI device missing for DirectComposition")?,
+                hwnd,
+            )
+            .context("Creating DirectComposition")?;
             composition
                 .set_swap_chain(&resources.swap_chain)
                 .context("Setting swap chain for DirectComposition")?;
@@ -185,32 +370,63 @@ impl DirectXRenderer {
         Ok(DirectXRenderer {
             hwnd,
             atlas,
-            devices: Some(devices),
-            resources: Some(resources),
-            globals,
-            pipelines,
-            direct_composition,
+            active: Some(DirectXRendererState {
+                devices,
+                resources,
+                globals,
+                pipelines,
+                _direct_composition: direct_composition,
+            }),
             font_info: Self::get_font_info(),
             width: 1,
             height: 1,
-            skip_draws: false,
+            disable_direct_composition,
+            recovery_generation: 0,
+            drawable: true,
+            #[cfg(debug_assertions)]
+            test_recovery_present_generation: None,
         })
+    }
+
+    pub(crate) fn new_suspended(
+        hwnd: HWND,
+        disable_direct_composition: bool,
+        recovery_generation: u64,
+    ) -> Self {
+        Self {
+            hwnd,
+            atlas: Arc::new(DirectXAtlas::new_suspended()),
+            active: None,
+            font_info: Self::get_font_info(),
+            width: 1,
+            height: 1,
+            disable_direct_composition,
+            recovery_generation,
+            drawable: false,
+            #[cfg(debug_assertions)]
+            test_recovery_present_generation: None,
+        }
     }
 
     pub(crate) fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.atlas.clone()
     }
 
+    pub(crate) fn is_suspended(&self) -> bool {
+        self.active.is_none()
+    }
+
     fn pre_draw(&self, clear_color: &[f32; 4]) -> Result<()> {
-        let resources = self.resources.as_ref().expect("resources missing");
-        let device_context = &self
-            .devices
-            .as_ref()
-            .expect("devices missing")
-            .device_context;
+        let active = self.active.as_ref().context("renderer is suspended")?;
+        let resources = &active.resources;
+        let device_context = &active.devices.device_context;
         update_buffer(
             device_context,
-            self.globals.global_params_buffer.as_ref().unwrap(),
+            active
+                .globals
+                .global_params_buffer
+                .as_ref()
+                .context("global params buffer missing")?,
             &[GlobalParams {
                 gamma_ratios: self.font_info.gamma_ratios,
                 viewport_size: [resources.viewport.Width, resources.viewport.Height],
@@ -231,100 +447,158 @@ impl DirectXRenderer {
             device_context
                 .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
             device_context.RSSetViewports(Some(slice::from_ref(&resources.viewport)));
-            device_context
-                .VSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
-            device_context
-                .VSSetConstantBuffers(1, Some(slice::from_ref(&self.globals.batch_params_buffer)));
-            device_context
-                .PSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
+            device_context.VSSetConstantBuffers(
+                0,
+                Some(slice::from_ref(&active.globals.global_params_buffer)),
+            );
+            device_context.VSSetConstantBuffers(
+                1,
+                Some(slice::from_ref(&active.globals.batch_params_buffer)),
+            );
+            device_context.PSSetConstantBuffers(
+                0,
+                Some(slice::from_ref(&active.globals.global_params_buffer)),
+            );
         }
         Ok(())
     }
 
     #[inline]
     fn present(&mut self) -> Result<()> {
-        let result = unsafe {
-            self.resources
-                .as_ref()
-                .expect("resources missing")
-                .swap_chain
-                .Present(0, DXGI_PRESENT(0))
-        };
-        result.ok().context("Presenting swap chain failed")
+        let active = self.active.as_ref().context("renderer is suspended")?;
+        // SAFETY: the swap chain belongs to this active renderer state and is
+        // presented only from its window thread.
+        let result = unsafe { active.resources.swap_chain.Present(0, DXGI_PRESENT(0)) };
+        result.ok().context("Presenting swap chain failed")?;
+        #[cfg(debug_assertions)]
+        if let Some(generation) = self.test_recovery_present_generation.take()
+            && std::env::var_os("GPUI_TEST_DEVICE_RECOVERY_FAILURE").is_some()
+        {
+            eprintln!(
+                "gpui_device_loss_test generation={generation} window={:?} result=presented",
+                self.hwnd
+            );
+        }
+        Ok(())
     }
 
-    pub(crate) fn handle_device_lost(&mut self, directx_devices: &DirectXDevices) -> Result<()> {
-        try_to_recover_from_device_lost(|| {
-            self.handle_device_lost_impl(directx_devices)
-                .context("DirectXRenderer handling device lost")
+    pub(crate) fn suspend(&mut self, generation: u64) -> Option<DirectXRendererSuspendedState> {
+        if generation < self.recovery_generation
+            || (generation == self.recovery_generation && self.active.is_some())
+        {
+            return None;
+        }
+
+        self.recovery_generation = generation;
+        self.drawable = false;
+        #[cfg(debug_assertions)]
+        {
+            self.test_recovery_present_generation = None;
+        }
+        self.atlas.suspend();
+        Some(DirectXRendererSuspendedState(self.active.take()))
+    }
+
+    pub(crate) fn recovery_snapshot(
+        &self,
+        generation: u64,
+    ) -> Option<DirectXRendererRecoverySnapshot> {
+        if self.active.is_some() || self.recovery_generation != generation {
+            return None;
+        }
+        Some(DirectXRendererRecoverySnapshot {
+            generation,
+            hwnd: self.hwnd,
+            width: self.width,
+            height: self.height,
+            disable_direct_composition: self.disable_direct_composition,
         })
     }
 
-    fn handle_device_lost_impl(&mut self, directx_devices: &DirectXDevices) -> Result<()> {
-        let disable_direct_composition = self.direct_composition.is_none();
-
-        unsafe {
-            #[cfg(debug_assertions)]
-            if let Some(devices) = &self.devices {
-                report_live_objects(&devices.device)
-                    .context("Failed to report live objects after device lost")
-                    .log_err();
-            }
-
-            self.resources.take();
-            if let Some(devices) = &self.devices {
-                devices.device_context.OMSetRenderTargets(None, None);
-                devices.device_context.ClearState();
-                devices.device_context.Flush();
-                #[cfg(debug_assertions)]
-                report_live_objects(&devices.device)
-                    .context("Failed to report live objects after device lost")
-                    .log_err();
-            }
-
-            self.direct_composition.take();
-            self.devices.take();
-        }
-
-        let devices = DirectXRendererDevices::new(directx_devices, disable_direct_composition)
-            .context("Recreating DirectX devices")?;
+    pub(crate) fn build_recovery_candidate(
+        snapshot: DirectXRendererRecoverySnapshot,
+        directx_devices: &DirectXDevices,
+    ) -> Result<DirectXRendererRecoveryCandidate> {
+        maybe_inject_device_recovery_failure("renderer-devices", snapshot.generation)?;
+        let devices =
+            DirectXRendererDevices::new(directx_devices, snapshot.disable_direct_composition)
+                .context("Recreating DirectX devices")?;
+        maybe_inject_device_recovery_failure("resources", snapshot.generation)?;
         let resources = DirectXResources::new(
             &devices,
-            self.width,
-            self.height,
-            self.hwnd,
-            disable_direct_composition,
+            snapshot.width,
+            snapshot.height,
+            snapshot.hwnd,
+            snapshot.disable_direct_composition,
         )
         .context("Creating DirectX resources")?;
+        maybe_inject_device_recovery_failure("global-elements", snapshot.generation)?;
         let globals = DirectXGlobalElements::new(&devices.device)
             .context("Creating DirectXGlobalElements")?;
+        maybe_inject_device_recovery_failure("pipelines", snapshot.generation)?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)
             .context("Creating DirectXRenderPipelines")?;
 
-        let direct_composition = if disable_direct_composition {
+        let direct_composition = if snapshot.disable_direct_composition {
             None
         } else {
-            let composition =
-                DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), self.hwnd)?;
+            maybe_inject_device_recovery_failure("direct-composition", snapshot.generation)?;
+            let composition = DirectComposition::new(
+                devices
+                    .dxgi_device
+                    .as_ref()
+                    .context("DXGI device missing for DirectComposition")?,
+                snapshot.hwnd,
+            )?;
+            maybe_inject_device_recovery_failure("composition-swapchain", snapshot.generation)?;
             composition.set_swap_chain(&resources.swap_chain)?;
             Some(composition)
         };
 
-        self.atlas
-            .handle_device_lost(&devices.device, &devices.device_context);
-
+        maybe_inject_device_recovery_failure("atlas-commit", snapshot.generation)?;
+        // SAFETY: the render-target view and context were created together in
+        // this unpublished candidate and remain alive for the call.
         unsafe {
             devices
                 .device_context
                 .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
         }
-        self.devices = Some(devices);
-        self.resources = Some(resources);
-        self.globals = globals;
-        self.pipelines = pipelines;
-        self.direct_composition = direct_composition;
-        self.skip_draws = true;
-        Ok(())
+        Ok(DirectXRendererRecoveryCandidate {
+            snapshot,
+            state: DirectXRendererState {
+                devices,
+                resources,
+                globals,
+                pipelines,
+                _direct_composition: direct_composition,
+            },
+        })
+    }
+
+    pub(crate) fn commit_recovery(
+        &mut self,
+        candidate: DirectXRendererRecoveryCandidate,
+    ) -> DirectXRendererRecoveryCommit {
+        let snapshot = candidate.snapshot;
+        if self.recovery_generation != snapshot.generation
+            || self.width != snapshot.width
+            || self.height != snapshot.height
+            || self.active.is_some()
+        {
+            return DirectXRendererRecoveryCommit::Stale;
+        }
+
+        self.atlas.handle_device_lost(
+            &candidate.state.devices.device,
+            &candidate.state.devices.device_context,
+        );
+        self.active = Some(candidate.state);
+        self.drawable = false;
+        #[cfg(debug_assertions)]
+        {
+            self.test_recovery_present_generation = Some(snapshot.generation);
+        }
+        DirectXRendererRecoveryCommit::Active
     }
 
     pub(crate) fn draw(
@@ -332,9 +606,7 @@ impl DirectXRenderer {
         scene: &Scene,
         background_appearance: WindowBackgroundAppearance,
     ) -> Result<()> {
-        if self.skip_draws {
-            // skip drawing this frame, we just recovered from a device lost event
-            // and so likely do not have the textures anymore that are required for drawing
+        if self.active.is_none() || !self.drawable {
             return Ok(());
         }
         self.render(scene, background_appearance)?;
@@ -358,9 +630,9 @@ impl DirectXRenderer {
         self.upload_scene_buffers(scene)?;
 
         let annotation = self
-            .devices
+            .active
             .as_ref()
-            .and_then(|devices| devices.annotation.clone())
+            .and_then(|active| active.devices.annotation.clone())
             .filter(|annotation| unsafe { annotation.GetStatus().as_bool() });
         for batch in scene.batches() {
             let _annotation = annotation
@@ -415,19 +687,19 @@ impl DirectXRenderer {
         scene: &Scene,
         background_appearance: WindowBackgroundAppearance,
     ) -> Result<image::RgbaImage> {
-        // A pending device-lost recovery (`skip_draws`) leaves the atlas holding
-        // tile references from the previous device; drawing before the forced
-        // re-render rebuilds them panics in `DirectXAtlasState::texture`.
+        // A suspended renderer has no complete device-bound bundle, and a
+        // recovered renderer is not drawable until a forced frame has rebuilt
+        // its atlas textures.
         anyhow::ensure!(
-            !self.skip_draws,
+            self.active.is_some() && self.drawable,
             "render_to_image unavailable while recovering from a lost device"
         );
         self.render(scene, background_appearance)?;
 
-        let devices = self.devices.as_ref().context("devices missing")?;
-        let device = &devices.device;
-        let context = &devices.device_context;
-        let resources = self.resources.as_ref().context("resources missing")?;
+        let active = self.active.as_ref().context("renderer is suspended")?;
+        let device = &active.devices.device;
+        let context = &active.devices.device_context;
+        let resources = &active.resources;
         let render_target = resources
             .render_target
             .as_ref()
@@ -491,46 +763,69 @@ impl DirectXRenderer {
         self.width = width;
         self.height = height;
 
+        let Some(mut active) = self.active.take() else {
+            return Ok(());
+        };
+
         // Clear the render target before resizing
-        let devices = self.devices.as_ref().context("devices missing")?;
-        unsafe { devices.device_context.OMSetRenderTargets(None, None) };
-        let resources = self.resources.as_mut().context("resources missing")?;
-        resources.render_target.take();
-        resources.render_target_view.take();
+        // SAFETY: the context belongs to `active`; unbinding does not retain
+        // either optional view that is dropped immediately below.
+        unsafe { active.devices.device_context.OMSetRenderTargets(None, None) };
+        active.resources.render_target.take();
+        active.resources.render_target_view.take();
 
         // Resizing the swap chain requires a call to the underlying DXGI adapter, which can return the device removed error.
         // The app might have moved to a monitor that's attached to a different graphics device.
         // When a graphics device is removed or reset, the desktop resolution often changes, resulting in a window size change.
         // But here we just return the error, because we are handling device lost scenarios elsewhere.
-        unsafe {
-            resources
-                .swap_chain
-                .ResizeBuffers(
-                    BUFFER_COUNT as u32,
-                    width,
-                    height,
-                    RENDER_TARGET_FORMAT,
-                    DXGI_SWAP_CHAIN_FLAG(0),
-                )
-                .context("Failed to resize swap chain")?;
+        let result = (|| {
+            // SAFETY: `active` exclusively owns the swap chain, all bound
+            // targets were released above, and the dimensions are nonzero.
+            unsafe {
+                active
+                    .resources
+                    .swap_chain
+                    .ResizeBuffers(
+                        BUFFER_COUNT as u32,
+                        width,
+                        height,
+                        RENDER_TARGET_FORMAT,
+                        DXGI_SWAP_CHAIN_FLAG(0),
+                    )
+                    .context("Failed to resize swap chain")?;
+            }
+
+            active
+                .resources
+                .recreate_resources(&active.devices, width, height)?;
+
+            // SAFETY: resource recreation produced this view for the active
+            // device context and both remain alive in `active`.
+            unsafe {
+                active.devices.device_context.OMSetRenderTargets(
+                    Some(slice::from_ref(&active.resources.render_target_view)),
+                    None,
+                );
+            }
+            Ok(())
+        })();
+
+        if let Err(error) = result {
+            self.drawable = false;
+            self.atlas.suspend();
+            return Err(error);
         }
 
-        resources.recreate_resources(devices, width, height)?;
-
-        unsafe {
-            devices
-                .device_context
-                .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
-        }
-
+        self.active = Some(active);
         Ok(())
     }
 
     fn upload_scene_buffers(&mut self, scene: &Scene) -> Result<()> {
-        let devices = self.devices.as_ref().context("devices missing")?;
+        let active = self.active.as_mut().context("renderer is suspended")?;
+        let devices = &active.devices;
 
         if !scene.shadows.is_empty() {
-            self.pipelines.shadow_pipeline.update_buffer(
+            active.pipelines.shadow_pipeline.update_buffer(
                 &devices.device,
                 &devices.device_context,
                 &scene.shadows,
@@ -538,7 +833,7 @@ impl DirectXRenderer {
         }
 
         if !scene.quads.is_empty() {
-            self.pipelines.quad_pipeline.update_buffer(
+            active.pipelines.quad_pipeline.update_buffer(
                 &devices.device,
                 &devices.device_context,
                 &scene.quads,
@@ -546,7 +841,7 @@ impl DirectXRenderer {
         }
 
         if !scene.underlines.is_empty() {
-            self.pipelines.underline_pipeline.update_buffer(
+            active.pipelines.underline_pipeline.update_buffer(
                 &devices.device,
                 &devices.device_context,
                 &scene.underlines,
@@ -554,7 +849,7 @@ impl DirectXRenderer {
         }
 
         if !scene.monochrome_sprites.is_empty() {
-            self.pipelines.mono_sprites.update_buffer(
+            active.pipelines.mono_sprites.update_buffer(
                 &devices.device,
                 &devices.device_context,
                 &scene.monochrome_sprites,
@@ -562,7 +857,7 @@ impl DirectXRenderer {
         }
 
         if !scene.subpixel_sprites.is_empty() {
-            self.pipelines.subpixel_sprites.update_buffer(
+            active.pipelines.subpixel_sprites.update_buffer(
                 &devices.device,
                 &devices.device_context,
                 &scene.subpixel_sprites,
@@ -570,7 +865,7 @@ impl DirectXRenderer {
         }
 
         if !scene.polychrome_sprites.is_empty() {
-            self.pipelines.poly_sprites.update_buffer(
+            active.pipelines.poly_sprites.update_buffer(
                 &devices.device,
                 &devices.device_context,
                 &scene.polychrome_sprites,
@@ -584,10 +879,11 @@ impl DirectXRenderer {
         if len == 0 {
             return Ok(());
         }
-        let devices = self.devices.as_ref().context("devices missing")?;
-        self.pipelines.shadow_pipeline.draw_range(
-            &devices.device_context,
-            self.globals
+        let active = self.active.as_mut().context("renderer is suspended")?;
+        active.pipelines.shadow_pipeline.draw_range(
+            &active.devices.device_context,
+            active
+                .globals
                 .batch_params_buffer
                 .as_ref()
                 .context("batch params buffer missing")?,
@@ -600,10 +896,11 @@ impl DirectXRenderer {
         if len == 0 {
             return Ok(());
         }
-        let devices = self.devices.as_ref().context("devices missing")?;
-        self.pipelines.quad_pipeline.draw_range(
-            &devices.device_context,
-            self.globals
+        let active = self.active.as_mut().context("renderer is suspended")?;
+        active.pipelines.quad_pipeline.draw_range(
+            &active.devices.device_context,
+            active
+                .globals
                 .batch_params_buffer
                 .as_ref()
                 .context("batch params buffer missing")?,
@@ -617,12 +914,16 @@ impl DirectXRenderer {
             return Ok(());
         }
 
-        let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
+        let active = self.active.as_mut().context("renderer is suspended")?;
+        let devices = &active.devices;
+        let resources = &active.resources;
         // Clear intermediate MSAA texture
         unsafe {
             devices.device_context.ClearRenderTargetView(
-                resources.path_intermediate_msaa_view.as_ref().unwrap(),
+                resources
+                    .path_intermediate_msaa_view
+                    .as_ref()
+                    .context("path MSAA render target view missing")?,
                 &[0.0; 4],
             );
             // Set intermediate MSAA texture as render target
@@ -644,13 +945,13 @@ impl DirectXRenderer {
             }));
         }
 
-        self.pipelines.path_rasterization_pipeline.update_buffer(
+        active.pipelines.path_rasterization_pipeline.update_buffer(
             &devices.device,
             &devices.device_context,
             &vertices,
         )?;
 
-        self.pipelines.path_rasterization_pipeline.draw(
+        active.pipelines.path_rasterization_pipeline.draw(
             &devices.device_context,
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
             vertices.len() as u32,
@@ -687,7 +988,10 @@ impl DirectXRenderer {
         // disjoint, so we can copy each path's bounds individually. If this
         // batch combines different draw orders, we perform a single copy
         // for a minimal spanning rect.
-        let sprites = if paths.last().unwrap().order == first_path.order {
+        let sprites = if paths
+            .last()
+            .is_some_and(|path| path.order == first_path.order)
+        {
             paths
                 .iter()
                 .map(|path| PathSprite {
@@ -702,19 +1006,20 @@ impl DirectXRenderer {
             vec![PathSprite { bounds }]
         };
 
-        let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
-        self.pipelines.path_sprite_pipeline.update_buffer(
+        let active = self.active.as_mut().context("renderer is suspended")?;
+        let devices = &active.devices;
+        let resources = &active.resources;
+        active.pipelines.path_sprite_pipeline.update_buffer(
             &devices.device,
             &devices.device_context,
             &sprites,
         )?;
 
         // Draw the sprites with the path texture
-        self.pipelines.path_sprite_pipeline.draw_with_texture(
+        active.pipelines.path_sprite_pipeline.draw_with_texture(
             &devices.device_context,
             slice::from_ref(&resources.path_intermediate_srv),
-            slice::from_ref(&self.globals.sampler),
+            slice::from_ref(&active.globals.sampler),
             sprites.len() as u32,
         )
     }
@@ -723,10 +1028,11 @@ impl DirectXRenderer {
         if len == 0 {
             return Ok(());
         }
-        let devices = self.devices.as_ref().context("devices missing")?;
-        self.pipelines.underline_pipeline.draw_range(
-            &devices.device_context,
-            self.globals
+        let active = self.active.as_mut().context("renderer is suspended")?;
+        active.pipelines.underline_pipeline.draw_range(
+            &active.devices.device_context,
+            active
+                .globals
                 .batch_params_buffer
                 .as_ref()
                 .context("batch params buffer missing")?,
@@ -744,16 +1050,17 @@ impl DirectXRenderer {
         if len == 0 {
             return Ok(());
         }
-        let devices = self.devices.as_ref().context("devices missing")?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
-        self.pipelines.mono_sprites.draw_range_with_texture(
-            &devices.device_context,
+        let texture_view = self.atlas.get_texture_view(texture_id)?;
+        let active = self.active.as_mut().context("renderer is suspended")?;
+        active.pipelines.mono_sprites.draw_range_with_texture(
+            &active.devices.device_context,
             &texture_view,
-            self.globals
+            active
+                .globals
                 .batch_params_buffer
                 .as_ref()
                 .context("batch params buffer missing")?,
-            slice::from_ref(&self.globals.sampler),
+            slice::from_ref(&active.globals.sampler),
             start as u32,
             len as u32,
         )
@@ -768,16 +1075,17 @@ impl DirectXRenderer {
         if len == 0 {
             return Ok(());
         }
-        let devices = self.devices.as_ref().context("devices missing")?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
-        self.pipelines.subpixel_sprites.draw_range_with_texture(
-            &devices.device_context,
+        let texture_view = self.atlas.get_texture_view(texture_id)?;
+        let active = self.active.as_mut().context("renderer is suspended")?;
+        active.pipelines.subpixel_sprites.draw_range_with_texture(
+            &active.devices.device_context,
             &texture_view,
-            self.globals
+            active
+                .globals
                 .batch_params_buffer
                 .as_ref()
                 .context("batch params buffer missing")?,
-            slice::from_ref(&self.globals.sampler),
+            slice::from_ref(&active.globals.sampler),
             start as u32,
             len as u32,
         )
@@ -792,16 +1100,17 @@ impl DirectXRenderer {
         if len == 0 {
             return Ok(());
         }
-        let devices = self.devices.as_ref().context("devices missing")?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
-        self.pipelines.poly_sprites.draw_range_with_texture(
-            &devices.device_context,
+        let texture_view = self.atlas.get_texture_view(texture_id)?;
+        let active = self.active.as_mut().context("renderer is suspended")?;
+        active.pipelines.poly_sprites.draw_range_with_texture(
+            &active.devices.device_context,
             &texture_view,
-            self.globals
+            active
+                .globals
                 .batch_params_buffer
                 .as_ref()
                 .context("batch params buffer missing")?,
-            slice::from_ref(&self.globals.sampler),
+            slice::from_ref(&active.globals.sampler),
             start as u32,
             len as u32,
         )
@@ -815,7 +1124,11 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn gpu_specs(&self) -> Result<GpuSpecs> {
-        let devices = self.devices.as_ref().context("devices missing")?;
+        let devices = &self
+            .active
+            .as_ref()
+            .context("renderer is suspended")?
+            .devices;
         let desc = unsafe { devices.adapter.GetDesc1() }?;
         let is_software_emulated = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0;
         let device_name = String::from_utf16_lossy(&desc.Description)
@@ -860,7 +1173,9 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn mark_drawable(&mut self) {
-        self.skip_draws = false;
+        if self.active.is_some() {
+            self.drawable = true;
+        }
     }
 }
 
@@ -1278,8 +1593,8 @@ struct PathSprite {
 impl Drop for DirectXRenderer {
     fn drop(&mut self) {
         #[cfg(debug_assertions)]
-        if let Some(devices) = &self.devices {
-            report_live_objects(&devices.device).ok();
+        if let Some(active) = &self.active {
+            report_live_objects(&active.devices.device).ok();
         }
     }
 }
@@ -1421,13 +1736,19 @@ fn create_path_intermediate_texture(
             MiscFlags: 0,
         };
         device.CreateTexture2D(&desc, None, Some(&mut output))?;
-        output.unwrap()
+        output.context("CreateTexture2D returned no path intermediate texture")?
     };
 
     let mut shader_resource_view = None;
     unsafe { device.CreateShaderResourceView(&texture, None, Some(&mut shader_resource_view))? };
 
-    Ok((texture, Some(shader_resource_view.unwrap())))
+    Ok((
+        texture,
+        Some(
+            shader_resource_view
+                .context("CreateShaderResourceView returned no path intermediate view")?,
+        ),
+    ))
 }
 
 #[inline]
@@ -1454,11 +1775,14 @@ fn create_path_intermediate_msaa_texture_and_view(
             MiscFlags: 0,
         };
         device.CreateTexture2D(&desc, None, Some(&mut output))?;
-        output.unwrap()
+        output.context("CreateTexture2D returned no path MSAA texture")?
     };
     let mut msaa_view = None;
     unsafe { device.CreateRenderTargetView(&msaa_texture, None, Some(&mut msaa_view))? };
-    Ok((msaa_texture, Some(msaa_view.unwrap())))
+    Ok((
+        msaa_texture,
+        Some(msaa_view.context("CreateRenderTargetView returned no path MSAA view")?),
+    ))
 }
 
 #[inline]
@@ -1478,7 +1802,7 @@ fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceCont
     let rasterizer_state = unsafe {
         let mut state = None;
         device.CreateRasterizerState(&desc, Some(&mut state))?;
-        state.unwrap()
+        state.context("CreateRasterizerState returned no state")?
     };
     unsafe { device_context.RSSetState(&rasterizer_state) };
     Ok(())
@@ -1499,7 +1823,7 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     unsafe {
         let mut state = None;
         device.CreateBlendState(&desc, Some(&mut state))?;
-        Ok(state.unwrap())
+        state.context("CreateBlendState returned no state")
     }
 }
 
@@ -1520,7 +1844,7 @@ fn create_blend_state_for_subpixel_rendering(device: &ID3D11Device) -> Result<ID
     unsafe {
         let mut state = None;
         device.CreateBlendState(&desc, Some(&mut state))?;
-        Ok(state.unwrap())
+        state.context("CreateBlendState for subpixel rendering returned no state")
     }
 }
 
@@ -1540,7 +1864,7 @@ fn create_blend_state_for_path_rasterization(device: &ID3D11Device) -> Result<ID
     unsafe {
         let mut state = None;
         device.CreateBlendState(&desc, Some(&mut state))?;
-        Ok(state.unwrap())
+        state.context("CreateBlendState for path rasterization returned no state")
     }
 }
 
@@ -1560,7 +1884,7 @@ fn create_blend_state_for_path_sprite(device: &ID3D11Device) -> Result<ID3D11Ble
     unsafe {
         let mut state = None;
         device.CreateBlendState(&desc, Some(&mut state))?;
-        Ok(state.unwrap())
+        state.context("CreateBlendState for path sprites returned no state")
     }
 }
 
@@ -1569,7 +1893,7 @@ fn create_vertex_shader(device: &ID3D11Device, bytes: &[u8]) -> Result<ID3D11Ver
     unsafe {
         let mut shader = None;
         device.CreateVertexShader(bytes, None, Some(&mut shader))?;
-        Ok(shader.unwrap())
+        shader.context("CreateVertexShader returned no shader")
     }
 }
 
@@ -1578,7 +1902,7 @@ fn create_fragment_shader(device: &ID3D11Device, bytes: &[u8]) -> Result<ID3D11P
     unsafe {
         let mut shader = None;
         device.CreatePixelShader(bytes, None, Some(&mut shader))?;
-        Ok(shader.unwrap())
+        shader.context("CreatePixelShader returned no shader")
     }
 }
 
@@ -1614,7 +1938,7 @@ fn create_buffer(
     };
     let mut buffer = None;
     unsafe { device.CreateBuffer(&desc, None, Some(&mut buffer)) }?;
-    Ok(buffer.unwrap())
+    buffer.context("CreateBuffer returned no buffer")
 }
 
 #[inline]
