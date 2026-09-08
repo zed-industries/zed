@@ -84,11 +84,11 @@ fig.tight_layout(); fig.savefig(f"{out}/per_element.png"); plt.close(fig)
 
 # 4. Model vs Zed-shaped fixtures
 fig, ax = plt.subplots(figsize=(8,4))
-labels = ["Workbench/full\n(48 rows, 4 panels, editor;\neverything dirty)", "editor_render", "Markdown 10000", "Elements/all dirty/2048", "Siblings/1024"]
+labels = ["Workbench/full\n(48 rows, 4 panels,\neditor; all dirty)", "editor_render", "Markdown\n10000", "Elements/all dirty\n2048", "Siblings\n1024"]
 vals = [100*(D[k][1]-D[k][0])/D[k][0] for k in ["Workbench/full","editor_render","Markdown 10000","Elements/all dirty/2048","Siblings/1024"]]
 ax.bar(labels, vals, color=["#2a9d8f","#999","#e9c46a","#e76f51","#e76f51"])
 ax.axhline(0, color="k", lw=0.8); ax.set_ylabel("% vs main, everything dirty")
 for i,v in enumerate(vals): ax.text(i, v + (0.5 if v>=0 else -1.5), f"{v:+.1f}%", ha="center")
-ax.set_title("The all-dirty tax by shape: ≈0.55 µs × nodes + ≈0.12 µs × elements, minus retention wins")
+ax.set_title("All-dirty tax by shape: ≈0.55 µs × nodes + ≈0.12 µs × elements − retention wins", fontsize=10)
 fig.tight_layout(); fig.savefig(f"{out}/tax_by_shape.png"); plt.close(fig)
 print("ok")
