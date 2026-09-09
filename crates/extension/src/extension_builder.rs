@@ -501,6 +501,23 @@ impl ExtensionBuilder {
             );
         }
 
+        let wasi_sdk_dir = self.cache_dir.join("wasi-sdk");
+
+        match self.update_wasi_sdk_if_needed().await {
+            Ok(clang_path) => Ok(clang_path),
+            Err(error) => {
+                let clang_path = wasi_sdk_clang_path(&wasi_sdk_dir);
+                if fs::metadata(&clang_path).is_ok_and(|metadata| metadata.is_file()) {
+                    log::warn!("failed to update wasi-sdk, using cached installation: {error:#}");
+                    Ok(clang_path)
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
+
+    async fn update_wasi_sdk_if_needed(&self) -> Result<PathBuf> {
         let url = if let Some(platform) = WASI_SDK_PLATFORM {
             let asset_name = format!("wasi-sdk-{WASI_SDK_VERSION}.0-{platform}.tar.gz");
             format!("{WASI_SDK_URL}wasi-sdk-{WASI_SDK_VERSION}/{asset_name}")
