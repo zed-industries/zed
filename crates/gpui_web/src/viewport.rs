@@ -8,45 +8,43 @@ use gpui::{Bounds, Edges, Pixels, WindowInsets, point, px, size};
 use wasm_bindgen::JsCast;
 
 pub(crate) struct WebViewport {
-    safe_area_probe: web_sys::HtmlElement,
+    safe_area_probes: [web_sys::HtmlElement; 4],
     pub(crate) visible_bounds: Bounds<Pixels>,
     pub(crate) insets: WindowInsets,
 }
 
 impl WebViewport {
     pub(crate) fn new(document: &web_sys::Document) -> anyhow::Result<Self> {
-        let probe = document
-            .create_element("div")
-            .map_err(|error| anyhow::anyhow!("Failed to create safe-area probe: {error:?}"))?
-            .dyn_into::<web_sys::HtmlElement>()
-            .map_err(|error| anyhow::anyhow!("Invalid safe-area probe element: {error:?}"))?;
-        probe
-            .set_attribute(
-                "style",
-                "position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;\
-                 pointer-events:none;padding-top:env(safe-area-inset-top,0px);\
-                 padding-right:env(safe-area-inset-right,0px);\
-                 padding-bottom:env(safe-area-inset-bottom,0px);\
-                 padding-left:env(safe-area-inset-left,0px)",
-            )
-            .map_err(|error| anyhow::anyhow!("Failed to style safe-area probe: {error:?}"))?;
-        document
-            .body()
-            .ok_or_else(|| anyhow::anyhow!("Missing document body"))?
-            .append_child(&probe)
-            .map_err(|error| anyhow::anyhow!("Failed to attach safe-area probe: {error:?}"))?;
-        Ok(Self {
-            safe_area_probe: probe,
+        let [top, right, bottom, left] =
+            ["top", "right", "bottom", "left"].map(|edge| safe_area_probe(document, edge));
+        let viewport = Self {
+            safe_area_probes: [top?, right?, bottom?, left?],
             visible_bounds: Bounds::default(),
             insets: WindowInsets::default(),
-        })
+        };
+        let body = document
+            .body()
+            .ok_or_else(|| anyhow::anyhow!("Missing document body"))?;
+        for probe in &viewport.safe_area_probes {
+            body.append_child(probe)
+                .map_err(|error| anyhow::anyhow!("Failed to attach safe-area probe: {error:?}"))?;
+        }
+        Ok(viewport)
+    }
+
+    pub(crate) fn observe_safe_area(&self, observer: &web_sys::ResizeObserver) {
+        // Separate boxes detect redistribution between edges even when the
+        // total inset, and therefore a single combined probe's size, is unchanged.
+        for probe in &self.safe_area_probes {
+            observer.observe(probe);
+        }
     }
 
     pub(crate) fn update(
         &mut self,
         window: &web_sys::Window,
         canvas: &web_sys::HtmlCanvasElement,
-    ) -> anyhow::Result<(bool, bool)> {
+    ) -> anyhow::Result<bool> {
         let canvas_bounds = canvas.get_bounding_client_rect();
         let document = window
             .document()
@@ -77,32 +75,21 @@ impl WebViewport {
             size(px((right - x) as f32), px((bottom - y) as f32)),
         );
 
-        let style = window
-            .get_computed_style(&self.safe_area_probe)
-            .map_err(|error| anyhow::anyhow!("Failed to measure safe area: {error:?}"))?
-            .ok_or_else(|| anyhow::anyhow!("Missing safe-area style"))?;
-        let padding = |property| -> anyhow::Result<f64> {
-            let value = style
-                .get_property_value(property)
-                .map_err(|error| anyhow::anyhow!("Failed to read {property}: {error:?}"))?;
-            Ok(value.trim_end_matches("px").parse::<f64>()?)
-        };
+        let [top, right, bottom, left] = self
+            .safe_area_probes
+            .each_ref()
+            .map(|probe| probe.get_bounding_client_rect().height());
         let safe_area = Edges {
-            top: px((padding("padding-top")? - canvas_bounds.top()).max(0.) as f32),
-            right: px(
-                (canvas_bounds.right() - layout_width + padding("padding-right")?).max(0.) as f32,
-            ),
-            bottom: px(
-                (canvas_bounds.bottom() - layout_height + padding("padding-bottom")?).max(0.)
-                    as f32,
-            ),
-            left: px((padding("padding-left")? - canvas_bounds.left()).max(0.) as f32),
+            top: px((top - canvas_bounds.top()).max(0.) as f32),
+            right: px((canvas_bounds.right() - layout_width + right).max(0.) as f32),
+            bottom: px((canvas_bounds.bottom() - layout_height + bottom).max(0.) as f32),
+            left: px((left - canvas_bounds.left()).max(0.) as f32),
         };
         let insets = WindowInsets {
             safe_area,
             ..WindowInsets::default()
         };
-        let changed = (self.visible_bounds != visible_bounds, self.insets != insets);
+        let changed = self.visible_bounds != visible_bounds || self.insets != insets;
         self.visible_bounds = visible_bounds;
         self.insets = insets;
         Ok(changed)
@@ -111,6 +98,29 @@ impl WebViewport {
 
 impl Drop for WebViewport {
     fn drop(&mut self) {
-        self.safe_area_probe.remove();
+        for probe in &self.safe_area_probes {
+            probe.remove();
+        }
     }
+}
+
+fn safe_area_probe(
+    document: &web_sys::Document,
+    edge: &str,
+) -> anyhow::Result<web_sys::HtmlElement> {
+    let probe = document
+        .create_element("div")
+        .map_err(|error| anyhow::anyhow!("Failed to create safe-area probe: {error:?}"))?
+        .dyn_into::<web_sys::HtmlElement>()
+        .map_err(|error| anyhow::anyhow!("Invalid safe-area probe element: {error:?}"))?;
+    probe
+        .set_attribute(
+            "style",
+            &format!(
+                "position:fixed;left:0;top:0;width:0;padding:0;border:0;visibility:hidden;\
+                 pointer-events:none;height:env(safe-area-inset-{edge},0px)"
+            ),
+        )
+        .map_err(|error| anyhow::anyhow!("Failed to style safe-area probe: {error:?}"))?;
+    Ok(probe)
 }

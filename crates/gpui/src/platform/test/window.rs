@@ -37,7 +37,6 @@ pub(crate) struct TestWindowState {
     hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     visual_viewport: Option<Bounds<Pixels>>,
-    staged_visual_viewport: Option<Bounds<Pixels>>,
     visual_viewport_callback: Option<Box<dyn FnMut()>>,
     insets: WindowInsets,
     insets_callback: Option<Box<dyn FnMut(WindowInsets)>>,
@@ -109,7 +108,6 @@ impl TestWindow {
             hover_status_change_callback: None,
             resize_callback: None,
             visual_viewport: None,
-            staged_visual_viewport: None,
             visual_viewport_callback: None,
             insets: WindowInsets::default(),
             insets_callback: None,
@@ -153,11 +151,6 @@ impl TestWindow {
 
     pub fn frame_scheduled(&self) -> bool {
         self.0.lock().frame_scheduled
-    }
-
-    #[cfg(test)]
-    pub(crate) fn stage_visual_viewport(&self, bounds: Bounds<Pixels>) {
-        self.0.lock().staged_visual_viewport = Some(bounds);
     }
 
     pub fn simulate_visual_viewport_change(&self, bounds: Bounds<Pixels>) {
@@ -283,18 +276,6 @@ impl TestWindow {
 }
 
 impl PlatformWindow for TestWindow {
-    fn prepare_frame(&self) -> bool {
-        let mut state = self.0.lock();
-        let Some(bounds) = state.staged_visual_viewport.take() else {
-            return false;
-        };
-        let previous = state
-            .visual_viewport
-            .unwrap_or_else(|| Bounds::new(Point::default(), state.bounds.size));
-        state.visual_viewport = Some(bounds);
-        bounds != previous
-    }
-
     fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
         let state = self.0.lock();
         state

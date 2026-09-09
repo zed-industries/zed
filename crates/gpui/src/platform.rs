@@ -826,7 +826,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
         Bounds::new(Point::default(), self.content_size())
     }
-    /// Registers a callback after cached visual viewport metrics change.
+    /// Registers a callback when visible geometry may have changed.
+    ///
+    /// This requests a frame; backends can sample the new viewport and safe-area
+    /// geometry in `prepare_frame` rather than updating it inside the callback.
     fn on_visual_viewport_changed(&self, _callback: Box<dyn FnMut()>) {}
     /// Samples platform geometry before a draw, returning whether view caches must be invalidated.
     ///

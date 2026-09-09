@@ -172,8 +172,27 @@ impl WebWindowInner {
         handles.extend(self.register_visibility_change());
         handles.extend(self.register_appearance_change());
         handles.extend(self.register_fullscreen_change());
+        handles.extend(self.register_viewport_changes());
 
         WebEventListeners { _handles: handles }
+    }
+
+    fn register_viewport_changes(self: &Rc<Self>) -> Vec<EventListenerHandle> {
+        let mut targets: Vec<web_sys::EventTarget> = vec![self.browser_window.clone().into()];
+        if let Some(viewport) = self.browser_window.visual_viewport() {
+            targets.push(viewport.into());
+        }
+        targets
+            .into_iter()
+            .flat_map(|target| {
+                ["resize", "scroll"].map(|event_name| {
+                    let this = Rc::clone(self);
+                    EventListenerHandle::add(&target, event_name, move |_| {
+                        this.notify_viewport_changed()
+                    })
+                })
+            })
+            .collect()
     }
 
     fn listen(
