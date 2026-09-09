@@ -5190,6 +5190,56 @@ async fn test_newline_below_with_cursor_on_deleted_hunk(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn test_expand_excerpts_with_cursor_on_deleted_hunk(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("zero\none\ntwo\nthree\nfour\nfiveˇ");
+    let buffer = cx.multibuffer(|multi_buffer, _| multi_buffer.as_singleton().unwrap());
+    cx.update_multibuffer(|multi_buffer, cx| {
+        let path_key = PathKey::for_buffer(&buffer, cx);
+        multi_buffer.set_excerpts_for_path(
+            path_key,
+            buffer,
+            [Point::new(1, 0)..Point::new(4, 4)],
+            0,
+            cx,
+        );
+    });
+    cx.set_head_text("zero\none\ntwo\ndeleted\nthree\nfour\nfive");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_all_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            let cursor = DisplayPoint::new(DisplayRow(2), 0);
+            selections.select_display_ranges([cursor..cursor]);
+        });
+    });
+
+    assert_eq!(cx.buffer_text(), "one\ntwo\ndeleted\nthree\nfour");
+    assert!(cx.update_editor(|editor, _, _| {
+        editor
+            .selections
+            .newest_anchor()
+            .head()
+            .diff_base_anchor()
+            .is_some()
+    }));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_excerpts(&ExpandExcerpts { lines: 1 }, window, cx);
+    });
+
+    assert_eq!(
+        cx.buffer_text(),
+        "zero\none\ntwo\ndeleted\nthree\nfour\nfive"
+    );
+}
+
+#[gpui::test]
 fn test_newline_below_multibuffer(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
