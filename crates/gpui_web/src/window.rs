@@ -86,6 +86,8 @@ pub(crate) struct WebWindowInner {
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
     raf_id: Cell<Option<i32>>,
+    /// GPUI frame demand, independent of the browser's geometry sampling loop.
+    frame_requested: Cell<bool>,
     raf_function: RefCell<Option<js_sys::Function>>,
 }
 
@@ -97,8 +99,6 @@ pub struct WebWindow {
     _raf_closure: Closure<dyn FnMut()>,
     _resize_observer: Option<web_sys::ResizeObserver>,
     _resize_observer_closure: Closure<dyn FnMut(js_sys::Array)>,
-    _safe_area_observer: Option<web_sys::ResizeObserver>,
-    _safe_area_observer_closure: Closure<dyn FnMut(js_sys::Array)>,
     _event_listeners: WebEventListeners,
 }
 
@@ -225,6 +225,7 @@ impl WebWindow {
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
             raf_id: Cell::new(None),
+            frame_requested: Cell::new(false),
             raf_function: RefCell::new(None),
         });
 
@@ -241,26 +242,6 @@ impl WebWindow {
         }
 
         let event_listeners = inner.register_event_listeners();
-        let safe_area_observer_closure = Closure::wrap(Box::new({
-            let inner = Rc::clone(&inner);
-            move |_: js_sys::Array| inner.update_viewport()
-        }) as Box<dyn FnMut(js_sys::Array)>);
-        let safe_area_observer =
-            match web_sys::ResizeObserver::new(safe_area_observer_closure.as_ref().unchecked_ref())
-            {
-                Ok(observer) => Some(observer),
-                Err(error) => {
-                    log::warn!("Failed to observe safe area: {error:?}");
-                    None
-                }
-            };
-        // Safe-area environment values can change without a viewport resize.
-        // The probe's padding makes those changes observable as box geometry.
-        let options = web_sys::ResizeObserverOptions::new();
-        options.set_box(web_sys::ResizeObserverBoxOptions::BorderBox);
-        if let Some(observer) = &safe_area_observer {
-            observer.observe_with_options(&inner.viewport.borrow().safe_area_probe, &options);
-        }
 
         Ok(Self {
             inner,
@@ -271,8 +252,6 @@ impl WebWindow {
             _resize_observer: resize_observer,
             _resize_observer_closure: resize_observer_closure,
             _event_listeners: event_listeners,
-            _safe_area_observer: safe_area_observer,
-            _safe_area_observer_closure: safe_area_observer_closure,
         })
     }
 
@@ -332,7 +311,6 @@ impl WebWindow {
                     |callbacks| &mut callbacks.resize,
                     |callback| callback(Size::default(), dpr_f32),
                 );
-                inner.update_viewport();
                 return;
             }
 
@@ -376,7 +354,6 @@ impl WebWindow {
                 |callbacks| &mut callbacks.resize,
                 |callback| callback(new_size, dpr_f32),
             );
-            inner.update_viewport();
 
             // ResizeObserver runs after layout but before the browser paints.
             // Render synchronously here so the newly resized CSS canvas is
@@ -396,21 +373,22 @@ impl WebWindow {
 }
 
 impl WebWindowInner {
-    pub(crate) fn update_viewport(&self) {
-        let (bounds_changed, insets_changed, insets) = {
-            let mut viewport = self.viewport.borrow_mut();
-            let old_bounds = viewport.visible_bounds;
-            let old_insets = viewport.insets.clone();
-            if let Err(error) = viewport.update(&self.browser_window, &self.canvas) {
+    fn sample_viewport(&self) -> (bool, bool) {
+        match self
+            .viewport
+            .borrow_mut()
+            .update(&self.browser_window, &self.canvas)
+        {
+            Ok(changed) => changed,
+            Err(error) => {
                 log::warn!("Failed to update browser viewport: {error:#}");
-                return;
+                (false, false)
             }
-            (
-                old_bounds != viewport.visible_bounds,
-                old_insets != viewport.insets,
-                viewport.insets.clone(),
-            )
-        };
+        }
+    }
+
+    fn update_viewport(&self) {
+        let (bounds_changed, insets_changed) = self.sample_viewport();
         if bounds_changed {
             self.with_callback(
                 |callbacks| &mut callbacks.visual_viewport_changed,
@@ -418,6 +396,7 @@ impl WebWindowInner {
             );
         }
         if insets_changed {
+            let insets = self.viewport.borrow().insets.clone();
             self.with_callback(
                 |callbacks| &mut callbacks.insets_changed,
                 |callback| callback(insets),
@@ -451,15 +430,22 @@ impl WebWindowInner {
             // (e.g. views invalidated during draw) schedule the next request
             // instead of being swallowed.
             this.raf_id.set(None);
-            this.with_callback(
-                |callbacks| &mut callbacks.request_frame,
-                |callback| {
-                    callback(RequestFrameOptions {
-                        require_presentation: false,
-                        force_render: false,
-                    })
-                },
-            );
+            this.update_viewport();
+            if this.frame_requested.replace(false) {
+                this.with_callback(
+                    |callbacks| &mut callbacks.request_frame,
+                    |callback| {
+                        callback(RequestFrameOptions {
+                            require_presentation: false,
+                            force_render: false,
+                        })
+                    },
+                );
+            }
+            // Position-only CSS changes and safe-area redistribution need not
+            // emit resize/scroll events. Check every browser frame, but only
+            // ask GPUI for a frame when geometry changed or it requested work.
+            this.schedule_animation_frame();
         });
 
         let js_func: js_sys::Function =
@@ -470,6 +456,11 @@ impl WebWindowInner {
     }
 
     pub(crate) fn wake_frame_loop(&self) {
+        self.frame_requested.set(true);
+        self.schedule_animation_frame();
+    }
+
+    fn schedule_animation_frame(&self) {
         if self.raf_id.get().is_some() {
             return;
         }
@@ -616,9 +607,6 @@ impl Drop for WebWindow {
         // freed closure; without a stored function, `wake_frame_loop` no-ops.
         self.inner.raf_function.borrow_mut().take();
         if let Some(ref observer) = self._resize_observer {
-            observer.disconnect();
-        }
-        if let Some(observer) = &self._safe_area_observer {
             observer.disconnect();
         }
 
@@ -802,6 +790,11 @@ impl PlatformWindow for WebWindow {
 
     fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
         self.inner.viewport.borrow().visible_bounds
+    }
+
+    fn prepare_frame(&self) -> bool {
+        let (bounds_changed, insets_changed) = self.inner.sample_viewport();
+        bounds_changed || insets_changed
     }
 
     fn on_visual_viewport_changed(&self, callback: Box<dyn FnMut()>) {

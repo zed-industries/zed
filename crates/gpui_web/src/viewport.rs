@@ -1,6 +1,6 @@
-//! Cached browser viewport and safe-area geometry in canvas coordinates.
+//! Browser viewport and safe-area frame snapshots in canvas coordinates.
 //!
-//! Browser geometry is measured on viewport changes, not during rendering.
+//! Browser geometry is sampled before rendering, never by geometry getters.
 //! Safe-area padding is resolved by CSS so display cutouts use the browser's
 //! own environment values rather than device-specific assumptions.
 
@@ -8,7 +8,7 @@ use gpui::{Bounds, Edges, Pixels, WindowInsets, point, px, size};
 use wasm_bindgen::JsCast;
 
 pub(crate) struct WebViewport {
-    pub(crate) safe_area_probe: web_sys::HtmlElement,
+    safe_area_probe: web_sys::HtmlElement,
     pub(crate) visible_bounds: Bounds<Pixels>,
     pub(crate) insets: WindowInsets,
 }
@@ -46,7 +46,7 @@ impl WebViewport {
         &mut self,
         window: &web_sys::Window,
         canvas: &web_sys::HtmlCanvasElement,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<(bool, bool)> {
         let canvas_bounds = canvas.get_bounding_client_rect();
         let document = window
             .document()
@@ -72,7 +72,7 @@ impl WebViewport {
         let y = (top - canvas_bounds.top()).clamp(0., canvas_bounds.height());
         let right = (left + width - canvas_bounds.left()).clamp(x, canvas_bounds.width());
         let bottom = (top + height - canvas_bounds.top()).clamp(y, canvas_bounds.height());
-        self.visible_bounds = Bounds::new(
+        let visible_bounds = Bounds::new(
             point(px(x as f32), px(y as f32)),
             size(px((right - x) as f32), px((bottom - y) as f32)),
         );
@@ -87,7 +87,7 @@ impl WebViewport {
                 .map_err(|error| anyhow::anyhow!("Failed to read {property}: {error:?}"))?;
             Ok(value.trim_end_matches("px").parse::<f64>()?)
         };
-        self.insets.safe_area = Edges {
+        let safe_area = Edges {
             top: px((padding("padding-top")? - canvas_bounds.top()).max(0.) as f32),
             right: px(
                 (canvas_bounds.right() - layout_width + padding("padding-right")?).max(0.) as f32,
@@ -98,7 +98,14 @@ impl WebViewport {
             ),
             left: px((padding("padding-left")? - canvas_bounds.left()).max(0.) as f32),
         };
-        Ok(())
+        let insets = WindowInsets {
+            safe_area,
+            ..WindowInsets::default()
+        };
+        let changed = (self.visible_bounds != visible_bounds, self.insets != insets);
+        self.visible_bounds = visible_bounds;
+        self.insets = insets;
+        Ok(changed)
     }
 }
 

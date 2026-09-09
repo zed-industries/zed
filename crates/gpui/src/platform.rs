@@ -822,12 +822,19 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     ///
     /// This may be smaller or offset when a keyboard or zoom obscures content;
     /// it must not change the full layout size returned by `content_size`.
-    /// Implementations should return cached metrics, not query platform layout here.
+    /// Implementations should return a frame snapshot, not query platform layout here.
     fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
         Bounds::new(Point::default(), self.content_size())
     }
     /// Registers a callback after cached visual viewport metrics change.
     fn on_visual_viewport_changed(&self, _callback: Box<dyn FnMut()>) {}
+    /// Samples platform geometry before a draw, returning whether view caches must be invalidated.
+    ///
+    /// Geometry getters must remain consistent throughout the ensuing draw.
+    /// Do not invoke callbacks here: GPUI is already updating this window.
+    fn prepare_frame(&self) -> bool {
+        false
+    }
     fn resize(&mut self, size: Size<Pixels>);
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
