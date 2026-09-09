@@ -1,8 +1,8 @@
-//! Discovery of installed shells for the terminal profile picker (P2).
+//! Discovery of installed shells for the terminal profile picker.
 //!
 //! The public entry point is [`detect_available_shells`], a cached list of
-//! shells found on the local machine. It backs the P3 "+"-menu "Detected
-//! shells" section and the P2 profile validator.
+//! shells found on the local machine. It backs the "+"-menu "Detected
+//! shells" section and the profile validator.
 //!
 //! The heavy lifting is done by [`detect_available_shells_inner`], a pure
 //! function that takes injectable inputs (file contents, env, and a
@@ -15,10 +15,10 @@ use std::sync::LazyLock;
 
 use collections::HashSet;
 
-use crate::shell::{get_windows_bash, get_windows_system_shell};
 use crate::get_system_shell;
+use crate::shell::{get_windows_bash, get_windows_system_shell};
 
-/// Where a [`DetectedShell`] came from. P3 uses this to group menu entries
+/// Where a [`DetectedShell`] came from. The menu uses this to group entries
 /// (e.g. configured vs `/etc/shells` vs PATH-resolved).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellSource {
@@ -36,7 +36,7 @@ pub enum ShellSource {
     Wsl,
 }
 
-/// A shell discovered on the local machine. P3 renders one menu entry per
+/// A shell discovered on the local machine. The menu renders one entry per
 /// `DetectedShell` that isn't shadowed by a configured profile.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetectedShell {
@@ -72,7 +72,8 @@ impl Platform {
     }
 }
 
-static DETECTED_SHELLS: LazyLock<Vec<DetectedShell>> = LazyLock::new(detect_available_shells_blocking);
+static DETECTED_SHELLS: LazyLock<Vec<DetectedShell>> =
+    LazyLock::new(detect_available_shells_blocking);
 
 /// Cached enumeration of installed shells on the local machine.
 ///
@@ -153,15 +154,8 @@ pub fn detect_available_shells_inner(
     path_exists: &dyn Fn(&Path) -> bool,
 ) -> Vec<DetectedShell> {
     match platform {
-        Platform::Unix => detect_unix_inner(
-            etc_shells_content,
-            login_shell,
-            path_env,
-            path_exists,
-        ),
-        Platform::Windows => {
-            detect_windows_inner(login_shell, path_env, windir, path_exists)
-        }
+        Platform::Unix => detect_unix_inner(etc_shells_content, login_shell, path_env, path_exists),
+        Platform::Windows => detect_windows_inner(login_shell, path_env, windir, path_exists),
     }
 }
 
@@ -205,10 +199,20 @@ fn detect_unix_inner(
     // of well-known absolute locations. This matches VSCode's behavior on
     // systems without /etc/shells (some containers, macOS variants).
     let probed_fallback = etc_shells_content
-        .map(|c| c.lines().any(|l| !l.trim().is_empty() && !l.trim().starts_with('#')))
+        .map(|c| {
+            c.lines()
+                .any(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
+        })
         .unwrap_or(false);
     if !probed_fallback {
-        for known in ["/bin/bash", "/usr/bin/bash", "/bin/zsh", "/usr/bin/zsh", "/bin/sh", "/usr/bin/fish"] {
+        for known in [
+            "/bin/bash",
+            "/usr/bin/bash",
+            "/bin/zsh",
+            "/usr/bin/zsh",
+            "/bin/sh",
+            "/usr/bin/fish",
+        ] {
             let path = PathBuf::from(known);
             if path_exists(&path) && seen_paths.insert(path.clone()) {
                 shells.push(DetectedShell {
@@ -337,24 +341,24 @@ fn detect_windows_inner(
 /// Enumerate WSL distros via `wsl.exe -l -q`, returning one entry per
 /// non-`docker-desktop*` distro on Windows builds >= 19041.
 ///
-/// **Currently a stub.** Implementation deferred within P2 because:
+/// **Currently a stub.** Deferred because:
 /// 1. WSL probing requires spawning `wsl.exe`, which can't be exercised
 ///    from unit tests on non-Windows hosts.
 /// 2. The output is UTF-16LE with a BOM and embedded NULs, requiring
 ///    careful decoding.
-/// 3. The plan explicitly marks WSL optional within P2.
 ///
-/// The [`ShellSource::Wsl`] variant is in place so P3 can render WSL
+/// The [`ShellSource::Wsl`] variant is in place so the menu can render WSL
 /// entries without further schema changes once this is filled in.
 #[cfg(target_os = "windows")]
 fn enumerate_wsl_distros() -> Vec<DetectedShell> {
-    // TODO(p2-terminal-profiles): implement WSL distro enumeration.
-    //                       Use `windows::Wdk::System::SystemServices::RtlGetVersion`
-    //                       for the build-number >= 19041 gate (see
-    //                       `crates/platform_title_bar/src/platforms/platform_windows.rs`
-    //                       for the precedent). Decode the `wsl.exe -l -q`
-    //                       output as UTF-16LE, strip the BOM, filter out
-    //                       distros whose name starts with `docker-desktop`.
+    // TODO: implement WSL distro enumeration.
+    //                       Decode the `wsl.exe -l -q` output as UTF-8 when
+    //                       `WSL_UTF8=1` is set, otherwise UTF-16LE with a
+    //                       BOM; filter out distros whose name starts with
+    //                       `docker-desktop`; treat an error or empty
+    //                       output as "no distros" (WSL2 and `wsl --list`
+    //                       work from 1903 build 18362.1049, so don't gate
+    //                       on the Windows build number).
     //                       Emit:
     //                       DetectedShell {
     //                           label: <distro>,
@@ -435,7 +439,8 @@ mod tests {
     /// `/etc/shells` parser: strips comments and blanks, drops nonexistent
     /// absolute entries, keeps duplicates separate (dedup happens later).
     #[test]
-    fn etc_shells_strips_comments_and_blanks() {        let content = "# This is a comment\n\n/bin/bash\n  /bin/zsh  \n# trailing comment\n";
+    fn etc_shells_strips_comments_and_blanks() {
+        let content = "# This is a comment\n\n/bin/bash\n  /bin/zsh  \n# trailing comment\n";
         let shells = detect_unix_inner(Some(content), "", Some("/bin"), &always_exists);
         let labels: Vec<&str> = shells.iter().map(|s| s.label.as_str()).collect();
         assert_eq!(labels, vec!["bash", "zsh"]);
@@ -518,9 +523,11 @@ mod tests {
         assert!(labels.contains(&"bash"));
         assert!(labels.contains(&"zsh"));
         assert!(labels.contains(&"sh"));
-        assert!(shells
-            .iter()
-            .all(|s| s.source == ShellSource::KnownLocation));
+        assert!(
+            shells
+                .iter()
+                .all(|s| s.source == ShellSource::KnownLocation)
+        );
     }
 
     #[test]
@@ -579,8 +586,8 @@ mod tests {
     /// injectable `path_exists`, in a stable order.
     #[test]
     fn windows_probes_emit_login_shell_when_windir_unset() {
-        // Pre-fix #3 contract still holds: when windir is None, no
-        // PowerShell/cmd entries, but the login shell still appears.
+        // When windir is None, no PowerShell/cmd entries are emitted, but
+        // the login shell still appears.
         let exists = always_exists;
         let shells = detect_windows_inner(
             "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
@@ -595,7 +602,7 @@ mod tests {
 
     #[test]
     fn windows_emits_powershell_and_cmd_when_windir_set() {
-        // Fix #3 lock: with an injected windir, both Windows PowerShell and
+        // With an injected windir, both Windows PowerShell and
         // cmd.exe should be emitted in stable order (login shell, then
         // PowerShell, then cmd), each with its well-known label.
         // Build expected paths via the same join semantics the production
@@ -615,12 +622,8 @@ mod tests {
             cmd.to_str().expect("utf8"),
         ];
         let exists = exists_set(&paths);
-        let shells = detect_windows_inner(
-            pwsh.to_str().expect("utf8"),
-            None,
-            Some(windir),
-            &exists,
-        );
+        let shells =
+            detect_windows_inner(pwsh.to_str().expect("utf8"), None, Some(windir), &exists);
         assert_eq!(
             shells.len(),
             3,
@@ -645,24 +648,15 @@ mod tests {
         let windir = Path::new("C:\\Windows");
         let pwsh = Path::new("C:\\pwsh.exe");
         let cmd = windir.join("System32").join("cmd.exe");
-        let paths = [
-            pwsh.to_str().expect("utf8"),
-            cmd.to_str().expect("utf8"),
-        ];
+        let paths = [pwsh.to_str().expect("utf8"), cmd.to_str().expect("utf8")];
         let exists = exists_set(&paths);
-        let shells = detect_windows_inner(
-            pwsh.to_str().expect("utf8"),
-            None,
-            Some(windir),
-            &exists,
-        );
+        let shells =
+            detect_windows_inner(pwsh.to_str().expect("utf8"), None, Some(windir), &exists);
         assert_eq!(shells.len(), 2);
         assert_eq!(shells[0].program.as_os_str(), pwsh.as_os_str());
         assert_eq!(shells[1].label, "Command Prompt");
         assert!(
-            !shells
-                .iter()
-                .any(|s| s.label == "PowerShell"),
+            !shells.iter().any(|s| s.label == "PowerShell"),
             "PowerShell should be skipped when its file is missing"
         );
     }
