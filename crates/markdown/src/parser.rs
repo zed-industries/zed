@@ -20,7 +20,8 @@ pub const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_OLD_FOOTNOTES)
     .union(Options::ENABLE_GFM)
     .union(Options::ENABLE_SUPERSCRIPT)
-    .union(Options::ENABLE_SUBSCRIPT);
+    .union(Options::ENABLE_SUBSCRIPT)
+    .union(Options::ENABLE_MATH);
 
 #[derive(Default)]
 struct ParseState {
@@ -232,6 +233,238 @@ fn is_br_tag(html: &str) -> bool {
         .is_some_and(|name| name.eq_ignore_ascii_case("br"))
 }
 
+/// Math is inline to pulldown-cmark, so a block-level line inside a `$$` span
+/// ends the paragraph and drops the formula. Rewrites are byte-for-byte, which
+/// keeps the ranges pulldown-cmark reports valid against the original source.
+fn normalize_math_for_parsing(text: &str) -> Option<String> {
+    if !text.contains('$') {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    let mut flattened: Option<Vec<u8>> = None;
+    let mut open_fence: Option<(u8, usize)> = None;
+    let mut padding_swaps = Vec::new();
+    let mut line_start = 0;
+    while line_start < bytes.len() {
+        let line_end = line_end_at(bytes, line_start);
+        let indent = indent_width(&bytes[line_start..line_end]);
+        let line = &bytes[line_start + indent..line_end];
+        // Four spaces in is an indented code block.
+        let is_block_start = indent <= 3;
+
+        if let Some((fence_char, fence_len)) = open_fence {
+            if is_block_start && closes_fence(line, fence_char, fence_len) {
+                open_fence = None;
+            }
+        } else if is_block_start && let Some(fence) = opening_fence(line) {
+            open_fence = Some(fence);
+        } else if is_block_start && line.starts_with(b"$$") {
+            if let Some(close_end) = find_display_math_close(bytes, line_start + indent + 2) {
+                let span = line_start + indent..close_end;
+                if bytes[span.clone()].contains(&b'\n')
+                    && !contains_unescaped_percent(&bytes[span.clone()])
+                {
+                    let target = flattened.get_or_insert_with(|| bytes.to_vec());
+                    for byte in &mut target[span] {
+                        if *byte == b'\n' || *byte == b'\r' {
+                            *byte = b' ';
+                        }
+                    }
+                }
+                line_start = line_end_at(bytes, close_end) + 1;
+                continue;
+            }
+            inline_math_padding_swaps(bytes, line_start..line_end, &mut padding_swaps);
+        } else {
+            inline_math_padding_swaps(bytes, line_start..line_end, &mut padding_swaps);
+        }
+        line_start = line_end + 1;
+    }
+
+    if !padding_swaps.is_empty() {
+        let target = flattened.get_or_insert_with(|| bytes.to_vec());
+        for pair_start in padding_swaps {
+            target.swap(pair_start, pair_start + 1);
+        }
+    }
+
+    let flattened = flattened?;
+    match String::from_utf8(flattened) {
+        Ok(flattened) => Some(flattened),
+        Err(error) => {
+            // Unreachable: only ASCII was rewritten, and only into ASCII.
+            log::error!("markdown: display math flattening broke UTF-8: {error}");
+            None
+        }
+    }
+}
+
+fn line_end_at(bytes: &[u8], from: usize) -> usize {
+    bytes[from..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map_or(bytes.len(), |index| from + index)
+}
+
+fn indent_width(line: &[u8]) -> usize {
+    line.iter().take_while(|byte| **byte == b' ').count()
+}
+
+fn opening_fence(line: &[u8]) -> Option<(u8, usize)> {
+    let fence_char = *line.first()?;
+    if fence_char != b'`' && fence_char != b'~' {
+        return None;
+    }
+    let fence_len = line.iter().take_while(|byte| **byte == fence_char).count();
+    if fence_len < 3 {
+        return None;
+    }
+    // A backtick info string may not itself contain a backtick.
+    if fence_char == b'`' && line[fence_len..].contains(&b'`') {
+        return None;
+    }
+    Some((fence_char, fence_len))
+}
+
+fn closes_fence(line: &[u8], fence_char: u8, fence_len: usize) -> bool {
+    let run = line.iter().take_while(|byte| **byte == fence_char).count();
+    run >= fence_len && line[run..].iter().all(u8::is_ascii_whitespace)
+}
+
+/// Bails on an intervening code fence, so a fenced `$$` cannot close a span.
+fn find_display_math_close(bytes: &[u8], search_start: usize) -> Option<usize> {
+    let mut line_start = search_start;
+    let mut cursor = search_start;
+    loop {
+        let line_end = line_end_at(bytes, line_start);
+        if line_start > search_start {
+            let indent = indent_width(&bytes[line_start..line_end]);
+            if indent <= 3 && opening_fence(&bytes[line_start + indent..line_end]).is_some() {
+                return None;
+            }
+        }
+        while cursor + 1 < line_end {
+            if bytes[cursor] == b'$' && bytes[cursor + 1] == b'$' && !is_escaped(bytes, cursor) {
+                return Some(cursor + 2);
+            }
+            cursor += 1;
+        }
+        if line_end >= bytes.len() {
+            return None;
+        }
+        line_start = line_end + 1;
+        cursor = line_start;
+    }
+}
+
+/// A LaTeX comment runs to end of line, so joining lines would comment out the
+/// rest of the formula.
+fn contains_unescaped_percent(span: &[u8]) -> bool {
+    span.iter()
+        .enumerate()
+        .any(|(index, byte)| *byte == b'%' && !is_escaped(span, index))
+}
+
+/// LaTeX's `\\` row separator leaves an even count, so it escapes nothing.
+fn is_escaped(bytes: &[u8], index: usize) -> bool {
+    let mut backslashes = 0;
+    let mut cursor = index;
+    while cursor > 0 && bytes[cursor - 1] == b'\\' {
+        backslashes += 1;
+        cursor -= 1;
+    }
+    backslashes % 2 == 1
+}
+
+/// pulldown-cmark rejects padded inline math, so `$ \geq 0$` rendered as text.
+/// Moving the padding outside the delimiters is byte-for-byte.
+fn inline_math_padding_swaps(bytes: &[u8], line: Range<usize>, swaps: &mut Vec<usize>) {
+    let mut index = line.start;
+    while index < line.end {
+        match bytes[index] {
+            b'`' => index = skip_code_span(bytes, index, line.end),
+            b'$' if !is_escaped(bytes, index) => {
+                if bytes.get(index + 1) == Some(&b'$') {
+                    index += 2;
+                    continue;
+                }
+                let content_start = index + 1;
+                match inline_math_close(bytes, content_start, line.end) {
+                    Some(close) => {
+                        if looks_like_formula(&bytes[content_start..close]) {
+                            if bytes[content_start] == b' ' {
+                                swaps.push(index);
+                            }
+                            if bytes[close - 1] == b' ' {
+                                swaps.push(close - 1);
+                            }
+                        }
+                        index = close + 1;
+                    }
+                    None => index += 1,
+                }
+            }
+            _ => index += 1,
+        }
+    }
+}
+
+// Tells `$C(x_i) = $` apart from prose like `$ 5 and $ 10`.
+const FORMULA_HINTS: &[u8] = br"\^_{}=+-<>()[]|/*";
+
+fn looks_like_formula(content: &[u8]) -> bool {
+    let Some(start) = content.iter().position(|byte| !byte.is_ascii_whitespace()) else {
+        return false;
+    };
+    let end = content
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(start);
+    let trimmed = &content[start..=end];
+    trimmed.iter().any(|byte| FORMULA_HINTS.contains(byte))
+        || !trimmed.iter().any(|byte| byte.is_ascii_whitespace())
+}
+
+/// Code spans are verbatim, so a byte moved inside one would be visible.
+fn skip_code_span(bytes: &[u8], start: usize, end: usize) -> usize {
+    let run = backtick_run(bytes, start, end);
+    let mut cursor = start + run;
+    while cursor < end {
+        if bytes[cursor] == b'`' {
+            let closing = backtick_run(bytes, cursor, end);
+            if closing == run {
+                return cursor + closing;
+            }
+            cursor += closing;
+        } else {
+            cursor += 1;
+        }
+    }
+    end
+}
+
+fn backtick_run(bytes: &[u8], start: usize, end: usize) -> usize {
+    bytes[start..end]
+        .iter()
+        .take_while(|byte| **byte == b'`')
+        .count()
+}
+
+fn inline_math_close(bytes: &[u8], content_start: usize, end: usize) -> Option<usize> {
+    let mut index = content_start;
+    while index < end {
+        if bytes[index] == b'$'
+            && !is_escaped(bytes, index)
+            && index > content_start
+            && bytes.get(index + 1) != Some(&b'$')
+        {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
 pub(crate) fn parse_markdown_with_options(
     text: &str,
     parse_html: bool,
@@ -255,7 +488,8 @@ pub(crate) fn parse_markdown_with_options(
     } else {
         PARSE_OPTIONS
     };
-    let parser = Parser::new_ext(text, parse_options);
+    let flattened_math = normalize_math_for_parsing(text);
+    let parser = Parser::new_ext(flattened_math.as_deref().unwrap_or(text), parse_options);
     let mut link_definition_spans = parser
         .reference_definitions()
         .iter()
@@ -668,7 +902,20 @@ pub(crate) fn parse_markdown_with_options(
             pulldown_cmark::Event::TaskListMarker(checked) => {
                 state.push_event(range, MarkdownEvent::TaskListMarker(checked))
             }
-            pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
+            pulldown_cmark::Event::InlineMath(content) => state.push_event(
+                range,
+                MarkdownEvent::Math {
+                    display: false,
+                    content: SharedString::from(content.into_string()),
+                },
+            ),
+            pulldown_cmark::Event::DisplayMath(content) => state.push_event(
+                range,
+                MarkdownEvent::Math {
+                    display: true,
+                    content: SharedString::from(content.into_string()),
+                },
+            ),
         }
     }
 
@@ -791,6 +1038,13 @@ pub enum MarkdownEvent {
     Rule,
     /// A task list marker, rendered as a checkbox in HTML. Contains a true when it is checked.
     TaskListMarker(bool),
+    /// A LaTeX math expression. `display: true` indicates block-level (`$$...$$`) math;
+    /// `display: false` indicates inline (`$...$`) math. `content` is the formula text
+    /// with delimiters stripped (as yielded by pulldown_cmark).
+    Math {
+        display: bool,
+        content: SharedString,
+    },
     /// Start of a root-level block (a top-level structural element like a paragraph, heading, list, etc.).
     RootStart,
     /// End of a root-level block. Contains the root block index.
@@ -982,7 +1236,7 @@ mod tests {
     use super::*;
 
     const CONDITIONAL_OPTIONS: Options = Options::ENABLE_YAML_STYLE_METADATA_BLOCKS;
-    const UNWANTED_OPTIONS: Options = Options::ENABLE_MATH
+    const UNWANTED_OPTIONS: Options = Options::empty()
         .union(Options::ENABLE_DEFINITION_LIST)
         .union(Options::ENABLE_WIKILINKS);
 
@@ -1889,5 +2143,159 @@ mod tests {
                 "unrecognized inline HTML \"{input}\" should not emit HardBreak"
             );
         }
+    }
+
+    fn display_math_contents(text: &str) -> Vec<String> {
+        parse_markdown_with_options(text, false, false, false)
+            .events
+            .into_iter()
+            .filter_map(|(_, event)| match event {
+                MarkdownEvent::Math {
+                    display: true,
+                    content,
+                } => Some(content.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn display_math_survives_setext_underline_lines() {
+        // A lone `=` line is a setext underline, which used to split the span.
+        let matrix_product = "\
+$$
+\\begin{pmatrix}
+a & b \\\\
+c & d
+\\end{pmatrix}
+=
+\\begin{pmatrix}
+ax + by \\\\
+cx + dy
+\\end{pmatrix}
+$$";
+        let contents = display_math_contents(matrix_product);
+        assert_eq!(contents.len(), 1, "expected one display formula");
+        assert!(contents[0].contains('='), "{:?}", contents[0]);
+        assert!(contents[0].contains("ax + by"), "{:?}", contents[0]);
+        assert!(!contents[0].contains('\n'), "{:?}", contents[0]);
+    }
+
+    #[test]
+    fn display_math_survives_thematic_break_and_blank_lines() {
+        for interior in ["---", "", "- a", "# h", "> q"] {
+            let source = format!("$$\nx = 1\n{interior}\ny = 2\n$$");
+            let contents = display_math_contents(&source);
+            assert_eq!(
+                contents.len(),
+                1,
+                "interior line {interior:?} broke the display math span"
+            );
+            assert!(contents[0].contains("y = 2"), "{:?}", contents[0]);
+        }
+    }
+
+    #[test]
+    fn display_math_ranges_still_index_the_original_source() {
+        let source = "intro\n\n$$\na\n=\nb\n$$\n\ntail\n";
+        let parsed = parse_markdown_with_options(source, false, false, false);
+        let (range, _) = parsed
+            .events
+            .iter()
+            .find(|(_, event)| matches!(event, MarkdownEvent::Math { display: true, .. }))
+            .expect("display math event");
+        assert_eq!(&source[range.clone()], "$$\na\n=\nb\n$$");
+    }
+
+    #[test]
+    fn dollar_pairs_inside_fenced_code_are_left_alone() {
+        let source = "```\n$$\na\n=\nb\n$$\n```\n";
+        assert!(normalize_math_for_parsing(source).is_none());
+        assert!(display_math_contents(source).is_empty());
+    }
+
+    #[test]
+    fn single_line_display_math_needs_no_rewrite() {
+        assert!(normalize_math_for_parsing("$$x^2 + y^2 = z^2$$\n").is_none());
+        assert!(normalize_math_for_parsing("no math here\n").is_none());
+    }
+
+    #[test]
+    fn escaped_dollars_do_not_close_a_display_span() {
+        // `\$` escapes, but `\\` is a row separator and does not.
+        let source = "$$\na \\$\\$ b\n=\nc\n$$\n";
+        let contents = display_math_contents(source);
+        assert_eq!(contents.len(), 1, "{contents:?}");
+        assert!(contents[0].contains("c"), "{:?}", contents[0]);
+    }
+
+    #[test]
+    fn latex_comments_block_the_line_join() {
+        // Joining these lines would put `= b` behind the comment.
+        assert!(normalize_math_for_parsing("$$\na % note\n= b\n$$\n").is_none());
+        // An escaped percent is a literal character, not a comment.
+        assert!(normalize_math_for_parsing("$$\n50\\% \\\\\n= x\n$$\n").is_some());
+    }
+
+    fn inline_math_contents(text: &str) -> Vec<String> {
+        parse_markdown_with_options(text, false, false, false)
+            .events
+            .into_iter()
+            .filter_map(|(_, event)| match event {
+                MarkdownEvent::Math {
+                    display: false,
+                    content,
+                } => Some(content.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn inline_math_tolerates_a_leading_space() {
+        // pulldown-cmark alone drops this span.
+        assert_eq!(
+            inline_math_contents(r"Therefore it is $ \geq 0$ and done."),
+            vec![r"\geq 0".to_string()]
+        );
+    }
+
+    #[test]
+    fn dollar_amounts_do_not_become_math() {
+        // The padding swap must not turn these into formulas.
+        assert!(inline_math_contents("it cost $ 5 and $ 10 total").is_empty());
+        assert!(inline_math_contents("it cost $5 and $10 total").is_empty());
+    }
+
+    #[test]
+    fn inline_math_padding_leaves_code_spans_alone() {
+        // Code spans are verbatim.
+        assert!(normalize_math_for_parsing("use `$ 5` here\n").is_none());
+    }
+
+    #[test]
+    fn inline_math_tolerates_a_trailing_space() {
+        assert_eq!(
+            inline_math_contents(r"Consider $C(x_i) = $ binary representation"),
+            vec!["C(x_i) =".to_string()]
+        );
+    }
+
+    #[test]
+    fn inline_math_tolerates_padding_on_both_sides() {
+        assert_eq!(
+            inline_math_contents(r"a $ \geq 0 $ b"),
+            vec![r"\geq 0".to_string()]
+        );
+    }
+
+    #[test]
+    fn all_whitespace_spans_are_left_alone() {
+        assert!(inline_math_contents("a $ $ b").is_empty());
+    }
+
+    #[test]
+    fn unterminated_display_math_is_left_alone() {
+        assert!(normalize_math_for_parsing("$$\na = b\n").is_none());
     }
 }
