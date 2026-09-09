@@ -28,16 +28,22 @@ PER_DIRTY_NODE = 0.55  # µs, Siblings sweep
 
 points = []  # (V, E, P, F, main_us, branch_us)
 editor_points = []  # (editors, dirty, reshape, main_us, branch_us)
+# The same fixtures with every view / editor wrapped in `.cached()`: what `main`'s own opt-in
+# reuse (docked panels, pane items) costs for a clean view. On the branch `.cached()` changes
+# nothing, which the branch column of these rows checks.
+cached_points = []
+cached_editor_points = []
 with open(csv_path, encoding="utf-8") as rows:
     for row in csv.reader(rows):
         if not row or len(row) < 3:
             continue
+        cached = row[0].rstrip("$").endswith("-cached")
         if m := re.search(r"v(\d+)-e(\d+)-p(\d+)-f(\d+)", row[0]):
             V, E, P, F = map(int, m.groups())
-            points.append((V, E, P, F, micros(row[1]), micros(row[2])))
+            (cached_points if cached else points).append((V, E, P, F, micros(row[1]), micros(row[2])))
         elif m := re.search(r"editors/k(\d+)-d(\d+)-(cursor|scroll)", row[0]):
             K, D, how = int(m.group(1)), int(m.group(2)), m.group(3)
-            editor_points.append((K, D, how == "scroll", micros(row[1]), micros(row[2])))
+            (cached_editor_points if cached else editor_points).append((K, D, how == "scroll", micros(row[1]), micros(row[2])))
 
 def counts(V, E, P, F):
     dirty_views = 0 if F == 0 else max(1, -(-F * V // 100))
@@ -83,6 +89,35 @@ if len(fit_points) >= 4:
     for K, D, reshape, m, b in editor_points:
         if not reshape and D > 0:
             print(f"  cursor moves (not fitted): k{K}-d{D}: main {m:.0f} µs, branch {b:.0f} µs")
+
+# main with `.cached()`. A notified cached view re-renders at main's uncached per-element cost
+# plus a surcharge u for the caching bookkeeping (at f = 100% the cached scene is ~30% dearer
+# than the uncached one); a clean one is replayed at r_k per element; and the frame-wide
+# superlinear term has its own coefficient q', with main's constant c kept:
+#   t = c + Σ_k d_k·(m_k + u) + Σ_k (n_k − d_k)·r_k + q'·(N/100)²
+# Likewise an idle cached editor costs e_replay against the uncached fit's e (+ x when scrolled)
+# for the D changed ones.
+main_cache = None
+if len(cached_points) >= 5:
+    X, y = [], []
+    for p in cached_points:
+        dirty, clean, N = counts(*p[:4])
+        X.append(clean + [sum(dirty), (N / 100) ** 2])
+        y.append(p[4] - coef_main[0] - sum(coef_main[1 + k] * d for k, d in enumerate(dirty)))
+    rc, _, err_cached = weighted_fit(np.array(X, float), np.array(y))
+    branch_cached_delta = [(p[5] - next((q[5] for q in points if q[:4] == p[:4]), p[5])) / p[5] for p in cached_points]
+    main_cache = dict(replay=[max(0.0, float(v)) for v in rc[:3]], dirty_extra=float(rc[3]), q=float(rc[4]), editor_replay=None)
+    print("main cached: replay per clean light %.2f, medium %.2f, heavy %.2f µs; dirty cached element +%.2f; q' %.2f; |err| mean %.1f%% max %.1f%%; branch with .cached() differs from uncached by %.1f%% mean"
+          % (*rc[:3], rc[3], rc[4], 100 * abs(err_cached).mean(), 100 * abs(err_cached).max(), 100 * np.mean(np.abs(branch_cached_delta))))
+    if editor_fit and len(cached_editor_points) >= 2:
+        Xe = np.array([[1, K - D] for K, D, *_ in cached_editor_points])
+        ye = np.array([m - D * (editor_fit["main_each"] + (editor_fit["main_reshape"] if reshape else 0)) for K, D, reshape, m, _ in cached_editor_points])
+        ec, _, erc = weighted_fit(Xe, ye)
+        main_cache["editor_replay"] = float(ec[1])
+        print("main cached editors: idle editor replayed for %.0f µs (c' %.0f); |err| mean %.1f%%; branch idle editor %.0f µs"
+              % (ec[1], ec[0], 100 * abs(erc).mean(), editor_fit["branch_clean"]))
+        for K, D, reshape, m, b in cached_editor_points:
+            print(f"  k{K}-d{D}-{'scroll' if reshape else 'cursor'}-cached: main {m:.0f} µs, branch {b:.0f} µs")
 
 def predict_main(n):  # n = [light, medium, heavy]
     N = sum(n)
@@ -192,10 +227,10 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <p><small>Model fitted to <code>complexity.csv</code> (%(npoints)d element points, mean error %(errm).0f%% / %(errb).0f%%; %(neditors)d editor points); see <code>view_tree.md</code>, "Scene complexity". Coefficients (µs): main — %(cm)s; branch — %(cb)s; editors — %(editors_text)s.</small></p>
 <script>
 const M=%(coef_main)s, B=%(coef_branch)s, NODE=%(node)s, ED=%(editors)s;
-// main's own caching (reuse_paint on cached panels and pane items). PLACEHOLDER coefficients
-// until the .cached() fixture variants have been measured: a replayed element on main is
-// taken as the branch's replay cost, an idle cached editor as the branch's clean editor.
-const MAIN_CACHE={measured:false, replay:[B[4],B[5],B[6]], editor_replay:ED?ED.branch_clean:0};
+// main's own caching (reuse_paint on cached panels and pane items), measured with the
+// `-cached` fixture variants; falls back to the branch's replay costs as placeholders when
+// those rows are missing from the CSV.
+const MAIN_CACHE=%(main_cache)s||{measured:false, replay:[B[4],B[5],B[6]], editor_replay:ED?ED.branch_clean:0};
 let K=0,D=0,R=false,preset=null,MC=false,PN=3,PS=0.6,LOC=0.8,hover=null;
 // Where this frame's change lands: a share LOC of it in the panel being worked in (plus the
 // uncached area), the rest spread uniformly. The working area saturates softly (tanh) rather
@@ -210,8 +245,9 @@ document.getElementById('formula').textContent=
 `main    t = ${us(M[0])} + ${us(M[1])}·n_div + ${us(M[2])}·n_button + ${us(M[3])}·n_card + ${us(M[4])}·(N/100)²`+
 (ED?`\n          + ${ED.main_each.toFixed(0)}·K + ${ED.main_reshape.toFixed(0)}·D·[reshaped]`:'')+
 `\n  with main's caching on: elements inside the P cached panels are replayed at r_main when the panel is clean,`+
+`\n          and re-rendered at ${MAIN_CACHE.dirty_extra!==undefined?'+'+us(MAIN_CACHE.dirty_extra)+' over the uncached cost':'the uncached cost'} when it is not;`+
 `\n          P(clean) = (1 − f′)^(elements per panel), f′ the panel's own share of the change (a share λ lands in the panel being worked in);  editors: ${MAIN_CACHE.editor_replay.toFixed(0)}·(K − D) + ${ED?ED.main_each.toFixed(0):'?'}·D`+
-`\n          r_main = (${MAIN_CACHE.replay.map(us).join(', ')}) per div, button, card${MAIN_CACHE.measured?'':'   ← placeholders'}`+
+`\n          r_main = (${MAIN_CACHE.replay.map(us).join(', ')}) per div, button, card${MAIN_CACHE.q!==undefined?', q′ = '+us(MAIN_CACHE.q)+' inside the panels':''}${MAIN_CACHE.measured?'   (measured: the -cached fixtures)':'   ← placeholders'}`+
 `\n\nbranch  t = ${us(B[0])} + (${us(B[1])}·n_div + ${us(B[2])}·n_button + ${us(B[3])}·n_card)·f        dirty: rendered`+
 `\n          + (${us(B[4])}·n_div + ${us(B[5])}·n_button + ${us(B[6])}·n_card)·(1 − f)   clean: replayed`+
 `\n          + ${us(B[7])}·(N/100)² + ${NODE}·⌈f·views⌉`+
@@ -220,7 +256,10 @@ document.getElementById('formula').textContent=
 function editorsMain(){return ED?K*ED.main_each+(R?D*ED.main_reshape:0):0;}
 function editorsBranch(){return ED?(K-D)*ED.branch_clean+D*(R?ED.branch_dirty:ED.branch_clean):0;}
 function tmain(n,f,mode){const N=n[0]+n[1]+n[2];let t=M[0]+M[4]*(N/100)**2;
-if(MC){const {inside}=cacheStats(n,f);const pClean=mode==='best'?1:mode==='worst'?0:cacheStats(n,f).pClean;for(let k=0;k<3;k++){const clean=inside[k]*pClean;t+=M[1+k]*(n[k]-clean)+MAIN_CACHE.replay[k]*clean;}
+if(MC){const {inside}=cacheStats(n,f);const pClean=mode==='best'?1:mode==='worst'?0:cacheStats(n,f).pClean;
+ // The quadratic term is main's own outside the panels and the cached fit's inside them.
+ if(MAIN_CACHE.q!==undefined)t+=(MAIN_CACHE.q-M[4])*PS*(N/100)**2;
+ for(let k=0;k<3;k++){const clean=inside[k]*pClean,dirtyCached=inside[k]-clean;t+=M[1+k]*(n[k]-inside[k])+(M[1+k]+(MAIN_CACHE.dirty_extra||0))*dirtyCached+MAIN_CACHE.replay[k]*clean;}
  t+=ED?(K-D)*MAIN_CACHE.editor_replay+D*(ED.main_each+(R?ED.main_reshape:0)):0;}
 else{t+=M[1]*n[0]+M[2]*n[1]+M[3]*n[2]+editorsMain();}
 return t;}
@@ -301,6 +340,8 @@ for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('b
            coef_main=json.dumps([float(v) for v in coef_main]), coef_branch=json.dumps([float(v) for v in coef_branch]), node=PER_DIRTY_NODE,
            editors=json.dumps({k: float(v) for k, v in editor_fit.items()}) if editor_fit else "null",
            neditors=len(editor_points),
+           main_cache=json.dumps(dict(measured=True, **main_cache)) if main_cache and main_cache["editor_replay"] is not None else "null",
+
            editors_text=("main %(main_each).0f each +%(main_reshape).0f reshaped; branch clean %(branch_clean).0f, dirty %(branch_dirty).0f" % editor_fit) if editor_fit else "not measured",
            measured="".join(f"<tr><td>{f}</td><td class=m>{m}</td><td class=n>{b}</td><td>{ch}%</td></tr>" for f, m, b, ch in measured) or "<tr><td colspan=4>matrix.csv not found</td></tr>")
 open(f"{out}/complexity.html", "w", encoding="utf-8").write(html)

@@ -20,8 +20,11 @@ row() { # main_bin branch_bin fixture
 ALL="v16-e128-p4-f25 v4-e128-p4-f25 v64-e128-p4-f25 v16-e32-p4-f25 v16-e512-p4-f25 \
      v16-e128-p1-f25 v16-e128-p12-f25 v16-e128-p4-f0 v16-e128-p4-f6 v16-e128-p4-f100 \
      v64-e128-p4-f6 v16-e512-p4-f6 v4-e512-p4-f100 v64-e32-p4-f100 \
-     v16-e128-p1-f100 v16-e128-p12-f100 v16-e128-p1-f0 v16-e128-p12-f0 v16-e512-p4-f0 v16-e512-p4-f100"
-EDITORS="k1-d0-cursor k1-d1-cursor k1-d1-scroll k4-d0-cursor k4-d1-cursor k4-d1-scroll k4-d4-cursor k4-d4-scroll"
+     v16-e128-p1-f100 v16-e128-p12-f100 v16-e128-p1-f0 v16-e128-p12-f0 v16-e512-p4-f0 v16-e512-p4-f100 \
+     v16-e128-p1-f0-cached v16-e128-p4-f0-cached v16-e128-p12-f0-cached v16-e512-p4-f0-cached v64-e128-p4-f0-cached \
+     v16-e128-p4-f6-cached v16-e128-p4-f25-cached v16-e128-p4-f100-cached"
+EDITORS="k1-d0-cursor k1-d1-cursor k1-d1-scroll k4-d0-cursor k4-d1-cursor k4-d1-scroll k4-d4-cursor k4-d4-scroll \
+         k1-d0-cursor-cached k4-d0-cursor-cached k4-d1-scroll-cached"
 # POINTS / EDITOR_POINTS override the lists (and append to OUT instead of truncating it), for
 # adding points; set the other to a space to skip it.
 [ -n "${POINTS:-}${EDITOR_POINTS:-}" ] || : > "$OUT"

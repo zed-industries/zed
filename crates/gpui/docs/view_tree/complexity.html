@@ -39,10 +39,10 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <p><small>Model fitted to <code>complexity.csv</code> (20 element points, mean error 2% / 4%; 8 editor points); see <code>view_tree.md</code>, "Scene complexity". Coefficients (µs): main — c -139.84, light 0.85, medium 3.57, heavy 11.89, q 2.27; branch — c -218.22, dirty light 1.18, dirty medium 3.98, dirty heavy 11.59, clean light 0.18, clean medium 1.19, clean heavy 8.29, q 0.77; editors — main 194 each +91 reshaped; branch clean 188, dirty 232.</small></p>
 <script>
 const M=[-139.84289721337763, 0.8524987970794011, 3.5736393700495634, 11.892341469820762, 2.269392046448264], B=[-218.22095395766462, 1.1827006745323234, 3.976729839383562, 11.592066683636467, 0.17816167768149171, 1.1949721959947799, 8.288148836614711, 0.7692595055901922], NODE=0.55, ED={"main_each": 193.93234193482397, "main_reshape": 90.59521255320696, "branch_clean": 187.7851450834667, "branch_dirty": 232.28520568421666};
-// main's own caching (reuse_paint on cached panels and pane items). PLACEHOLDER coefficients
-// until the .cached() fixture variants have been measured: a replayed element on main is
-// taken as the branch's replay cost, an idle cached editor as the branch's clean editor.
-const MAIN_CACHE={measured:false, replay:[B[4],B[5],B[6]], editor_replay:ED?ED.branch_clean:0};
+// main's own caching (reuse_paint on cached panels and pane items), measured with the
+// `-cached` fixture variants; falls back to the branch's replay costs as placeholders when
+// those rows are missing from the CSV.
+const MAIN_CACHE={"measured": true, "replay": [0.0, 1.8924239778217564, 13.50006067196842], "dirty_extra": 0.9669423775723629, "q": 3.1536069894363123, "editor_replay": 32.974632361118736}||{measured:false, replay:[B[4],B[5],B[6]], editor_replay:ED?ED.branch_clean:0};
 let K=0,D=0,R=false,preset=null,MC=false,PN=3,PS=0.6,LOC=0.8,hover=null;
 // Where this frame's change lands: a share LOC of it in the panel being worked in (plus the
 // uncached area), the rest spread uniformly. The working area saturates softly (tanh) rather
@@ -60,9 +60,11 @@ document.getElementById('formula').textContent=
 `
   with main's caching on: elements inside the P cached panels are replayed at r_main when the panel is clean,`+
 `
+          and re-rendered at ${MAIN_CACHE.dirty_extra!==undefined?'+'+us(MAIN_CACHE.dirty_extra)+' over the uncached cost':'the uncached cost'} when it is not;`+
+`
           P(clean) = (1 − f′)^(elements per panel), f′ the panel's own share of the change (a share λ lands in the panel being worked in);  editors: ${MAIN_CACHE.editor_replay.toFixed(0)}·(K − D) + ${ED?ED.main_each.toFixed(0):'?'}·D`+
 `
-          r_main = (${MAIN_CACHE.replay.map(us).join(', ')}) per div, button, card${MAIN_CACHE.measured?'':'   ← placeholders'}`+
+          r_main = (${MAIN_CACHE.replay.map(us).join(', ')}) per div, button, card${MAIN_CACHE.q!==undefined?', q′ = '+us(MAIN_CACHE.q)+' inside the panels':''}${MAIN_CACHE.measured?'   (measured: the -cached fixtures)':'   ← placeholders'}`+
 `
 
 branch  t = ${us(B[0])} + (${us(B[1])}·n_div + ${us(B[2])}·n_button + ${us(B[3])}·n_card)·f        dirty: rendered`+
@@ -78,7 +80,10 @@ branch  t = ${us(B[0])} + (${us(B[1])}·n_div + ${us(B[2])}·n_button + ${us(B[3
 function editorsMain(){return ED?K*ED.main_each+(R?D*ED.main_reshape:0):0;}
 function editorsBranch(){return ED?(K-D)*ED.branch_clean+D*(R?ED.branch_dirty:ED.branch_clean):0;}
 function tmain(n,f,mode){const N=n[0]+n[1]+n[2];let t=M[0]+M[4]*(N/100)**2;
-if(MC){const {inside}=cacheStats(n,f);const pClean=mode==='best'?1:mode==='worst'?0:cacheStats(n,f).pClean;for(let k=0;k<3;k++){const clean=inside[k]*pClean;t+=M[1+k]*(n[k]-clean)+MAIN_CACHE.replay[k]*clean;}
+if(MC){const {inside}=cacheStats(n,f);const pClean=mode==='best'?1:mode==='worst'?0:cacheStats(n,f).pClean;
+ // The quadratic term is main's own outside the panels and the cached fit's inside them.
+ if(MAIN_CACHE.q!==undefined)t+=(MAIN_CACHE.q-M[4])*PS*(N/100)**2;
+ for(let k=0;k<3;k++){const clean=inside[k]*pClean,dirtyCached=inside[k]-clean;t+=M[1+k]*(n[k]-inside[k])+(M[1+k]+(MAIN_CACHE.dirty_extra||0))*dirtyCached+MAIN_CACHE.replay[k]*clean;}
  t+=ED?(K-D)*MAIN_CACHE.editor_replay+D*(ED.main_each+(R?ED.main_reshape:0)):0;}
 else{t+=M[1]*n[0]+M[2]*n[1]+M[3]*n[2]+editorsMain();}
 return t;}

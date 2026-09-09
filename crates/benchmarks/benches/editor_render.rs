@@ -729,14 +729,21 @@ struct ComplexityPoint {
     elements: usize,
     primitives: usize,
     dirty_percent: usize,
+    /// Wrap every view in `.cached()`, the opt-in reuse `main` ships for docked panels and
+    /// pane items; measures what a clean cached panel costs there.
+    cached: bool,
 }
 
 impl std::fmt::Display for ComplexityPoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "v{}-e{}-p{}-f{}",
-            self.views, self.elements, self.primitives, self.dirty_percent
+            "v{}-e{}-p{}-f{}{}",
+            self.views,
+            self.elements,
+            self.primitives,
+            self.dirty_percent,
+            if self.cached { "-cached" } else { "" }
         )
     }
 }
@@ -751,6 +758,11 @@ fn complexity_points() -> Vec<ComplexityPoint> {
         elements,
         primitives,
         dirty_percent,
+        cached: false,
+    };
+    let cached = |views, elements, primitives, dirty_percent| ComplexityPoint {
+        cached: true,
+        ..point(views, elements, primitives, dirty_percent)
     };
     vec![
         point(16, 128, 4, 25),
@@ -775,6 +787,17 @@ fn complexity_points() -> Vec<ComplexityPoint> {
         point(16, 128, 12, 0),
         point(16, 512, 4, 0),
         point(16, 512, 4, 100),
+        // `.cached()` views: the clean per-element replay cost of `main`'s own caching, per
+        // kind and scale, plus a few dirty shares to check that a notified cached view
+        // costs what an uncached one does.
+        cached(16, 128, 1, 0),
+        cached(16, 128, 4, 0),
+        cached(16, 128, 12, 0),
+        cached(16, 512, 4, 0),
+        cached(64, 128, 4, 0),
+        cached(16, 128, 4, 6),
+        cached(16, 128, 4, 25),
+        cached(16, 128, 4, 100),
     ]
 }
 
@@ -791,7 +814,7 @@ fn complexity_points() -> Vec<ComplexityPoint> {
 fn complexity(point: &ComplexityPoint, cx: &mut BenchAppContext) {
     use gpui::{
         AnyElement, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
-        Styled, Window, div, px, rgb,
+        StyleRefinement, Styled, Window, div, px, rgb,
     };
 
     struct View {
@@ -810,16 +833,13 @@ fn complexity(point: &ComplexityPoint, cx: &mut BenchAppContext) {
                 .flex()
                 .flex_wrap()
                 .children((0..self.elements).map(|index| -> AnyElement {
-                    let element = div()
-                        .id(index)
-                        .w(px(16.))
-                        .h(px(8.))
-                        .m(px(0.5))
-                        .bg(rgb(if (index + revision).is_multiple_of(2) {
+                    let element = div().id(index).w(px(16.)).h(px(8.)).m(px(0.5)).bg(rgb(
+                        if (index + revision).is_multiple_of(2) {
                             0x336699
                         } else {
                             0x996633
-                        }));
+                        },
+                    ));
                     // Labels are fixed per element: a changing string would be reshaped
                     // every frame and the sweep would measure text shaping, not primitives.
                     match primitives {
@@ -829,7 +849,12 @@ fn complexity(point: &ComplexityPoint, cx: &mut BenchAppContext) {
                             .into_any_element(),
                         _ => element
                             .shadow_sm()
-                            .child(format!("{:03}{:03}{:04}", view_index % 1000, index % 1000, 0))
+                            .child(format!(
+                                "{:03}{:03}{:04}",
+                                view_index % 1000,
+                                index % 1000,
+                                0
+                            ))
                             .into_any_element(),
                     }
                 }))
@@ -839,9 +864,11 @@ fn complexity(point: &ComplexityPoint, cx: &mut BenchAppContext) {
         views: Vec<Entity<View>>,
         dirty_per_update: usize,
         next_dirty: usize,
+        cached: bool,
     }
     impl Render for Host {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let cached = self.cached;
             div()
                 .size_full()
                 .flex()
@@ -849,7 +876,15 @@ fn complexity(point: &ComplexityPoint, cx: &mut BenchAppContext) {
                 .bg(rgb(0x18202a))
                 .text_color(rgb(0xdde5ef))
                 .text_size(px(5.))
-                .children(self.views.iter().cloned())
+                .children(self.views.iter().map(|view| -> AnyElement {
+                    if cached {
+                        view.clone()
+                            .cached(StyleRefinement::default().w_full())
+                            .into_any_element()
+                    } else {
+                        view.clone().into_any_element()
+                    }
+                }))
         }
     }
 
@@ -878,6 +913,7 @@ fn complexity(point: &ComplexityPoint, cx: &mut BenchAppContext) {
             views,
             dirty_per_update,
             next_dirty: 0,
+            cached: point.cached,
         })
     });
     // The dirty views rotate, so the same nodes are not the changing ones every frame; with
@@ -909,36 +945,43 @@ struct EditorsPoint {
     editors: usize,
     dirty: usize,
     reshape: bool,
+    /// Wrap every editor in `.cached()`, as `main`'s pane items are.
+    cached: bool,
 }
 
 impl std::fmt::Display for EditorsPoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "k{}-d{}-{}",
+            "k{}-d{}-{}{}",
             self.editors,
             self.dirty,
-            if self.reshape { "scroll" } else { "cursor" }
+            if self.reshape { "scroll" } else { "cursor" },
+            if self.cached { "-cached" } else { "" }
         )
     }
 }
 
 fn editors_points() -> Vec<EditorsPoint> {
     [
-        (1, 0, false),
-        (1, 1, false),
-        (1, 1, true),
-        (4, 0, false),
-        (4, 1, false),
-        (4, 1, true),
-        (4, 4, false),
-        (4, 4, true),
+        (1, 0, false, false),
+        (1, 1, false, false),
+        (1, 1, true, false),
+        (4, 0, false, false),
+        (4, 1, false, false),
+        (4, 1, true, false),
+        (4, 4, false, false),
+        (4, 4, true, false),
+        (1, 0, false, true),
+        (4, 0, false, true),
+        (4, 1, true, true),
     ]
     .into_iter()
-    .map(|(editors, dirty, reshape)| EditorsPoint {
+    .map(|(editors, dirty, reshape, cached)| EditorsPoint {
         editors,
         dirty,
         reshape,
+        cached,
     })
     .collect()
 }
@@ -956,7 +999,8 @@ fn editors_points() -> Vec<EditorsPoint> {
 )]
 fn complexity_editors(point: &EditorsPoint, cx: &mut BenchAppContext) {
     use gpui::{
-        Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, px, rgb,
+        AnyElement, Context, Entity, IntoElement, ParentElement, Render, StyleRefinement, Styled,
+        Window, div, px, rgb,
     };
 
     struct Host {
@@ -964,20 +1008,26 @@ fn complexity_editors(point: &EditorsPoint, cx: &mut BenchAppContext) {
         dirty: usize,
         reshape: bool,
         move_down: bool,
+        cached: bool,
     }
     impl Render for Host {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let cached = self.cached;
             div()
                 .size_full()
                 .flex()
                 .flex_wrap()
                 .bg(rgb(0x18202a))
                 .children(self.editors.iter().map(|editor| {
-                    div()
-                        .w(px(780.))
-                        .h(px(470.))
-                        .m(px(5.))
-                        .child(editor.clone())
+                    let editor: AnyElement = if cached {
+                        editor
+                            .clone()
+                            .cached(StyleRefinement::default().flex().flex_col().size_full())
+                            .into_any_element()
+                    } else {
+                        editor.clone().into_any_element()
+                    };
+                    div().w(px(780.)).h(px(470.)).m(px(5.)).child(editor)
                 }))
         }
     }
@@ -1003,6 +1053,7 @@ fn complexity_editors(point: &EditorsPoint, cx: &mut BenchAppContext) {
             dirty: point.dirty,
             reshape: point.reshape,
             move_down: true,
+            cached: point.cached,
         })
     });
     let update = move |host: &mut Host, window: &mut Window, cx: &mut Context<Host>| {
