@@ -131,14 +131,11 @@ html = """<!doctype html><meta charset="utf-8"><title>GPUI view tree: frame cost
 table{border-collapse:collapse;margin:1em 0}td,th{padding:.3em .8em;border-bottom:1px solid #ddd;text-align:right}th:first-child,td:first-child{text-align:left}
 canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small{color:#666}button{margin:.2em .3em .2em 0}</style>
 <h2>GPUI view tree — frame cost model</h2>
-<p>Fitted to the <code>Complexity</code> sweep (<code>complexity.csv</code>, %(npoints)d points, <code>main</code> at 5a9b9558db). An element is <b>light</b> (a quad), <b>medium</b> (quad + 3-glyph label) or <b>heavy</b> (quad + shadow + 10-glyph label). <code>main</code>: <code>t = c + Σ n<sub>k</sub>·m<sub>k</sub> + q·(N/100)²</code>; branch: the same per <em>dirty</em> element plus a cheaper <em>clean</em> (replayed) cost per element, plus 0.55 µs per dirty view from the Siblings sweep. Mean |error| %(errm).0f%% / %(errb).0f%% (main / branch), worst %(maxm).0f%% / %(maxb).0f%%, at the 8k-element points where the frame grows faster than the scene.</p>
 <p>Presets: <span id=presets></span></p>
-<p>Scale note: a real Zed window is a few hundred layout elements of chrome around custom-painted editors (the 3-pane workspace in <code>test_workspace_rendering_stress</code> has ~160 layout nodes and 20 views), so the ranges below stop where a frame budget does, not where the sweep did; the sweep went to 8192 elements to pin the slopes.</p>
 <label>divs (a quad) <input id=L type=range min=0 max=4000 step=10 value=200> <span id=Lv></span></label>
 <label>buttons (quad + 3-glyph label) <input id=M type=range min=0 max=1500 step=10 value=300> <span id=Mv></span></label>
 <label>cards (quad + shadow + 10-glyph label) <input id=H type=range min=0 max=400 step=5 value=20> <span id=Hv></span></label>
-<p><small>Editors are not element counts: an editor paints its text directly inside one node and caches its shaped lines on both engines, so it is one dirty or clean node with a cost of its own — see the measured <code>Workbench</code> rows below, which include one.</small></p>
-<label>views <input id=V type=range min=1 max=128 value=20> <span id=Vv></span> <small>(0.55 µs per dirty view; not fitted)</small></label>
+<label>views <input id=V type=range min=1 max=128 value=20> <span id=Vv></span></label>
 <label>elements changing per frame <input id=F type=range min=0 max=100 value=10> <span id=Fv></span>%%</label>
 <table><tr><th></th><th>main</th><th>branch</th></tr>
 <tr><td>frame time</td><td class=m id=tm></td><td class=n id=tb></td></tr>
@@ -146,11 +143,9 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <tr><td>… i.e. total elements</td><td class=m id=em></td><td class=n id=eb></td></tr>
 <tr><td>share changing up to which the frame fits 4 ms</td><td class=m id=fm></td><td class=n id=fb></td></tr></table>
 <canvas id=c width=900 height=320></canvas>
-<p><small>Curve: frame time against the share of elements changing, for the scene above. Grey: <code>main</code>; green: branch; dashed: the 4 ms and 8.3 ms (120 Hz) budgets; vertical: your setting.</small></p>
-<h3>Measured, not modelled: the Zed-shaped fixtures</h3>
-<p>From <code>matrix.sh</code>: a 48-row list, four panels and an editor at 1600×1000 (<code>Workbench</code>), Criterion medians.</p>
+<h3>Measured: the Zed-shaped <code>Workbench</code> fixtures</h3>
 <table><tr><th>fixture</th><th>main</th><th>branch</th><th>change</th></tr>%(measured)s</table>
-<p><small>Coefficients (µs): main — %(cm)s; branch — %(cb)s.</small></p>
+<p><small>Model fitted to <code>complexity.csv</code> (%(npoints)d points; mean error %(errm).0f%% / %(errb).0f%%); see <code>view_tree.md</code>, "Scene complexity". Coefficients (µs): main — %(cm)s; branch — %(cb)s.</small></p>
 <script>
 const M=%(coef_main)s, B=%(coef_branch)s, NODE=%(node)s;
 function tmain(n){const N=n[0]+n[1]+n[2];return M[0]+M[1]*n[0]+M[2]*n[1]+M[3]*n[2]+M[4]*(N/100)**2;}
