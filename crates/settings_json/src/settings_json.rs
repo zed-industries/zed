@@ -1,10 +1,17 @@
 use anyhow::Result;
-use serde::{Serialize, de::DeserializeOwned};
+#[cfg(feature = "editing")]
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+#[cfg(feature = "editing")]
 use serde_json::Value;
+#[cfg(feature = "editing")]
 use std::{ops::Range, sync::LazyLock};
+#[cfg(feature = "editing")]
 use tree_sitter::{Query, StreamingIterator as _};
+#[cfg(feature = "editing")]
 use util::RangeExt;
 
+#[cfg(feature = "editing")]
 pub fn update_value_in_json_text<'a>(
     text: &mut String,
     key_path: &mut Vec<&'a str>,
@@ -65,6 +72,7 @@ pub fn update_value_in_json_text<'a>(
 }
 
 /// * `replace_key` - When an exact key match according to `key_path` is found, replace the key with `replace_key` if `Some`.
+#[cfg(feature = "editing")]
 pub fn replace_value_in_json_text<T: AsRef<str>>(
     text: &str,
     key_path: &[T],
@@ -91,6 +99,7 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
     let mut depth = 0;
     let mut last_value_range = 0..0;
     let mut first_key_start = None;
+    let mut matched_key_start = None;
     let mut existing_value_range = 0..text.len();
 
     let mut matches = cursor.matches(&PAIR_QUERY, syntax_tree.root_node(), text.as_bytes());
@@ -127,6 +136,7 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
             .unwrap_or(false);
 
         if found_key {
+            matched_key_start = Some(key_range.start);
             existing_value_range = value_range;
             // Reset last value range when increasing in depth
             last_value_range = existing_value_range.start..existing_value_range.start;
@@ -158,12 +168,8 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
             let new_val = to_pretty_json(new_value, tab_size, tab_size * depth);
             if let Some(replace_key) = replace_key.and_then(|str| serde_json::to_string(str).ok()) {
                 let new_key = format!("{}: ", replace_key);
-                if let Some(key_start) = text[..existing_value_range.start].rfind('"') {
-                    if let Some(prev_key_start) = text[..key_start].rfind('"') {
-                        existing_value_range.start = prev_key_start;
-                    } else {
-                        existing_value_range.start = key_start;
-                    }
+                if let Some(key_start) = matched_key_start {
+                    existing_value_range.start = key_start;
                 }
                 (existing_value_range, new_key + &new_val)
             } else {
@@ -173,14 +179,8 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
             let mut removal_start = first_key_start.unwrap_or(existing_value_range.start);
             let mut removal_end = existing_value_range.end;
 
-            // Find the actual key position by looking for the key in the pair
-            // We need to extend the range to include the key, not just the value
-            if let Some(key_start) = text[..existing_value_range.start].rfind('"') {
-                if let Some(prev_key_start) = text[..key_start].rfind('"') {
-                    removal_start = prev_key_start;
-                } else {
-                    removal_start = key_start;
-                }
+            if let Some(key_start) = matched_key_start {
+                removal_start = key_start;
             }
 
             let mut removed_comma = false;
@@ -220,7 +220,7 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
     } else {
         if let Some(first_key_start) = first_key_start {
             // We have key paths, construct the sub objects
-            let new_key = key_path[depth].as_ref();
+            let new_key = serde_json::to_string(key_path[depth].as_ref()).unwrap();
             // We don't have the key, construct the nested objects
             let new_value = construct_json_value(&key_path[(depth + 1)..], new_value);
 
@@ -242,11 +242,11 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
                 // depth is 0 based, but division needs to be 1 based.
                 let new_val = to_pretty_json(&new_value, column / (depth + 1), column);
                 let space = ' ';
-                let content = format!("\"{new_key}\": {new_val},\n{space:width$}", width = column);
+                let content = format!("{new_key}: {new_val},\n{space:width$}", width = column);
                 (first_key_start..first_key_start, content)
             } else {
                 let new_val = serde_json::to_string(&new_value).unwrap();
-                let mut content = format!(r#""{new_key}": {new_val},"#);
+                let mut content = format!("{new_key}: {new_val},");
                 content.push(' ');
                 (first_key_start..first_key_start, content)
             }
@@ -284,6 +284,7 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
     }
 }
 
+#[cfg(feature = "editing")]
 fn construct_json_value(
     key_path: &[impl AsRef<str>],
     new_value: Option<&serde_json::Value>,
@@ -300,10 +301,12 @@ fn construct_json_value(
     return new_value;
 }
 
+#[cfg(feature = "editing")]
 fn parse_index_key(index_key: &str) -> Option<usize> {
     index_key.strip_prefix('#')?.parse().ok()
 }
 
+#[cfg(feature = "editing")]
 fn handle_possible_array_value(
     key_node: &tree_sitter::Node,
     value_node: &tree_sitter::Node,
@@ -371,10 +374,14 @@ fn handle_possible_array_value(
     return Some((replace_range, replace_value));
 }
 
+#[cfg(feature = "editing")]
 const TS_DOCUMENT_KIND: &str = "document";
+#[cfg(feature = "editing")]
 const TS_ARRAY_KIND: &str = "array";
+#[cfg(feature = "editing")]
 const TS_COMMENT_KIND: &str = "comment";
 
+#[cfg(feature = "editing")]
 pub fn replace_top_level_array_value_in_json_text(
     text: &str,
     key_path: &[impl AsRef<str>],
@@ -497,6 +504,7 @@ pub fn replace_top_level_array_value_in_json_text(
     }
 }
 
+#[cfg(feature = "editing")]
 pub fn append_top_level_array_value_in_json_text(
     text: &str,
     new_value: &Value,
@@ -621,6 +629,7 @@ pub fn append_top_level_array_value_in_json_text(
 
 /// Infers the indentation size used in JSON text by analyzing the tree structure.
 /// Returns the detected indent size, or a default of 2 if no indentation is found.
+#[cfg(feature = "editing")]
 pub fn infer_json_indent_size(text: &str) -> usize {
     const MAX_INDENT_SIZE: usize = 64;
 
@@ -713,6 +722,7 @@ pub fn infer_json_indent_size(text: &str) -> usize {
     if max_count == 0 { 2 } else { max_indent }
 }
 
+#[cfg(feature = "editing")]
 pub fn to_pretty_json(
     value: &impl Serialize,
     indent_size: usize,
@@ -2568,6 +2578,47 @@ mod tests {
             ]"#
             .unindent(),
         )
+    }
+
+    #[test]
+    fn object_replace_escapes_new_key() {
+        // An object that already has a key: an empty one takes the nested-construction path.
+        let single_line = r#"{"theme": "One Dark"}"#;
+        let multi_line = "{\n    \"theme\": \"One Dark\"\n}";
+        let key = r#"/home/me/say "hi" C:\x"#;
+
+        for input in [single_line, multi_line] {
+            let mut text = input.to_string();
+            let (range, replacement) =
+                replace_value_in_json_text(&text, &[key], 4, Some(&json!("One Light")), None);
+            text.replace_range(range, &replacement);
+
+            let parsed: Value = serde_json::from_str(&text)
+                .expect("a folder name carrying a quote must not break settings.json");
+            pretty_assertions::assert_eq!(parsed, json!({ "theme": "One Dark", key: "One Light" }));
+        }
+    }
+
+    #[test]
+    fn object_remove_and_rename_find_an_escaped_key_by_its_own_range() {
+        let key = "say \"hi\"";
+        let input = format!(
+            "{{{}: \"V\", \"theme\": \"One Dark\"}}",
+            serde_json::to_string(key).unwrap()
+        );
+
+        let mut removed = input.clone();
+        let (range, replacement) = replace_value_in_json_text(&removed, &[key], 4, None, None);
+        removed.replace_range(range, &replacement);
+        let parsed: Value = serde_json::from_str(&removed).expect("removal must leave valid JSON");
+        pretty_assertions::assert_eq!(parsed, json!({ "theme": "One Dark" }));
+
+        let mut renamed = input;
+        let (range, replacement) =
+            replace_value_in_json_text(&renamed, &[key], 4, Some(&json!("V2")), Some("plain"));
+        renamed.replace_range(range, &replacement);
+        let parsed: Value = serde_json::from_str(&renamed).expect("rename must leave valid JSON");
+        pretty_assertions::assert_eq!(parsed, json!({ "plain": "V2", "theme": "One Dark" }));
     }
 
     #[test]

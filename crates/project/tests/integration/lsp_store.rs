@@ -1,15 +1,15 @@
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use collections::HashMap;
-use fs::FakeFs;
+use fs::{FakeFs, Fs};
 use futures::StreamExt;
-use gpui::TestAppContext;
-use language::{CodeLabel, FakeLspAdapter, HighlightId, rust_lang};
-use lsp::{LanguageServerName, Uri};
+use gpui::{Entity, TestAppContext};
+use language::{Buffer, CodeLabel, FakeLspAdapter, HighlightId, LocalFile, rust_lang};
+use lsp::{LanguageServerId, LanguageServerName, Uri};
 use parking_lot::Mutex;
 use project::{
     Project,
@@ -161,6 +161,117 @@ async fn test_open_buffer_via_lsp_case_variant_no_duplicate(cx: &mut TestAppCont
             .collect();
         assert_eq!(entries, vec!["", "src", "src/main.rs"]);
     });
+}
+
+#[gpui::test]
+async fn test_open_buffer_via_lsp_preserves_external_symlink_path(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/shared"),
+        json!({ "pkg": { "def.rs": "pub fn def() {}" } }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/project"),
+        json!({ "src": { "main.rs": "fn main() {}" } }),
+    )
+    .await;
+    fs.create_symlink(
+        path!("/project/pkg").as_ref(),
+        PathBuf::from(path!("/shared/pkg")),
+    )
+    .await
+    .unwrap();
+
+    let (project, server_id) =
+        project_with_rust_server(fs, path!("/project"), path!("/project/src/main.rs"), cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_via_lsp(
+                Uri::from_file_path(path!("/project/pkg/def.rs")).unwrap(),
+                server_id,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer_paths(&buffer, cx),
+        (
+            "pkg/def.rs".to_string(),
+            PathBuf::from(path!("/project/pkg/def.rs"))
+        )
+    );
+    assert_eq!(
+        worktree_roots(&project, cx),
+        vec![PathBuf::from(path!("/project"))]
+    );
+}
+
+#[gpui::test]
+async fn test_open_buffer_via_lsp_case_variant_in_unscanned_dir(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.set_case_sensitive(false);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".gitignore": "ignored\n",
+            "src": { "main.rs": "fn main() {}" },
+            "ignored": { "lib.rs": "pub fn lib() {}" },
+        }),
+    )
+    .await;
+
+    let (project, server_id) =
+        project_with_rust_server(fs, path!("/root"), path!("/root/src/main.rs"), cx).await;
+    assert_eq!(
+        worktree_entries(&project, cx),
+        vec!["", ".gitignore", "ignored", "src", "src/main.rs"]
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_via_lsp(
+                Uri::from_file_path(path!("/root/IGNORED/LIB.rs")).unwrap(),
+                server_id,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer_paths(&buffer, cx),
+        (
+            "ignored/lib.rs".to_string(),
+            PathBuf::from(path!("/root/ignored/lib.rs"))
+        )
+    );
+    assert_eq!(
+        worktree_roots(&project, cx),
+        vec![PathBuf::from(path!("/root"))]
+    );
+    assert_eq!(
+        worktree_entries(&project, cx),
+        vec![
+            "",
+            ".gitignore",
+            "ignored",
+            "ignored/lib.rs",
+            "src",
+            "src/main.rs"
+        ]
+    );
 }
 
 #[test]
@@ -672,4 +783,64 @@ async fn test_initialization_options_contributions_without_own_options(cx: &mut 
         sent_initialization_options.lock().take(),
         Some(Some(contribution)),
     );
+}
+
+async fn project_with_rust_server(
+    fs: Arc<FakeFs>,
+    root: &str,
+    first_file: &str,
+    cx: &mut TestAppContext,
+) -> (Entity<Project>, LanguageServerId) {
+    let project = Project::test(fs, [root.as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(first_file, cx)
+        })
+        .await
+        .unwrap();
+    fake_servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    let server_id = project.read_with(cx, |project, cx| {
+        project
+            .lsp_store()
+            .read(cx)
+            .language_server_statuses()
+            .next()
+            .unwrap()
+            .0
+    });
+    (project, server_id)
+}
+
+fn buffer_paths(buffer: &Entity<Buffer>, cx: &TestAppContext) -> (String, PathBuf) {
+    buffer.read_with(cx, |buffer, cx| {
+        let file = File::from_dyn(buffer.file()).unwrap();
+        (file.path.as_unix_str().to_string(), file.abs_path(cx))
+    })
+}
+
+fn worktree_roots(project: &Entity<Project>, cx: &TestAppContext) -> Vec<PathBuf> {
+    project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+            .collect()
+    })
+}
+
+fn worktree_entries(project: &Entity<Project>, cx: &TestAppContext) -> Vec<String> {
+    project.read_with(cx, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap();
+        worktree
+            .read(cx)
+            .snapshot()
+            .entries(true, 0)
+            .map(|entry| entry.path.as_unix_str().to_string())
+            .collect()
+    })
 }

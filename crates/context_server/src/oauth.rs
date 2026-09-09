@@ -710,6 +710,7 @@ const SUPPORTED_GRANT_TYPES: &[&str] = &["authorization_code", "refresh_token"];
 pub fn dcr_registration_body(
     redirect_uri: &str,
     server_grant_types: Option<&[String]>,
+    scopes: &[String],
 ) -> serde_json::Value {
     // Use the intersection of what we support and what the server advertises.
     // When the server doesn't advertise grant_types_supported, send all of
@@ -723,13 +724,22 @@ pub fn dcr_registration_body(
         None => SUPPORTED_GRANT_TYPES.to_vec(),
     };
 
-    serde_json::json!({
+    let mut body = serde_json::json!({
         "client_name": "Zed",
         "redirect_uris": [redirect_uri],
         "grant_types": grant_types,
         "response_types": ["code"],
         "token_endpoint_auth_method": "none"
-    })
+    });
+
+    // Use the scopes the server requests or advertises for this registration.
+    // When the server doesn't request/advertise any scopes on the initial challenge,
+    // leave the field out so the server selects a default set of scopes to include.
+    if !scopes.is_empty() {
+        body["scope"] = serde_json::Value::String(scopes.join(" "));
+    }
+
+    body
 }
 
 // -- Discovery (async, hits real endpoints) ----------------------------------
@@ -910,6 +920,7 @@ pub async fn resolve_client_registration(
                     .auth_server_metadata
                     .grant_types_supported
                     .as_deref(),
+                &discovery.scopes,
             )
             .await
         }
@@ -927,10 +938,11 @@ pub async fn perform_dcr(
     registration_endpoint: &Url,
     redirect_uri: &str,
     server_grant_types: Option<&[String]>,
+    scopes: &[String],
 ) -> Result<OAuthClientRegistration> {
     validate_oauth_url(registration_endpoint)?;
 
-    let body = dcr_registration_body(redirect_uri, server_grant_types);
+    let body = dcr_registration_body(redirect_uri, server_grant_types, scopes);
     let body_bytes = serde_json::to_vec(&body)?;
 
     let request = Request::builder()
@@ -1896,20 +1908,22 @@ mod tests {
     #[test]
     fn test_dcr_registration_body_without_server_metadata() {
         // When server metadata is unavailable, include all supported grant types.
-        let body = dcr_registration_body("http://127.0.0.1:12345/callback", None);
+        let body = dcr_registration_body("http://127.0.0.1:12345/callback", None, &[]);
         assert_eq!(body["client_name"], "Zed");
         assert_eq!(body["redirect_uris"][0], "http://127.0.0.1:12345/callback");
         assert_eq!(body["grant_types"][0], "authorization_code");
         assert_eq!(body["grant_types"][1], "refresh_token");
         assert_eq!(body["response_types"][0], "code");
         assert_eq!(body["token_endpoint_auth_method"], "none");
+        assert!(body.get("scope").is_none());
     }
 
     #[test]
     fn test_dcr_registration_body_mirrors_server_grant_types() {
         // When the server only supports authorization_code, omit refresh_token.
         let server_types = vec!["authorization_code".to_string()];
-        let body = dcr_registration_body("http://127.0.0.1:12345/callback", Some(&server_types));
+        let body =
+            dcr_registration_body("http://127.0.0.1:12345/callback", Some(&server_types), &[]);
         assert_eq!(body["grant_types"][0], "authorization_code");
         assert!(body["grant_types"].as_array().unwrap().len() == 1);
 
@@ -1918,9 +1932,18 @@ mod tests {
             "authorization_code".to_string(),
             "refresh_token".to_string(),
         ];
-        let body = dcr_registration_body("http://127.0.0.1:12345/callback", Some(&server_types));
+        let body =
+            dcr_registration_body("http://127.0.0.1:12345/callback", Some(&server_types), &[]);
         assert_eq!(body["grant_types"][0], "authorization_code");
         assert_eq!(body["grant_types"][1], "refresh_token");
+    }
+
+    #[test]
+    fn test_dcr_registration_body_mirrors_server_scopes() {
+        // When the server requests certain scopes, include those in the request
+        let scopes = vec!["mcp".to_string(), "read_api".to_string()];
+        let body = dcr_registration_body("http://127.0.0.1:12345/callback", None, &scopes);
+        assert_eq!(body["scope"], "mcp read_api");
     }
 
     // -- Test helpers for async/HTTP tests -----------------------------------
@@ -2574,10 +2597,15 @@ mod tests {
             });
 
             let endpoint = Url::parse("https://auth.example.com/register").unwrap();
-            let registration =
-                perform_dcr(&client, &endpoint, "http://127.0.0.1:9999/callback", None)
-                    .await
-                    .unwrap();
+            let registration = perform_dcr(
+                &client,
+                &endpoint,
+                "http://127.0.0.1:9999/callback",
+                None,
+                &[],
+            )
+            .await
+            .unwrap();
 
             assert_eq!(registration.client_id, "dynamic-client-001");
             assert_eq!(
@@ -2597,8 +2625,14 @@ mod tests {
             });
 
             let endpoint = Url::parse("https://auth.example.com/register").unwrap();
-            let result =
-                perform_dcr(&client, &endpoint, "http://127.0.0.1:9999/callback", None).await;
+            let result = perform_dcr(
+                &client,
+                &endpoint,
+                "http://127.0.0.1:9999/callback",
+                None,
+                &[],
+            )
+            .await;
 
             assert!(result.is_err());
             assert!(result.unwrap_err().to_string().contains("403"));

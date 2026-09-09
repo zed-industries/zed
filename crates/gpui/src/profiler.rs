@@ -734,10 +734,10 @@ pub fn set_trace_enabled(enabled: bool) -> bool {
     }
 }
 
-#[cfg(any(feature = "bench", all(test, feature = "profiler")))]
+#[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
 pub(crate) struct TraceGuard;
 
-#[cfg(any(feature = "bench", all(test, feature = "profiler")))]
+#[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
 pub(crate) fn trace_scope() -> TraceGuard {
     let incremented = TRACE_STATE.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
         (state & TRACE_SCOPE_COUNT_MASK < TRACE_SCOPE_COUNT_MASK).then_some(state + 1)
@@ -746,7 +746,7 @@ pub(crate) fn trace_scope() -> TraceGuard {
     TraceGuard
 }
 
-#[cfg(any(feature = "bench", all(test, feature = "profiler")))]
+#[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
 impl Drop for TraceGuard {
     fn drop(&mut self) {
         let previous_state =
@@ -852,6 +852,8 @@ pub enum FrameEvent {
 #[cfg(feature = "profiler")]
 #[derive(Clone)]
 pub struct FrameDurationSnapshot {
+    /// Histogram of durations from the first invalidation through presentation, in nanoseconds.
+    pub dirty_to_present_histogram: Histogram<u64>,
     /// Histogram of `Window::draw` durations, in nanoseconds.
     pub draw_duration_histogram: Histogram<u64>,
     /// Histogram of intervals between consecutively presented frames while the
@@ -894,6 +896,7 @@ pub struct WindowProfiler {
     window_id: WindowId,
     active_activities: SmallVec<[WindowActivity; 4]>,
     active_actions: SmallVec<[(&'static str, Instant); 2]>,
+    dirty_to_present_histogram: Histogram<u64>,
     draw_duration_histogram: Histogram<u64>,
     present_interval_histogram: Histogram<u64>,
     first_input_at: Option<Instant>,
@@ -914,6 +917,9 @@ impl WindowProfiler {
             window_id,
             active_activities: SmallVec::new(),
             active_actions: SmallVec::new(),
+            dirty_to_present_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create dirty-to-present histogram: {error}")
+            })?,
             draw_duration_histogram: Histogram::new(3).map_err(|error| {
                 anyhow::anyhow!("Failed to create draw duration histogram: {error}")
             })?,
@@ -1070,6 +1076,7 @@ impl WindowProfiler {
     /// Returns a snapshot of the current frame-duration histograms.
     pub fn frame_duration_snapshot(&self) -> FrameDurationSnapshot {
         FrameDurationSnapshot {
+            dirty_to_present_histogram: self.dirty_to_present_histogram.clone(),
             draw_duration_histogram: self.draw_duration_histogram.clone(),
             present_interval_histogram: self.present_interval_histogram.clone(),
         }
@@ -1109,8 +1116,16 @@ impl WindowProfiler {
         };
         journal::record_present(present_timing, frame);
 
-        if frame.is_none() {
+        let Some(frame) = frame else {
             return;
+        };
+
+        if let Some(dirty_at) = frame.dirty_at
+            && let Err(error) = self
+                .dirty_to_present_histogram
+                .record(present_end.duration_since(dirty_at).as_nanos() as u64)
+        {
+            log::error!("failed to record dirty-to-present frame timing: {error}");
         }
 
         if let Some(animation_interval) = animation_interval {
@@ -1406,6 +1421,22 @@ mod tests {
 
         draw_and_present(&mut window_profiler, start + FRAME * 3, true, true);
         assert_eq!(window_profiler.present_interval_histogram.len(), 1);
+    }
+
+    #[test]
+    fn records_dirty_to_present_durations() {
+        let mut window_profiler =
+            WindowProfiler::new(WindowId::from(8)).expect("window profiler should initialize");
+        let draw_end = Instant::now();
+        let present_end = draw_end + Duration::from_millis(6);
+
+        record_test_draw(&mut window_profiler, draw_end);
+        window_profiler.record_present_at(present_end, present_end, true, false);
+
+        let snapshot = window_profiler.frame_duration_snapshot();
+        let histogram = snapshot.dirty_to_present_histogram;
+        assert_eq!(histogram.len(), 1);
+        assert!(histogram.max() >= Duration::from_millis(10).as_nanos() as u64);
     }
 
     #[cfg(feature = "profiler")]

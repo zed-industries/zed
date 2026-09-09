@@ -42,6 +42,15 @@ pub fn requires_explicit_thinking_opt_out(model_id: &str) -> bool {
 
 pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
 pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
+pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-controls-2026-08-01";
+
+pub fn binds_thinking_blocks_to_prefix(model_id: &str) -> bool {
+    matches!(model_id, "claude-fable-5-1")
+}
+
+pub fn supports_forced_tool_use(model_id: &str) -> bool {
+    !matches!(model_id, "claude-fable-5-1" | "claude-mythos-5-1")
+}
 
 /// <https://platform.claude.com/docs/en/build-with-claude/compaction>
 pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
@@ -183,7 +192,9 @@ impl Model {
         // <https://platform.claude.com/docs/en/build-with-claude/compaction#supported-models>
         let supports_compaction = matches!(
             entry.id.as_str(),
-            "claude-fable-5"
+            "claude-fable-5-1"
+                | "claude-fable-5"
+                | "claude-mythos-5-1"
                 | "claude-mythos-5"
                 | "claude-mythos-preview"
                 | "claude-opus-5"
@@ -200,6 +211,9 @@ impl Model {
         }
         if supports_compaction {
             extra_beta_headers.push(COMPACTION_BETA_HEADER.to_string());
+        }
+        if binds_thinking_blocks_to_prefix(&entry.id) {
+            extra_beta_headers.push(THINKING_BINDING_CONTROLS_BETA_HEADER.to_string());
         }
 
         Self {
@@ -452,14 +466,19 @@ async fn handle_error_response(
     mut response: http::Response<AsyncBody>,
     rate_limits: RateLimitInfo,
 ) -> AnthropicError {
-    if response.status().as_u16() == 529 {
+    let status = response.status();
+    if status.as_u16() == 529 {
         return AnthropicError::ServerOverloaded {
+            status,
             retry_after: rate_limits.retry_after,
         };
     }
 
     if let Some(retry_after) = rate_limits.retry_after {
-        return AnthropicError::RateLimit { retry_after };
+        return AnthropicError::RateLimit {
+            status,
+            retry_after,
+        };
     }
 
     let mut body = String::new();
@@ -474,9 +493,12 @@ async fn handle_error_response(
     }
 
     match serde_json::from_str::<Event>(&body) {
-        Ok(Event::Error { error }) => AnthropicError::ApiError(error),
+        Ok(Event::Error { error }) => AnthropicError::ApiError {
+            status: Some(status),
+            error,
+        },
         Ok(_) | Err(_) => AnthropicError::HttpResponseError {
-            status_code: response.status(),
+            status_code: status,
             message: body,
         },
     }
@@ -804,6 +826,8 @@ pub enum Thinking {
     Adaptive {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         display: Option<AdaptiveThinkingDisplay>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        block_binding: Option<ThinkingBlockBinding>,
     },
     /// Explicitly turns thinking off. Required by models where thinking runs
     /// by default (see [`requires_explicit_thinking_opt_out`]); only accepted
@@ -816,6 +840,22 @@ pub enum Thinking {
 pub enum AdaptiveThinkingDisplay {
     Omitted,
     Summarized,
+}
+
+/// Controls for models that bind thinking blocks to the request prefix (see
+/// [`binds_thinking_blocks_to_prefix`]). Requires the
+/// [`THINKING_BINDING_CONTROLS_BETA_HEADER`] beta header.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThinkingBlockBinding {
+    pub prefix_mismatch_behavior: PrefixMismatchBehavior,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PrefixMismatchBehavior {
+    /// Drop an invalidated thinking block and continue, instead of rejecting
+    /// the request with a 400.
+    DropBlock,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumString)]
@@ -1096,13 +1136,22 @@ pub enum AnthropicError {
     },
 
     /// Rate limit exceeded
-    RateLimit { retry_after: Duration },
+    RateLimit {
+        status: StatusCode,
+        retry_after: Duration,
+    },
 
     /// Server overloaded
-    ServerOverloaded { retry_after: Option<Duration> },
+    ServerOverloaded {
+        status: StatusCode,
+        retry_after: Option<Duration>,
+    },
 
     /// API returned an error response
-    ApiError(ApiError),
+    ApiError {
+        status: Option<StatusCode>,
+        error: ApiError,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Error)]
@@ -1212,21 +1261,37 @@ pub fn completion_error_from_anthropic(
         AnthropicError::HttpResponseError {
             status_code,
             message,
-        } => Error::HttpResponseError {
-            provider,
-            status_code,
-            message,
-        },
-        AnthropicError::RateLimit { retry_after } => Error::RateLimitExceeded {
-            provider,
-            retry_after: Some(retry_after),
-        },
-        AnthropicError::ServerOverloaded { retry_after } => Error::ServerOverloaded {
-            provider,
+        } => Error::from_http_status(provider, status_code, message, None),
+        AnthropicError::RateLimit {
+            status,
             retry_after,
-        },
-        AnthropicError::ApiError(api_error) => {
-            completion_error_from_anthropic_api(api_error, provider)
+        } => {
+            let message = format!("{provider}'s API rate limit exceeded");
+            Error::from_provider_response(
+                provider,
+                Some(status),
+                None,
+                message,
+                Some(retry_after),
+                language_model_core::ProviderErrorCategory::RateLimit,
+            )
+        }
+        AnthropicError::ServerOverloaded {
+            status,
+            retry_after,
+        } => {
+            let message = format!("{provider}'s API servers are overloaded right now");
+            Error::from_provider_response(
+                provider,
+                Some(status),
+                None,
+                message,
+                retry_after,
+                language_model_core::ProviderErrorCategory::Overloaded,
+            )
+        }
+        AnthropicError::ApiError { status, error } => {
+            completion_error_from_anthropic_api_with_status(error, provider, status)
         }
     }
 }
@@ -1235,52 +1300,49 @@ pub fn completion_error_from_anthropic_api(
     error: ApiError,
     provider: language_model_core::LanguageModelProviderName,
 ) -> language_model_core::LanguageModelCompletionError {
+    completion_error_from_anthropic_api_with_status(error, provider, None)
+}
+
+fn completion_error_from_anthropic_api_with_status(
+    error: ApiError,
+    provider: language_model_core::LanguageModelProviderName,
+    status: Option<StatusCode>,
+) -> language_model_core::LanguageModelCompletionError {
     use ApiErrorCode::*;
     use language_model_core::LanguageModelCompletionError as Error;
-    match error.code() {
-        Some(code) => match code {
-            InvalidRequestError => Error::BadRequestFormat {
-                provider,
-                message: error.message,
-            },
-            AuthenticationError => Error::AuthenticationError {
-                provider,
-                message: error.message,
-            },
-            BillingError => Error::PaymentRequired,
-            PermissionError => Error::PermissionError {
-                provider,
-                message: error.message,
-            },
-            NotFoundError => Error::ApiEndpointNotFound { provider },
-            ConflictError => Error::HttpResponseError {
-                provider,
-                status_code: StatusCode::CONFLICT,
-                message: error.message,
-            },
-            RequestTooLarge => Error::PromptTooLarge {
-                tokens: language_model_core::parse_prompt_too_long(&error.message),
-            },
-            RateLimitError => Error::RateLimitExceeded {
-                provider,
-                retry_after: None,
-            },
-            TimeoutError => Error::UpstreamProviderError {
-                message: error.message,
-                status: StatusCode::GATEWAY_TIMEOUT,
-                retry_after: None,
-            },
-            ApiError => Error::ApiInternalServerError {
-                provider,
-                message: error.message,
-            },
-            OverloadedError => Error::ServerOverloaded {
-                provider,
-                retry_after: None,
-            },
+    use language_model_core::ProviderErrorCategory;
+    let category = match error.code() {
+        Some(InvalidRequestError) => {
+            if let Some(tokens) = parse_prompt_too_long(&error.message) {
+                ProviderErrorCategory::PromptTooLarge {
+                    tokens: Some(tokens),
+                }
+            } else {
+                ProviderErrorCategory::InvalidRequest
+            }
+        }
+        Some(AuthenticationError) => ProviderErrorCategory::Authentication,
+        Some(BillingError) => ProviderErrorCategory::PaymentRequired,
+        Some(PermissionError) => ProviderErrorCategory::Permission,
+        Some(NotFoundError) => ProviderErrorCategory::EndpointNotFound,
+        Some(ConflictError) => ProviderErrorCategory::Conflict,
+        Some(RequestTooLarge) => ProviderErrorCategory::PromptTooLarge {
+            tokens: parse_prompt_too_long(&error.message),
         },
-        None => Error::Other(error.into()),
-    }
+        Some(RateLimitError) => ProviderErrorCategory::RateLimit,
+        Some(TimeoutError) => ProviderErrorCategory::Timeout,
+        Some(ApiError) => ProviderErrorCategory::InternalServer,
+        Some(OverloadedError) => ProviderErrorCategory::Overloaded,
+        None => ProviderErrorCategory::Other,
+    };
+    Error::from_provider_response(
+        provider,
+        status,
+        Some(error.error_type),
+        error.message,
+        None,
+        category,
+    )
 }
 
 #[cfg(test)]
@@ -1309,10 +1371,13 @@ mod tests {
 
         assert!(matches!(
             error,
-            AnthropicError::ApiError(ApiError {
-                error_type,
-                message,
-            }) if error_type == "authentication_error" && message == "invalid x-api-key"
+            AnthropicError::ApiError {
+                status: Some(StatusCode::UNAUTHORIZED),
+                error: ApiError {
+                    error_type,
+                    message,
+                },
+            } if error_type == "authentication_error" && message == "invalid x-api-key"
         ));
     }
 
@@ -1362,12 +1427,36 @@ mod tests {
 
         assert!(matches!(
             completion_error,
-            language_model_core::LanguageModelCompletionError::PaymentRequired
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                category: language_model_core::ProviderErrorCategory::PaymentRequired,
+                ..
+            }
         ));
     }
 
     #[test]
-    fn list_models_maps_anthropic_conflict_errors_to_http_conflict() {
+    fn request_too_large_preserves_reported_token_count() {
+        let error = completion_error_from_anthropic_api(
+            ApiError {
+                error_type: "request_too_large".to_string(),
+                message: "prompt is too long: 1500000 tokens".to_string(),
+            },
+            language_model_core::ANTHROPIC_PROVIDER_NAME,
+        );
+
+        assert!(matches!(
+            error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                category: language_model_core::ProviderErrorCategory::PromptTooLarge {
+                    tokens: Some(1_500_000),
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn list_models_preserves_anthropic_conflict_errors() {
         let client = FakeHttpClient::create(|_| async move {
             Ok(http::Response::builder()
                 .status(StatusCode::CONFLICT)
@@ -1388,11 +1477,15 @@ mod tests {
 
         assert!(matches!(
             completion_error,
-            language_model_core::LanguageModelCompletionError::HttpResponseError {
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
                 provider,
-                status_code: StatusCode::CONFLICT,
+                status: Some(StatusCode::CONFLICT),
+                code: Some(code),
                 message,
+                retry_after: None,
+                category: language_model_core::ProviderErrorCategory::Conflict,
             } if provider == language_model_core::ANTHROPIC_PROVIDER_NAME
+                && code == "conflict_error"
                 && message == "The resource was modified concurrently."
         ));
     }
@@ -1419,11 +1512,16 @@ mod tests {
 
         assert!(matches!(
             completion_error,
-            language_model_core::LanguageModelCompletionError::UpstreamProviderError {
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                provider,
                 message,
-                status: StatusCode::GATEWAY_TIMEOUT,
+                status: Some(StatusCode::GATEWAY_TIMEOUT),
+                code: Some(code),
                 retry_after: None,
-            } if message == "The request timed out."
+                category: language_model_core::ProviderErrorCategory::Timeout,
+            } if provider == language_model_core::ANTHROPIC_PROVIDER_NAME
+                && code == "timeout_error"
+                && message == "The request timed out."
         ));
     }
 
@@ -1541,6 +1639,31 @@ mod tests {
             assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
             assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
         }
+    }
+
+    #[test]
+    fn from_listed_enables_compaction_and_binding_controls_for_fable_5_1() {
+        let model = Model::from_listed(listed_entry(
+            "claude-fable-5-1",
+            ModelCapabilities::default(),
+        ));
+        let beta_headers = model
+            .beta_headers()
+            .expect("model should have beta headers");
+        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+        assert!(beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER));
+
+        // Mythos 5.1 supports compaction but doesn't run the prefix-binding
+        // check, so it must not get the binding-controls header.
+        let model = Model::from_listed(listed_entry(
+            "claude-mythos-5-1",
+            ModelCapabilities::default(),
+        ));
+        let beta_headers = model
+            .beta_headers()
+            .expect("model should have beta headers");
+        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+        assert!(!beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER));
     }
 
     #[test]

@@ -31,8 +31,10 @@ actions!(
     [
         /// Starts a new debugging session.
         Start,
-        /// Continues execution until the next breakpoint.
+        /// Continues all threads until the next breakpoint.
         Continue,
+        /// Continues the selected thread until the next breakpoint.
+        ContinueThread,
         /// Detaches the debugger from the running process.
         Detach,
         /// Pauses the currently running program.
@@ -159,6 +161,9 @@ pub fn init(cx: &mut App) {
 
                 let caps = running_state.capabilities(cx);
                 let supports_step_back = caps.supports_step_back.unwrap_or_default();
+                let supports_single_thread_execution_requests = caps
+                    .supports_single_thread_execution_requests
+                    .unwrap_or_default();
                 let supports_detach = running_state.session().read(cx).is_attached();
                 let status = running_state.thread_status(cx);
 
@@ -200,9 +205,17 @@ pub fn init(cx: &mut App) {
                         let active_item = active_item.clone();
                         move |_: &Continue, _, cx| {
                             active_item
-                                .update(cx, |item, cx| item.continue_thread(cx))
+                                .update(cx, |item, cx| item.continue_program(cx))
                                 .ok();
                         }
+                    })
+                    .when(supports_single_thread_execution_requests, |div| {
+                        let active_item = active_item.clone();
+                        div.on_action(move |_: &ContinueThread, _, cx| {
+                            active_item
+                                .update(cx, |item, cx| item.continue_thread(cx))
+                                .ok();
+                        })
                     })
                 })
                 .when(supports_detach, |div| {
