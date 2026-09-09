@@ -23324,6 +23324,7 @@ async fn test_toggle_comment_ignore_indent(cx: &mut TestAppContext) {
     let toggle_comments = &ToggleComments {
         advance_downwards: false,
         ignore_indent: true,
+        comment_empty_lines: false,
     };
 
     // If multiple selections intersect a line, the line is only toggled once.
@@ -23434,6 +23435,78 @@ async fn test_toggle_comment_ignore_indent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_comment_commenting_blank_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    // A prefix without a trailing space keeps every expectation below free of
+    // trailing whitespace, which would otherwise be stripped on save and break
+    // the assertions on commented blank lines.
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let toggle_comments = &ToggleComments {
+        comment_empty_lines: true,
+        ..Default::default()
+    };
+
+    cx.set_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        //«fn a() {
+        //    b();
+        //
+        //    c();
+        //}ˇ»
+    "});
+
+    // Toggling again removes the prefix from every line, blank ones included.
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    // All prefixes in a block go at one shared column so they line up: the
+    // smallest indent among the rows being commented. A blank line contributes
+    // 0 and drags that to 0 - shifting every line in the block left. VS Code
+    // does the same.
+    cx.set_state(indoc! {"
+        fn a() {
+            «b();
+
+            c();ˇ»
+        }
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //    «b();
+        //
+        //    c();ˇ»
+        }
+    "});
+}
+#[gpui::test]
 async fn test_advance_downward_on_toggle_comment(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -23455,6 +23528,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut TestAppContext) {
     let toggle_comments = &ToggleComments {
         advance_downwards: true,
         ignore_indent: false,
+        comment_empty_lines: false,
     };
 
     // Single cursor on one line -> advance

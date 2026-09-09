@@ -148,6 +148,10 @@ pub struct ToggleComments {
     pub advance_downwards: bool,
     #[serde(default)]
     pub ignore_indent: bool,
+    /// Whether to add comment markers to blank lines inside a multi-line
+    /// selection. A line of only whitespace counts as blank.
+    #[serde(default)]
+    pub comment_empty_lines: bool,
 }
 
 /// Toggles block comment markers for the selected text.

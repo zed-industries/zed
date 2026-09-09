@@ -1415,6 +1415,7 @@ impl Editor {
             let empty_str: Arc<str> = Arc::default();
             let mut suffixes_inserted = Vec::new();
             let ignore_indent = action.ignore_indent;
+            let comment_empty_lines = action.comment_empty_lines;
 
             fn comment_prefix_range(
                 snapshot: &MultiBufferSnapshot,
@@ -1548,7 +1549,10 @@ impl Editor {
 
                     for row in start_row.0..=end_row.0 {
                         let row = MultiBufferRow(row);
-                        if start_row < end_row && snapshot.is_line_blank(row) {
+                        if !comment_empty_lines
+                            && start_row < end_row
+                            && snapshot.is_line_blank(row)
+                        {
                             continue;
                         }
 
