@@ -593,6 +593,25 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         self.model.supports_disabling_thinking
     }
 
+    fn supports_disabling_thinking_at_effort(&self, effort: Option<&str>) -> bool {
+        let effort_level = match effort {
+            Some(effort) => self
+                .model
+                .supported_effort_levels
+                .iter()
+                .find(|effort_level| effort_level.value.as_ref() == effort),
+            None => self
+                .model
+                .supported_effort_levels
+                .iter()
+                .find(|effort_level| effort_level.is_default == Some(true)),
+        };
+
+        effort_level
+            .and_then(|effort_level| effort_level.supports_disabling_thinking)
+            .unwrap_or(self.model.supports_disabling_thinking)
+    }
+
     fn supports_fast_mode(&self) -> bool {
         self.model.supports_fast_mode
     }
@@ -1887,6 +1906,35 @@ mod tests {
             app_version: None,
             request_limiter: RateLimiter::new(4),
         }
+    }
+
+    #[test]
+    fn test_disabling_thinking_support_uses_effort_level_override() {
+        let mut model = cloud_test_model(FakeHttpClient::create(|_| async {
+            Err(anyhow::anyhow!("unexpected request"))
+        }));
+        let mut model_data = (*model.model).clone();
+        model_data.supports_disabling_thinking = false;
+        model_data.supported_effort_levels = vec![
+            cloud_llm_client::SupportedEffortLevel {
+                name: Arc::from("High"),
+                value: Arc::from("high"),
+                is_default: Some(true),
+                supports_disabling_thinking: Some(true),
+            },
+            cloud_llm_client::SupportedEffortLevel {
+                name: Arc::from("Max"),
+                value: Arc::from("max"),
+                is_default: None,
+                supports_disabling_thinking: None,
+            },
+        ];
+        model.model = Arc::new(model_data);
+
+        assert!(model.supports_disabling_thinking_at_effort(None));
+        assert!(model.supports_disabling_thinking_at_effort(Some("high")));
+        assert!(!model.supports_disabling_thinking_at_effort(Some("max")));
+        assert!(!model.supports_disabling_thinking_at_effort(Some("unknown")));
     }
 
     struct TestTokenProvider;
