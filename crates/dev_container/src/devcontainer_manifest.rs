@@ -1502,25 +1502,15 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             for port in main_service_ports {
                 // If the main service uses a different service's network bridge, append to that service's ports instead
                 if let Some(network_service_name) = network_mode_service {
-                    if let Some(service) = service_declarations.get_mut(network_service_name) {
-                        service.ports.push(DockerComposeServicePort {
+                    service_declarations
+                        .entry(network_service_name.to_string())
+                        .or_default()
+                        .ports
+                        .push(DockerComposeServicePort {
                             target: port.clone(),
                             published: port.clone(),
                             ..Default::default()
                         });
-                    } else {
-                        service_declarations.insert(
-                            network_service_name.to_string(),
-                            DockerComposeService {
-                                ports: vec![DockerComposeServicePort {
-                                    target: port.clone(),
-                                    published: port.clone(),
-                                    ..Default::default()
-                                }],
-                                ..Default::default()
-                            },
-                        );
-                    }
                 } else {
                     main_service.ports.push(DockerComposeServicePort {
                         target: port.clone(),
@@ -1548,25 +1538,15 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 })
                 .collect();
             for (service_name, port) in other_service_ports {
-                if let Some(service) = service_declarations.get_mut(service_name) {
-                    service.ports.push(DockerComposeServicePort {
+                service_declarations
+                    .entry(service_name.to_string())
+                    .or_default()
+                    .ports
+                    .push(DockerComposeServicePort {
                         target: port.to_string(),
                         published: port.to_string(),
                         ..Default::default()
                     });
-                } else {
-                    service_declarations.insert(
-                        service_name.to_string(),
-                        DockerComposeService {
-                            ports: vec![DockerComposeServicePort {
-                                target: port.to_string(),
-                                published: port.to_string(),
-                                ..Default::default()
-                            }],
-                            ..Default::default()
-                        },
-                    );
-                }
             }
         }
 

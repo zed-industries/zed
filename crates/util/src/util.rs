@@ -425,10 +425,13 @@ pub fn merge_json_lenient_value_into(
     match (source, target) {
         (serde_json_lenient::Value::Object(source), serde_json_lenient::Value::Object(target)) => {
             for (key, value) in source {
-                if let Some(target) = target.get_mut(&key) {
-                    merge_json_lenient_value_into(value, target);
-                } else {
-                    target.insert(key, value);
+                match target.entry(key) {
+                    serde_json_lenient::map::Entry::Occupied(mut entry) => {
+                        merge_json_lenient_value_into(value, entry.get_mut());
+                    }
+                    serde_json_lenient::map::Entry::Vacant(entry) => {
+                        entry.insert(value);
+                    }
                 }
             }
         }
@@ -452,10 +455,13 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
     match (source, target) {
         (Value::Object(source), Value::Object(target)) => {
             for (key, value) in source {
-                if let Some(target) = target.get_mut(&key) {
-                    merge_json_value_into(value, target);
-                } else {
-                    target.insert(key, value);
+                match target.entry(key) {
+                    serde_json::map::Entry::Occupied(mut entry) => {
+                        merge_json_value_into(value, entry.get_mut());
+                    }
+                    serde_json::map::Entry::Vacant(entry) => {
+                        entry.insert(value);
+                    }
                 }
             }
         }
@@ -497,10 +503,15 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
             target.as_object_mut().unwrap()
         };
         for (key, value) in source_object {
-            if let Some(target) = target_object.get_mut(&key) {
-                merge_non_null_json_value_into(value, target);
-            } else if !value.is_null() {
-                target_object.insert(key, value);
+            match target_object.entry(key) {
+                serde_json::map::Entry::Occupied(mut entry) => {
+                    merge_non_null_json_value_into(value, entry.get_mut());
+                }
+                serde_json::map::Entry::Vacant(entry) => {
+                    if !value.is_null() {
+                        entry.insert(value);
+                    }
+                }
             }
         }
     } else if !source.is_null() {

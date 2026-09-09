@@ -1182,20 +1182,24 @@ impl GitStore {
                             while let Some(update) = updates_rx.next().await {
                                 match update {
                                     DownstreamUpdate::UpdateRepository(snapshot) => {
-                                        if let Some(old_snapshot) = snapshots.get_mut(&snapshot.id)
-                                        {
-                                            let update =
-                                                snapshot.build_update(old_snapshot, project_id);
-                                            *old_snapshot = snapshot;
-                                            for update in split_repository_update(update) {
-                                                client.send(update)?;
+                                        match snapshots.entry(snapshot.id) {
+                                            collections::hash_map::Entry::Occupied(
+                                                mut old_snapshot,
+                                            ) => {
+                                                let update = snapshot
+                                                    .build_update(old_snapshot.get(), project_id);
+                                                *old_snapshot.get_mut() = snapshot;
+                                                for update in split_repository_update(update) {
+                                                    client.send(update)?;
+                                                }
                                             }
-                                        } else {
-                                            let update = snapshot.initial_update(project_id);
-                                            for update in split_repository_update(update) {
-                                                client.send(update)?;
+                                            collections::hash_map::Entry::Vacant(entry) => {
+                                                let update = snapshot.initial_update(project_id);
+                                                for update in split_repository_update(update) {
+                                                    client.send(update)?;
+                                                }
+                                                entry.insert(snapshot);
                                             }
-                                            snapshots.insert(snapshot.id, snapshot);
                                         }
                                     }
                                     DownstreamUpdate::RemoveRepository(id) => {

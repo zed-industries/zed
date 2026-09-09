@@ -3415,20 +3415,16 @@ impl Buffer {
     }
 
     fn restore_encoding_for_transaction(&mut self, transaction_id: TransactionId, was_dirty: bool) {
-        if let Some((old_encoding, old_has_bom)) =
-            self.reload_with_encoding_txns.get(&transaction_id)
-        {
-            let current_encoding = self.encoding;
-            let current_has_bom = self.has_bom;
-            self.encoding = *old_encoding;
-            self.has_bom = *old_has_bom;
+        if let Some(entry) = self.reload_with_encoding_txns.get_mut(&transaction_id) {
+            let (old_encoding, old_has_bom) =
+                std::mem::replace(entry, (self.encoding, self.has_bom));
+            self.encoding = old_encoding;
+            self.has_bom = old_has_bom;
             if !was_dirty {
                 self.saved_version = self.version.clone();
                 self.has_unsaved_edits
                     .set((self.saved_version.clone(), false));
             }
-            self.reload_with_encoding_txns
-                .insert(transaction_id, (current_encoding, current_has_bom));
         }
     }
 
