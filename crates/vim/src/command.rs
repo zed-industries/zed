@@ -3,7 +3,10 @@ use collections::{HashMap, HashSet};
 use command_palette_hooks::{CommandInterceptItem, CommandInterceptResult};
 use editor::{
     Bias, Editor, EditorSettings, SelectionEffects, ToPoint,
-    actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
+    actions::{
+        SortLinesCaseInsensitive, SortLinesCaseSensitive, SortLinesCaseSensitiveDescending,
+        SortLinesCaseSensitiveUnique, SortLinesNatural,
+    },
     display_map::ToDisplayPoint,
 };
 use futures::AsyncWriteExt as _;
@@ -1759,9 +1762,16 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             .bang(DeleteMarks::AllLocal)
             .args(|_, args| Some(DeleteMarks::Marks(args).boxed_clone())),
         VimCommand::new(("sor", "t"), SortLinesCaseSensitive)
+            .bang(SortLinesCaseSensitiveDescending)
             .range(select_range)
             .default_range(CommandRange::buffer()),
         VimCommand::new(("sort i", ""), SortLinesCaseInsensitive)
+            .range(select_range)
+            .default_range(CommandRange::buffer()),
+        VimCommand::new(("sort u", ""), SortLinesCaseSensitiveUnique)
+            .range(select_range)
+            .default_range(CommandRange::buffer()),
+        VimCommand::new(("sort n", ""), SortLinesNatural)
             .range(select_range)
             .default_range(CommandRange::buffer()),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
