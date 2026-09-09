@@ -157,6 +157,7 @@ table{border-collapse:collapse;margin:1em 0}td,th{padding:.3em .8em;border-botto
 canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small{color:#666}button{margin:.2em .3em .2em 0}</style>
 <h2>GPUI view tree — frame cost model</h2>
 <p>Presets: <span id=presets></span></p>
+<p><small>The frame budget at 120 Hz is 8.3 ms, shared by every window and by everything else on the main thread; the 4 ms line is the half of it a draw should stay under.</small></p>
 <label>divs (a quad) <input id=L type=range min=0 max=4000 step=10 value=200> <span id=Lv></span></label>
 <label>buttons (quad + 3-glyph label) <input id=M type=range min=0 max=1500 step=10 value=300> <span id=Mv></span></label>
 <label>cards (quad + shadow + 10-glyph label) <input id=H type=range min=0 max=400 step=5 value=20> <span id=Hv></span></label>
@@ -200,11 +201,13 @@ const PRESETS={
  'Zed, typing':[200,300,20,20,3,3,1,false],
  'Zed, scrolling':[200,300,20,20,3,3,1,true],
  'Zed, resize':[200,300,20,20,100,3,3,true],
+ 'Big workspace':[600,800,60,60,5,6,1,false],
+ 'Busy UI':[400,1000,200,40,10,0,0,false],
+ 'Data table':[4000,600,0,50,5,0,0,false],
  'Dashboard':[3000,0,0,40,1,0,0,false],
  'Long list':[0,0,300,1,100,0,0,false],
- 'Element sweep':[0,1500,0,16,25,0,0,false],
 };
-const BUDGET=8.3;const BUDGETS=[[8.3,'8.3 ms (120 Hz)'],[16.7,'16.7 ms (60 Hz)']];
+const BUDGET=8.3;const BUDGETS=[[4,'4 ms — half a 120 Hz frame'],[8.3,'8.3 ms (120 Hz)'],[16.7,'16.7 ms (60 Hz)']];
 function label(g,text,x,y,color){g.font='12px system-ui';g.lineWidth=3;g.strokeStyle='rgba(255,255,255,.9)';g.strokeText(text,x,y);g.fillStyle=color;g.fillText(text,x,y);}
 function draw(){const n=[+$('L').value,+$('M').value,+$('H').value],V=+$('V').value,F=+$('F').value,budget=BUDGET,f=F/100;
 K=+$('K').value;$('D').max=K;D=Math.min(+$('D').value,K);$('D').value=D;R=$('R').checked;
@@ -218,7 +221,7 @@ const fBudget=t1===t0?null:(budget*1000-t0)/(t1-t0);
 $('fm').textContent=tm<=budget*1000?'always':'never';$('fb').textContent=fBudget===null?(t0<=budget*1000?'always':'never'):fBudget>=1?'always':fBudget<=0?'never':Math.round(fBudget*100)+'%%';
 // Break-even: the share of change above which the branch costs what main does.
 const fEven=t1===t0?null:(tm-t0)/(t1-t0);
-const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=44,W=cv.width-2*pad-150,H=cv.height-2*pad;
+const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=44,W=cv.width-2*pad-200,H=cv.height-2*pad;
 const ymax=Math.max(tm,tb,budget*1000)*1.15;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
 g.fillStyle='rgba(150,150,150,.5)';g.fillRect(X(0),Y(tm),W,Y(0)-Y(tm));
 g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(tbranch(n,p/100,V)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(42,157,143,.7)';g.fill();
