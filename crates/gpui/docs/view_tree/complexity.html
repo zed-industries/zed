@@ -21,6 +21,7 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <fieldset><legend><label style="display:inline"><input id=MC type=checkbox> <code>main</code> caches editors and panels, as Zed ships it</label></legend>
 <label>cached panels<br><input id=PN type=range min=1 max=12 value=3> <span id=PNv></span></label>
 <label>share of divs / buttons / cards inside them<br><input id=PS type=range min=0 max=100 value=60> <span id=PSv></span>%</label>
+<label>share of the change landing in the panel being worked in<br><input id=LOC type=range min=0 max=100 value=80> <span id=LOCv></span>%</label>
 <p id=mcnote style="color:#666"></p>
 <p id=mcwarn style="color:#b00"></p></fieldset></div>
 <canvas id=c width=900 height=340></canvas>
@@ -42,8 +43,13 @@ const M=[-139.84289721337763, 0.8524987970794011, 3.5736393700495634, 11.8923414
 // until the .cached() fixture variants have been measured: a replayed element on main is
 // taken as the branch's replay cost, an idle cached editor as the branch's clean editor.
 const MAIN_CACHE={measured:false, replay:[B[4],B[5],B[6]], editor_replay:ED?ED.branch_clean:0};
-let K=0,D=0,R=false,preset=null,MC=false,PN=3,PS=0.6;
-function cacheStats(n,f){const inside=n.map(x=>x*PS);const per=inside.reduce((a,b)=>a+b,0)/PN;const pClean=Math.pow(1-f,per);return {inside,per,pClean};}
+let K=0,D=0,R=false,preset=null,MC=false,PN=3,PS=0.6,LOC=0.8;
+// Where this frame's change lands: a share LOC of it in the panel being worked in (plus the
+// uncached area), the rest spread uniformly. Each panel is clean iff none of its elements
+// changed; the expected replay is the average over the active and the other P−1 panels.
+function cacheStats(n,f){const N=n[0]+n[1]+n[2];const inside=n.map(x=>x*PS);const per=inside.reduce((a,b)=>a+b,0)/PN;
+ const working=N>0?(per+(N-inside.reduce((a,b)=>a+b,0)))/N:1;const fOther=Math.max(0,f-Math.min(LOC*f,working));const fActive=Math.min(1,fOther+(working>0?LOC*f/working:0));
+ const pActive=Math.pow(1-fActive,per),pOther=Math.pow(1-fOther,per);const pClean=(pActive+(PN-1)*pOther)/PN;return {inside,per,pClean,pActive,pOther,fActive,fOther};}
 const us=v=>v.toFixed(2);
 document.getElementById('formula').textContent=
 `main    t = ${us(M[0])} + ${us(M[1])}·n_div + ${us(M[2])}·n_button + ${us(M[3])}·n_card + ${us(M[4])}·(N/100)²`+
@@ -52,7 +58,7 @@ document.getElementById('formula').textContent=
 `
   with main's caching on: elements inside the P cached panels are replayed at r_main when the panel is clean,`+
 `
-          P(clean) = (1 − f)^(elements per panel);  editors: ${MAIN_CACHE.editor_replay.toFixed(0)}·(K − D) + ${ED?ED.main_each.toFixed(0):'?'}·D`+
+          P(clean) = (1 − f′)^(elements per panel), f′ the panel's own share of the change (a share λ lands in the panel being worked in);  editors: ${MAIN_CACHE.editor_replay.toFixed(0)}·(K − D) + ${ED?ED.main_each.toFixed(0):'?'}·D`+
 `
           r_main = (${MAIN_CACHE.replay.map(us).join(', ')}) per div, button, card${MAIN_CACHE.measured?'':'   ← placeholders'}`+
 `
@@ -79,16 +85,16 @@ for(let k=0;k<3;k++){const d=n[k]*f;t+=B[1+k]*d+B[4+k]*(n[k]-d);}return t;}
 function scale(f,budget){let lo=0,hi=1024;for(let i=0;i<40;i++){const mid=(lo+hi)/2;if(f(mid)<=budget*1000)lo=mid;else hi=mid;}return lo;}
 const $=id=>document.getElementById(id);
 function fmt(us){return us>=1000?(us/1000).toFixed(2)+' ms':us.toFixed(0)+' µs';}
-// [divs, buttons, cards, views, f%, editors, editors changing, reshaped, main caches?, cached panels, share inside them %]
+// [divs, buttons, cards, views, f%, editors, editors changing, reshaped, main caches?, cached panels, share inside them %, share of change in the working panel %]
 const PRESETS={
- 'Zed, typing':[200,300,20,20,3,3,1,false,true,3,60],
- 'Zed, scrolling':[200,300,20,20,3,3,1,true,true,3,60],
- 'Zed, resize':[200,300,20,20,100,3,3,true,true,3,60],
- 'Big workspace':[600,800,60,60,5,6,1,false,true,4,60],
- 'Busy UI':[400,1000,200,40,10,0,0,false,false,3,60],
- 'Data table':[4000,600,0,50,5,0,0,false,false,3,60],
- 'Dashboard':[3000,0,0,40,1,0,0,false,false,3,60],
- 'Long list':[0,0,300,1,100,0,0,false,false,3,60],
+ 'Zed, typing':[200,300,20,20,3,3,1,false,true,3,60,100],
+ 'Zed, scrolling':[200,300,20,20,3,3,1,true,true,3,60,100],
+ 'Zed, resize':[200,300,20,20,100,3,3,true,true,3,60,0],
+ 'Big workspace':[600,800,60,60,5,6,1,false,true,4,60,95],
+ 'Busy UI':[400,1000,200,40,10,0,0,false,false,3,60,50],
+ 'Data table':[4000,600,0,50,5,0,0,false,false,3,60,50],
+ 'Dashboard':[3000,0,0,40,1,0,0,false,false,3,60,50],
+ 'Long list':[0,0,300,1,100,0,0,false,false,3,60,0],
 };
 const BUDGET=8.3;const BUDGETS=[[4,'4 ms — half a 120 Hz frame'],[8.3,'8.3 ms (120 Hz)'],[16.7,'16.7 ms (60 Hz)']];
 function label(g,text,x,y,color){g.font='12px system-ui';g.lineWidth=3;g.lineJoin='round';g.strokeStyle='rgba(255,255,255,.9)';g.strokeText(text,x,y);g.fillStyle=color;g.fillText(text,x,y);}
@@ -98,8 +104,9 @@ function drawMarginLabels(g,items,x,gap){items.sort((a,b)=>a.y-b.y);for(let i=1;
  for(const it of items){if(Math.abs(it.y-it.lineY)>1){g.save();g.setLineDash([]);g.lineWidth=1;g.strokeStyle=it.color;g.beginPath();g.moveTo(x-4,it.lineY);g.lineTo(x+2,it.y);g.stroke();g.restore();}label(g,it.text,x+4,it.y+4,it.color);}}
 function draw(){const n=[+$('L').value,+$('M').value,+$('H').value],V=+$('V').value,F=+$('F').value,budget=BUDGET,f=F/100;
 K=+$('K').value;$('D').max=K;D=Math.min(+$('D').value,K);$('D').value=D;R=$('R').checked;
-MC=$('MC').checked;PN=+$('PN').value;PS=+$('PS').value/100;$('PNv').textContent=PN;$('PSv').textContent=Math.round(PS*100);
-{const {per,pClean}=cacheStats(n,f);$('mcnote').textContent=MC?`each panel ≈ ${Math.round(per)} elements; clean with probability (1 − f)ⁿ = ${(100*pClean).toFixed(pClean<0.01?2:0)}% at f = ${F}%; expected ${(PN*pClean).toFixed(1)} of ${PN} panels replayed this frame`:'';
+MC=$('MC').checked;PN=+$('PN').value;PS=+$('PS').value/100;LOC=+$('LOC').value/100;$('PNv').textContent=PN;$('PSv').textContent=Math.round(PS*100);$('LOCv').textContent=Math.round(LOC*100);
+{const {per,pClean,pActive,pOther,fActive,fOther}=cacheStats(n,f);const pct=p=>(100*p).toFixed(p>0&&p<0.01?2:0)+'%';
+ $('mcnote').textContent=MC?`each panel ≈ ${Math.round(per)} elements. At f = ${F}% the panel being worked in sees ${pct(fActive)} of its elements change and stays clean with probability ${pct(pActive)}; each other panel sees ${pct(fOther)} and stays clean with probability ${pct(pOther)}. Expected ${(PN*pClean).toFixed(1)} of ${PN} panels replayed this frame.`:'';
  $('mcwarn').textContent=MC&&!MAIN_CACHE.measured?'placeholder coefficients: main’s replay cost is taken as the branch’s until the .cached() fixtures are measured':'';}
 $('Lv').textContent=n[0];$('Mv').textContent=n[1];$('Hv').textContent=n[2];$('Vv').textContent=V;$('Fv').textContent=F;$('Kv').textContent=K;$('Dv').textContent=D;
 const tm=tmain(n,f),tb=tbranch(n,f,V);$('tm').textContent=fmt(tm)+(MC?' (expected)':'');$('tb').textContent=fmt(tb);$('tmnote').textContent=MC?'— main’s is the expectation over which panels stayed clean; the band on the chart is its range':'';
@@ -133,8 +140,8 @@ g.font='bold 13px system-ui';label(g,preset?preset:'custom scene',pad,pad-14,'#2
 for(const [ms] of BUDGETS){const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);if(cross!==null&&cross>0&&cross<1&&ms*1000<ymax){g.fillStyle='#e76f51';g.beginPath();g.arc(X(cross*100),Y(ms*1000),4,0,7);g.fill();}}
 if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tmain(n,fEven)),4,0,7);g.fill();const t='break-even '+Math.round(fEven*100)+'%';const tw=g.measureText(t).width;label(g,t,Math.min(X(fEven*100)-tw/2,X(100)-tw),Y(tmain(n,fEven))-22,'#555');}else if(fEven!==null&&fEven>=1){const t='≈ main at 100% (measured ±5% by scene shape)';label(g,t,X(100)-g.measureText(t).width-4,Y(tmain(n,1))-6,'#555');}}
 for(const id of ['L','M','H','K','D','R','V','F'])$(id).addEventListener('input',()=>{preset=null;draw();});
-for(const id of ['MC','PN','PS'])$(id).addEventListener('input',()=>{preset=null;draw();});
+for(const id of ['MC','PN','PS','LOC'])$(id).addEventListener('input',()=>{preset=null;draw();});
 $('YS').addEventListener('input',()=>{$('fit').checked=false;draw();});$('fit').addEventListener('input',draw);
-for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value]=v;$('D').max=v[5];$('D').value=v[6];$('R').checked=v[7];$('MC').checked=v[8];$('PN').value=v[9];$('PS').value=v[10];preset=name;draw();};$('presets').appendChild(b);}
+for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value]=v;$('D').max=v[5];$('D').value=v[6];$('R').checked=v[7];$('MC').checked=v[8];$('PN').value=v[9];$('PS').value=v[10];$('LOC').value=v[11];preset=name;draw();};$('presets').appendChild(b);}
 {const wanted=decodeURIComponent(location.hash.slice(1));const start=[...$('presets').children].find(b=>b.textContent===wanted)||$('presets').firstChild;start.click();}
 </script>
