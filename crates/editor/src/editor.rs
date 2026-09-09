@@ -5790,20 +5790,21 @@ impl Editor {
                             .collect::<String>();
 
                         if !line_text_after_indent.is_empty() {
-                            let block_prefix = language_scope
+                            let block_prefixes = language_scope
                                 .block_comment()
-                                .map(|c| c.prefix.as_ref())
-                                .filter(|p| !p.is_empty());
-                            let doc_prefix = language_scope
-                                .documentation_comment()
-                                .map(|c| c.prefix.as_ref())
-                                .filter(|p| !p.is_empty());
+                                .into_iter()
+                                .chain(language_scope.documentation_comment())
+                                .filter(|comment| {
+                                    language_scope.override_name() == Some("comment")
+                                        && !comment.prefix.is_empty()
+                                        && !line_text_after_indent.starts_with(comment.end.as_ref())
+                                })
+                                .map(|comment| comment.prefix.as_ref());
                             let comment_prefixes = language_scope
                                 .line_comment_prefixes()
                                 .iter()
                                 .map(|p| p.as_ref())
-                                .chain(block_prefix)
-                                .chain(doc_prefix)
+                                .chain(block_prefixes)
                                 .map(|prefix| (prefix, false));
                             let all_prefixes = comment_prefixes.chain(
                                 language_scope
@@ -6825,13 +6826,14 @@ impl Editor {
                     .map(|(i, &row)| (row, i))
                     .collect();
 
-                // Compute new line start offsets after rotation (handles CRLF)
-                let newline_len = line_ranges[1].start.0 - line_ranges[0].end.0;
-                let first_line_start = line_ranges[0].start.0;
-                let mut new_line_starts: Vec<usize> = vec![first_line_start];
-                for text in line_texts.iter().take(num_rows - 1) {
-                    let prev_start = *new_line_starts.last().unwrap();
-                    new_line_starts.push(prev_start + text.len() + newline_len);
+                let mut old_line_end = 0;
+                let mut new_line_end = 0;
+                let mut new_line_starts = Vec::new();
+                for (range, text) in line_ranges.iter().zip(&line_texts) {
+                    let line_start = new_line_end + (range.start.0 - old_line_end);
+                    new_line_starts.push(line_start);
+                    old_line_end = range.end.0;
+                    new_line_end = line_start + text.len();
                 }
 
                 let new_selections = selections
