@@ -193,18 +193,21 @@ by step.
 
 ### Memory
 
-`ViewTreeStats::retained_bytes` estimates what the engine holds between frames from its
-containers' capacities (recordings, dependency sets, bookkeeping; not the shaped text
-bodies, boxed listeners or the Taffy tree). `view_tree_retained_memory_is_flat_across_reuse`
-checks it stays flat over a thousand frames that redraw one row at a time, and
+Every GPUI bench report ends with the process's resident set size — what `ps` or a
+system monitor shows — sampled when the first measurement starts and ends and at most
+after any measurement. The samples are taken with profiler tracing off, after its frame
+ring has been freed, so they reflect the app and not the harness, and `matrix.sh`
+records them next to the timings (`main_rss`, `branch_rss` columns, MB after the first
+measurement; `*_rss_max`). Results: _pending the paired run._
+
+From the inside, `ViewTreeStats::retained_bytes` estimates what the view tree holds
+between frames from its containers' capacities (records, dependency sets, bookkeeping;
+not the shaped text bodies, boxed listeners, the Taffy tree, or the primitives, which
+live in the frame). `view_tree_retained_memory_is_flat_across_reuse` checks it stays
+flat over a thousand frames that redraw one row at a time, and
 `test_workspace_rendering_stress` prints it: a 3-pane workspace at 1600×1000 with three
-editors holds 20 nodes and about 500 KB. Against `main`, sampling the bench process's
-RSS (three runs each): `Workbench/update/full` peaks 5% lower and its median RSS is 5%
-lower; `Workbench/update/row` peaks 12% higher and its median 4% higher, but that
-growth is the harness storing per-iteration samples and the branch runs 2.2× the
-iterations in the same time, so per iteration it grows less. For process-level numbers
-in real use, sample RSS during the session below (`ps -o rss= -p <pid>` once a second)
-alongside the frame log.
+editors holds 20 nodes and about 500 KB. For real use, sample RSS during the session
+below (`ps -o rss= -p <pid>` once a second) alongside the frame log.
 
 ### Real use
 

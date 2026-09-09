@@ -96,6 +96,7 @@ pub struct ForegroundWorkSummary {
 #[derive(Clone)]
 pub struct BenchReport {
     frame_snapshot: Rc<RefCell<WindowFrameSnapshot>>,
+    resident_memory: Rc<RefCell<ResidentMemory>>,
     frame_budget_nanos: u128,
 }
 
@@ -118,8 +119,44 @@ impl BenchReport {
     pub fn with_frame_budget_nanos(frame_budget_nanos: u128) -> Self {
         Self {
             frame_snapshot: Rc::new(RefCell::new(WindowFrameSnapshot::new())),
+            resident_memory: Rc::new(RefCell::new(ResidentMemory::default())),
             frame_budget_nanos,
         }
+    }
+
+    fn record_resident_memory_before_measuring(&self) {
+        let Some(bytes) = resident_memory_bytes() else {
+            return;
+        };
+        let mut memory = self.resident_memory.borrow_mut();
+        if memory.first.is_none() {
+            memory.first = Some((bytes, None));
+        }
+    }
+
+    fn record_resident_memory_after_measuring(&self) {
+        let Some(bytes) = resident_memory_bytes() else {
+            return;
+        };
+        let mut memory = self.resident_memory.borrow_mut();
+        if let Some((_, after @ None)) = &mut memory.first {
+            *after = Some(bytes);
+        }
+        memory.max_after = memory.max_after.max(bytes);
+    }
+
+    /// Resident set size of the benchmark process around the first measurement
+    /// and the largest seen after any measurement, in bytes. `None` where the
+    /// platform's process memory isn't read (currently everything but macOS and
+    /// Linux) or before any measurement ran.
+    pub fn resident_memory(&self) -> Option<ResidentMemorySummary> {
+        let memory = self.resident_memory.borrow();
+        let (before_first, after_first) = memory.first?;
+        Some(ResidentMemorySummary {
+            before_first_measurement: before_first,
+            after_first_measurement: after_first?,
+            max_after_measurement: memory.max_after,
+        })
     }
 
     fn record_frame_timings<'i>(&self, events: impl IntoIterator<Item = &'i FrameEvent>) {
@@ -232,7 +269,8 @@ impl BenchReport {
     /// Prints this report to stderr.
     pub fn print(&self, benchmark_name: Option<&'static str>) {
         let frame_snapshot = self.frame_snapshot.borrow();
-        if frame_snapshot.is_empty() {
+        let resident_memory = self.resident_memory();
+        if frame_snapshot.is_empty() && resident_memory.is_none() {
             return;
         }
 
@@ -250,6 +288,20 @@ impl BenchReport {
             );
         }
         self.print_foreground_work(&frame_snapshot.foreground_work);
+        if let Some(memory) = resident_memory {
+            eprintln!("  process resident memory (sampled with profiler tracing off):");
+            eprintln!(
+                "    first measurement: {} before, {} after ({:+.1} MB)",
+                format_bytes(memory.before_first_measurement),
+                format_bytes(memory.after_first_measurement),
+                (memory.after_first_measurement as f64 - memory.before_first_measurement as f64)
+                    / MEGABYTE
+            );
+            eprintln!(
+                "    max after any measurement: {}",
+                format_bytes(memory.max_after_measurement)
+            );
+        }
     }
 
     fn print_histogram(&self, name: &str, histogram: &Histogram<u64>) {
@@ -363,6 +415,69 @@ impl DurationHistogram {
 
 fn format_duration(duration: Duration) -> String {
     format!("{:.3}ms", duration.as_secs_f64() * 1000.)
+}
+
+const MEGABYTE: f64 = 1024. * 1024.;
+
+fn format_bytes(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / MEGABYTE)
+}
+
+/// Resident set size samples: `(before, after)` the first measurement and the
+/// largest value seen after any measurement.
+#[derive(Default)]
+struct ResidentMemory {
+    first: Option<(u64, Option<u64>)>,
+    max_after: u64,
+}
+
+/// Resident set size of the benchmark process, as `ps` or a system monitor would
+/// report it, in bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResidentMemorySummary {
+    /// Sampled when the first measurement began, after the benchmark's own setup.
+    pub before_first_measurement: u64,
+    /// Sampled when the first measurement ended, before its teardown.
+    pub after_first_measurement: u64,
+    /// The largest value sampled at the end of any measurement.
+    pub max_after_measurement: u64,
+}
+
+#[cfg(target_os = "macos")]
+fn resident_memory_bytes() -> Option<u64> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+    // SAFETY: `proc_pidinfo` writes at most `size` bytes into `info`, and the
+    // struct is only read if the call reports having filled it completely.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            std::process::id() as libc::c_int,
+            libc::PROC_PIDTASKINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    (written == size).then(|| unsafe { info.assume_init() }.pti_resident_size)
+}
+
+#[cfg(target_os = "linux")]
+fn resident_memory_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let kilobytes = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))?
+        .trim()
+        .strip_suffix("kB")?
+        .trim()
+        .parse::<u64>()
+        .ok()?;
+    Some(kilobytes * 1024)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn resident_memory_bytes() -> Option<u64> {
+    None
 }
 
 /// Enables profiler tracing for a measurement and collects its frame events
@@ -812,12 +927,17 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     }
 
     fn take_bencher(&self, benchmark_kind: &str) -> &'a mut criterion::Bencher<'measurement> {
-        self.bencher.borrow_mut().take().unwrap_or_else(|| {
+        let bencher = self.bencher.borrow_mut().take().unwrap_or_else(|| {
             panic!("cannot start {benchmark_kind}: benchmark measurement is already running")
-        })
+        });
+        self.report.record_resident_memory_before_measuring();
+        bencher
     }
 
     fn replace_bencher(&self, bencher: &'a mut criterion::Bencher<'measurement>) {
+        // Every trace scope has ended by now, so the profiler's frame ring has been
+        // freed and the sample reflects the app, not the harness.
+        self.report.record_resident_memory_after_measuring();
         let previous = self.bencher.borrow_mut().replace(bencher);
         assert!(
             previous.is_none(),
@@ -1129,6 +1249,39 @@ mod tests {
 
     use super::*;
     use crate::profiler::journal::install_test_foreground_journal;
+
+    #[test]
+    fn resident_memory_reports_the_first_measurement_and_the_maximum() {
+        let report = BenchReport::default();
+        assert!(report.resident_memory().is_none());
+
+        report.record_resident_memory_before_measuring();
+        assert!(
+            report.resident_memory().is_none(),
+            "a measurement that has not ended has nothing to report"
+        );
+        // Hold a large live allocation so the process measurably grows between
+        // the two samples of the first measurement.
+        let ballast = vec![1u8; 64 * 1024 * 1024];
+        report.record_resident_memory_after_measuring();
+        report.record_resident_memory_before_measuring();
+        report.record_resident_memory_after_measuring();
+
+        if let Some(summary) = report.resident_memory() {
+            assert!(
+                summary.after_first_measurement
+                    >= summary.before_first_measurement + 32 * 1024 * 1024,
+                "expected the {} bytes of ballast to show up: {summary:?}",
+                ballast.len()
+            );
+            assert!(summary.max_after_measurement >= summary.after_first_measurement);
+        } else {
+            assert!(
+                resident_memory_bytes().is_none(),
+                "resident memory is readable but was not reported"
+            );
+        }
+    }
 
     #[test]
     fn foreground_work_reports_long_task_without_window_draw() {

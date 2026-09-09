@@ -1,6 +1,9 @@
 #!/bin/sh
 # Paired main->branch runs, one fixture at a time, main re-run first so both binaries see
-# the same machine state. Writes CSV rows: fixture,main,branch,change_pct,lo,hi.
+# the same machine state. Writes CSV rows:
+#   fixture,main,branch,change_pct,lo,hi,main_rss,branch_rss,main_rss_max,branch_rss_max
+# where the time columns are Criterion's medians and the rss columns are the bench report's
+# process resident memory in MB after the first measurement and at most after any.
 # Point MAIN_EDITOR/BRANCH_EDITOR/MAIN_MD/BRANCH_MD at the two builds of each bench binary
 # (`cargo bench -p benchmarks --bench editor_render --no-run` prints the path).
 cd "$(dirname "$0")/../../../.."
@@ -9,13 +12,15 @@ MAIN_EDITOR=${MAIN_EDITOR:-target/frame-times/bench-editor-main}
 BRANCH_EDITOR=${BRANCH_EDITOR:-target/frame-times/bench-editor-branch}
 MAIN_MD=${MAIN_MD:-target/frame-times/bench-md-main}
 BRANCH_MD=${BRANCH_MD:-target/frame-times/bench-md-branch}
-run() { "$1" --bench --warm-up-time 2 --measurement-time 8 "$3" "$2" 2>&1 | grep -E "time:|change:"; }
+run() { "$1" --bench --warm-up-time 2 --measurement-time 8 "$3" "$2" 2>&1 | grep -E "time:|change:|first measurement:|max after any measurement:"; }
+median() { grep time: | sed -E 's/.*\[([0-9.]+) ([a-zµ]+) ([0-9.]+) ([a-zµ]+) ([0-9.]+) ([a-zµ]+)\].*/\3 \4/'; }
+rss() { grep 'first measurement:' | sed -E 's/.* ([0-9.]+) MB after.*/\1/'; }
+rss_max() { grep 'max after any measurement:' | sed -E 's/.*: ([0-9.]+) MB.*/\1/'; }
 row() { # main_bin branch_bin fixture
-  m=$(run "$1" "$3" --save-baseline=main | grep time: | sed -E 's/.*\[([0-9.]+) ([a-zµ]+) ([0-9.]+) ([a-zµ]+) ([0-9.]+) ([a-zµ]+)\].*/\3 \4/')
+  m=$(run "$1" "$3" --save-baseline=main)
   b=$(run "$2" "$3" --baseline=main)
-  bt=$(echo "$b" | grep time: | sed -E 's/.*\[([0-9.]+) ([a-zµ]+) ([0-9.]+) ([a-zµ]+) ([0-9.]+) ([a-zµ]+)\].*/\3 \4/')
   ch=$(echo "$b" | grep change: | sed -E 's/.*\[([-+0-9.]+)% ([-+0-9.]+)% ([-+0-9.]+)%\].*/\2,\1,\3/')
-  echo "$3,$m,$bt,$ch" | tee -a "$OUT"
+  echo "$3,$(echo "$m" | median),$(echo "$b" | median),$ch,$(echo "$m" | rss),$(echo "$b" | rss),$(echo "$m" | rss_max),$(echo "$b" | rss_max)" | tee -a "$OUT"
 }
 : > "$OUT"
 for f in "Workbench/update/row" "Workbench/update/editor" "Workbench/update/mixed" "Workbench/update/full" \
