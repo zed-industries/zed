@@ -2058,7 +2058,7 @@ impl Project {
     ) -> Entity<Project> {
         use clock::FakeSystemClock;
 
-        let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
+        let fs = RealFs::new(None, cx.background_executor().clone());
         let languages = LanguageRegistry::test(cx.background_executor().clone());
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
@@ -5885,6 +5885,13 @@ impl Project {
             });
 
             while let Some((buffer, _)) = new_matches.next().await {
+                let is_private = buffer.read_with(cx, |buffer, _| {
+                    buffer.file().is_some_and(|file| file.is_private())
+                });
+                if is_private {
+                    continue;
+                }
+
                 let buffer_id = this.update(cx, |this, cx| {
                     this.create_buffer_for_peer(&buffer, peer_id, cx).to_proto()
                 });

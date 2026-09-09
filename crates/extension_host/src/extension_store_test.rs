@@ -802,7 +802,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let test_extension_id = "test-extension";
     let test_extension_dir = root_dir.join("extensions").join(test_extension_id);
 
-    let fs = Arc::new(RealFs::new(None, cx.executor()));
+    let fs = RealFs::new(None, cx.executor());
     let extensions_tree = TempTree::new(json!({
         "installed": {},
         "work": {}

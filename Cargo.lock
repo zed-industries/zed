@@ -6246,15 +6246,19 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
+ "http_client",
  "language",
  "log",
+ "markdown",
  "num-format",
+ "paths",
  "picker",
  "project",
  "release_channel",
  "schemars 1.0.4",
  "semver",
  "serde",
+ "serde_json",
  "settings",
  "strum 0.28.0",
  "telemetry",
@@ -7197,7 +7201,6 @@ dependencies = [
  "menu",
  "multi_buffer",
  "notifications",
- "panel",
  "picker",
  "pretty_assertions",
  "project",
@@ -7803,7 +7806,6 @@ dependencies = [
  "anyhow",
  "language_core",
  "rust-embed",
- "toml 0.8.23",
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",
@@ -11412,7 +11414,7 @@ dependencies = [
 [[package]]
 name = "notify"
 version = "9.0.0-rc.4"
-source = "git+https://github.com/zed-industries/notify?rev=0890bbb8ca40a4b5d1f67031698dd7918b37d991#0890bbb8ca40a4b5d1f67031698dd7918b37d991"
+source = "git+https://github.com/zed-industries/notify?rev=d842f16b2716bd60f09caf3ae3a894237ab38f54#d842f16b2716bd60f09caf3ae3a894237ab38f54"
 dependencies = [
  "bitflags 2.13.1",
  "inotify 0.11.0",
@@ -11456,7 +11458,7 @@ dependencies = [
 [[package]]
 name = "notify-types"
 version = "2.1.0"
-source = "git+https://github.com/zed-industries/notify?rev=0890bbb8ca40a4b5d1f67031698dd7918b37d991#0890bbb8ca40a4b5d1f67031698dd7918b37d991"
+source = "git+https://github.com/zed-industries/notify?rev=d842f16b2716bd60f09caf3ae3a894237ab38f54#d842f16b2716bd60f09caf3ae3a894237ab38f54"
 dependencies = [
  "bitflags 2.13.1",
 ]
@@ -12520,15 +12522,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "panel"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "ui",
- "workspace",
 ]
 
 [[package]]
@@ -14979,7 +14972,6 @@ dependencies = [
  "log",
  "parking_lot",
  "paths",
- "prost",
  "release_channel",
  "rpc",
  "schemars 1.0.4",
@@ -16576,6 +16568,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
+ "language_models",
  "log",
  "menu",
  "paths",
@@ -18597,6 +18590,7 @@ dependencies = [
  "smallvec",
  "telemetry",
  "theme",
+ "theme_settings",
  "ui",
  "util",
  "workspace",
@@ -22261,6 +22255,7 @@ dependencies = [
  "project",
  "proptest",
  "proptest-derive",
+ "release_channel",
  "remote",
  "schemars 1.0.4",
  "serde",
@@ -22726,7 +22721,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.20.0"
+version = "1.21.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
