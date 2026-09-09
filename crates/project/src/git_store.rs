@@ -215,13 +215,13 @@ fn decode_git_text(bytes: Vec<u8>) -> Result<String> {
     Ok(decode_text(bytes)?.text)
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
     pub is_shallow_boundary: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CommitFile {
     pub path: RepoPath,
     pub old_text: Option<String>,

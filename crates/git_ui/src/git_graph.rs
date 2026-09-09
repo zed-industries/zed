@@ -1320,7 +1320,10 @@ pub struct GitGraph {
     log_order: LogOrder,
     selected_commit_diff: Option<CommitDiff>,
     selected_commit_diff_stats: Option<(usize, usize)>,
-    _commit_diff_task: Option<Task<()>>,
+    _commit_diff_task: Option<Task<Option<CommitDiff>>>,
+    _commit_preview_task: Option<Task<Option<()>>>,
+    #[cfg(test)]
+    commit_preview_open_gate: Option<futures::channel::oneshot::Receiver<()>>,
     selected_commit_message: Option<DetailPanelCommitMessage>,
     _selected_commit_message_task: Option<Task<()>>,
     commit_details_split_state: Entity<SplitState>,
@@ -1557,6 +1560,9 @@ impl GitGraph {
             workspace,
             graph_data: graph,
             _commit_diff_task: None,
+            _commit_preview_task: None,
+            #[cfg(test)]
+            commit_preview_open_gate: None,
             context_menu: None,
             table_interaction_state,
             column_widths,
@@ -2152,6 +2158,7 @@ impl GitGraph {
         };
 
         let commit_message_handle = commit.data.sha;
+        let selected_sha = commit.data.sha;
         let diff_handle = commit.data.sha.to_string();
 
         self.load_selected_commit_message(cx, &commit_message_handle, &repository);
@@ -2160,15 +2167,25 @@ impl GitGraph {
             repository.update(cx, |repo, _| repo.load_commit_diff(diff_handle, false));
 
         self._commit_diff_task = Some(cx.spawn(async move |this, cx| {
-            if let Ok(Ok(diff)) = diff_receiver.await {
-                this.update(cx, |this, cx| {
-                    let stats = compute_diff_stats(&diff);
-                    this.selected_commit_diff = Some(diff);
-                    this.selected_commit_diff_stats = Some(stats);
-                    cx.notify();
-                })
-                .ok();
-            }
+            let Ok(Ok(diff)) = diff_receiver.await else {
+                return None;
+            };
+            let preview_diff = diff.clone();
+            this.update(cx, |this, cx| {
+                let is_still_selected = this
+                    .selected_entry_idx
+                    .and_then(|index| this.graph_data.commits.get(index))
+                    .is_some_and(|commit| commit.data.sha == selected_sha);
+                if !is_still_selected {
+                    return;
+                }
+                let stats = compute_diff_stats(&diff);
+                this.selected_commit_diff = Some(diff);
+                this.selected_commit_diff_stats = Some(stats);
+                cx.notify();
+            })
+            .ok()?;
+            Some(preview_diff)
         }));
 
         cx.emit(ItemEvent::Edit);
@@ -2343,15 +2360,36 @@ impl GitGraph {
             return;
         };
 
-        CommitView::open(
+        let commit_diff = if self.selected_entry_idx == Some(entry_index) {
+            self.selected_commit_diff
+                .clone()
+                .map(|diff| Task::ready(Some(diff)))
+                .or_else(|| self._commit_diff_task.take())
+        } else {
+            None
+        };
+
+        self._commit_preview_task = Some(CommitView::open_from_git_graph(
             commit_entry.data.sha.to_string(),
             repository.downgrade(),
             self.workspace.clone(),
-            None,
-            None,
+            cx.entity_id(),
+            commit_diff,
+            #[cfg(test)]
+            self.commit_preview_open_gate.take(),
             window,
             cx,
+        ));
+    }
+
+    #[cfg(test)]
+    fn gate_next_commit_preview_open(&mut self) -> futures::channel::oneshot::Sender<()> {
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        assert!(
+            self.commit_preview_open_gate.replace(receiver).is_none(),
+            "commit preview open gate should be unique"
         );
+        sender
     }
 
     fn copy_commit_sha(&mut self, entry_index: usize, cx: &mut Context<Self>) {
@@ -4720,7 +4758,7 @@ mod tests {
     use fs::FakeFs;
     use git::Oid;
     use git::repository::{CommitData, InitialGraphCommitData};
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::git_store::{GitStoreEvent, RepositoryEvent};
     use project::{
         GIT_COMMAND_TASK_TAG, Project, TaskSourceKind, task_store::TaskSettingsLocation,
@@ -6917,6 +6955,350 @@ mod tests {
         git_graph.read_with(&*cx, |graph, _| {
             assert_eq!(graph.selected_entry_idx, Some(1));
         });
+    }
+
+    struct CommitPreviewTestProject {
+        project: Entity<Project>,
+        repository: Entity<Repository>,
+        first_sha: Oid,
+        second_sha: Oid,
+    }
+
+    impl CommitPreviewTestProject {
+        async fn new(cx: &mut TestAppContext) -> Self {
+            init_test(cx);
+
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                Path::new("/project"),
+                json!({ ".git": {}, "file.txt": "content" }),
+            )
+            .await;
+
+            let first_sha = Oid::from_bytes(&[1; 20]).expect("valid commit SHA");
+            let second_sha = Oid::from_bytes(&[2; 20]).expect("valid commit SHA");
+            fs.set_graph_commits(
+                Path::new("/project/.git"),
+                vec![
+                    Arc::new(InitialGraphCommitData {
+                        sha: second_sha,
+                        parents: smallvec![first_sha],
+                        ref_names: vec!["HEAD -> main".into()],
+                    }),
+                    Arc::new(InitialGraphCommitData {
+                        sha: first_sha,
+                        parents: smallvec![],
+                        ref_names: Vec::new(),
+                    }),
+                ],
+            );
+            fs.set_commit_data(
+                Path::new("/project/.git"),
+                [first_sha, second_sha].map(|sha| {
+                    (
+                        CommitData {
+                            sha,
+                            parents: smallvec![],
+                            author_name: "Author".into(),
+                            author_email: "author@example.com".into(),
+                            commit_timestamp: 1_700_000_000,
+                            subject: format!("Commit {sha}").into(),
+                            message: format!("Commit {sha}").into(),
+                        },
+                        false,
+                    )
+                }),
+            );
+
+            let project = Project::test(fs, [Path::new("/project")], cx).await;
+            cx.run_until_parked();
+            let repository = project.read_with(cx, |project, cx| {
+                project
+                    .active_repository(cx)
+                    .expect("should have a repository")
+            });
+
+            Self {
+                project,
+                repository,
+                first_sha,
+                second_sha,
+            }
+        }
+
+        fn open(self, cx: &mut TestAppContext) -> (CommitPreviewTest, &mut VisualTestContext) {
+            let project = self.project.clone();
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                workspace::MultiWorkspace::test_new(project, window, cx)
+            });
+            let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+            let git_graph = new_test_git_graph(&self.project, &self.repository, &workspace, cx);
+            let origin_pane = workspace.update_in(cx, |workspace, window, cx| {
+                workspace.add_item_to_active_pane(
+                    Box::new(git_graph.clone()),
+                    None,
+                    true,
+                    window,
+                    cx,
+                );
+                workspace.active_pane().clone()
+            });
+            cx.run_until_parked();
+
+            (
+                CommitPreviewTest {
+                    project: self.project,
+                    repository: self.repository,
+                    workspace,
+                    git_graph,
+                    origin_pane,
+                    first_sha: self.first_sha,
+                    second_sha: self.second_sha,
+                },
+                cx,
+            )
+        }
+    }
+
+    struct CommitPreviewTest {
+        project: Entity<Project>,
+        repository: Entity<Repository>,
+        workspace: Entity<Workspace>,
+        git_graph: Entity<GitGraph>,
+        origin_pane: Entity<workspace::Pane>,
+        first_sha: Oid,
+        second_sha: Oid,
+    }
+
+    impl CommitPreviewTest {
+        fn new_git_graph(&self, cx: &mut VisualTestContext) -> Entity<GitGraph> {
+            new_test_git_graph(&self.project, &self.repository, &self.workspace, cx)
+        }
+
+        fn open_commit(&self, sha: Oid, cx: &mut VisualTestContext) {
+            self.git_graph.update_in(cx, |graph, window, cx| {
+                graph.select_commit_by_sha(sha, cx);
+                graph.open_selected_commit_view(window, cx);
+            });
+            cx.run_until_parked();
+        }
+
+        fn adjacent_pane(&self, cx: &mut VisualTestContext) -> Entity<workspace::Pane> {
+            self.workspace.read_with(&*cx, |workspace, _| {
+                workspace
+                    .panes()
+                    .iter()
+                    .find(|pane| pane.entity_id() != self.origin_pane.entity_id())
+                    .expect("adjacent pane should exist")
+                    .clone()
+            })
+        }
+    }
+
+    fn new_test_git_graph(
+        project: &Entity<Project>,
+        repository: &Entity<Repository>,
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<GitGraph> {
+        cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace.downgrade(),
+                None,
+                window,
+                cx,
+            )
+        })
+    }
+
+    #[gpui::test]
+    async fn test_open_commit_view_uses_adjacent_pane_and_preserves_graph_focus(
+        cx: &mut TestAppContext,
+    ) {
+        let (test, cx) = CommitPreviewTestProject::new(cx).await.open(cx);
+        test.git_graph.update_in(cx, |graph, window, cx| {
+            graph.focus_handle(cx).focus(window, cx);
+        });
+
+        test.open_commit(test.first_sha, cx);
+
+        assert_eq!(
+            test.workspace
+                .read_with(&*cx, |workspace, _| workspace.panes().len()),
+            2
+        );
+        assert!(test.git_graph.update_in(cx, |graph, window, cx| {
+            graph.focus_handle.contains_focused(window, cx)
+        }));
+        assert_eq!(
+            test.origin_pane
+                .read_with(&*cx, |pane, _| pane.items_of_type::<CommitView>().count()),
+            0
+        );
+        let adjacent_pane = test.adjacent_pane(cx);
+        assert_eq!(
+            adjacent_pane.read_with(&*cx, |pane, _| pane.items_of_type::<CommitView>().count()),
+            1
+        );
+        assert!(adjacent_pane.read_with(&*cx, |pane, _| {
+            pane.active_item()
+                .and_then(|item| item.downcast::<CommitView>())
+                .is_some()
+        }));
+    }
+
+    #[gpui::test]
+    async fn test_open_commit_view_cancels_stale_load_without_stealing_focus(
+        cx: &mut TestAppContext,
+    ) {
+        let (test, cx) = CommitPreviewTestProject::new(cx).await.open(cx);
+        let first_gate = test
+            .git_graph
+            .update(cx, |graph, _| graph.gate_next_commit_preview_open());
+        test.open_commit(test.first_sha, cx);
+        let second_gate = test
+            .git_graph
+            .update(cx, |graph, _| graph.gate_next_commit_preview_open());
+        test.open_commit(test.second_sha, cx);
+
+        let focused_item = test.new_git_graph(cx);
+        let focus_pane = test.workspace.update_in(cx, |workspace, window, cx| {
+            let pane = workspace.split_pane(
+                test.origin_pane.clone(),
+                workspace::SplitDirection::Left,
+                window,
+                cx,
+            );
+            pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(focused_item.clone()), true, true, None, window, cx);
+            });
+            pane
+        });
+        cx.run_until_parked();
+
+        second_gate
+            .send(())
+            .expect("latest commit load should still be active");
+        cx.run_until_parked();
+        assert!(
+            first_gate.send(()).is_err(),
+            "superseded commit load should be cancelled"
+        );
+        cx.run_until_parked();
+
+        assert_eq!(
+            test.workspace
+                .read_with(&*cx, |workspace, _| workspace.active_pane().entity_id()),
+            focus_pane.entity_id()
+        );
+        assert!(focused_item.update_in(cx, |item, window, cx| {
+            item.focus_handle.contains_focused(window, cx)
+        }));
+        assert!(!test.git_graph.update_in(cx, |graph, window, cx| {
+            graph.focus_handle.contains_focused(window, cx)
+        }));
+        let commit_views = test.workspace.read_with(&*cx, |workspace, cx| {
+            workspace
+                .panes()
+                .iter()
+                .flat_map(|pane| pane.read(cx).items_of_type::<CommitView>())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(commit_views.len(), 1);
+        assert!(
+            commit_views[0]
+                .read_with(&*cx, |view, cx| view.tab_content_text(0, cx))
+                .starts_with(&test.second_sha.to_string()[..7])
+        );
+    }
+
+    #[gpui::test]
+    async fn test_open_commit_view_preserves_promoted_preview_and_reuses_matching_commit(
+        cx: &mut TestAppContext,
+    ) {
+        let (test, cx) = CommitPreviewTestProject::new(cx).await.open(cx);
+        test.git_graph.update_in(cx, |graph, window, cx| {
+            graph.focus_handle(cx).focus(window, cx);
+        });
+        test.open_commit(test.first_sha, cx);
+
+        let adjacent_pane = test.adjacent_pane(cx);
+        let promoted_commit_view = adjacent_pane.read_with(&*cx, |pane, _| {
+            pane.items_of_type::<CommitView>()
+                .next()
+                .expect("commit preview should exist")
+        });
+        adjacent_pane.update(cx, |pane, _| {
+            assert_eq!(
+                pane.preview_item_id(),
+                Some(promoted_commit_view.entity_id())
+            );
+            pane.unpreview_item_if_preview(promoted_commit_view.entity_id());
+        });
+        let unrelated_item = test.new_git_graph(cx);
+        adjacent_pane.update_in(cx, |pane, window, cx| {
+            pane.add_item(
+                Box::new(unrelated_item.clone()),
+                false,
+                false,
+                None,
+                window,
+                cx,
+            );
+        });
+
+        test.open_commit(test.second_sha, cx);
+
+        let commit_views = adjacent_pane.read_with(&*cx, |pane, _| {
+            pane.items_of_type::<CommitView>().collect::<Vec<_>>()
+        });
+        assert_eq!(commit_views.len(), 2);
+        assert!(
+            commit_views
+                .iter()
+                .any(|view| view.entity_id() == promoted_commit_view.entity_id())
+        );
+        let active_commit_view = commit_views
+            .iter()
+            .find(|view| view.entity_id() != promoted_commit_view.entity_id())
+            .expect("new commit preview should exist");
+        assert_eq!(
+            adjacent_pane.read_with(&*cx, |pane, _| pane
+                .active_item()
+                .map(|item| item.item_id())),
+            Some(active_commit_view.entity_id())
+        );
+        assert_eq!(
+            adjacent_pane.read_with(&*cx, |pane, _| pane.items_of_type::<GitGraph>().count()),
+            1
+        );
+
+        test.open_commit(test.first_sha, cx);
+
+        let commit_views = adjacent_pane.read_with(&*cx, |pane, _| {
+            pane.items_of_type::<CommitView>().collect::<Vec<_>>()
+        });
+        assert_eq!(commit_views.len(), 1);
+        assert_eq!(
+            commit_views[0].entity_id(),
+            promoted_commit_view.entity_id()
+        );
+        assert_eq!(
+            adjacent_pane.read_with(&*cx, |pane, _| pane.preview_item_id()),
+            None
+        );
+        assert_eq!(
+            adjacent_pane.read_with(&*cx, |pane, _| pane
+                .active_item()
+                .map(|item| item.item_id())),
+            Some(promoted_commit_view.entity_id())
+        );
+        assert_eq!(
+            adjacent_pane.read_with(&*cx, |pane, _| pane.items_of_type::<GitGraph>().count()),
+            1
+        );
     }
 
     #[gpui::test]
