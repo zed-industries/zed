@@ -5,6 +5,7 @@ mod terminal;
 pub use ::terminal::HeadlessTerminal;
 use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::schema::{MaybeUndefined, v1 as acp};
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashSet;
 pub use connection::*;
@@ -12,8 +13,8 @@ pub use diff::*;
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{
-    AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    WeakEntity,
+    ActivityGuard, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription,
+    Task, WeakEntity,
 };
 use itertools::Itertools;
 use language::language_settings::FormatOnSave;
@@ -29,6 +30,7 @@ use project::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
+use settings::{Settings, SettingsStore};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Formatter, Write};
@@ -2108,6 +2110,7 @@ pub struct AcpThread {
     prompt_capabilities: acp::PromptCapabilities,
     available_commands: Vec<acp::AvailableCommand>,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
+    _idle_sleep_subscriptions: Vec<Subscription>,
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
@@ -2121,6 +2124,14 @@ pub struct AcpThread {
     /// gradually to create a fluid typing effect instead of choppy chunk-at-a-time
     /// updates.
     streaming_text_buffer: Option<StreamingTextBuffer>,
+    idle_sleep_prevention: IdleSleepPrevention,
+}
+
+enum IdleSleepPrevention {
+    Inactive,
+    Acquiring { _task: Task<()> },
+    Active { _guard: ActivityGuard },
+    Failed,
 }
 
 struct StreamingTextBuffer {
@@ -2283,6 +2294,34 @@ impl AcpThread {
                 })?;
             }
         });
+        let idle_sleep_settings_subscription = cx.observe_global::<SettingsStore>(|this, cx| {
+            this.update_idle_sleep_prevention(cx);
+        });
+        let idle_sleep_event_subscription =
+            cx.subscribe_self(|this, event: &AcpThreadEvent, cx| match event {
+                AcpThreadEvent::StatusChanged
+                | AcpThreadEvent::EntriesRemoved(_)
+                | AcpThreadEvent::ToolAuthorizationRequested(_)
+                | AcpThreadEvent::ToolAuthorizationReceived(_)
+                | AcpThreadEvent::ElicitationRequested(_)
+                | AcpThreadEvent::ElicitationResponded(_) => this.update_idle_sleep_prevention(cx),
+                AcpThreadEvent::PromptUpdated
+                | AcpThreadEvent::NewEntry
+                | AcpThreadEvent::TitleUpdated
+                | AcpThreadEvent::TokenUsageUpdated
+                | AcpThreadEvent::EntryUpdated(_)
+                | AcpThreadEvent::Retry(_)
+                | AcpThreadEvent::SubagentSpawned(_)
+                | AcpThreadEvent::Stopped(_)
+                | AcpThreadEvent::Error
+                | AcpThreadEvent::LoadError(_)
+                | AcpThreadEvent::PromptCapabilitiesUpdated
+                | AcpThreadEvent::Refusal
+                | AcpThreadEvent::AvailableCommandsUpdated(_)
+                | AcpThreadEvent::ModeUpdated(_)
+                | AcpThreadEvent::ConfigOptionsUpdated(_)
+                | AcpThreadEvent::WorkingDirectoriesUpdated => {}
+            });
 
         let git_store = project.read(cx).git_store().clone();
         let _git_store_subscription = cx.subscribe(&git_store, |this, _, event, cx| {
@@ -2321,6 +2360,10 @@ impl AcpThread {
             prompt_capabilities,
             available_commands: Vec::new(),
             _observe_prompt_capabilities: task,
+            _idle_sleep_subscriptions: vec![
+                idle_sleep_settings_subscription,
+                idle_sleep_event_subscription,
+            ],
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
@@ -2328,6 +2371,7 @@ impl AcpThread {
             draft_prompt: None,
             ui_scroll_position: None,
             streaming_text_buffer: None,
+            idle_sleep_prevention: IdleSleepPrevention::Inactive,
         }
     }
 
@@ -3158,14 +3202,17 @@ impl AcpThread {
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
-                call.update_fields(
+                if let Err(error) = call.update_fields(
                     update.fields,
                     update.meta,
                     languages,
                     path_style,
                     &self.terminals,
                     cx,
-                )?;
+                ) {
+                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                    return Err(error);
+                }
                 if location_updated {
                     self.resolve_locations(update.tool_call_id, cx);
                 }
@@ -3230,14 +3277,17 @@ impl AcpThread {
                 unreachable!()
             };
 
-            call.update_fields(
+            if let Err(error) = call.update_fields(
                 update.fields,
                 update.meta,
                 language_registry,
                 path_style,
                 &self.terminals,
                 cx,
-            )?;
+            ) {
+                cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                return Err(acp::Error::from(error));
+            }
             call.update_status(status);
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -3753,14 +3803,21 @@ impl AcpThread {
         });
         cx.emit(AcpThreadEvent::StatusChanged);
 
-        cx.spawn(async move |this, cx| {
+        let completion = async move |thread: WeakEntity<Self>, cx: &mut AsyncApp| {
             let response = rx.await;
 
-            this.update(cx, |this, cx| this.update_last_checkpoint(cx))?
+            thread
+                .update(cx, |this, cx| {
+                    if this.turn_id == turn_id {
+                        this.update_last_checkpoint(cx)
+                    } else {
+                        Task::ready(Ok(()))
+                    }
+                })?
                 .await?;
 
-            this.update(cx, |this, cx| {
-                if this.parent_session_id.is_none() {
+            thread.update(cx, |this, cx| {
+                if this.turn_id == turn_id && this.parent_session_id.is_none() {
                     this.project
                         .update(cx, |project, cx| project.set_agent_location(None, cx));
                 }
@@ -3786,6 +3843,10 @@ impl AcpThread {
                     // tx dropped, just return
                     return Ok(None);
                 };
+
+                if this.turn_id != turn_id {
+                    return response.map(Some);
+                }
 
                 match response {
                     Ok(r) => {
@@ -3894,8 +3955,13 @@ impl AcpThread {
                     }
                 }
             })?
+        };
+        let (completion_tx, completion_rx) = oneshot::channel();
+        cx.spawn(async move |thread, cx| {
+            completion_tx.send(completion(thread, cx).await).ok();
         })
-        .boxed()
+        .detach();
+        async move { completion_rx.await? }.boxed()
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
@@ -3919,6 +3985,38 @@ impl AcpThread {
 
         // Wait for the send task to complete
         cx.background_spawn(turn.send_task)
+    }
+
+    fn update_idle_sleep_prevention(&mut self, cx: &mut Context<Self>) {
+        if !AgentSettings::get_global(cx).prevent_idle_sleep
+            || self.running_turn.is_none()
+            || self.is_waiting_for_confirmation()
+        {
+            self.idle_sleep_prevention = IdleSleepPrevention::Inactive;
+            return;
+        }
+
+        if !matches!(self.idle_sleep_prevention, IdleSleepPrevention::Inactive) {
+            return;
+        }
+
+        let acquisition = cx.prevent_idle_sleep("Agent thread in progress");
+        self.idle_sleep_prevention = IdleSleepPrevention::Acquiring {
+            _task: cx.spawn(async move |thread, cx| {
+                let result = acquisition.await;
+                thread
+                    .update(cx, |thread, _| {
+                        thread.idle_sleep_prevention = match result {
+                            Ok(guard) => IdleSleepPrevention::Active { _guard: guard },
+                            Err(error) => {
+                                log::error!("Failed to prevent idle sleep: {error:#}");
+                                IdleSleepPrevention::Failed
+                            }
+                        };
+                    })
+                    .log_err();
+            }),
+        };
     }
 
     fn cancel_pending_turn_entries(&mut self, cx: &mut Context<Self>) {
@@ -9481,6 +9579,8 @@ mod tests {
         // First handler waits for this signal before completing
         let (first_complete_tx, first_complete_rx) = futures::channel::oneshot::channel::<()>();
         let first_complete_rx = RefCell::new(Some(first_complete_rx));
+        let (second_complete_tx, second_complete_rx) = oneshot::channel::<()>();
+        let second_complete_rx = RefCell::new(Some(second_complete_rx));
 
         let connection = Rc::new(FakeAgentConnection::new().on_user_message({
             move |params, _thread, _cx| {
@@ -9489,6 +9589,11 @@ mod tests {
                     .prompt
                     .iter()
                     .any(|c| matches!(c, acp::ContentBlock::Text(t) if t.text.contains("first")));
+                let second_complete_rx = if is_first {
+                    None
+                } else {
+                    second_complete_rx.borrow_mut().take()
+                };
 
                 async move {
                     if is_first {
@@ -9496,6 +9601,10 @@ mod tests {
                         if let Some(rx) = first_complete_rx {
                             rx.await.ok();
                         }
+                    } else {
+                        second_complete_rx
+                            .expect("second completion receiver should be available")
+                            .await?;
                     }
                     Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
                 }
@@ -9512,7 +9621,9 @@ mod tests {
 
         // Send first message (turn_id=1) - handler will block
         let first_request = thread.update(cx, |thread, cx| thread.send_raw("first", cx));
+        cx.run_until_parked();
         assert_eq!(thread.read_with(cx, |t, _| t.turn_id), 1);
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
         let permission_task = thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(
@@ -9523,6 +9634,7 @@ mod tests {
                 )
             })
             .unwrap();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
 
         // Send second message (turn_id=2) while first is still blocked
         // This calls cancel() which takes turn 1's running_turn and sets turn 2's
@@ -9532,6 +9644,7 @@ mod tests {
             RequestPermissionOutcome::InterruptedByFollowUp
         ));
         assert_eq!(thread.read_with(cx, |t, _| t.turn_id), 2);
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
         let running_turn_after_second_send =
             thread.read_with(cx, |thread, _| thread.running_turn.as_ref().map(|t| t.id));
@@ -9555,8 +9668,12 @@ mod tests {
             Some(2),
             "first turn completing should not clear running_turn (belongs to turn 2)"
         );
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
         // Second request completes - SHOULD clear running_turn
+        second_complete_tx
+            .send(())
+            .expect("second completion receiver should still be alive");
         second_request.await.unwrap();
 
         let running_turn_after_second =
@@ -9565,6 +9682,40 @@ mod tests {
             !running_turn_after_second,
             "second turn completing should clear running_turn"
         );
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_setting_toggle_updates_idle_sleep_prevention_for_running_turn(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        set_prevent_idle_sleep(false, cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        for (enabled, expected_count) in [(true, 1), (true, 1), (false, 0), (false, 0), (true, 1)] {
+            set_prevent_idle_sleep(enabled, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), expected_count);
+            assert_eq!(
+                thread.read_with(cx, |thread, _| thread.status()),
+                ThreadStatus::Generating
+            );
+        }
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        for enabled in [false, true] {
+            set_prevent_idle_sleep(enabled, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
     }
 
     #[gpui::test]
@@ -10196,5 +10347,1096 @@ mod tests {
             ThreadStatus::Idle,
             "running_turn must be cleared even when tx was dropped without send"
         );
+    }
+
+    #[gpui::test]
+    async fn test_dropped_completion_waiter_does_not_leave_thread_generating(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, completion) = oneshot::channel::<()>();
+        let backend_finished = Rc::new(AtomicBool::new(false));
+        let statuses = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let statuses = statuses.clone();
+                move |thread, event, cx| {
+                    if matches!(event, AcpThreadEvent::StatusChanged) {
+                        statuses.borrow_mut().push(thread.read(cx).status());
+                    }
+                }
+            })
+        });
+        let request = thread.update(cx, |thread, cx| {
+            thread.run_turn(cx, {
+                let backend_finished = backend_finished.clone();
+                async move |_, _| {
+                    completion.await?;
+                    backend_finished.store(true, SeqCst);
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.status()),
+            ThreadStatus::Generating
+        );
+        assert!(!backend_finished.load(SeqCst));
+
+        drop(request);
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.status()),
+            ThreadStatus::Generating
+        );
+        complete.send(()).expect("backend should still be running");
+        cx.run_until_parked();
+
+        assert!(backend_finished.load(SeqCst));
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.status()),
+            ThreadStatus::Idle
+        );
+        assert_eq!(
+            *statuses.borrow(),
+            vec![ThreadStatus::Generating, ThreadStatus::Idle]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_released_on_turn_completion(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        assert!(cx.read(|cx| AgentSettings::get_global(cx).prevent_idle_sleep));
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        for (delay, expected_count) in [(Duration::ZERO, 1), (Duration::from_secs(2), 0)] {
+            cx.set_idle_sleep_prevention_delay(delay);
+            for (backend_result, expected_result, expected_had_error) in [
+                (
+                    Ok(acp::StopReason::EndTurn),
+                    Ok(acp::StopReason::EndTurn),
+                    false,
+                ),
+                (
+                    Ok(acp::StopReason::Cancelled),
+                    Ok(acp::StopReason::Cancelled),
+                    false,
+                ),
+                (
+                    Ok(acp::StopReason::Refusal),
+                    Ok(acp::StopReason::Refusal),
+                    true,
+                ),
+                (
+                    Ok(acp::StopReason::MaxTokens),
+                    Err("output token limit reached"),
+                    true,
+                ),
+                (Err(anyhow!("backend failed")), Err("backend failed"), true),
+            ] {
+                let (complete, request) = start_test_turn(&thread, cx);
+                cx.run_until_parked();
+                assert_eq!(cx.active_idle_sleep_preventions(), expected_count);
+                assert_eq!(
+                    thread.read_with(cx, |thread, _| thread.status()),
+                    ThreadStatus::Generating
+                );
+                assert!(!thread.read_with(cx, |thread, _| thread.had_error()));
+
+                complete
+                    .send(backend_result.map(acp::PromptResponse::new))
+                    .expect("turn should still be running");
+                let result = request
+                    .await
+                    .map(|response| response.map(|response| response.stop_reason))
+                    .map_err(|error| error.to_string());
+                assert_eq!(result, expected_result.map(Some).map_err(String::from));
+                assert_eq!(cx.active_idle_sleep_preventions(), 0);
+                thread.read_with(cx, |thread, _| {
+                    assert_eq!(thread.status(), ThreadStatus::Idle);
+                    assert_eq!(thread.had_error(), expected_had_error);
+                    assert!(matches!(
+                        thread.idle_sleep_prevention,
+                        IdleSleepPrevention::Inactive
+                    ));
+                });
+                cx.executor().advance_clock(Duration::from_secs(2));
+                cx.run_until_parked();
+                assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_overlaps_distinct_threads_and_subagent(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let parent = new_test_thread(cx).await;
+        let independent = new_test_thread(cx).await;
+        let subagent = cx.update(|cx| {
+            let parent = parent.read(cx);
+            let session_id = parent.session_id().clone();
+            let connection = parent.connection.clone();
+            let project = parent.project.clone();
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            cx.new(|cx| {
+                AcpThread::new(
+                    Some(session_id),
+                    None,
+                    None,
+                    connection,
+                    project,
+                    action_log,
+                    acp::SessionId::new("subagent"),
+                    watch::Receiver::constant(acp::PromptCapabilities::new()),
+                    cx,
+                )
+            })
+        });
+        assert_ne!(parent.entity_id(), independent.entity_id());
+        assert_ne!(parent.entity_id(), subagent.entity_id());
+        assert_ne!(independent.entity_id(), subagent.entity_id());
+        assert_eq!(
+            subagent.read_with(cx, |thread, _| thread.parent_session_id().cloned()),
+            Some(parent.read_with(cx, |thread, _| thread.session_id().clone()))
+        );
+
+        let (parent_complete, parent_request) = start_test_turn(&parent, cx);
+        let (independent_complete, independent_request) = start_test_turn(&independent, cx);
+        let (subagent_complete, subagent_request) = start_test_turn(&subagent, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 3);
+
+        let parent_cancel = parent.update(cx, |thread, cx| thread.cancel(cx));
+        assert_eq!(cx.active_idle_sleep_preventions(), 2);
+        parent_complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)))
+            .expect("parent backend should still be running");
+        parent_cancel.await;
+        parent_request.await.expect("parent turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 2);
+
+        independent_complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("independent turn should still be running");
+        independent_request
+            .await
+            .expect("independent turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        assert_eq!(
+            subagent.read_with(cx, |thread, _| thread.status()),
+            ThreadStatus::Generating
+        );
+
+        subagent_complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("subagent should still be running");
+        subagent_request
+            .await
+            .expect("subagent turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_cancel_releases_pending_idle_sleep_prevention(cx: &mut TestAppContext) {
+        init_test(cx);
+        for (delay, acquisition_fails, expected_count) in [
+            (Duration::ZERO, false, 1),
+            (Duration::from_secs(2), false, 0),
+            (Duration::from_secs(2), true, 0),
+        ] {
+            cx.set_idle_sleep_prevention_delay(delay);
+            cx.set_idle_sleep_prevention_fails(acquisition_fails);
+            let thread = new_test_thread(cx).await;
+            let (complete, request) = start_test_turn(&thread, cx);
+            assert_eq!(cx.active_idle_sleep_preventions(), expected_count);
+            thread.read_with(cx, |thread, _| {
+                assert!(matches!(
+                    thread.idle_sleep_prevention,
+                    IdleSleepPrevention::Acquiring { .. }
+                ));
+            });
+
+            let cancel = thread.update(cx, |thread, cx| thread.cancel(cx));
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_secs(2));
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.status(), ThreadStatus::Idle);
+                assert!(matches!(
+                    thread.idle_sleep_prevention,
+                    IdleSleepPrevention::Inactive
+                ));
+            });
+
+            complete
+                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .expect("backend should still be running");
+            cancel.await;
+            request.await.expect("turn should complete");
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_setting_disables_pending_idle_sleep_prevention(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.set_idle_sleep_prevention_delay(Duration::from_secs(2));
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        set_prevent_idle_sleep(false, cx);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Inactive
+            ));
+        });
+
+        set_prevent_idle_sleep(true, cx);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        set_prevent_idle_sleep(true, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Active { .. }
+            ));
+        });
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_follow_up_keeps_pending_idle_sleep_prevention(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.set_idle_sleep_prevention_delay(Duration::from_secs(2));
+        let thread = new_test_thread(cx).await;
+        let (first_complete, first_request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        let (second_complete, second_request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.running_turn.as_ref().map(|turn| turn.id), Some(2));
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Acquiring { .. }
+            ));
+        });
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Active { .. }
+            ));
+        });
+
+        first_complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)))
+            .expect("first backend should still be running");
+        first_request.await.expect("first turn should complete");
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.running_turn.as_ref().map(|turn| turn.id), Some(2));
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Active { .. }
+            ));
+        });
+
+        second_complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("second backend should still be running");
+        second_request.await.expect("second turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_dropping_thread_releases_idle_sleep_prevention(cx: &mut TestAppContext) {
+        init_test(cx);
+        for (delay, expected_count) in [(Duration::ZERO, 1), (Duration::from_secs(2), 0)] {
+            cx.set_idle_sleep_prevention_delay(delay);
+            let thread = new_test_thread(cx).await;
+            let weak_thread = thread.downgrade();
+            let (complete, request) = start_test_turn(&thread, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), expected_count);
+
+            cx.update(|_| drop(thread));
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_secs(2));
+            cx.run_until_parked();
+            assert!(weak_thread.upgrade().is_none());
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            assert!(request.await.is_err());
+            drop(complete);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_failure_retries_only_on_setting_toggle(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for delay in [Duration::ZERO, Duration::from_secs(2)] {
+            cx.set_idle_sleep_prevention_delay(delay);
+            cx.set_idle_sleep_prevention_fails(true);
+            let thread = new_test_thread(cx).await;
+            let (complete, request) = start_test_turn(&thread, cx);
+            cx.run_until_parked();
+            cx.executor().advance_clock(delay);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            thread.read_with(cx, |thread, _| {
+                assert!(matches!(
+                    thread.idle_sleep_prevention,
+                    IdleSleepPrevention::Failed
+                ));
+                assert_eq!(thread.status(), ThreadStatus::Generating);
+                assert!(!thread.had_error());
+            });
+
+            cx.set_idle_sleep_prevention_fails(false);
+            set_prevent_idle_sleep(true, cx);
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_secs(4));
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            assert!(thread.read_with(cx, |thread, _| matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Failed
+            )));
+
+            set_prevent_idle_sleep(false, cx);
+            cx.run_until_parked();
+            assert!(!thread.read_with(cx, |thread, _| matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Failed
+            )));
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            set_prevent_idle_sleep(true, cx);
+            cx.run_until_parked();
+            cx.executor().advance_clock(delay);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+            thread.read_with(cx, |thread, _| {
+                assert!(matches!(
+                    thread.idle_sleep_prevention,
+                    IdleSleepPrevention::Active { .. }
+                ));
+            });
+
+            complete
+                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .expect("turn should still be running");
+            request.await.expect("turn should complete");
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_failure_clears_when_turn_stops(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        for cancel_turn in [false, true] {
+            cx.set_idle_sleep_prevention_fails(true);
+            let (complete, request) = start_test_turn(&thread, cx);
+            cx.run_until_parked();
+            assert!(thread.read_with(cx, |thread, _| matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Failed
+            )));
+
+            let cancel = if cancel_turn {
+                let cancel = thread.update(cx, |thread, cx| thread.cancel(cx));
+                thread.read_with(cx, |thread, _| {
+                    assert!(matches!(
+                        thread.idle_sleep_prevention,
+                        IdleSleepPrevention::Inactive
+                    ));
+                    assert_eq!(thread.status(), ThreadStatus::Idle);
+                });
+                Some(cancel)
+            } else {
+                None
+            };
+            complete
+                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .expect("backend should still be running");
+            if let Some(cancel) = cancel {
+                cancel.await;
+            }
+            request.await.expect("turn should complete");
+            thread.read_with(cx, |thread, _| {
+                assert!(matches!(
+                    thread.idle_sleep_prevention,
+                    IdleSleepPrevention::Inactive
+                ));
+                assert_eq!(thread.status(), ThreadStatus::Idle);
+            });
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+            cx.set_idle_sleep_prevention_fails(false);
+            let (complete, request) = start_test_turn(&thread, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+            complete
+                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .expect("next turn should still be running");
+            request.await.expect("next turn should complete");
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_waits_for_all_confirmations(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        let first_id = acp::ToolCallId::new("first-permission");
+        let second_id = acp::ToolCallId::new("second-permission");
+        let first_permission = request_test_permission(&thread, first_id.clone(), cx);
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        let second_permission = request_test_permission(&thread, second_id.clone(), cx);
+        let (elicitation_id, elicitation_response) = request_test_form_elicitation(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        for enabled in [false, true] {
+            set_prevent_idle_sleep(enabled, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_tool_call(
+                    acp::ToolCallUpdate::new(
+                        first_id.clone(),
+                        acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
+                    ),
+                    cx,
+                )
+                .expect("tool update should succeed");
+            thread.authorize_tool_call(
+                second_id,
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("reject"),
+                    acp::PermissionOptionKind::RejectOnce,
+                ),
+                cx,
+            );
+        });
+        assert!(matches!(
+            second_permission.await,
+            RequestPermissionOutcome::Selected(outcome)
+                if outcome.option_kind == acp::PermissionOptionKind::RejectOnce
+        ));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                cx,
+            );
+        });
+        assert_eq!(
+            elicitation_response.await.action,
+            acp::ElicitationAction::Decline
+        );
+        cx.run_until_parked();
+        assert!(thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(
+                first_id,
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+        });
+        assert!(matches!(
+            first_permission.await,
+            RequestPermissionOutcome::Selected(outcome)
+                if outcome.option_kind == acp::PermissionOptionKind::AllowOnce
+        ));
+        cx.run_until_parked();
+        assert!(!thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_resumes_after_permission_cancellation_or_terminal_update(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for status in [
+            None,
+            Some(acp::ToolCallStatus::Completed),
+            Some(acp::ToolCallStatus::Failed),
+        ] {
+            let thread = new_test_thread(cx).await;
+            let (complete, request) = start_test_turn(&thread, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+            let tool_call_id = acp::ToolCallId::new("permission");
+            let permission = request_test_permission(&thread, tool_call_id.clone(), cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+            thread.update(cx, |thread, cx| {
+                if let Some(status) = status {
+                    thread
+                        .handle_session_update(
+                            acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                                tool_call_id,
+                                acp::ToolCallUpdateFields::new().status(status),
+                            )),
+                            cx,
+                        )
+                        .expect("terminal tool update should succeed");
+                } else {
+                    thread.cancel_tool_call_authorization(&tool_call_id, cx);
+                }
+            });
+            assert!(matches!(
+                permission.await,
+                RequestPermissionOutcome::Cancelled
+            ));
+            cx.run_until_parked();
+            assert!(!thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+            assert_eq!(cx.active_idle_sleep_preventions(), 1, "status: {status:?}");
+
+            complete
+                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .expect("turn should still be running");
+            request.await.expect("turn should complete");
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_permission_suspends_pending_idle_sleep_prevention(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.set_idle_sleep_prevention_delay(Duration::from_secs(2));
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        let tool_call_id = acp::ToolCallId::new("permission");
+        let permission = request_test_permission(&thread, tool_call_id.clone(), cx);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.is_waiting_for_confirmation());
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Inactive
+            ));
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(
+                tool_call_id,
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+        });
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Selected(_)
+        ));
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_resumes_after_form_elicitation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        for action in [
+            acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
+            acp::ElicitationAction::Decline,
+            acp::ElicitationAction::Cancel,
+        ] {
+            let (elicitation_id, response) = request_test_form_elicitation(&thread, cx);
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            assert_eq!(
+                thread.read_with(cx, |thread, _| thread.status()),
+                ThreadStatus::Generating
+            );
+
+            thread.update(cx, |thread, cx| {
+                thread.respond_to_elicitation(
+                    &elicitation_id,
+                    acp::CreateElicitationResponse::new(action.clone()),
+                    cx,
+                );
+            });
+            assert_eq!(response.await.action, action);
+            cx.run_until_parked();
+            assert!(!thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+            thread.update(cx, |thread, cx| {
+                thread.respond_to_elicitation(
+                    &elicitation_id,
+                    acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        }
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_idle_sleep_prevention_resumes_after_url_elicitation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        for (url_id, accept) in [("accepted", true), ("canceled", false)] {
+            let url_id = acp::ElicitationId::new(url_id);
+            let (entry_id, response) = thread.update(cx, |thread, cx| {
+                thread
+                    .request_elicitation_with_id(
+                        acp::CreateElicitationRequest::new(
+                            acp::ElicitationUrlMode::new(
+                                acp::ElicitationSessionScope::new(thread.session_id().clone()),
+                                url_id.clone(),
+                                "https://example.com/complete",
+                            ),
+                            "Complete this in the browser",
+                        ),
+                        cx,
+                    )
+                    .expect("URL elicitation should succeed")
+            });
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+            thread.update(cx, |thread, cx| {
+                thread.complete_url_elicitation(&url_id, cx)
+            });
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+            let expected_action = if accept {
+                acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new())
+            } else {
+                acp::ElicitationAction::Cancel
+            };
+            thread.update(cx, |thread, cx| {
+                if accept {
+                    thread.respond_to_elicitation(
+                        &entry_id,
+                        acp::CreateElicitationResponse::new(expected_action.clone()),
+                        cx,
+                    );
+                } else {
+                    thread.cancel_elicitation(&entry_id, cx);
+                }
+            });
+            assert_eq!(response.await.action, expected_action);
+            cx.run_until_parked();
+            assert!(!thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+            thread.update(cx, |thread, cx| {
+                thread.complete_url_elicitation(&url_id, cx)
+            });
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        }
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("turn should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_confirmation_resolution_does_not_reacquire_idle_sleep_prevention_after_cancel(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        let tool_call_id = acp::ToolCallId::new("permission");
+        let permission = request_test_permission(&thread, tool_call_id.clone(), cx);
+        let (elicitation_id, elicitation_response) = request_test_form_elicitation(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        let cancel = thread.update(cx, |thread, cx| thread.cancel(cx));
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+        assert_eq!(
+            elicitation_response.await.action,
+            acp::ElicitationAction::Cancel
+        );
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(
+                tool_call_id,
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.status()),
+            ThreadStatus::Idle
+        );
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)))
+            .expect("backend should still be running");
+        cancel.await;
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_stale_refusal_does_not_affect_follow_up_turn(cx: &mut TestAppContext) {
+        assert_stale_completion_does_not_affect_follow_up_turn(Ok(acp::StopReason::Refusal), cx)
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_stale_error_does_not_affect_follow_up_turn(cx: &mut TestAppContext) {
+        assert_stale_completion_does_not_affect_follow_up_turn(Err("first turn failed"), cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_failed_tool_update_resumes_sleep_prevention(cx: &mut TestAppContext) {
+        assert_failed_tool_update_resumes_sleep_prevention(false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_failed_tool_upsert_resumes_sleep_prevention(cx: &mut TestAppContext) {
+        assert_failed_tool_update_resumes_sleep_prevention(true, cx).await;
+    }
+
+    fn start_test_turn(
+        thread: &Entity<AcpThread>,
+        cx: &mut TestAppContext,
+    ) -> (
+        oneshot::Sender<Result<acp::PromptResponse>>,
+        BoxFuture<'static, Result<Option<acp::PromptResponse>>>,
+    ) {
+        let (complete, completion) = oneshot::channel::<Result<acp::PromptResponse>>();
+        let request = thread.update(cx, |thread, cx| {
+            thread.run_turn(cx, async move |_, _| completion.await?)
+        });
+        (complete, request)
+    }
+
+    fn request_test_permission(
+        thread: &Entity<AcpThread>,
+        tool_call_id: acp::ToolCallId,
+        cx: &mut TestAppContext,
+    ) -> Task<RequestPermissionOutcome> {
+        thread.update(cx, |thread, cx| {
+            thread
+                .request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id, "Needs permission").into(),
+                    PermissionOptions::Flat(vec![
+                        acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("allow"),
+                            "Allow",
+                            acp::PermissionOptionKind::AllowOnce,
+                        ),
+                        acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("reject"),
+                            "Reject",
+                            acp::PermissionOptionKind::RejectOnce,
+                        ),
+                    ]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+                .expect("permission request should succeed")
+        })
+    }
+
+    fn request_test_form_elicitation(
+        thread: &Entity<AcpThread>,
+        cx: &mut TestAppContext,
+    ) -> (ElicitationEntryId, Task<acp::CreateElicitationResponse>) {
+        thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation_with_id(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationSessionScope::new(thread.session_id().clone()),
+                            acp::ElicitationSchema::new().string("name", false),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .expect("form elicitation should succeed")
+        })
+    }
+
+    fn set_prevent_idle_sleep(enabled: bool, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.agent.get_or_insert_default().prevent_idle_sleep = Some(enabled);
+                });
+            });
+        });
+    }
+
+    async fn assert_stale_completion_does_not_affect_follow_up_turn(
+        backend_result: Result<acp::StopReason, &'static str>,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for drop_waiter in [false, true] {
+            let thread = new_test_thread(cx).await;
+            let (first_complete, first_request) = start_test_turn(&thread, cx);
+            thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "first".into(), cx);
+                thread.push_assistant_content_block("first reply".into(), false, cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+            let first_request = if drop_waiter {
+                drop(first_request);
+                None
+            } else {
+                Some(first_request)
+            };
+            first_complete
+                .send(
+                    backend_result
+                        .map(acp::PromptResponse::new)
+                        .map_err(|message| anyhow!(message)),
+                )
+                .expect("first backend should still be running");
+            let (second_complete, second_request) = start_test_turn(&thread, cx);
+            thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "second".into(), cx);
+                thread.push_assistant_content_block("second reply".into(), false, cx);
+                assert_eq!(thread.running_turn.as_ref().map(|turn| turn.id), Some(2));
+                assert!(!thread.had_error());
+            });
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let _subscription = cx.update(|cx| {
+                cx.subscribe(&thread, {
+                    let events = events.clone();
+                    move |_, event, _| {
+                        let event = match event {
+                            AcpThreadEvent::StatusChanged => "status changed",
+                            AcpThreadEvent::EntriesRemoved(_) => "entries removed",
+                            AcpThreadEvent::Stopped(_) => "stopped",
+                            AcpThreadEvent::Refusal => "refusal",
+                            AcpThreadEvent::Error => "error",
+                            _ => return,
+                        };
+                        events.borrow_mut().push(event);
+                    }
+                })
+            });
+            cx.run_until_parked();
+            if let Some(first_request) = first_request {
+                assert_eq!(
+                    first_request
+                        .await
+                        .map(|response| response.map(|response| response.stop_reason))
+                        .map_err(|error| error.to_string()),
+                    backend_result.map(Some).map_err(String::from)
+                );
+            }
+
+            thread.read_with(cx, |thread, cx| {
+                assert_eq!(thread.entries().len(), 4);
+                assert_eq!(
+                    thread.to_markdown(cx),
+                    concat!(
+                        "## User\n\nfirst\n\n",
+                        "## Assistant\n\nfirst reply\n\n",
+                        "## User\n\nsecond\n\n",
+                        "## Assistant\n\nsecond reply\n\n",
+                    )
+                );
+                assert!(!thread.had_error());
+                assert_eq!(thread.turn_id, 2);
+                assert_eq!(thread.running_turn.as_ref().map(|turn| turn.id), Some(2));
+                assert_eq!(thread.status(), ThreadStatus::Generating);
+                assert!(matches!(
+                    thread.idle_sleep_prevention,
+                    IdleSleepPrevention::Active { .. }
+                ));
+            });
+            assert_eq!(*events.borrow(), Vec::<&str>::new());
+            assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+            second_complete
+                .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+                .expect("second backend should still be running");
+            second_request.await.expect("second turn should complete");
+            assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        }
+    }
+
+    async fn assert_failed_tool_update_resumes_sleep_prevention(
+        upsert: bool,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let (complete, request) = start_test_turn(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        let tool_call_id = acp::ToolCallId::new("permission");
+        let permission = request_test_permission(&thread, tool_call_id.clone(), cx);
+        cx.run_until_parked();
+        assert!(thread.read_with(cx, |thread, _| thread.is_waiting_for_confirmation()));
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        thread.update(cx, |thread, cx| {
+            let update = acp::ToolCallUpdate::new(
+                tool_call_id.clone(),
+                acp::ToolCallUpdateFields::new()
+                    .status(acp::ToolCallStatus::Completed)
+                    .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                        acp::TerminalId::new("unknown-terminal"),
+                    ))]),
+            );
+            if upsert {
+                assert!(
+                    thread
+                        .upsert_tool_call_inner(update, ToolCallStatus::Completed, cx)
+                        .is_err()
+                );
+            } else {
+                assert_eq!(
+                    thread
+                        .update_tool_call(update, cx)
+                        .map_err(|error| error.to_string()),
+                    Err(String::from(
+                        "Terminal with id `unknown-terminal` not found"
+                    ))
+                );
+            }
+            assert_eq!(
+                thread
+                    .tool_call(&tool_call_id)
+                    .expect("tool call should remain present")
+                    .1
+                    .status
+                    .as_acp_status(),
+                Some(acp::ToolCallStatus::Completed)
+            );
+            assert!(!thread.is_waiting_for_confirmation());
+        });
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+            assert_eq!(thread.running_turn.as_ref().map(|turn| turn.id), Some(1));
+            assert!(!thread.had_error());
+            assert!(matches!(
+                thread.idle_sleep_prevention,
+                IdleSleepPrevention::Active { .. }
+            ));
+        });
+
+        complete
+            .send(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+            .expect("backend should still be running");
+        request.await.expect("turn should complete");
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
     }
 }

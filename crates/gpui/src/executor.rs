@@ -1,4 +1,4 @@
-use crate::{App, PlatformDispatcher, PlatformScheduler};
+use crate::{ActivityGuard, App, PlatformDispatcher, PlatformScheduler};
 #[cfg(not(target_family = "wasm"))]
 use futures::channel::mpsc;
 use futures::prelude::*;
@@ -89,6 +89,13 @@ impl BackgroundExecutor {
     /// This is used by Ex to pass the executor to thread/worktree code.
     pub fn scheduler_executor(&self) -> scheduler::BackgroundExecutor {
         self.inner.clone()
+    }
+
+    /// Prevents App Nap-style throttling while the returned guard is held.
+    ///
+    /// This does not prevent the system from entering idle sleep.
+    pub fn prevent_app_nap(&self, reason: &str) -> ActivityGuard {
+        self.dispatcher.prevent_app_nap(reason)
     }
 
     /// Spawn a closure on a fresh session pinned to its own [`SchedulerLocalExecutor`].
