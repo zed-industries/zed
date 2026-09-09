@@ -985,7 +985,7 @@ libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev =
 notify = { git = "https://github.com/zed-industries/notify", rev = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
 notify-types = { git = "https://github.com/zed-industries/notify", rev = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
 webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "0a1c519cfce9b365229026b55de9b9dbdb6fed3c" }
-cosmic-text = { git = "https://github.com/jotuel/cosmic-text.git" rev = "4a9a418b9463ca182e4d7ae279ee72e4244b6175" }
+cosmic-text = { git = "https://github.com/jotuel/cosmic-text.git", rev = "4a9a418b9463ca182e4d7ae279ee72e4244b6175" }
 
 # corgi runs build.rs/proc-macros in a sandbox with no write access outside the
 # action's own OUT_DIR. Upstream `scratch` bakes its build-time OUT_DIR in via
