@@ -626,16 +626,19 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
             .when(platform == Platform::Linux, |this| {
                 use_clang(this.add_step(steps::cache_rust_dependencies_namespace()))
             })
-            .when(
-                platform == Platform::Linux,
-                steps::install_linux_dependencies,
-            )
+            .when(platform == Platform::Linux, |job| {
+                job.add_step(steps::setup_linux())
+            })
             .add_step(steps::setup_node())
             .when(
                 platform == Platform::Linux || platform == Platform::Mac,
                 |job| job.add_step(steps::cargo_install_nextest()),
             )
             .add_step(steps::clear_target_dir_if_large(platform))
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |job| job.add_step(steps::download_wasi_sdk()),
+            )
             .add_step(steps::setup_sccache(platform))
             .when(filter_packages, |job| {
                 job.add_step(

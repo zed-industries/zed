@@ -1,14 +1,13 @@
 use anyhow::{Result, anyhow};
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
-use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{App, AsyncApp, Context, Entity, Subscription, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, StopReason, TokenUsage, env_var,
+    MessageContent, env_var,
 };
 use language_model::{
     InlineDescription, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -19,17 +18,13 @@ use lmstudio::{LMSTUDIO_API_URL, ModelType, get_models};
 
 pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::pin::Pin;
 use std::sync::LazyLock;
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 use ui::{ButtonLike, ConfiguredApiCard, Divider, List, ListBulletItem, Tooltip, prelude::*};
 use ui_input::InputField;
 
 use crate::AllLanguageModelSettings;
-use language_model::util::parse_tool_arguments;
+use language_model::chat_completion::ChatCompletionEventMapper;
 
 const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
 const LMSTUDIO_CATALOG_URL: &str = "https://lmstudio.ai/models";
@@ -559,275 +554,10 @@ impl LanguageModel for LmStudioLanguageModel {
         };
         let completions = self.stream_completion(request, cx);
         async move {
-            let mapper = LmStudioEventMapper::new();
+            let mapper = ChatCompletionEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())
         }
         .boxed()
-    }
-}
-
-struct LmStudioEventMapper {
-    tool_calls_by_index: HashMap<usize, RawToolCall>,
-}
-
-impl LmStudioEventMapper {
-    fn new() -> Self {
-        Self {
-            tool_calls_by_index: HashMap::default(),
-        }
-    }
-
-    pub fn map_stream(
-        mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<lmstudio::ResponseStreamEvent>>>>,
-    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
-    {
-        events.flat_map(move |event| {
-            futures::stream::iter(match event {
-                Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(error))],
-            })
-        })
-    }
-
-    pub fn map_event(
-        &mut self,
-        event: lmstudio::ResponseStreamEvent,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let mut events = Vec::new();
-
-        if let Some(usage) = event.usage {
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            })));
-        }
-
-        // The final usage summary chunk from OpenAI-compatible servers has an empty choices array.
-        // Return accumulated events instead of treating it as an error.
-        let Some(choice) = event.choices.into_iter().next() else {
-            return events;
-        };
-
-        if let Some(content) = choice.delta.content {
-            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
-        }
-
-        if let Some(reasoning_content) = choice.delta.reasoning_content {
-            events.push(Ok(LanguageModelCompletionEvent::Thinking {
-                text: reasoning_content,
-                signature: None,
-            }));
-        }
-
-        if let Some(tool_calls) = choice.delta.tool_calls {
-            for tool_call in tool_calls {
-                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
-
-                if let Some(tool_id) = tool_call.id {
-                    entry.id = tool_id;
-                }
-
-                if let Some(function) = tool_call.function {
-                    if let Some(name) = function.name {
-                        // At the time of writing this code LM Studio (0.3.15) is incompatible with the OpenAI API:
-                        // 1. It sends function name in the first chunk
-                        // 2. It sends empty string in the function name field in all subsequent chunks for arguments
-                        // According to https://platform.openai.com/docs/guides/function-calling?api-mode=responses#streaming
-                        // function name field should be sent only inside the first chunk.
-                        if !name.is_empty() {
-                            entry.name = name;
-                        }
-                    }
-
-                    if let Some(arguments) = function.arguments {
-                        entry.arguments.push_str(&arguments);
-                    }
-                }
-            }
-        }
-
-        match choice.finish_reason.as_deref() {
-            Some("stop") => {
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            Some("tool_calls") => {
-                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match parse_tool_arguments(&tool_call.arguments) {
-                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
-                                id: tool_call.id.into(),
-                                name: tool_call.name.into(),
-                                is_input_complete: true,
-                                input: language_model::LanguageModelToolUseInput::Json(input),
-                                raw_input: tool_call.arguments,
-                                thought_signature: None,
-                            },
-                        )),
-                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                            id: tool_call.id.into(),
-                            tool_name: tool_call.name.into(),
-                            raw_input: tool_call.arguments.into(),
-                            json_parse_error: error.to_string(),
-                        }),
-                    }
-                }));
-
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
-            }
-            Some(stop_reason) => {
-                log::error!("Unexpected LMStudio stop_reason: {stop_reason:?}",);
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            None => {}
-        }
-
-        events
-    }
-}
-
-#[derive(Default)]
-struct RawToolCall {
-    id: String,
-    name: String,
-    arguments: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use lmstudio::{ChoiceDelta, ResponseMessageDelta, ResponseStreamEvent, Usage};
-
-    fn make_event(choices: Vec<ChoiceDelta>, usage: Option<Usage>) -> ResponseStreamEvent {
-        ResponseStreamEvent {
-            created: 0,
-            model: "test-model".to_string(),
-            object: "chat.completion.chunk".to_string(),
-            choices,
-            usage,
-        }
-    }
-
-    fn make_content_choice(content: &str) -> ChoiceDelta {
-        ChoiceDelta {
-            index: 0,
-            delta: ResponseMessageDelta {
-                role: None,
-                content: Some(content.to_string()),
-                reasoning_content: None,
-                tool_calls: None,
-            },
-            finish_reason: None,
-        }
-    }
-
-    fn make_stop_choice() -> ChoiceDelta {
-        ChoiceDelta {
-            index: 0,
-            delta: ResponseMessageDelta {
-                role: None,
-                content: None,
-                reasoning_content: None,
-                tool_calls: None,
-            },
-            finish_reason: Some("stop".to_string()),
-        }
-    }
-
-    // OpenAI-compatible servers send a final chunk with usage data and an empty
-    // choices array. Before this fix, the mapper returned an error for empty
-    // choices, discarding usage entirely.
-    #[test]
-    fn test_usage_in_final_empty_choices_chunk() {
-        let mut mapper = LmStudioEventMapper::new();
-        let event = make_event(
-            vec![],
-            Some(Usage {
-                prompt_tokens: 10,
-                completion_tokens: 20,
-                total_tokens: 30,
-            }),
-        );
-
-        let results: Vec<_> = mapper
-            .map_event(event)
-            .into_iter()
-            .map(|r| r.unwrap())
-            .collect();
-
-        assert_eq!(
-            results,
-            vec![LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: 10,
-                output_tokens: 20,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            })]
-        );
-    }
-
-    #[test]
-    fn test_empty_choices_without_usage_returns_empty() {
-        let mut mapper = LmStudioEventMapper::new();
-        let event = make_event(vec![], None);
-
-        let results = mapper.map_event(event);
-
-        assert!(results.is_empty());
-    }
-
-    // Usage data can also arrive in a regular chunk that also contains content.
-    // Both events must be emitted, with UsageUpdate first.
-    #[test]
-    fn test_usage_emitted_alongside_content() {
-        let mut mapper = LmStudioEventMapper::new();
-        let event = make_event(
-            vec![make_content_choice("Hello!")],
-            Some(Usage {
-                prompt_tokens: 5,
-                completion_tokens: 3,
-                total_tokens: 8,
-            }),
-        );
-
-        let results: Vec<_> = mapper
-            .map_event(event)
-            .into_iter()
-            .map(|r| r.unwrap())
-            .collect();
-
-        assert_eq!(
-            results[0],
-            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: 5,
-                output_tokens: 3,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            })
-        );
-        assert_eq!(
-            results[1],
-            LanguageModelCompletionEvent::Text("Hello!".to_string())
-        );
-    }
-
-    #[test]
-    fn test_stop_event_emitted_on_finish_reason() {
-        let mut mapper = LmStudioEventMapper::new();
-        let event = make_event(vec![make_stop_choice()], None);
-
-        let results: Vec<_> = mapper
-            .map_event(event)
-            .into_iter()
-            .map(|r| r.unwrap())
-            .collect();
-
-        assert_eq!(
-            results,
-            vec![LanguageModelCompletionEvent::Stop(StopReason::EndTurn)]
-        );
     }
 }
 

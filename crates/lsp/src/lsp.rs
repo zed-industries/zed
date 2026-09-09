@@ -78,7 +78,7 @@ pub fn workspace_folder_for_uri(uri: Uri) -> WorkspaceFolder {
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
 type PendingRespondTasks = Arc<Mutex<HashMap<RequestId, Task<()>>>>;
-type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>) -> Task<()>>;
+type ResponseHandler = Box<dyn Send + FnOnce(Result<String, ResponseError>) -> Task<()>>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
 /// Kind of language server stdio given to an IO handler.
@@ -273,7 +273,7 @@ struct AnyResponse<'a> {
     jsonrpc: &'a str,
     id: RequestId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    error: Option<Error>,
+    error: Option<ResponseError>,
     #[serde(borrow, skip_serializing_if = "Option::is_none")]
     result: Option<&'a RawValue>,
 }
@@ -294,7 +294,7 @@ struct Response<T> {
 enum LspResult<T> {
     #[serde(rename = "result")]
     Ok(Option<T>),
-    Error(Option<Error>),
+    Error(Option<ResponseError>),
 }
 
 /// Language server protocol RPC notification message.
@@ -322,13 +322,98 @@ struct NotificationOrRequest {
     params: Option<Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Error {
-    code: i64,
-    message: String,
-    #[serde(default)]
-    data: Option<serde_json::Value>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "i64", into = "i64")]
+pub enum ResponseErrorCode {
+    ParseError,
+    MethodNotFound,
+    RequestFailed,
+    ServerCancelled,
+    ContentModified,
+    Other(i64),
 }
+
+impl From<i64> for ResponseErrorCode {
+    fn from(code: i64) -> Self {
+        match code {
+            -32700 => Self::ParseError,
+            -32601 => Self::MethodNotFound,
+            lsp_types::error_codes::REQUEST_FAILED => Self::RequestFailed,
+            lsp_types::error_codes::SERVER_CANCELLED => Self::ServerCancelled,
+            lsp_types::error_codes::CONTENT_MODIFIED => Self::ContentModified,
+            code => Self::Other(code),
+        }
+    }
+}
+
+impl From<ResponseErrorCode> for i64 {
+    fn from(code: ResponseErrorCode) -> Self {
+        match code {
+            ResponseErrorCode::ParseError => -32700,
+            ResponseErrorCode::MethodNotFound => -32601,
+            ResponseErrorCode::RequestFailed => lsp_types::error_codes::REQUEST_FAILED,
+            ResponseErrorCode::ServerCancelled => lsp_types::error_codes::SERVER_CANCELLED,
+            ResponseErrorCode::ContentModified => lsp_types::error_codes::CONTENT_MODIFIED,
+            ResponseErrorCode::Other(code) => code,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseError {
+    pub code: ResponseErrorCode,
+    pub message: String,
+    #[serde(default)]
+    pub data: Option<serde_json::Value>,
+}
+
+impl ResponseError {
+    pub fn new(code: ResponseErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            data: None,
+        }
+    }
+
+    pub fn server_cancelled() -> Self {
+        Self::new(
+            ResponseErrorCode::ServerCancelled,
+            "server cancelled the request",
+        )
+    }
+
+    pub fn method_not_found(method: &str) -> Self {
+        Self::new(
+            ResponseErrorCode::MethodNotFound,
+            format!("Unrecognized method `{method}`"),
+        )
+    }
+
+    pub fn is_request_denied(&self) -> bool {
+        self.code == ResponseErrorCode::ServerCancelled
+            || self.code == ResponseErrorCode::ContentModified
+    }
+
+    pub fn should_retrigger(&self) -> bool {
+        self.code == ResponseErrorCode::ServerCancelled
+            && self
+                .data
+                .clone()
+                .and_then(|data| {
+                    serde_json::from_value::<DiagnosticServerCancellationData>(data).log_err()
+                })
+                .is_none_or(|data| data.retrigger_request)
+    }
+}
+
+impl std::fmt::Display for ResponseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for ResponseError {}
 
 pub trait LspRequestFuture<O>: Future<Output = ConnectionResult<O>> {
     fn id(&self) -> i32;
@@ -365,12 +450,12 @@ where
 }
 
 /// Combined capabilities of the server and the adapter.
-#[derive(Debug, Clone)]
-pub struct AdapterServerCapabilities {
+#[derive(Debug, Clone, Copy)]
+pub struct AdapterServerCapabilities<'a> {
     // Reported capabilities by the server
-    pub server_capabilities: ServerCapabilities,
+    pub server_capabilities: &'a ServerCapabilities,
     // List of code actions supported by the LspAdapter matching the server
-    pub code_action_kinds: Option<Vec<CodeActionKind>>,
+    pub code_action_kinds: Option<&'a [CodeActionKind]>,
 }
 
 // See the VSCode docs [1] and the LSP Spec [2]
@@ -533,11 +618,7 @@ impl LanguageServer {
                         let response = AnyResponse {
                             jsonrpc: JSON_RPC_VERSION,
                             id: message_id,
-                            error: Some(Error {
-                                code: -32601,
-                                message: format!("Unrecognized method `{}`", msg.method),
-                                data: None,
-                            }),
+                            error: Some(ResponseError::method_not_found(&msg.method)),
                             result: None,
                         };
                         if let Ok(response) = serde_json::to_string(&response) {
@@ -640,8 +721,8 @@ impl LanguageServer {
     }
 
     /// List of code action kinds this language server reports being able to emit.
-    pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        self.code_action_kinds.clone()
+    pub fn code_action_kinds(&self) -> Option<&[CodeActionKind]> {
+        self.code_action_kinds.as_deref()
     }
 
     async fn handle_incoming_messages<Stdout>(
@@ -1280,11 +1361,15 @@ impl LanguageServer {
                                         Err(error) => Response {
                                             jsonrpc: JSON_RPC_VERSION,
                                             id: id.clone(),
-                                            value: LspResult::Error(Some(Error {
-                                                code: lsp_types::error_codes::REQUEST_FAILED,
-                                                message: error.to_string(),
-                                                data: None,
-                                            })),
+                                            value: LspResult::Error(Some(
+                                                match error.downcast::<ResponseError>() {
+                                                    Ok(response_error) => response_error,
+                                                    Err(error) => ResponseError::new(
+                                                        ResponseErrorCode::RequestFailed,
+                                                        error.to_string(),
+                                                    ),
+                                                },
+                                            )),
                                         },
                                     };
                                     if let Some(response) =
@@ -1304,11 +1389,10 @@ impl LanguageServer {
                                 jsonrpc: JSON_RPC_VERSION,
                                 id,
                                 result: None,
-                                error: Some(Error {
-                                    code: -32700, // Parse error
-                                    message: error.to_string(),
-                                    data: None,
-                                }),
+                                error: Some(ResponseError::new(
+                                    ResponseErrorCode::ParseError,
+                                    error.to_string(),
+                                )),
                             };
                             if let Some(response) = serde_json::to_string(&response).log_err() {
                                 outbound_tx.try_send(response).ok();
@@ -1371,15 +1455,6 @@ impl LanguageServer {
         self.capabilities.read().clone()
     }
 
-    /// Get the reported capabilities of the running language server and
-    /// what we know on the client/adapter-side of its capabilities.
-    pub fn adapter_server_capabilities(&self) -> AdapterServerCapabilities {
-        AdapterServerCapabilities {
-            server_capabilities: self.capabilities(),
-            code_action_kinds: self.code_action_kinds(),
-        }
-    }
-
     /// Update the capabilities of the running language server.
     pub fn update_capabilities(&self, update: impl FnOnce(&mut ServerCapabilities)) {
         update(self.capabilities.write().deref_mut());
@@ -1428,29 +1503,6 @@ impl LanguageServer {
         )
     }
 
-    /// Send a RPC request to the language server with a custom timer.
-    /// Once the attached future becomes ready, the request will time out with the provided output message.
-    ///
-    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
-    pub fn request_with_timer<T: request::Request, U: Future<Output = String>>(
-        &self,
-        params: T::Params,
-        timer: U,
-    ) -> impl LspRequestFuture<T::Result> + use<T, U>
-    where
-        T::Result: 'static + Send,
-    {
-        Self::request_internal_with_timer::<T, U>(
-            &self.next_id,
-            &self.response_handlers,
-            &self.outbound_tx,
-            &self.notification_tx,
-            &self.executor,
-            timer,
-            params,
-        )
-    }
-
     fn request_internal_with_timer<T, U>(
         next_id: &AtomicI32,
         response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
@@ -1494,7 +1546,7 @@ impl LanguageServer {
                                             Err(error).context("failed to deserialize response")
                                         }
                                     }
-                                    Err(error) => Err(anyhow!("{}", error.message)),
+                                    Err(error) => Err(anyhow::Error::new(error)),
                                 };
                                 tx.send(response).ok();
                             })
@@ -2369,20 +2421,31 @@ mod tests {
     }
 
     #[test]
+    fn test_response_error_code_roundtrip() {
+        for (code, number) in [
+            (ResponseErrorCode::ParseError, -32700),
+            (ResponseErrorCode::MethodNotFound, -32601),
+            (ResponseErrorCode::RequestFailed, -32803),
+            (ResponseErrorCode::ServerCancelled, -32802),
+            (ResponseErrorCode::ContentModified, -32801),
+            (ResponseErrorCode::Other(-32099), -32099),
+        ] {
+            assert_eq!(i64::from(code), number);
+            assert_eq!(ResponseErrorCode::from(number), code);
+        }
+    }
+
+    #[test]
     fn test_serialize_error_response_has_no_result() {
         let response = AnyResponse {
             jsonrpc: JSON_RPC_VERSION,
             id: RequestId::Int(0),
-            error: Some(Error {
-                code: -32601,
-                message: "Unrecognized method".to_string(),
-                data: None,
-            }),
+            error: Some(ResponseError::method_not_found("foo")),
             result: None,
         };
         assert_eq!(
             serde_json::to_string(&response).unwrap(),
-            "{\"jsonrpc\":\"2.0\",\"id\":0,\"error\":{\"code\":-32601,\"message\":\"Unrecognized method\",\"data\":null}}"
+            "{\"jsonrpc\":\"2.0\",\"id\":0,\"error\":{\"code\":-32601,\"message\":\"Unrecognized method `foo`\",\"data\":null}}"
         );
     }
 

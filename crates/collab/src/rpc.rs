@@ -376,6 +376,9 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUncommittedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtExpandMacro>)
+            .add_request_handler(
+                forward_read_only_project_request::<proto::LspExtExpandAbbreviation>,
+            )
             .add_request_handler(forward_read_only_project_request::<proto::LspExtOpenDocs>)
             .add_request_handler(forward_mutating_project_request::<proto::LspExtRunnables>)
             .add_request_handler(
@@ -417,7 +420,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
             .add_request_handler(lsp_query)
-            .add_message_handler(broadcast_project_message_from_host::<proto::LspQueryResponse>)
+            .add_message_handler(forward_lsp_query_response)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
@@ -2467,6 +2470,26 @@ async fn lsp_query(
         forward_mutating_project_request(request, response, session).await
     } else {
         forward_read_only_project_request(request, response, session).await
+    }
+}
+
+async fn forward_lsp_query_response(
+    request: proto::LspQueryResponse,
+    session: MessageContext,
+) -> Result<()> {
+    let project_id = ProjectId::from_proto(request.project_id);
+    session
+        .db()
+        .await
+        .check_user_is_project_host(project_id, session.connection_id)
+        .await?;
+    if let Some(peer_id) = request.peer_id {
+        session
+            .peer
+            .forward_send(session.connection_id, peer_id.into(), request)?;
+        Ok(())
+    } else {
+        broadcast_project_message_from_host(request, session).await
     }
 }
 

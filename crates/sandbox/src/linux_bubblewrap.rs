@@ -26,7 +26,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, TcpListener, TcpStream};
-use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd, RawFd};
+use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, FromRawFd as _, OwnedFd, RawFd};
 use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
@@ -848,7 +848,7 @@ fn validate_binds(socket_path: &Path, paths: &[PathBuf]) -> Result<()> {
         );
     }
     for (fd, path) in fds.iter().zip(paths) {
-        let expected = fd_dev_ino(fd.as_raw_fd())
+        let expected = fd_dev_ino(fd.as_fd())
             .with_context(|| format!("fstat of captured descriptor for {}", path.display()))?;
         let mounted = lstat_dev_ino(path)
             .with_context(|| format!("lstat of mounted bind {}", path.display()))?;
@@ -1121,7 +1121,7 @@ fn recv_fds(stream: &UnixStream) -> std::io::Result<Vec<OwnedFd>> {
 }
 
 /// `(device, inode)` of the object an already-open descriptor refers to.
-fn fd_dev_ino(fd: RawFd) -> std::io::Result<(u64, u64)> {
+fn fd_dev_ino(fd: BorrowedFd<'_>) -> std::io::Result<(u64, u64)> {
     let stat = nix::sys::stat::fstat(fd).map_err(std::io::Error::from)?;
     Ok((stat.st_dev as u64, stat.st_ino as u64))
 }
