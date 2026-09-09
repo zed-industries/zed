@@ -196,7 +196,7 @@ const M=%(coef_main)s, B=%(coef_branch)s, NODE=%(node)s, ED=%(editors)s;
 // until the .cached() fixture variants have been measured: a replayed element on main is
 // taken as the branch's replay cost, an idle cached editor as the branch's clean editor.
 const MAIN_CACHE={measured:false, replay:[B[4],B[5],B[6]], editor_replay:ED?ED.branch_clean:0};
-let K=0,D=0,R=false,preset=null,MC=false,PN=3,PS=0.6,LOC=0.8;
+let K=0,D=0,R=false,preset=null,MC=false,PN=3,PS=0.6,LOC=0.8,hover=null;
 // Where this frame's change lands: a share LOC of it in the panel being worked in (plus the
 // uncached area), the rest spread uniformly. The working area saturates softly (tanh) rather
 // than at a hard cap, so change spills into the other panels gradually as f grows instead of
@@ -282,10 +282,17 @@ const bx=F>55?X(F)-bw:X(F)+6;const by=(Y(tb)-Y(tm))<22?Y(tb)+18:Y(tb)-6;
 for(const b of $('presets').children)b.classList.toggle('active',b.textContent===preset);
 g.font='bold 13px system-ui';label(g,preset?preset:'custom scene',pad,pad-14,'#222');g.font='12px system-ui';
 for(const [ms] of BUDGETS){const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);if(cross!==null&&cross>0&&cross<1&&ms*1000<ymax){g.fillStyle='#e76f51';g.beginPath();g.arc(X(cross*100),Y(ms*1000),4,0,7);g.fill();}}
-if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tmain(n,fEven)),4,0,7);g.fill();const t='break-even '+Math.round(fEven*100)+'%%';const tw=g.measureText(t).width;label(g,t,Math.min(X(fEven*100)-tw/2,X(100)-tw),Y(tmain(n,fEven))-22,'#555');}else if(fEven!==null&&fEven>=1){const t='≈ main at 100%% (measured ±5%% by scene shape)';label(g,t,X(100)-g.measureText(t).width-4,Y(tmain(n,1))-6,'#555');}}
+if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tmain(n,fEven)),4,0,7);g.fill();const t='break-even '+Math.round(fEven*100)+'%%';const tw=g.measureText(t).width;label(g,t,Math.min(X(fEven*100)-tw/2,X(100)-tw),Y(tmain(n,fEven))-22,'#555');}else if(fEven!==null&&fEven>=1){const t='≈ main at 100%% (measured ±5%% by scene shape)';label(g,t,X(100)-g.measureText(t).width-4,Y(tmain(n,1))-6,'#555');}
+// Hover readout: the values of both curves at the f under the mouse.
+if(hover!==null){const hp=hover,hf=hp/100,hm=tmain(n,hf),hb=tbranch(n,hf,V);g.save();g.strokeStyle='#999';g.lineWidth=1;g.setLineDash([2,2]);g.beginPath();g.moveTo(X(hp),Y(0));g.lineTo(X(hp),pad);g.stroke();g.setLineDash([]);
+ for(const [t,c] of [[hm,'#555'],[hb,'#1b6f65']]){g.fillStyle=c;g.beginPath();g.arc(X(hp),Y(Math.min(t,ymax)),3.5,0,7);g.fill();}
+ const lines=[`at ${hp}%% changing`,`main    ${fmt(hm)}`+(MC?` (${fmt(tmain(n,hf,'best'))} – ${fmt(tmain(n,hf,'worst'))})`:''),`branch  ${fmt(hb)}`,hb<=hm?`${(hm/hb).toFixed(2)}× faster`:`${(hb/hm).toFixed(2)}× slower`];
+ g.font='12px ui-monospace,Menlo,monospace';const bw=Math.max(...lines.map(l=>g.measureText(l).width))+16,bh=lines.length*16+10;const bx=hp>55?X(hp)-bw-8:X(hp)+8,byy=Math.max(pad,Math.min(Y(Math.min(Math.max(hm,hb),ymax))-bh/2,Y(0)-bh));
+ g.fillStyle='rgba(255,255,255,.95)';g.strokeStyle='#bbb';g.beginPath();g.rect(bx,byy,bw,bh);g.fill();g.stroke();lines.forEach((l,i)=>{g.fillStyle=i===1?'#555':i===2?'#1b6f65':'#222';g.fillText(l,bx+8,byy+16+i*16);});g.restore();}}
 for(const id of ['L','M','H','K','D','R','V','F'])$(id).addEventListener('input',()=>{preset=null;draw();});
 for(const id of ['MC','PN','PS','LOC'])$(id).addEventListener('input',()=>{preset=null;draw();});
-$('YS').addEventListener('input',()=>{$('fit').checked=false;draw();});$('fit').addEventListener('input',draw);
+$('YS').addEventListener('input',()=>{$('fit').checked=false;draw();});
+$('c').addEventListener('mousemove',e=>{const cv=$('c'),pad=52,W=cv.width-2*pad-215;const p=Math.round(100*(e.offsetX-pad)/W);const next=p>=0&&p<=100?p:null;if(next!==hover){hover=next;draw();}});$('c').addEventListener('mouseleave',()=>{hover=null;draw();});$('fit').addEventListener('input',draw);
 for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value]=v;$('D').max=v[5];$('D').value=v[6];$('R').checked=v[7];$('MC').checked=v[8];$('PN').value=v[9];$('PS').value=v[10];$('LOC').value=v[11];preset=name;draw();};$('presets').appendChild(b);}
 {const wanted=decodeURIComponent(location.hash.slice(1));const start=[...$('presets').children].find(b=>b.textContent===wanted)||$('presets').firstChild;start.click();}
 </script>
