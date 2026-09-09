@@ -17,11 +17,13 @@ row() { # main_bin branch_bin fixture
   ch=$(echo "$b" | grep change: | sed -E 's/.*\[([-+0-9.]+)% ([-+0-9.]+)% ([-+0-9.]+)%\].*/\2,\1,\3/')
   echo "$3,$(echo "$m" | median),$(echo "$b" | median),$ch,$(echo "$m" | rss),$(echo "$b" | rss),$(echo "$m" | rss_max),$(echo "$b" | rss_max)" | tee -a "$OUT"
 }
-: > "$OUT"
-for p in v16-e128-p4-f25 v4-e128-p4-f25 v64-e128-p4-f25 v16-e32-p4-f25 v16-e512-p4-f25 \
-         v16-e128-p1-f25 v16-e128-p12-f25 v16-e128-p4-f0 v16-e128-p4-f6 v16-e128-p4-f100 \
-         v64-e128-p4-f6 v16-e512-p4-f6 v4-e512-p4-f100 v64-e32-p4-f100 \
-         v16-e128-p1-f100 v16-e128-p12-f100 v16-e128-p1-f0 v16-e128-p12-f0 v16-e512-p4-f0 v16-e512-p4-f100; do
+ALL="v16-e128-p4-f25 v4-e128-p4-f25 v64-e128-p4-f25 v16-e32-p4-f25 v16-e512-p4-f25 \
+     v16-e128-p1-f25 v16-e128-p12-f25 v16-e128-p4-f0 v16-e128-p4-f6 v16-e128-p4-f100 \
+     v64-e128-p4-f6 v16-e512-p4-f6 v4-e512-p4-f100 v64-e32-p4-f100 \
+     v16-e128-p1-f100 v16-e128-p12-f100 v16-e128-p1-f0 v16-e128-p12-f0 v16-e512-p4-f0 v16-e512-p4-f100"
+# POINTS overrides the list (and appends to OUT instead of truncating it), for adding points.
+[ -n "${POINTS:-}" ] || : > "$OUT"
+for p in ${POINTS:-$ALL}; do
   row "$MAIN_EDITOR" "$BRANCH_EDITOR" "Complexity/scene/$p\$"
 done
 uptime

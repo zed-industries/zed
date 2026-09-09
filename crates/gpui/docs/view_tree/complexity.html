@@ -6,15 +6,17 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <p>Fitted to the <code>Complexity</code> sweep (<code>complexity.csv</code>, 20 points, <code>main</code> at 5a9b9558db). An element is <b>light</b> (a quad), <b>medium</b> (quad + 3-glyph label) or <b>heavy</b> (quad + shadow + 10-glyph label). <code>main</code>: <code>t = c + Σ n<sub>k</sub>·m<sub>k</sub> + q·(N/100)²</code>; branch: the same per <em>dirty</em> element plus a cheaper <em>clean</em> (replayed) cost per element, plus 0.55 µs per dirty view from the Siblings sweep. Mean |error| 2% / 4% (main / branch), worst 8% / 14%, at the 8k-element points where the frame grows faster than the scene.</p>
 <p>Presets: <span id=presets></span></p>
 <p>Scale note: a real Zed window is a few hundred layout elements of chrome around custom-painted editors (the 3-pane workspace in <code>test_workspace_rendering_stress</code> has ~160 layout nodes and 20 views), so the ranges below stop where a frame budget does, not where the sweep did; the sweep went to 8192 elements to pin the slopes.</p>
-<label>light elements (a quad) <input id=L type=range min=0 max=4000 step=10 value=200> <span id=Lv></span></label>
-<label>medium elements (quad + 3 glyphs) <input id=M type=range min=0 max=1500 step=10 value=300> <span id=Mv></span></label>
-<label>heavy elements (quad + shadow + 10 glyphs) <input id=H type=range min=0 max=400 step=5 value=20> <span id=Hv></span></label>
+<label>divs (a quad) <input id=L type=range min=0 max=4000 step=10 value=200> <span id=Lv></span></label>
+<label>buttons (quad + 3-glyph label) <input id=M type=range min=0 max=1500 step=10 value=300> <span id=Mv></span></label>
+<label>cards (quad + shadow + 10-glyph label) <input id=H type=range min=0 max=400 step=5 value=20> <span id=Hv></span></label>
+<p><small>Editors are not element counts: an editor paints its text directly inside one node and caches its shaped lines on both engines, so it is one dirty or clean node with a cost of its own — see the measured <code>Workbench</code> rows below, which include one.</small></p>
 <label>views <input id=V type=range min=1 max=128 value=20> <span id=Vv></span> <small>(0.55 µs per dirty view; not fitted)</small></label>
 <label>elements changing per frame <input id=F type=range min=0 max=100 value=10> <span id=Fv></span>%</label>
 <table><tr><th></th><th>main</th><th>branch</th></tr>
 <tr><td>frame time</td><td class=m id=tm></td><td class=n id=tb></td></tr>
 <tr><td>scale of this scene that fits 4 ms (× the element counts above)</td><td class=m id=sm></td><td class=n id=sb></td></tr>
-<tr><td>… i.e. total elements</td><td class=m id=em></td><td class=n id=eb></td></tr></table>
+<tr><td>… i.e. total elements</td><td class=m id=em></td><td class=n id=eb></td></tr>
+<tr><td>share changing up to which the frame fits 4 ms</td><td class=m id=fm></td><td class=n id=fb></td></tr></table>
 <canvas id=c width=900 height=320></canvas>
 <p><small>Curve: frame time against the share of elements changing, for the scene above. Grey: <code>main</code>; green: branch; dashed: the 4 ms and 8.3 ms (120 Hz) budgets; vertical: your setting.</small></p>
 <h3>Measured, not modelled: the Zed-shaped fixtures</h3>
@@ -30,12 +32,12 @@ function scale(f,budget){let lo=0,hi=1024;for(let i=0;i<40;i++){const mid=(lo+hi
 const $=id=>document.getElementById(id);
 function fmt(us){return us>=1000?(us/1000).toFixed(2)+' ms':us.toFixed(0)+' µs';}
 const PRESETS={
- 'Zed-shaped chrome: 200 light + 300 medium + 20 heavy, 20 views, 10% changing':[200,300,20,20,10],
+ 'Zed-shaped chrome: 200 divs + 300 buttons + 20 cards, 20 views, 10% changing':[200,300,20,20,10],
  'typing in one of 3 panes: same scene, 3%':[200,300,20,20,3],
- 'dashboard: 3000 light tiles, one animating (1%)':[3000,0,0,40,1],
- 'list: 300 heavy rows scrolling (all changing)':[0,0,300,1,100],
+ 'dashboard: 3000 div tiles, one animating (1%)':[3000,0,0,40,1],
+ 'list: 300 card rows scrolling (all changing)':[0,0,300,1,100],
  'everything dirty (resize / focus change)':[200,300,20,20,100],
- 'sweep-sized: 1500 medium, 25%':[0,1500,0,16,25],
+ 'sweep-sized: 1500 buttons, 25%':[0,1500,0,16,25],
 };
 const BUDGETS=[[4,'4 ms'],[8.3,'120 Hz']];
 function label(g,text,x,y,color){g.font='12px system-ui';g.lineWidth=3;g.strokeStyle='rgba(255,255,255,.9)';g.strokeText(text,x,y);g.fillStyle=color;g.fillText(text,x,y);}
@@ -44,6 +46,11 @@ $('Lv').textContent=n[0];$('Mv').textContent=n[1];$('Hv').textContent=n[2];$('Vv
 const tm=tmain(n),tb=tbranch(n,f,V);$('tm').textContent=fmt(tm);$('tb').textContent=fmt(tb);
 const N=n[0]+n[1]+n[2];const sm=scale(s=>tmain(n.map(x=>x*s)),budget),sb=scale(s=>tbranch(n.map(x=>x*s),f,V),budget);
 $('sm').textContent=sm.toFixed(2)+'×';$('sb').textContent=sb.toFixed(2)+'×';$('em').textContent=Math.round(N*sm);$('eb').textContent=Math.round(N*sb);
+// Where the branch curve crosses the budget (it is linear in f between 0 and 100%).
+const t0=tbranch(n,0,V),t1=tbranch(n,1,V);const fBudget=t1===t0?null:(4000-t0)/(t1-t0);
+$('fm').textContent=tm<=4000?'always':'never';$('fb').textContent=fBudget===null?(t0<=4000?'always':'never'):fBudget>=1?'always':fBudget<=0?'never':Math.round(fBudget*100)+'%';
+// Break-even: the share of change above which the branch costs what main does.
+const fEven=t1===t0?null:(tm-t0)/(t1-t0);
 const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=44,W=cv.width-2*pad,H=cv.height-2*pad;
 const ymax=Math.max(tm,tb,4000)*1.15;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
 g.fillStyle='rgba(150,150,150,.5)';g.fillRect(X(0),Y(tm),W,Y(0)-Y(tm));
@@ -51,7 +58,9 @@ g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(tbranch
 g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);for(const [ms,name] of BUDGETS){if(ms*1000<ymax){g.beginPath();g.moveTo(X(0),Y(ms*1000));g.lineTo(X(100),Y(ms*1000));g.stroke();label(g,name,X(100)-46,Y(ms*1000)-4,'#e76f51');}}g.setLineDash([]);
 g.beginPath();g.moveTo(X(F),Y(0));g.lineTo(X(F),Y(ymax/1.15));g.stroke();
 label(g,'0%',X(0)-8,Y(0)+16,'#333');label(g,'100% of elements changing',X(100)-140,Y(0)+16,'#333');label(g,fmt(ymax/1.15),2,Y(ymax/1.15)+4,'#333');label(g,'0',24,Y(0)+4,'#333');
-label(g,'main '+fmt(tm),X(2),Y(tm)-4,'#555');label(g,'branch '+fmt(tb)+' at '+F+'%',Math.min(X(F)+4,X(100)-150),Y(tb)-6,'#1b6f65');}
+label(g,'main '+fmt(tm),X(2),Y(tm)-4,'#555');label(g,'branch '+fmt(tb)+' at '+F+'%',Math.min(X(F)+4,X(100)-150),Y(tb)-6,'#1b6f65');
+if(fBudget!==null&&fBudget>0&&fBudget<1){g.fillStyle='#e76f51';g.beginPath();g.arc(X(fBudget*100),Y(4000),4,0,7);g.fill();label(g,'fits 4 ms up to '+Math.round(fBudget*100)+'%',X(fBudget*100)-60,Y(4000)+16,'#e76f51');}
+if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tm),4,0,7);g.fill();label(g,'break-even '+Math.round(fEven*100)+'%',X(fEven*100)-40,Y(tm)-8,'#555');}else if(fEven!==null&&fEven>=1){label(g,'never costs more than main below 100% changing',X(100)-250,Y(tm)-8,'#555');}}
 for(const id of ['L','M','H','V','F'])$(id).addEventListener('input',draw);
 for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value]=v;draw();};$('presets').appendChild(b);}
 draw();
