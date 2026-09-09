@@ -137,59 +137,63 @@ one view rendering N plain id'd `div`s, which isolates the cost per element.
 
 | Fixture | `main` | branch | change (95% CI) |
 | --- | ---: | ---: | ---: |
-| Workbench/update/row | 769 µs | 324 µs | **−58%** (−59.5, −57.8) |
-| Workbench/update/editor | 1.54 ms | 1.11 ms | **−28%** (−30.2, −28.4) |
-| Workbench/update/mixed | 1.20 ms | 796 µs | **−34%** (−34.9, −33.2) |
-| Workbench/update/full (all dirty) | 1.60 ms | 1.48 ms | **−7.5%** (−9.7, −6.5) |
-| editor_render | 694 µs | 697 µs | +0.5% (−0.7, +1.5) |
-| editor_render_with_editorconfig | 1.56 ms | 1.59 ms | +1.6% (−0.0, +3.5) |
-| open_editor_with_one_long_line | 832 µs | 813 µs | −2.4% (−3.0, +1.1) |
-| Multi-cursor input 1000 / 10000 | 71 ms / 659 ms | 71 ms / 665 ms | +0.1% / +0.9% |
-| Markdown render 5000 / 10000 / 50000 | 1.15 / 1.61 / 6.46 ms | 1.18 / 1.66 / 6.70 ms | **+2.2% / +3.2% / +3.7%** |
-| Elements/all dirty 256 / 2048 / 8192 | 743 µs / 6.71 ms / 23.7 ms | 770 µs / 6.97 ms / 24.8 ms | **+3.6% / +3.8% / +4.6%** |
-| Elements/incremental 256 / 2048 / 8192 | 762 µs / 6.81 ms / 24.1 ms | 783 µs / 7.19 ms / 24.9 ms | +2.7% / +5.6% / +3.2% |
-| Siblings/all dirty 64 / 256 / 1024 | 220 µs / 760 µs / 3.20 ms | 255 µs / 889 µs / 3.89 ms | **+15.7% / +17.0% / +21.7%** |
+| Workbench/update/row | 765 µs | 285 µs | **−64%** (−64.7, −62.6) |
+| Workbench/update/editor | 1.56 ms | 899 µs | **−42%** (−42.4, −42.0) |
+| Workbench/update/mixed | 1.19 ms | 685 µs | **−43%** (−42.9, −42.1) |
+| Workbench/update/full (all dirty) | 1.62 ms | 1.24 ms | **−23%** (−23.5, −22.6) |
+| editor_render | 692 µs | 676 µs | **−2.2%** (−3.1, −1.4) |
+| editor_render_with_editorconfig | 1.52 ms | 1.45 ms | **−5.5%** (−6.6, −4.6) |
+| open_editor_with_one_long_line | 816 µs | 819 µs | +1.0% (−1.1, +3.4) |
+| Multi-cursor input 1000 / 10000 | 73 ms / 678 ms | 72 ms / 682 ms | −0.3% / +0.5% |
+| Markdown render 5000 / 10000 / 50000 | 1.17 / 1.63 / 6.64 ms | 1.09 / 1.56 / 6.71 ms | **−7.3% / −4.4%** / +1.5% (−3.5, +6.7) |
+| Elements/all dirty 256 / 2048 / 8192 | 754 µs / 6.84 ms / 25.1 ms | 769 µs / 7.00 ms / 25.9 ms | **+2.0% / +3.1% / +4.6%** |
+| Elements/incremental 256 / 2048 / 8192 | 758 µs / 6.93 ms / 25.5 ms | 778 µs / 7.11 ms / 26.1 ms | **+2.6% / +3.1% / +3.0%** |
+| Siblings/all dirty 64 / 256 / 1024 | 213 µs / 758 µs / 3.21 ms | 248 µs / 898 µs / 3.81 ms | **+16.7% / +18.6% / +18.9%** |
 
-`main` at `5a9b9558db`, branch at `46c3ffa866`, M-series laptop, load average under 4.
+`main` at `5a9b9558db`, branch at `b7f55c0437`, M-series laptop, load average 3–7
+(other builds running; the intervals are still narrow because the pairs run back to
+back). Since the previous run of this table (at `46c3ffa866`), the rendered frame
+became the scene cache and the dispatch tree is snapshotted rather than rewritten from
+ops: the reuse rows gained 6–14 points, the Zed-shaped all-dirty rows turned from
++0.5–1.6% to −2–5%, Markdown from +2–4% to −7–+1%, and the synthetic per-element tax
+roughly halved.
 
 **The cost model.** Two synthetic sweeps pin the engine's tax on a frame in which nothing
 is reused:
 
 ![per node](view_tree/per_node.png)
 
-A node costs about **0.5–0.7 µs per dirty node per frame**, flat in the node's size
+A node costs about **0.55–0.6 µs per dirty node per frame**, flat in the node's size
 (occurrence lookup, cache key, three phases of begin/end, dependency recording, the
-dispatch snapshot, layout retention). The 1024 point is steeper than the others; the
-fixture's hitbox bounds tree, which is `main`'s and 30% of the frame, is the likely
-cause, but it is not separated.
+dispatch snapshot, layout retention).
 
 ![per element](view_tree/per_element.png)
 
-An element costs about **0.1–0.13 µs per rendered element per frame** (a 24-byte
-dispatch op, a hitbox item, its primitives written into the node's scene as well as the
-frame's, and its text line's handle) — 3.5–4.5% of an id'd `div` with a glyph, which
-costs `main` about 2.9 µs, and 2–4% of Markdown's heavier elements. The incremental
-variant, where the retained layout tree is kept and the view's previous tree retired
-subtree by subtree, is within noise of the cleared one.
+An element costs about **0.06–0.11 µs per rendered element per frame** (a hitbox item,
+the primitive-kind byte recorded beside the frame's lane, and its text line's handle) —
+2–3.5% of an id'd `div` with a glyph, which costs `main` about 2.9 µs, and less than
+the retention wins on Markdown's heavier elements. The incremental variant, where the
+retained layout tree is kept and the view's previous tree retired subtree by subtree,
+is within noise of the cleared one.
 
 ![by shape](view_tree/tax_by_shape.png)
 
-So an all-dirty frame pays roughly `0.55 µs × dirty nodes + 0.12 µs × dirty elements`,
+So an all-dirty frame pays roughly `0.55 µs × dirty nodes + 0.08 µs × dirty elements`,
 less what retention saves it (kept text layouts, kept Taffy trees for clean subtrees).
-A Zed window has tens of nodes and a few thousand elements, so the tax is one to two
+A Zed window has tens of nodes and a few thousand elements, so the tax is well under a
 hundred microseconds on a frame of one to several milliseconds — and `Workbench/full`,
-the Zed-shaped all-dirty fixture, comes out 7.5% *faster* than `main` because the
-retention wins are larger than that. The tax is visible only where nodes are many and
-trivial (`Siblings`) or a single view is thousands of cheap elements (`Elements`,
-Markdown). By ablation, no single mechanism is more than 15% of it; the passes taken
-(the line layout cache behind `RefCell`s, no reseeding of text still cached, no bubbling
-of reads into the parent, empty dispatch nodes dropped, node flags instead of hash sets,
-`SmallVec` dependency sets, occurrence keys from a running path hash, 56-byte items, the
-dispatch record in its own lane, generation-stamped element states) took `Siblings/512`
-from +22% to about +19%. Getting materially lower needs the per-node steps themselves
-to go — a node-owned dispatch tree, then fused per-phase choreography — which is
-follow-up work. `crates/gpui/docs/view_tree_render_path.md` walks the render path step
-by step.
+the Zed-shaped all-dirty fixture, comes out 23% *faster* than `main`, `editor_render`
+2–5% faster, because the retention wins are larger than that. The tax is visible only
+where nodes are many and trivial (`Siblings`) or a single view is thousands of cheap
+elements (`Elements`). By ablation, no single mechanism is more than 15% of it; the
+passes taken (the line layout cache behind `RefCell`s, no reseeding of text still
+cached, no bubbling of reads into the parent, empty dispatch nodes dropped, node flags
+instead of hash sets, `SmallVec` dependency sets, occurrence keys from a running path
+hash, 56-byte items, generation-stamped element states, the frame as the scene cache,
+the dispatch tree snapshotted instead of rewritten) took `Siblings/1024` from +24% to
++19% and halved the per-element cost. Getting materially lower needs the per-node steps
+themselves to go — fused per-phase choreography — which is follow-up work.
+`crates/gpui/docs/view_tree_render_path.md` walks the render path step by step.
 
 ### Memory
 
@@ -198,7 +202,23 @@ system monitor shows — sampled when the first measurement starts and ends and 
 after any measurement. The samples are taken with profiler tracing off, after its frame
 ring has been freed, so they reflect the app and not the harness, and `matrix.sh`
 records them next to the timings (`main_rss`, `branch_rss` columns, MB after the first
-measurement; `*_rss_max`). Results: _pending the paired run._
+measurement; `*_rss_max`).
+
+![memory](view_tree/memory.png)
+
+In the same paired run as the table above, the process is the same size on both sides:
+across the 21 fixtures the branch is between −5 MB and +5 MB of `main` after the first
+measurement (−0.2 to −4.2 MB on the four Workbench fixtures, +0.6 MB on
+`editor_render`, −4.4 MB on Markdown 50000), except `Siblings/1024` at +10.6 MB and
+`Elements/incremental/8192` at −34 MB — both within what two runs of the *same* binary
+show, since a fresh process lands anywhere in a ±5 MB band and the two 8192-element
+fixtures in a wider one. Two repeats of `Siblings/1024` put the growth during the first
+measurement at +1.9/+2.6 MB on `main` and +2.0/+2.3 MB on the branch. The one
+systematic difference is in the `*_rss_max` columns, the high-water mark after all
+~20 Criterion samples (each a fresh app in the same process): `Siblings/1024` ends 10%
+higher on the branch (240–245 vs 260–275 MB), which is a thousand nodes' records that
+the allocator keeps around between apps, about 1 KB per node; the Zed-shaped fixtures
+end equal or lower (`Workbench/full` 140 vs 130 MB, `editor_render` 155 vs 150 MB).
 
 There is no in-engine byte count: an estimate from container capacities was a second
 bookkeeping to keep in step with every structure, and the process number is what

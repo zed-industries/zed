@@ -1,41 +1,40 @@
-import sys, os
+import sys, os, csv
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+# Usage: python charts.py <output dir> [matrix.csv]  (needs matplotlib)
+# Reads matrix.sh's rows: fixture,main,branch,change_pct,lo,hi,main_rss,branch_rss,main_rss_max,branch_rss_max
 out = sys.argv[1]
-# Usage: python charts.py <output dir>  (needs matplotlib)
-# fixture: (main, branch) in µs; Criterion medians from matrix.csv (main 5a9b9558db vs 46c3ffa866)
-D = {
- "Workbench/row":      (768.75, 323.76),
- "Workbench/editor":   (1543.8, 1112.0),
- "Workbench/mixed":    (1204.2, 796.31),
- "Workbench/full":     (1601.4, 1480.7),
- "editor_render":      (693.58, 697.08),
- "editorconfig":       (1564.9, 1590.5),
- "one long line":      (832.31, 812.67),
- "multi-cursor 1000":  (71074, 71119),
- "multi-cursor 10000": (659460, 665250),
- "Markdown 5000":      (1152.8, 1178.4),
- "Markdown 10000":     (1605.5, 1657.2),
- "Markdown 50000":     (6461.1, 6698.1),
- "Elements/all dirty/256":   (743.45, 770.35),
- "Elements/all dirty/2048":  (6712.6, 6969.7),
- "Elements/all dirty/8192":  (23658, 24752),
- "Elements/incr/256":   (761.65, 782.53),
- "Elements/incr/2048":  (6811.0, 7191.0),  # mean of three runs: +7.6, +6.4, +3.6
- "Elements/incr/8192":  (24079, 24852),
- "Siblings/64":   (220.23, 254.80),
- "Siblings/256":  (760.36, 889.40),
- "Siblings/1024": (3196.7, 3890.8),
+matrix = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "matrix.csv")
+LABELS = {  # matrix.sh fixture filter -> chart label
+ "Workbench/update/row": "Workbench/row", "Workbench/update/editor": "Workbench/editor",
+ "Workbench/update/mixed": "Workbench/mixed", "Workbench/update/full": "Workbench/full",
+ "^editor_render$": "editor_render", "^editor_render_with_editorconfig$": "editorconfig",
+ "^open_editor_with_one_long_line$": "one long line",
+ "Multi-cursor input/cursors/1000$": "multi-cursor 1000", "Multi-cursor input/cursors/10000": "multi-cursor 10000",
+ "Markdown render/min_bytes/5000$": "Markdown 5000", "Markdown render/min_bytes/10000": "Markdown 10000",
+ "Markdown render/min_bytes/50000": "Markdown 50000",
+ "Elements/all dirty/256": "Elements/all dirty/256", "Elements/all dirty/2048": "Elements/all dirty/2048",
+ "Elements/all dirty/8192": "Elements/all dirty/8192",
+ "Elements/incremental/256": "Elements/incr/256", "Elements/incremental/2048": "Elements/incr/2048",
+ "Elements/incremental/8192": "Elements/incr/8192",
+ "Siblings/all dirty/64": "Siblings/64", "Siblings/all dirty/256": "Siblings/256", "Siblings/all dirty/1024": "Siblings/1024",
 }
-CI = {  # (lo, hi) % from criterion
- "Workbench/row": (-59.5,-57.8), "Workbench/editor": (-30.2,-28.4), "Workbench/mixed": (-34.9,-33.2), "Workbench/full": (-9.7,-6.5),
- "editor_render": (-0.7,1.5), "editorconfig": (-0.0,3.5), "one long line": (-3.0,1.1), "multi-cursor 1000": (-5.5,6.6), "multi-cursor 10000": (0.6,1.2),
- "Markdown 5000": (1.2,2.5), "Markdown 10000": (1.9,4.4), "Markdown 50000": (-1.9,8.4),
- "Elements/all dirty/256": (3.4,4.3), "Elements/all dirty/2048": (3.3,5.0), "Elements/all dirty/8192": (3.4,5.7),
- "Elements/incr/256": (0.7,2.4), "Elements/incr/2048": (3.6,7.6), "Elements/incr/8192": (1.3,3.9),
- "Siblings/64": (14.8,15.9), "Siblings/256": (16.9,18.3), "Siblings/1024": (21.9,26.6),
-}
+UNITS = {"ns": 1e-3, "µs": 1, "us": 1, "ms": 1e3, "s": 1e6}
+def micros(text):
+    value, unit = text.split()
+    return float(value) * UNITS[unit]
+D, CI, RSS = {}, {}, {}  # label -> (main, branch) µs; (lo, hi) %; (main, branch) MB after the first measurement
+with open(matrix, encoding="utf-8") as rows:
+    for row in csv.reader(rows):
+        if len(row) < 6 or row[0] not in LABELS:
+            continue
+        label = LABELS[row[0]]
+        D[label] = (micros(row[1]), micros(row[2]))
+        CI[label] = (float(row[4]), float(row[5]))
+        if len(row) >= 8 and row[6] and row[7]:
+            RSS[label] = (float(row[6]), float(row[7]))
+D = {label: D[label] for label in LABELS.values() if label in D}
 plt.rcParams.update({"font.size": 10, "figure.dpi": 130})
 
 # 1. Overview: % change per fixture
@@ -48,15 +47,15 @@ ax.barh(y, pct, color=colors, xerr=[lo,hi], error_kw=dict(ecolor="#444", capsize
 ax.set_yticks(y); ax.set_yticklabels(names); ax.invert_yaxis()
 ax.axvline(0, color="k", lw=0.8)
 for sep in [3.5, 8.5, 11.5, 17.5]: ax.axhline(sep, color="#bbb", lw=0.6, ls="--")
-ax.text(-58, 1.5, "reuse fires", va="center", color="#2a9d8f")
-ax.text(-58, 6, "Zed-shaped, all dirty", va="center", color="#555")
-ax.text(-58, 10, "one view, all elements dirty", va="center", color="#555")
-ax.text(-58, 14.5, "per-element cost (synthetic)", va="center", color="#e76f51")
-ax.text(-58, 19, "per-node cost (synthetic worst case)", va="center", color="#e76f51")
+ax.text(-66, 1.5, "reuse fires", va="center", color="#2a9d8f")
+ax.text(-66, 6, "Zed-shaped, all dirty", va="center", color="#555")
+ax.text(-66, 10, "one view, all elements dirty", va="center", color="#555")
+ax.text(-66, 14.5, "per-element cost (synthetic)", va="center", color="#e76f51")
+ax.text(-66, 19, "per-node cost (synthetic worst case)", va="center", color="#e76f51")
 ax.set_xlabel("frame time change vs main (%), Criterion median, 95% CI")
 ax.set_title("GPUI view tree vs main — paired Criterion runs, same machine")
 for i,p in enumerate(pct): ax.text(p + (1 if p>=0 else -1), i, f"{p:+.1f}%", va="center", ha="left" if p>=0 else "right", fontsize=8)
-ax.set_xlim(-62, 32)
+ax.set_xlim(-72, 32)
 fig.tight_layout(); fig.savefig(f"{out}/overview.png"); plt.close(fig)
 
 # 2. Siblings: fixed per-node cost
@@ -89,6 +88,20 @@ vals = [100*(D[k][1]-D[k][0])/D[k][0] for k in ["Workbench/full","editor_render"
 ax.bar(labels, vals, color=["#2a9d8f","#999","#e9c46a","#e76f51","#e76f51"])
 ax.axhline(0, color="k", lw=0.8); ax.set_ylabel("% vs main, everything dirty")
 for i,v in enumerate(vals): ax.text(i, v + (0.5 if v>=0 else -1.5), f"{v:+.1f}%", ha="center")
-ax.set_title("All-dirty tax by shape: ≈0.55 µs × nodes + ≈0.12 µs × elements − retention wins", fontsize=10)
+ax.set_title("All-dirty tax by shape: ≈≈0.55 µs × nodes + ≈0.08 µs × elements − retention wins", fontsize=10)
 fig.tight_layout(); fig.savefig(f"{out}/tax_by_shape.png"); plt.close(fig)
+
+# 5. Process resident memory after the first measurement
+if RSS:
+    names = [n for n in D if n in RSS]
+    fig, ax = plt.subplots(figsize=(9, 7))
+    y = np.arange(len(names)); h = 0.38
+    ax.barh(y - h/2, [RSS[n][0] for n in names], h, color="#999", label="main")
+    ax.barh(y + h/2, [RSS[n][1] for n in names], h, color="#2a9d8f", label="branch")
+    for i, n in enumerate(names):
+        ax.text(max(RSS[n]) + 1, i, f"{RSS[n][1]-RSS[n][0]:+.1f} MB", va="center", fontsize=8)
+    ax.set_yticks(y); ax.set_yticklabels(names); ax.invert_yaxis(); ax.legend(loc="lower right")
+    ax.set_xlabel("bench process resident set size after the first measurement (MB)")
+    ax.set_title("Process memory, main vs branch, same fixture in the same harness")
+    fig.tight_layout(); fig.savefig(f"{out}/memory.png"); plt.close(fig)
 print("ok")

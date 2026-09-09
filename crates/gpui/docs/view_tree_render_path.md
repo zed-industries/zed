@@ -303,9 +303,9 @@ real window (10–30k items) perhaps 10–30 µs per query, two or three per mou
 
 ## 9. Where the per-node cost goes
 
-Measured on `Siblings/all dirty` (N trivial views, all dirty every frame): 0.5–0.7 µs
-per node per frame over `main` (64: +15.7%, 256: +17.0%, 1024: +21.7%), and on
-`Elements/all dirty` (one view, N id'd `div`s): 0.10–0.13 µs per element (+3.6% to
+Measured on `Siblings/all dirty` (N trivial views, all dirty every frame): 0.55–0.6 µs
+per node per frame over `main` (64: +16.7%, 256: +18.6%, 1024: +18.9%), and on
+`Elements/all dirty` (one view, N id'd `div`s): 0.06–0.11 µs per element (+2.0% to
 +4.6%). Full table and charts in `view_tree.md` under "Measuring". By ablation of the
 per-node overhead on the 512 fixture, before the passes listed below:
 
@@ -327,8 +327,12 @@ with a full-tree layout snapshot (now incremental retention and root-only compar
 an O(nodes) "is everything dirty" probe; `TextUse` reallocations; the text system's
 locks; reseeding text the cache still holds from last frame; bubbling child reads into
 the parent's dependency set (the window's tracked entities now come from `consumers`);
-copying and replaying empty dispatch nodes; the window's unread `dirty_views` set. The
-passes since the ablation took 256 to +17% and 64 to +15.7% (512 was +22%, 64 +21%).
+copying and replaying empty dispatch nodes; the window's unread `dirty_views` set;
+copying primitives into a per-node scene at paint (the rendered frame is the cache and
+replay gathers from it); rewriting the dispatch tree from a per-node op stream (nodes
+now snapshot their range of the live tree and graft it back). The passes since the
+ablation took 1024 from +24% to +19% and 64 from +21% to +17%; the per-element cost
+halved.
 
 Also fixed on the way, found by review of the retention protocol: a tree laid out with
 `layout_as_root` inside a node (list items, editor blocks, the measured row of a
