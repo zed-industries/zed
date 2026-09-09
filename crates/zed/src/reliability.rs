@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use client::{Client, telemetry::MINIDUMP_ENDPOINT};
 use feature_flags::FeatureFlagAppExt;
 use futures::{AsyncReadExt, TryStreamExt};
-use gpui::{App, AppContext, Entity, TaskExt};
+use gpui::{App, AppContext, Entity, TaskExt, WeakEntity};
 use http_client::{AsyncBody, HttpClient, Request};
 use project::{Project, worktree_store::WorktreeStoreDiagnostics};
 use proto::{CrashReport, GetCrashFilesResponse};
@@ -13,9 +13,11 @@ use reqwest::{
 use serde::Deserialize;
 use smol::stream::StreamExt;
 use std::{
+    cell::RefCell,
     collections::HashSet,
     ffi::OsStr,
     fs,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -25,9 +27,12 @@ use workspace::WorkspaceStore;
 
 mod hang_detection;
 
+type ProjectRegistry = Rc<RefCell<Vec<WeakEntity<Project>>>>;
+
 pub fn init(client: Arc<Client>, workspace_store: Entity<WorkspaceStore>, cx: &mut App) {
     hang_detection::start(client.clone(), cx);
-    start_memory_usage_logging(workspace_store, cx);
+    let projects = ProjectRegistry::default();
+    start_memory_usage_logging(workspace_store, projects.clone(), cx);
 
     cx.on_flags_ready({
         let client = client.clone();
@@ -52,6 +57,7 @@ pub fn init(client: Arc<Client>, workspace_store: Entity<WorkspaceStore>, cx: &m
     }
 
     cx.observe_new(move |project: &mut Project, _, cx| {
+        projects.borrow_mut().push(cx.weak_entity());
         let client = client.clone();
 
         let Some(remote_client) = project.remote_client() else {
@@ -99,11 +105,15 @@ const MEMORY_USAGE_MINIMUM_LOGGED_DELTA: u64 = 64 * 1024 * 1024;
 /// Logs on a fixed heartbeat, and additionally whenever resident memory changed
 /// significantly since the last logged value, so that bursts of growth are timestamped
 /// against the surrounding log entries.
-fn start_memory_usage_logging(workspace_store: Entity<WorkspaceStore>, cx: &App) {
+fn start_memory_usage_logging(
+    workspace_store: Entity<WorkspaceStore>,
+    projects: ProjectRegistry,
+    cx: &App,
+) {
     let (diagnostics_sender, mut diagnostics_receiver) = futures::channel::mpsc::unbounded();
     cx.spawn(async move |cx| {
         while diagnostics_receiver.next().await.is_some() {
-            cx.update(|cx| log_worktree_diagnostics(&workspace_store, cx));
+            cx.update(|cx| log_worktree_diagnostics(&workspace_store, &projects, cx));
         }
     })
     .detach();
@@ -157,18 +167,35 @@ fn start_memory_usage_logging(workspace_store: Entity<WorkspaceStore>, cx: &App)
     .detach();
 }
 
-fn log_worktree_diagnostics(workspace_store: &Entity<WorkspaceStore>, cx: &App) {
-    let workspaces = workspace_store
+fn log_worktree_diagnostics(
+    workspace_store: &Entity<WorkspaceStore>,
+    projects: &ProjectRegistry,
+    cx: &App,
+) {
+    let workspace_project_ids = workspace_store
         .read(cx)
         .workspaces()
         .filter_map(|workspace| workspace.upgrade())
-        .collect::<Vec<_>>();
+        .map(|workspace| workspace.read(cx).project().entity_id())
+        .collect::<HashSet<_>>();
+    let live_projects = {
+        let mut projects = projects.borrow_mut();
+        projects.retain(|project| project.upgrade().is_some());
+        projects
+            .iter()
+            .filter_map(|project| project.upgrade())
+            .collect::<Vec<_>>()
+    };
+    let project_count = live_projects.len();
+    let orphaned_project_count = live_projects
+        .iter()
+        .filter(|project| !workspace_project_ids.contains(&project.entity_id()))
+        .count();
     let mut worktree_store_ids = HashSet::new();
     let mut store_count = 0;
     let mut aggregate = WorktreeStoreDiagnostics::default();
 
-    for workspace in workspaces {
-        let project = workspace.read(cx).project().clone();
+    for project in live_projects {
         let worktree_store = project.read(cx).worktree_store();
         if !worktree_store_ids.insert(worktree_store.entity_id()) {
             continue;
@@ -218,13 +245,13 @@ fn log_worktree_diagnostics(workspace_store: &Entity<WorkspaceStore>, cx: &App) 
     } = aggregate;
     match largest_worktree {
         Some(largest_worktree) => log::info!(
-            "worktree diagnostics: stores {store_count}, slots {worktree_slots}, live {live_worktrees}, visible {visible_worktrees}, strong {strong_handles}, dead weak {dead_weak_handles}, loading {loading_worktrees}, entries {total_entries}, visible entries {visible_entries}, largest {} ({} entries, {} visible)",
+            "worktree diagnostics: projects {project_count}, orphaned projects {orphaned_project_count}, stores {store_count}, slots {worktree_slots}, live {live_worktrees}, visible {visible_worktrees}, strong {strong_handles}, dead weak {dead_weak_handles}, loading {loading_worktrees}, entries {total_entries}, visible entries {visible_entries}, largest {} ({} entries, {} visible)",
             largest_worktree.path.display(),
             largest_worktree.entries,
             largest_worktree.visible_entries,
         ),
         None => log::info!(
-            "worktree diagnostics: stores {store_count}, slots {worktree_slots}, live {live_worktrees}, visible {visible_worktrees}, strong {strong_handles}, dead weak {dead_weak_handles}, loading {loading_worktrees}, entries {total_entries}, visible entries {visible_entries}, largest none",
+            "worktree diagnostics: projects {project_count}, orphaned projects {orphaned_project_count}, stores {store_count}, slots {worktree_slots}, live {live_worktrees}, visible {visible_worktrees}, strong {strong_handles}, dead weak {dead_weak_handles}, loading {loading_worktrees}, entries {total_entries}, visible entries {visible_entries}, largest none",
         ),
     }
 }

@@ -88,6 +88,7 @@ version = "0.1.0"
 dependencies = [
  "action_log",
  "agent-client-protocol",
+ "agent_settings",
  "anyhow",
  "async-channel 2.5.0",
  "base64 0.22.1",
@@ -6246,15 +6247,19 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
+ "http_client",
  "language",
  "log",
+ "markdown",
  "num-format",
+ "paths",
  "picker",
  "project",
  "release_channel",
  "schemars 1.0.4",
  "semver",
  "serde",
+ "serde_json",
  "settings",
  "strum 0.28.0",
  "telemetry",
@@ -7197,7 +7202,6 @@ dependencies = [
  "menu",
  "multi_buffer",
  "notifications",
- "panel",
  "picker",
  "pretty_assertions",
  "project",
@@ -7803,7 +7807,6 @@ dependencies = [
  "anyhow",
  "language_core",
  "rust-embed",
- "toml 0.8.23",
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",
@@ -9552,12 +9555,14 @@ dependencies = [
  "gpui_shared_string",
  "gpui_util",
  "log",
+ "lru",
  "parking_lot",
  "path",
  "regex",
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "smallvec",
  "strum 0.28.0",
  "toml 0.8.23",
  "tree-sitter",
@@ -10165,7 +10170,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "audio",
- "cocoa 0.26.0",
  "collections",
  "core-foundation 0.10.0",
  "core-video",
@@ -10182,7 +10186,6 @@ dependencies = [
  "livekit_api",
  "log",
  "nanoid",
- "objc",
  "parking_lot",
  "postage",
  "rodio",
@@ -10413,6 +10416,29 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "lsp_command_selector"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "futures 0.3.32",
+ "fuzzy",
+ "gpui",
+ "language",
+ "log",
+ "lsp",
+ "menu",
+ "picker",
+ "project",
+ "serde_json",
+ "settings",
+ "ui",
+ "util",
+ "workspace",
+ "zlog",
 ]
 
 [[package]]
@@ -11411,7 +11437,7 @@ dependencies = [
 [[package]]
 name = "notify"
 version = "9.0.0-rc.4"
-source = "git+https://github.com/zed-industries/notify?rev=0890bbb8ca40a4b5d1f67031698dd7918b37d991#0890bbb8ca40a4b5d1f67031698dd7918b37d991"
+source = "git+https://github.com/zed-industries/notify?rev=d842f16b2716bd60f09caf3ae3a894237ab38f54#d842f16b2716bd60f09caf3ae3a894237ab38f54"
 dependencies = [
  "bitflags 2.13.1",
  "inotify 0.11.0",
@@ -11455,7 +11481,7 @@ dependencies = [
 [[package]]
 name = "notify-types"
 version = "2.1.0"
-source = "git+https://github.com/zed-industries/notify?rev=0890bbb8ca40a4b5d1f67031698dd7918b37d991#0890bbb8ca40a4b5d1f67031698dd7918b37d991"
+source = "git+https://github.com/zed-industries/notify?rev=d842f16b2716bd60f09caf3ae3a894237ab38f54#d842f16b2716bd60f09caf3ae3a894237ab38f54"
 dependencies = [
  "bitflags 2.13.1",
 ]
@@ -12519,15 +12545,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "panel"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "ui",
- "workspace",
 ]
 
 [[package]]
@@ -14978,7 +14995,6 @@ dependencies = [
  "log",
  "parking_lot",
  "paths",
- "prost",
  "release_channel",
  "rpc",
  "schemars 1.0.4",
@@ -18597,6 +18613,7 @@ dependencies = [
  "smallvec",
  "telemetry",
  "theme",
+ "theme_settings",
  "ui",
  "util",
  "workspace",
@@ -22261,6 +22278,7 @@ dependencies = [
  "project",
  "proptest",
  "proptest-derive",
+ "release_channel",
  "remote",
  "schemars 1.0.4",
  "serde",
@@ -22726,7 +22744,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.20.0"
+version = "1.21.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -22812,6 +22830,7 @@ dependencies = [
  "languages",
  "line_ending_selector",
  "log",
+ "lsp_command_selector",
  "lsp_locations",
  "markdown",
  "markdown_preview",
