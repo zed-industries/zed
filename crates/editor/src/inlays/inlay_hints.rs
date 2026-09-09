@@ -5265,9 +5265,7 @@ let c = 3;"#
     }
 
     #[gpui::test]
-    async fn test_inlay_hints_for_gitignored_but_included_file(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_inlay_hints_for_gitignored_but_included_file(cx: &mut gpui::TestAppContext) {
         init_test(cx, &|settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
                 enabled: Some(true),
