@@ -166,6 +166,11 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <label>… of which changing <input id=D type=range min=0 max=8 value=1> <span id=Dv></span> <label style="display:inline;margin-left:1em"><input id=R type=checkbox> showing new text (lines reshaped, e.g. scrolling)</label></label>
 <label>views <input id=V type=range min=1 max=128 value=20> <span id=Vv></span></label>
 <label>elements changing per frame <input id=F type=range min=0 max=100 value=10> <span id=Fv></span>%%</label>
+<fieldset style="margin:1em 0;padding:.6em 1em;border:1px solid #ddd"><legend><label style="display:inline"><input id=MC type=checkbox> <code>main</code> caches editors and panels, as Zed ships it</label></legend>
+<label>cached panels <input id=PN type=range min=1 max=12 value=3> <span id=PNv></span></label>
+<label>share of divs / buttons / cards inside them <input id=PS type=range min=0 max=100 value=60> <span id=PSv></span>%%</label>
+<p id=mcnote style="margin:.3em 0;color:#666"></p>
+<p id=mcwarn style="margin:.3em 0;color:#b00"></p></fieldset>
 <table><tr><th></th><th>main</th><th>branch</th></tr>
 <tr><td>frame time</td><td class=m id=tm></td><td class=n id=tb></td></tr>
 <tr><td>scale of this scene that fits a 120 Hz frame, 8.3 ms (× the element counts above)</td><td class=m id=sm></td><td class=n id=sb></td></tr>
@@ -180,11 +185,19 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <p><small>Model fitted to <code>complexity.csv</code> (%(npoints)d element points, mean error %(errm).0f%% / %(errb).0f%%; %(neditors)d editor points); see <code>view_tree.md</code>, "Scene complexity". Coefficients (µs): main — %(cm)s; branch — %(cb)s; editors — %(editors_text)s.</small></p>
 <script>
 const M=%(coef_main)s, B=%(coef_branch)s, NODE=%(node)s, ED=%(editors)s;
-let K=0,D=0,R=false,preset=null;
+// main's own caching (reuse_paint on cached panels and pane items). PLACEHOLDER coefficients
+// until the .cached() fixture variants have been measured: a replayed element on main is
+// taken as the branch's replay cost, an idle cached editor as the branch's clean editor.
+const MAIN_CACHE={measured:false, replay:[B[4],B[5],B[6]], editor_replay:ED?ED.branch_clean:0};
+let K=0,D=0,R=false,preset=null,MC=false,PN=3,PS=0.6;
+function cacheStats(n,f){const inside=n.map(x=>x*PS);const per=inside.reduce((a,b)=>a+b,0)/PN;const pClean=Math.pow(1-f,per);return {inside,per,pClean};}
 const us=v=>v.toFixed(2);
 document.getElementById('formula').textContent=
 `main    t = ${us(M[0])} + ${us(M[1])}·n_div + ${us(M[2])}·n_button + ${us(M[3])}·n_card + ${us(M[4])}·(N/100)²`+
 (ED?`\n          + ${ED.main_each.toFixed(0)}·K + ${ED.main_reshape.toFixed(0)}·D·[reshaped]`:'')+
+`\n  with main's caching on: elements inside the P cached panels are replayed at r_main when the panel is clean,`+
+`\n          P(clean) = (1 − f)^(elements per panel);  editors: ${MAIN_CACHE.editor_replay.toFixed(0)}·(K − D) + ${ED?ED.main_each.toFixed(0):'?'}·D`+
+`\n          r_main = (${MAIN_CACHE.replay.map(us).join(', ')}) per div, button, card${MAIN_CACHE.measured?'':'   ← placeholders'}`+
 `\n\nbranch  t = ${us(B[0])} + (${us(B[1])}·n_div + ${us(B[2])}·n_button + ${us(B[3])}·n_card)·f        dirty: rendered`+
 `\n          + (${us(B[4])}·n_div + ${us(B[5])}·n_button + ${us(B[6])}·n_card)·(1 − f)   clean: replayed`+
 `\n          + ${us(B[7])}·(N/100)² + ${NODE}·⌈f·views⌉`+
@@ -192,7 +205,11 @@ document.getElementById('formula').textContent=
 `\n\n(µs; least squares on relative error over the sweep; main redraws every element every frame)`;
 function editorsMain(){return ED?K*ED.main_each+(R?D*ED.main_reshape:0):0;}
 function editorsBranch(){return ED?(K-D)*ED.branch_clean+D*(R?ED.branch_dirty:ED.branch_clean):0;}
-function tmain(n){const N=n[0]+n[1]+n[2];return M[0]+M[1]*n[0]+M[2]*n[1]+M[3]*n[2]+M[4]*(N/100)**2+editorsMain();}
+function tmain(n,f){const N=n[0]+n[1]+n[2];let t=M[0]+M[4]*(N/100)**2;
+if(MC){const {inside,pClean}=cacheStats(n,f);for(let k=0;k<3;k++){const clean=inside[k]*pClean;t+=M[1+k]*(n[k]-clean)+MAIN_CACHE.replay[k]*clean;}
+ t+=ED?(K-D)*MAIN_CACHE.editor_replay+D*(ED.main_each+(R?ED.main_reshape:0)):0;}
+else{t+=M[1]*n[0]+M[2]*n[1]+M[3]*n[2]+editorsMain();}
+return t;}
 function tbranch(n,f,V){const N=n[0]+n[1]+n[2];let t=B[0]+B[7]*(N/100)**2+NODE*(f==0?0:Math.max(1,Math.ceil(f*V)))+editorsBranch();
 for(let k=0;k<3;k++){const d=n[k]*f;t+=B[1+k]*d+B[4+k]*(n[k]-d);}return t;}
 function scale(f,budget){let lo=0,hi=1024;for(let i=0;i<40;i++){const mid=(lo+hi)/2;if(f(mid)<=budget*1000)lo=mid;else hi=mid;}return lo;}
@@ -212,19 +229,23 @@ const BUDGET=8.3;const BUDGETS=[[4,'4 ms — half a 120 Hz frame'],[8.3,'8.3 ms 
 function label(g,text,x,y,color){g.font='12px system-ui';g.lineWidth=3;g.strokeStyle='rgba(255,255,255,.9)';g.strokeText(text,x,y);g.fillStyle=color;g.fillText(text,x,y);}
 function draw(){const n=[+$('L').value,+$('M').value,+$('H').value],V=+$('V').value,F=+$('F').value,budget=BUDGET,f=F/100;
 K=+$('K').value;$('D').max=K;D=Math.min(+$('D').value,K);$('D').value=D;R=$('R').checked;
+MC=$('MC').checked;PN=+$('PN').value;PS=+$('PS').value/100;$('PNv').textContent=PN;$('PSv').textContent=Math.round(PS*100);
+{const {per,pClean}=cacheStats(n,f);$('mcnote').textContent=MC?`each panel ≈ ${Math.round(per)} elements; clean with probability (1 − f)ⁿ = ${(100*pClean).toFixed(pClean<0.01?2:0)}%% at f = ${F}%%; expected ${(PN*pClean).toFixed(1)} of ${PN} panels replayed this frame`:'';
+ $('mcwarn').textContent=MC&&!MAIN_CACHE.measured?'placeholder coefficients: main’s replay cost is taken as the branch’s until the .cached() fixtures are measured':'';}
 $('Lv').textContent=n[0];$('Mv').textContent=n[1];$('Hv').textContent=n[2];$('Vv').textContent=V;$('Fv').textContent=F;$('Kv').textContent=K;$('Dv').textContent=D;
-const tm=tmain(n),tb=tbranch(n,f,V);$('tm').textContent=fmt(tm);$('tb').textContent=fmt(tb);
+const tm=tmain(n,f),tb=tbranch(n,f,V);$('tm').textContent=fmt(tm);$('tb').textContent=fmt(tb);
 const t0=tbranch(n,0,V),t1=tbranch(n,1,V);
-const N=n[0]+n[1]+n[2];const sm=scale(s=>tmain(n.map(x=>x*s)),budget),sb=scale(s=>tbranch(n.map(x=>x*s),f,V),budget);
+const N=n[0]+n[1]+n[2];const sm=scale(s=>tmain(n.map(x=>x*s),f),budget),sb=scale(s=>tbranch(n.map(x=>x*s),f,V),budget);
 $('sm').textContent=sm.toFixed(2)+'×';$('sb').textContent=sb.toFixed(2)+'×';$('em').textContent=Math.round(N*sm);$('eb').textContent=Math.round(N*sb);
 // Where the branch curve crosses the budget (it is linear in f between 0 and 100%%).
 const fBudget=t1===t0?null:(budget*1000-t0)/(t1-t0);
-$('fm').textContent=tm<=budget*1000?'always':'never';$('fb').textContent=fBudget===null?(t0<=budget*1000?'always':'never'):fBudget>=1?'always':fBudget<=0?'never':Math.round(fBudget*100)+'%%';
+{let fm=null;for(let p=0;p<=100;p++){if(tmain(n,p/100)<=budget*1000)fm=p;else break;}$('fm').textContent=fm===null?'never':fm>=100?'always':fm+'%%';}$('fb').textContent=fBudget===null?(t0<=budget*1000?'always':'never'):fBudget>=1?'always':fBudget<=0?'never':Math.round(fBudget*100)+'%%';
 // Break-even: the share of change above which the branch costs what main does.
-const fEven=t1===t0?null:(tm-t0)/(t1-t0);
+let fEven=null;for(let p=0;p<=100;p++){if(tbranch(n,p/100,V)>=tmain(n,p/100)){fEven=p/100;break;}}if(fEven===null)fEven=1;
 const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=44,W=cv.width-2*pad-200,H=cv.height-2*pad;
-const ymax=Math.max(tm,tb,budget*1000)*1.15;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
-g.fillStyle='rgba(150,150,150,.5)';g.fillRect(X(0),Y(tm),W,Y(0)-Y(tm));
+const ymax=Math.max(tmain(n,1),tb,budget*1000)*1.15;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
+const mainAt=p=>tmain(n,p/100);const tmMax=Math.max(...Array.from({length:101},(_,p)=>mainAt(p)));
+g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(mainAt(p)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(150,150,150,.5)';g.fill();
 g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(tbranch(n,p/100,V)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(42,157,143,.7)';g.fill();
 g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);for(const [ms,name] of BUDGETS){if(ms*1000<ymax){g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);g.beginPath();g.moveTo(X(0),Y(ms*1000));g.lineTo(X(100),Y(ms*1000));g.stroke();const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);const upTo=cross!==null&&cross>0&&cross<1?' · up to '+Math.round(cross*100)+'%%':'';label(g,name+upTo,X(100)+6,Y(ms*1000)+4,'#e76f51');}}g.setLineDash([]);
 g.lineWidth=1;g.strokeStyle='#e76f51';g.beginPath();g.moveTo(X(F),Y(0));g.lineTo(X(F),Y(ymax/1.15));g.stroke();
@@ -233,12 +254,13 @@ label(g,F+'%%',X(F)-10,Y(0)+16,'#e76f51');
 const faster=tm/tb;const gain=faster>=1?faster.toFixed(1)+'× faster ('+Math.round(100*(1-tb/tm))+'%%)':(tb/tm).toFixed(2)+'× slower';
 const branchText='branch '+fmt(tb)+' — '+gain;const bw=g.measureText(branchText).width+8;
 const bx=F>55?X(F)-bw:X(F)+6;const by=(Y(tb)-Y(tm))<22?Y(tb)+18:Y(tb)-6;
-label(g,'main '+fmt(tm),X(2),Y(tm)-6,'#555');label(g,branchText,bx,by,'#1b6f65');
+label(g,'main '+fmt(tm)+(MC?' at '+F+'%%':''),X(2),Y(tmMax)-6,'#555');label(g,branchText,bx,by,'#1b6f65');
 for(const b of $('presets').children)b.classList.toggle('active',b.textContent===preset);
 g.font='bold 13px system-ui';label(g,preset?preset:'custom scene',pad,pad-14,'#222');g.font='12px system-ui';
 for(const [ms] of BUDGETS){const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);if(cross!==null&&cross>0&&cross<1&&ms*1000<ymax){g.fillStyle='#e76f51';g.beginPath();g.arc(X(cross*100),Y(ms*1000),4,0,7);g.fill();}}
-if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tm),4,0,7);g.fill();const t='break-even '+Math.round(fEven*100)+'%%';const tw=g.measureText(t).width;label(g,t,Math.min(X(fEven*100)-tw/2,X(100)-tw),Y(tm)-22,'#555');}else if(fEven!==null&&fEven>=1){const t='≈ main at 100%% (measured ±5%% by scene shape)';label(g,t,X(100)-g.measureText(t).width-4,Y(tm)-6,'#555');}}
+if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tmain(n,fEven)),4,0,7);g.fill();const t='break-even '+Math.round(fEven*100)+'%%';const tw=g.measureText(t).width;label(g,t,Math.min(X(fEven*100)-tw/2,X(100)-tw),Y(tmain(n,fEven))-22,'#555');}else if(fEven!==null&&fEven>=1){const t='≈ main at 100%% (measured ±5%% by scene shape)';label(g,t,X(100)-g.measureText(t).width-4,Y(tmain(n,1))-6,'#555');}}
 for(const id of ['L','M','H','K','D','R','V','F'])$(id).addEventListener('input',()=>{preset=null;draw();});
+for(const id of ['MC','PN','PS'])$(id).addEventListener('input',draw);
 for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value]=v;$('D').max=v[5];$('D').value=v[6];$('R').checked=v[7];preset=name;draw();};$('presets').appendChild(b);}
 $('presets').firstChild.click();
 </script>
