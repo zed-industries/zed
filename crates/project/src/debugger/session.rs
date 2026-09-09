@@ -10,6 +10,7 @@ use super::dap_command::{
     TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
+use super::execution_order::{ExecutionOrder, ExecutionToken};
 use crate::debugger::breakpoint_store::BreakpointSessionState;
 use crate::debugger::dap_command::{DataBreakpointContext, ReadMemory};
 use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, PageAddress};
@@ -703,6 +704,7 @@ pub struct Session {
     output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
     watchers: HashMap<SharedString, Watcher>,
     is_session_terminated: bool,
+    execution_order: ExecutionOrder,
     requests: TypeIdHashMap<HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     ignore_breakpoints: bool,
@@ -879,6 +881,7 @@ impl Session {
                 background_tasks: Vec::default(),
                 restart_task: None,
                 is_session_terminated: false,
+                execution_order: ExecutionOrder::default(),
                 ignore_breakpoints: false,
                 breakpoint_store,
                 data_breakpoints: Default::default(),
@@ -915,6 +918,8 @@ impl Session {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded();
+        self.execution_order.all_threads_changed();
+        self.execution_order.position_changed();
         let (initialized_tx, initialized_rx) = futures::channel::oneshot::channel();
 
         let background_tasks = vec![cx.spawn(async move |this: WeakEntity<Session>, cx| {
@@ -1461,6 +1466,12 @@ impl Session {
     }
 
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
+        if event.all_threads_stopped.unwrap_or_default() || event.thread_id.is_none() {
+            self.execution_order.all_threads_changed();
+        } else if let Some(thread_id) = event.thread_id {
+            self.execution_order.thread_changed(thread_id);
+        }
+        self.execution_order.position_changed();
         self.push_to_history();
 
         self.state.stopped();
@@ -1528,11 +1539,14 @@ impl Session {
             Events::Continued(event) => {
                 // DAP defines an omitted `allThreadsContinued` as `true`.
                 if event.all_threads_continued.unwrap_or(true) {
+                    self.execution_order.all_threads_changed();
+                    self.execution_order.position_changed();
                     self.active_snapshot.thread_states.continue_all_threads();
                     self.breakpoint_store.update(cx, |store, cx| {
                         store.remove_active_position(Some(self.session_id()), cx)
                     });
                 } else {
+                    self.execution_order.thread_changed(event.thread_id);
                     self.active_snapshot
                         .thread_states
                         .continue_thread(ThreadId(event.thread_id));
@@ -1548,6 +1562,7 @@ impl Session {
             }
             Events::Thread(event) => {
                 let thread_id = ThreadId(event.thread_id);
+                self.execution_order.thread_changed(thread_id.0);
 
                 match event.reason {
                     dap::ThreadEventReason::Started => {
@@ -2125,17 +2140,31 @@ impl Session {
 
     fn on_step_response<T: LocalDapCommand + PartialEq + Eq + Hash>(
         thread_id: ThreadId,
+        execution_token: ExecutionToken,
+        position_revision: u64,
     ) -> impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) -> Option<T::Response> + 'static
     {
         move |this, response, cx| match response.log_err() {
             Some(response) => {
-                this.breakpoint_store.update(cx, |store, cx| {
-                    store.remove_active_position(Some(this.session_id()), cx)
-                });
+                if !this.is_session_terminated
+                    && this.execution_order.allows_position(execution_token)
+                {
+                    this.breakpoint_store.update(cx, |store, cx| {
+                        if store.active_position_revision() == position_revision {
+                            store.remove_active_position(Some(this.session_id()), cx)
+                        }
+                    });
+                }
                 Some(response)
             }
             None => {
-                this.active_snapshot.thread_states.stop_thread(thread_id);
+                if !this.is_session_terminated
+                    && this
+                        .execution_order
+                        .allows_thread(execution_token, thread_id.0)
+                {
+                    this.active_snapshot.thread_states.stop_thread(thread_id);
+                }
                 cx.notify();
                 None
             }
@@ -2144,6 +2173,8 @@ impl Session {
 
     fn on_continue_response(
         thread_id: ThreadId,
+        execution_token: ExecutionToken,
+        position_revision: u64,
     ) -> impl FnOnce(
         &mut Self,
         Result<dap::ContinueResponse>,
@@ -2152,22 +2183,48 @@ impl Session {
     + 'static {
         move |this, response, cx| match response.log_err() {
             Some(response) => {
+                if this.is_session_terminated {
+                    return Some(response);
+                }
                 if response.all_threads_continued.unwrap_or(true) {
-                    this.active_snapshot.thread_states.continue_all_threads();
-                } else {
+                    if this.execution_order.allows_all_threads(execution_token) {
+                        // Preserve newer per-thread events even when this response resumes other threads.
+                        let order = &this.execution_order;
+                        this.active_snapshot
+                            .thread_states
+                            .known_thread_states
+                            .retain(|thread, _| !order.allows_thread(execution_token, thread.0));
+                        this.active_snapshot.thread_states.global_state =
+                            Some(ThreadStatus::Running);
+                        this.execution_order.apply_all_threads(execution_token);
+                    }
+                } else if this
+                    .execution_order
+                    .allows_thread(execution_token, thread_id.0)
+                {
                     this.active_snapshot
                         .thread_states
                         .continue_thread(thread_id);
                 }
-                this.breakpoint_store.update(cx, |store, cx| {
-                    store.remove_active_position(Some(this.session_id()), cx)
-                });
+                if this.execution_order.allows_position(execution_token) {
+                    this.breakpoint_store.update(cx, |store, cx| {
+                        if store.active_position_revision() == position_revision {
+                            store.remove_active_position(Some(this.session_id()), cx)
+                        }
+                    });
+                }
                 this.invalidate_generic();
                 cx.notify();
                 Some(response)
             }
             None => {
-                this.active_snapshot.thread_states.stop_thread(thread_id);
+                if !this.is_session_terminated
+                    && this
+                        .execution_order
+                        .allows_thread(execution_token, thread_id.0)
+                {
+                    this.active_snapshot.thread_states.stop_thread(thread_id);
+                }
                 cx.notify();
                 None
             }
@@ -2249,6 +2306,8 @@ impl Session {
         }
 
         self.is_session_terminated = true;
+        self.execution_order.all_threads_changed();
+        self.execution_order.position_changed();
         self.active_snapshot.thread_states.exit_all_threads();
         cx.notify();
 
@@ -2335,6 +2394,7 @@ impl Session {
         cx: &mut Context<Self>,
     ) {
         self.select_historic_snapshot(None, cx);
+        let execution_token = self.execution_order.begin(thread_id.0);
 
         self.active_snapshot
             .thread_states
@@ -2346,7 +2406,11 @@ impl Session {
                     single_thread,
                 },
             },
-            Self::on_continue_response(thread_id),
+            Self::on_continue_response(
+                thread_id,
+                execution_token,
+                self.breakpoint_store.read(cx).active_position_revision(),
+            ),
             cx,
         )
         .detach();
@@ -2370,6 +2434,7 @@ impl Session {
         cx: &mut Context<Self>,
     ) {
         self.select_historic_snapshot(None, cx);
+        let execution_token = self.execution_order.begin(thread_id.0);
 
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
@@ -2389,7 +2454,11 @@ impl Session {
         self.active_snapshot.thread_states.process_step(thread_id);
         self.request(
             command,
-            Self::on_step_response::<NextCommand>(thread_id),
+            Self::on_step_response::<NextCommand>(
+                thread_id,
+                execution_token,
+                self.breakpoint_store.read(cx).active_position_revision(),
+            ),
             cx,
         )
         .detach();
@@ -2402,6 +2471,7 @@ impl Session {
         cx: &mut Context<Self>,
     ) {
         self.select_historic_snapshot(None, cx);
+        let execution_token = self.execution_order.begin(thread_id.0);
 
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
@@ -2421,7 +2491,11 @@ impl Session {
         self.active_snapshot.thread_states.process_step(thread_id);
         self.request(
             command,
-            Self::on_step_response::<StepInCommand>(thread_id),
+            Self::on_step_response::<StepInCommand>(
+                thread_id,
+                execution_token,
+                self.breakpoint_store.read(cx).active_position_revision(),
+            ),
             cx,
         )
         .detach();
@@ -2434,6 +2508,7 @@ impl Session {
         cx: &mut Context<Self>,
     ) {
         self.select_historic_snapshot(None, cx);
+        let execution_token = self.execution_order.begin(thread_id.0);
 
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
@@ -2453,7 +2528,11 @@ impl Session {
         self.active_snapshot.thread_states.process_step(thread_id);
         self.request(
             command,
-            Self::on_step_response::<StepOutCommand>(thread_id),
+            Self::on_step_response::<StepOutCommand>(
+                thread_id,
+                execution_token,
+                self.breakpoint_store.read(cx).active_position_revision(),
+            ),
             cx,
         )
         .detach();
@@ -2466,6 +2545,7 @@ impl Session {
         cx: &mut Context<Self>,
     ) {
         self.select_historic_snapshot(None, cx);
+        let execution_token = self.execution_order.begin(thread_id.0);
 
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
@@ -2486,7 +2566,11 @@ impl Session {
 
         self.request(
             command,
-            Self::on_step_response::<StepBackCommand>(thread_id),
+            Self::on_step_response::<StepBackCommand>(
+                thread_id,
+                execution_token,
+                self.breakpoint_store.read(cx).active_position_revision(),
+            ),
             cx,
         )
         .detach();

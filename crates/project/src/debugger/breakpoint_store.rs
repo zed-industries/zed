@@ -156,6 +156,7 @@ pub struct BreakpointStore {
     breakpoints: BTreeMap<Arc<Path>, BreakpointsInFile>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     active_stack_frame: Option<ActiveStackFrame>,
+    active_position_revision: u64,
     active_debug_line_pane_id: Option<EntityId>,
     // E.g ssh
     mode: BreakpointStoreMode,
@@ -174,6 +175,7 @@ impl BreakpointStore {
             worktree_store,
             downstream_client: None,
             active_stack_frame: Default::default(),
+            active_position_revision: 0,
             active_debug_line_pane_id: None,
         }
     }
@@ -194,6 +196,7 @@ impl BreakpointStore {
             worktree_store,
             downstream_client: None,
             active_stack_frame: Default::default(),
+            active_position_revision: 0,
             active_debug_line_pane_id: None,
         }
     }
@@ -675,6 +678,10 @@ impl BreakpointStore {
         self.active_stack_frame.as_ref()
     }
 
+    pub(crate) fn active_position_revision(&self) -> u64 {
+        self.active_position_revision
+    }
+
     pub fn active_debug_line_pane_id(&self) -> Option<EntityId> {
         self.active_debug_line_pane_id
     }
@@ -694,10 +701,13 @@ impl BreakpointStore {
                 .take_if(|active_stack_frame| active_stack_frame.session_id == session_id)
                 .is_some()
             {
+                self.active_position_revision += 1;
                 self.active_debug_line_pane_id = None;
             }
         } else {
-            self.active_stack_frame.take();
+            if self.active_stack_frame.take().is_some() {
+                self.active_position_revision += 1;
+            }
             self.active_debug_line_pane_id = None;
         }
 
@@ -706,6 +716,7 @@ impl BreakpointStore {
     }
 
     pub fn set_active_position(&mut self, position: ActiveStackFrame, cx: &mut Context<Self>) {
+        self.active_position_revision += 1;
         if self
             .active_stack_frame
             .as_ref()
