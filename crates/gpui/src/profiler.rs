@@ -797,6 +797,21 @@ pub struct FrameTiming {
     pub draw_start: Instant,
     /// When `Window::draw` finished.
     pub draw_end: Instant,
+    /// What the view tree did in this frame: how many scopes were rebuilt or reused, and
+    /// whether any global was written mid-draw (which invalidates that global's readers).
+    pub view_tree: crate::ViewTreeStats,
+}
+
+/// The globals written while some frame was drawing, by type name, since tracing began.
+/// Kept aside from the per-frame ring so a report can name them.
+#[cfg(feature = "profiler")]
+static GLOBALS_WRITTEN_DURING_DRAW: spin::Mutex<std::collections::BTreeSet<&'static str>> =
+    spin::Mutex::new(std::collections::BTreeSet::new());
+
+/// The type names of every global written while a frame was drawing since tracing began.
+#[cfg(feature = "profiler")]
+pub fn globals_written_during_draw() -> Vec<&'static str> {
+    GLOBALS_WRITTEN_DURING_DRAW.lock().iter().copied().collect()
 }
 
 #[cfg(feature = "profiler")]
@@ -1021,7 +1036,13 @@ impl WindowProfiler {
     }
 
     /// Records the end of a window draw and returns the draw duration.
-    pub fn end_draw(&mut self, dirty_at: Option<Instant>, invalidations: u64) -> Duration {
+    pub fn end_draw(
+        &mut self,
+        dirty_at: Option<Instant>,
+        invalidations: u64,
+        view_tree: crate::ViewTreeStats,
+        globals_written: Vec<&'static str>,
+    ) -> Duration {
         let Some(WindowActivity::Draw {
             started_at: draw_start,
         }) = self.active_activities.pop()
@@ -1031,6 +1052,9 @@ impl WindowProfiler {
             return Duration::ZERO;
         };
 
+        if !globals_written.is_empty() {
+            GLOBALS_WRITTEN_DURING_DRAW.lock().extend(globals_written);
+        }
         let draw_end = Instant::now();
         let frame_timing = FrameTiming {
             window_id: self.window_id,
@@ -1038,6 +1062,7 @@ impl WindowProfiler {
             invalidations,
             draw_start,
             draw_end,
+            view_tree,
         };
         let draw_duration = frame_timing.draw_duration();
         self.record_draw_timing(frame_timing);
@@ -1251,7 +1276,7 @@ mod tests {
         let mut collector = FrameTimingCollector::new();
 
         window_profiler.begin_draw();
-        window_profiler.end_draw(Some(dirty_at), 3);
+        window_profiler.end_draw(Some(dirty_at), 3, Default::default(), Vec::new());
         assert!(
             collector
                 .collect_unseen()
@@ -1262,7 +1287,7 @@ mod tests {
         set_trace_enabled(true);
         let mut collector = FrameTimingCollector::new();
         window_profiler.begin_draw();
-        window_profiler.end_draw(Some(dirty_at), 3);
+        window_profiler.end_draw(Some(dirty_at), 3, Default::default(), Vec::new());
 
         let timing = collector
             .collect_unseen()
@@ -1335,7 +1360,7 @@ mod tests {
         let mut collector = FrameTimingCollector::new();
 
         window_profiler.begin_draw();
-        window_profiler.end_draw(None, 0);
+        window_profiler.end_draw(None, 0, Default::default(), Vec::new());
         assert!(
             FRAME_TIMINGS
                 .lock()
@@ -1486,7 +1511,7 @@ mod tests {
         window_profiler.begin_draw();
         begin_input_at(&mut window_profiler, Instant::now());
         window_profiler.end_input(true);
-        window_profiler.end_draw(None, 0);
+        window_profiler.end_draw(None, 0, Default::default(), Vec::new());
 
         let snapshot = window_profiler.input_latency_snapshot();
         assert!(snapshot.latency_histogram.is_empty());
@@ -1577,6 +1602,7 @@ mod tests {
             invalidations: 1,
             draw_start: draw_end - Duration::from_millis(2),
             draw_end,
+            view_tree: Default::default(),
         });
     }
 }

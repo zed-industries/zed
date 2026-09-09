@@ -283,7 +283,7 @@ impl ShowBehavior {
             ShowScrollbar::Never => Self::Never,
             ShowScrollbar::Auto => Self::Autohide,
             ShowScrollbar::System => {
-                if cx.default_global::<ScrollbarAutoHide>().should_hide() {
+                if cx.global_or_default::<ScrollbarAutoHide>().should_hide() {
                     Self::Autohide
                 } else {
                     Self::Always

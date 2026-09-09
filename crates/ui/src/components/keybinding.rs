@@ -118,7 +118,7 @@ impl KeyBinding {
 
     /// Returns whether keybindings are visible application-wide.
     pub fn default_visibility(cx: &mut App) -> bool {
-        cx.default_global::<KeyBindingVisibility>().0
+        cx.global_or_default::<KeyBindingVisibility>().0
     }
 
     pub fn new(action: &dyn Action, focus_handle: Option<FocusHandle>, cx: &App) -> Self {

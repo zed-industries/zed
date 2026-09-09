@@ -76,6 +76,10 @@ pub struct ViewTreeStats {
     pub live_nodes: usize,
     /// Taffy nodes retained after the frame.
     pub layout_nodes: usize,
+    /// Globals written while the frame was drawing. Each write invalidates every view
+    /// that read the global, so one that recurs every frame keeps its readers from ever
+    /// being reused; frame-local drawing state belongs on the `Window` instead.
+    pub globals_written_during_draw: usize,
 }
 
 /// The entities one node's render read. Nodes read a handful, so a small vector with a

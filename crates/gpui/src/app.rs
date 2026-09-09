@@ -737,6 +737,10 @@ pub struct App {
     // might panic.
     pub(crate) globals_by_type: TypeIdHashMap<Box<dyn Any>>,
     global_dependencies: RefCell<TypeIdHashMap<Slot<()>>>,
+    /// Globals written while a window was drawing, drained by the draw. Every such write
+    /// invalidates every view that read the global, so a write that happens on every
+    /// frame keeps its readers from ever being reused; the frame profiler reports them.
+    pub(crate) globals_written_during_draw: Vec<&'static str>,
 
     // assets
     loading_assets: FxHashMap<(TypeId, u64), CachedAsset>,
@@ -832,6 +836,7 @@ impl App {
                 http_client,
                 globals_by_type: Default::default(),
                 global_dependencies: RefCell::default(),
+                globals_written_during_draw: Vec::new(),
                 entities,
                 new_entity_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
@@ -2087,12 +2092,22 @@ impl App {
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
     }
 
+    /// Records a write to the global `G`: notifies its observers and, during a draw,
+    /// notes it for the frame profiler (see [`App::globals_written_during_draw`]).
+    fn note_global_write<G: Global>(&mut self) {
+        let global_type = TypeId::of::<G>();
+        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        if self.is_drawing() {
+            self.globals_written_during_draw.push(type_name::<G>());
+        }
+    }
+
     /// Access the global of the given type mutably. Panics if a global for that type has not been assigned.
     #[track_caller]
     pub fn global_mut<G: Global>(&mut self) -> &mut G {
         self.track_global::<G>();
         let global_type = TypeId::of::<G>();
-        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.note_global_write::<G>();
         self.globals_by_type
             .get_mut(&global_type)
             .and_then(|any_state| any_state.downcast_mut::<G>())
@@ -2104,7 +2119,7 @@ impl App {
     pub fn default_global<G: Global + Default>(&mut self) -> &mut G {
         self.track_global::<G>();
         let global_type = TypeId::of::<G>();
-        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.note_global_write::<G>();
         self.globals_by_type
             .entry(global_type)
             .or_insert_with(|| Box::<G>::default())
@@ -2112,10 +2127,28 @@ impl App {
             .unwrap()
     }
 
+    /// Reads the global of the given type, assigning its default first if none has been
+    /// assigned. Unlike [`App::default_global`] this is a read: it does not notify the
+    /// global's observers or invalidate the views that read it, so it is the accessor to
+    /// use from `render`.
+    pub fn global_or_default<G: Global + Default>(&mut self) -> &G {
+        self.track_global::<G>();
+        let global_type = TypeId::of::<G>();
+        if !self.globals_by_type.contains_key(&global_type) {
+            self.note_global_write::<G>();
+            self.globals_by_type
+                .insert(global_type, Box::<G>::default());
+        }
+        self.globals_by_type
+            .get(&global_type)
+            .and_then(|any_state| any_state.downcast_ref::<G>())
+            .unwrap_or_else(|| panic!("no state of type {} exists", type_name::<G>()))
+    }
+
     /// Sets the value of the global of the given type.
     pub fn set_global<G: Global>(&mut self, global: G) {
         let global_type = TypeId::of::<G>();
-        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.note_global_write::<G>();
         self.globals_by_type.insert(global_type, Box::new(global));
     }
 
@@ -2128,7 +2161,7 @@ impl App {
     /// Remove the global of the given type from the app context. Does not notify global observers.
     pub fn remove_global<G: Global>(&mut self) -> G {
         let global_type = TypeId::of::<G>();
-        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.note_global_write::<G>();
         *self
             .globals_by_type
             .remove(&global_type)
@@ -2169,7 +2202,7 @@ impl App {
     pub(crate) fn end_global_lease<G: Global>(&mut self, lease: GlobalLease<G>) {
         let global_type = TypeId::of::<G>();
 
-        self.push_effect(Effect::NotifyGlobalObservers { global_type });
+        self.note_global_write::<G>();
         self.globals_by_type.insert(global_type, lease.global);
     }
 

@@ -3037,13 +3037,21 @@ impl Window {
         }
         self.needs_present.set(true);
 
+        let globals_written = std::mem::take(&mut cx.globals_written_during_draw);
+        self.view_tree.last_frame_stats.globals_written_during_draw = globals_written.len();
+
         #[cfg(feature = "profiler")]
         {
-            let draw_duration = self
-                .window_profiler
-                .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
+            let draw_duration = self.window_profiler.end_draw(
+                frame_dirty.dirty_at,
+                frame_dirty.invalidations,
+                self.view_tree.last_frame_stats,
+                globals_written,
+            );
             self.debug_frame_overlay.record_frame(draw_duration);
         }
+        #[cfg(not(feature = "profiler"))]
+        drop(globals_written);
 
         // Exit the scope to obtain the arena-clear token this draw owes; the
         // scope's teardown itself happens in `ElementArenaScope::drop`.

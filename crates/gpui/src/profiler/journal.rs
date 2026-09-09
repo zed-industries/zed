@@ -1115,6 +1115,7 @@ mod tests {
             invalidations: 1,
             draw_start: start + Duration::from_millis(3),
             draw_end: start + Duration::from_millis(4),
+            view_tree: Default::default(),
         };
         let presentation = PresentTiming {
             window_id: frame.window_id,
@@ -2732,6 +2733,7 @@ mod tests {
             invalidations: 1,
             draw_start: draw_end,
             draw_end,
+            view_tree: Default::default(),
         }
     }
 

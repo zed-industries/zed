@@ -181,6 +181,17 @@ impl BenchReport {
                             .record(timing.invalidations)
                             .ok();
                     }
+                    snapshot
+                        .rebuilt_scopes
+                        .record(timing.view_tree.rebuilt_scopes as u64)
+                        .ok();
+                    snapshot
+                        .reused_subtrees
+                        .record(timing.view_tree.reused_subtrees as u64)
+                        .ok();
+                    if timing.view_tree.globals_written_during_draw > 0 {
+                        snapshot.frames_writing_globals += 1;
+                    }
                 }
                 FrameEvent::Present(timing) => {
                     if let Some(animation_interval) = timing.animation_interval {
@@ -287,6 +298,23 @@ impl BenchReport {
                 frame_snapshot.invalidations_per_frame.max()
             );
         }
+        if !frame_snapshot.rebuilt_scopes.is_empty() {
+            eprintln!(
+                "  view tree per frame: rebuilt scopes mean {:.2} max {}, reused subtrees mean {:.2} max {}",
+                frame_snapshot.rebuilt_scopes.mean(),
+                frame_snapshot.rebuilt_scopes.max(),
+                frame_snapshot.reused_subtrees.mean(),
+                frame_snapshot.reused_subtrees.max()
+            );
+            if frame_snapshot.frames_writing_globals > 0 {
+                eprintln!(
+                    "  WARNING: globals written during draw in {} of {} frames — their readers are re-rendered every frame: {}",
+                    frame_snapshot.frames_writing_globals,
+                    frame_snapshot.rebuilt_scopes.len(),
+                    crate::profiler::globals_written_during_draw().join(", ")
+                );
+            }
+        }
         self.print_foreground_work(&frame_snapshot.foreground_work);
         if let Some(memory) = resident_memory {
             eprintln!("  process resident memory (sampled with profiler tracing off):");
@@ -367,6 +395,9 @@ struct WindowFrameSnapshot {
     draw: Histogram<u64>,
     present_interval: Histogram<u64>,
     invalidations_per_frame: Histogram<u64>,
+    rebuilt_scopes: Histogram<u64>,
+    reused_subtrees: Histogram<u64>,
+    frames_writing_globals: u64,
     foreground_work: DurationHistogram,
 }
 
@@ -377,6 +408,9 @@ impl WindowFrameSnapshot {
             draw: Histogram::new(3).expect("3 significant digits is valid"),
             present_interval: Histogram::new(3).expect("3 significant digits is valid"),
             invalidations_per_frame: Histogram::new(3).expect("3 significant digits is valid"),
+            rebuilt_scopes: Histogram::new(3).expect("3 significant digits is valid"),
+            reused_subtrees: Histogram::new(3).expect("3 significant digits is valid"),
+            frames_writing_globals: 0,
             foreground_work: DurationHistogram::new(),
         }
     }
