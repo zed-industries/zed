@@ -467,6 +467,7 @@ mod tests {
         let model = direct_anthropic_test_model(&provider);
 
         assert!(model.supports_explicit_compaction());
+        assert_eq!(model.max_total_tokens(), Some(model.max_token_count()));
         assert_eq!(
             model.minimum_explicit_compaction_input_tokens(),
             Some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
@@ -883,10 +884,6 @@ impl LanguageModel for AnthropicModel {
 
     fn max_token_count(&self) -> u64 {
         self.model.max_input_tokens
-    }
-
-    fn max_total_tokens(&self) -> Option<u64> {
-        None
     }
 
     fn max_output_tokens(&self) -> Option<u64> {

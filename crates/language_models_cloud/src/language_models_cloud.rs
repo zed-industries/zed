@@ -692,13 +692,6 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         self.model.max_token_count as u64
     }
 
-    fn max_total_tokens(&self) -> Option<u64> {
-        match self.model.provider {
-            cloud_llm_client::LanguageModelProvider::Anthropic => None,
-            _ => Some(self.max_token_count()),
-        }
-    }
-
     fn max_output_tokens(&self) -> Option<u64> {
         Some(self.model.max_output_tokens as u64)
     }
@@ -1823,6 +1816,7 @@ mod tests {
 
         assert!(model.supports_explicit_compaction());
         assert!(model.supports_explicit_compaction_output_limit());
+        assert_eq!(model.max_total_tokens(), Some(model.max_token_count()));
         assert_eq!(
             model.minimum_explicit_compaction_input_tokens(),
             Some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)

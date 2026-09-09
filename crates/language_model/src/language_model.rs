@@ -220,8 +220,9 @@ pub trait LanguageModel: Send + Sync {
 
     /// Returns the combined input and output ceiling, if one applies.
     ///
-    /// The conservative default shares the input ceiling with output. Models with
-    /// independent input and output limits should return `None`.
+    /// The conservative default shares the input ceiling with output. `None`
+    /// means generation does not consume that window, not merely that the API
+    /// validates input separately or stops generation at the window boundary.
     fn max_total_tokens(&self) -> Option<u64> {
         Some(self.max_token_count())
     }
