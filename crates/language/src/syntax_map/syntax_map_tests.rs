@@ -4,6 +4,7 @@ use crate::{
     buffer_tests::markdown_inline_lang, markdown_lang, rust_lang,
 };
 use gpui::App;
+use indoc::indoc;
 use pretty_assertions::assert_eq;
 use rand::rngs::StdRng;
 use std::borrow::Cow;
@@ -1050,6 +1051,99 @@ fn test_comment_triggered_injection_toggle(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_injection_grouped_by_host(cx: &mut App) {
+    // Each SQL layer is described by the buffer text of the fragments it is parsed from,
+    // so that interpolated strings are asserted to produce a single layer covering every
+    // fragment of the string.
+    let cases: &[(&str, &[&[&str]])] = &[
+        (
+            indoc! {r#"
+                # sql
+                cmd = "SELECT col1, col2 FROM tbl"
+            "#},
+            &[&["SELECT col1, col2 FROM tbl"]],
+        ),
+        (
+            indoc! {r#"
+                # sql
+                cmd = f"SELECT col1 FROM tbl WHERE col2 = '{my_var}'"
+            "#},
+            &[&["SELECT col1 FROM tbl WHERE col2 = '", "'"]],
+        ),
+        (
+            indoc! {r#"
+                # sql
+                cmd = f"SELECT {col1}, {col2} FROM {tbl}"
+            "#},
+            &[&["SELECT ", ", ", " FROM "]],
+        ),
+        (
+            indoc! {r#"
+                cursor.execute(
+                    # sql
+                    f"SELECT col1 FROM tbl WHERE col2 = '{my_var}'"
+                )
+            "#},
+            &[&["SELECT col1 FROM tbl WHERE col2 = '", "'"]],
+        ),
+        (
+            indoc! {r#"
+                cursor.execute(
+                    # sql
+                    f"SELECT col1 FROM tbl WHERE col2 = '{my_var}'"
+                )
+
+                cursor.execute(
+                    # sql
+                    f"INSERT INTO tbl VALUES ('{val1}')"
+                )
+            "#},
+            &[
+                &["SELECT col1 FROM tbl WHERE col2 = '", "'"],
+                &["INSERT INTO tbl VALUES ('", "')"],
+            ],
+        ),
+    ];
+
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let python = Arc::new(python_lang());
+    registry.add(python.clone());
+    registry.add(Arc::new(comment_lang()));
+    registry.add(Arc::new(sql_lang()));
+
+    for (buffer_index, (text, expected_layers)) in cases.iter().enumerate() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(buffer_index as u64 + 1).unwrap(),
+            text.to_string(),
+        );
+        let mut syntax_map = SyntaxMap::new(&buffer);
+        syntax_map.set_language_registry(registry.clone());
+        syntax_map.reparse(python.clone(), &buffer);
+
+        let sql_layers = syntax_map
+            .layers_for_range(0..buffer.len(), &buffer, true)
+            .filter(|layer| layer.language.name() == "SQL")
+            .map(|layer| match layer.included_sub_ranges {
+                Some(sub_ranges) => sub_ranges
+                    .iter()
+                    .map(|range| buffer.text_for_range(range.clone()).collect::<String>())
+                    .collect::<Vec<_>>(),
+                None => {
+                    vec![
+                        buffer
+                            .text_for_range(layer.node().byte_range())
+                            .collect::<String>(),
+                    ]
+                }
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(sql_layers, *expected_layers, "buffer text:\n{text}");
+    }
+}
+
+#[gpui::test]
 fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     let text = r#"
         <body>
@@ -1184,6 +1278,32 @@ fn test_random_syntax_map_edits_with_erb(rng: StdRng, cx: &mut App) {
     registry.add(language.clone());
     registry.add(Arc::new(ruby_lang()));
     registry.add(Arc::new(html_lang()));
+
+    test_random_edits(text, registry, language, rng);
+}
+
+#[gpui::test(iterations = 50)]
+fn test_random_syntax_map_edits_with_python_sql(rng: StdRng, cx: &mut App) {
+    let text = r#"
+        # sql
+        query = f"SELECT {col} FROM tbl WHERE name = '{name}' AND id = {id}"
+
+        cursor.execute(
+            # sql
+            f"""
+                INSERT INTO tbl (col1, col2)
+                VALUES ('{one}', '{two}')
+            """
+        )
+    "#
+    .unindent()
+    .repeat(5);
+
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let language = Arc::new(python_lang());
+    registry.add(language.clone());
+    registry.add(Arc::new(comment_lang()));
+    registry.add(Arc::new(sql_lang()));
 
     test_random_edits(text, registry, language, rng);
 }
@@ -1624,6 +1744,18 @@ fn comment_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "comment".into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_json::LANGUAGE.into()),
+    )
+}
+
+/// Stands in for the real SQL language, which this crate doesn't depend on. The grammar
+/// is irrelevant here; only the layers Python's injection query produces are asserted on.
+fn sql_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "SQL".into(),
             ..Default::default()
         },
         Some(tree_sitter_json::LANGUAGE.into()),
