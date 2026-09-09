@@ -174,18 +174,16 @@ impl TabSwitcher {
             window.modifiers().modified().then_some(window.modifiers())
         };
         let has_modifiers = init_modifiers.is_some();
-        let _show_task = if has_modifiers {
-            Some(cx.spawn_in(window, async move |this, cx| {
+        let _show_task = has_modifiers.then(|| {
+            cx.spawn_in(window, async move |this, cx| {
                 cx.background_executor().timer(POPOVER_DELAY).await;
                 this.update_in(cx, |this, _window, cx| {
                     this.visible = true;
                     cx.notify();
                 })
                 .ok();
-            }))
-        } else {
-            None
-        };
+            })
+        });
         Self {
             picker: cx.new(|cx| {
                 if is_global {
