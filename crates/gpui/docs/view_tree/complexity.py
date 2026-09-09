@@ -94,14 +94,14 @@ for ax, (n, title) in zip(axes, [([0, 2048, 0], "2048 medium elements (16 views 
     main = np.full_like(F, predict_main(n) / 1000)
     ax.fill_between(F * 100, 0, main, color="#bbb", alpha=0.6, label="main: everything redrawn")
     ax.fill_between(F * 100, 0, branch, color="#2a9d8f", alpha=0.7, label="branch: clean views replayed")
-    for budget, name in [(4.0, "4 ms"), (8.3, "120 Hz"), (16.7, "60 Hz")]:
+    for budget, name in [(8.3, "120 Hz"), (16.7, "60 Hz")]:
         if budget < max(main.max(), branch.max()) * 1.1:
             ax.axhline(budget, color="#e76f51", lw=0.8, ls="--"); ax.text(1, budget, name, va="bottom", color="#e76f51", fontsize=8)
     ax.set_xlabel("elements changing per frame (%)"); ax.set_ylabel("frame time (ms)"); ax.set_title(title, fontsize=9); ax.legend(fontsize=8, loc="upper left")
     ax.set_ylim(0, max(main.max(), branch.max()) * 1.15)
 fig.tight_layout(); fig.savefig(f"{out}/complexity_surface.png"); plt.close(fig)
 
-# 3. How many medium elements fit a 4 ms frame, against the share changing.
+# 3. How many medium elements fit a 120 Hz frame, against the share changing.
 def fits(predict, budget_us):
     lo, hi = 0, 1 << 17
     while lo < hi:
@@ -111,7 +111,7 @@ def fits(predict, budget_us):
     return lo
 fig, ax = plt.subplots(figsize=(6, 3.6))
 F = np.linspace(0, 1, 51)
-for budget, style in [(4000, "-"), (8300, "--")]:
+for budget, style in [(8300, "-"), (16700, "--")]:
     ax.plot(F * 100, [fits(lambda n: predict_branch([0, n, 0], f, dirty_views=16 * f), budget) for f in F], "#2a9d8f", ls=style, label=f"branch, {budget/1000:g} ms budget")
     ax.plot(F * 100, [fits(lambda n: predict_main([0, n, 0]), budget)] * len(F), "#999", ls=style, label=f"main, {budget/1000:g} ms budget")
 ax.set_xlabel("elements changing per frame (%)"); ax.set_ylabel("medium elements that fit"); ax.set_yscale("log"); ax.legend(fontsize=8)
@@ -139,9 +139,9 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <label>elements changing per frame <input id=F type=range min=0 max=100 value=10> <span id=Fv></span>%%</label>
 <table><tr><th></th><th>main</th><th>branch</th></tr>
 <tr><td>frame time</td><td class=m id=tm></td><td class=n id=tb></td></tr>
-<tr><td>scale of this scene that fits 4 ms (× the element counts above)</td><td class=m id=sm></td><td class=n id=sb></td></tr>
+<tr><td>scale of this scene that fits a 120 Hz frame, 8.3 ms (× the element counts above)</td><td class=m id=sm></td><td class=n id=sb></td></tr>
 <tr><td>… i.e. total elements</td><td class=m id=em></td><td class=n id=eb></td></tr>
-<tr><td>share changing up to which the frame fits 4 ms</td><td class=m id=fm></td><td class=n id=fb></td></tr></table>
+<tr><td>share changing up to which the frame fits 8.3 ms</td><td class=m id=fm></td><td class=n id=fb></td></tr></table>
 <canvas id=c width=900 height=320></canvas>
 <h3>Measured: the Zed-shaped <code>Workbench</code> fixtures</h3>
 <table><tr><th>fixture</th><th>main</th><th>branch</th><th>change</th></tr>%(measured)s</table>
@@ -162,21 +162,21 @@ const PRESETS={
  'everything dirty (resize / focus change)':[200,300,20,20,100],
  'sweep-sized: 1500 buttons, 25%%':[0,1500,0,16,25],
 };
-const BUDGETS=[[4,'4 ms'],[8.3,'8.3 ms (120 Hz)']];
+const BUDGET=8.3;const BUDGETS=[[8.3,'8.3 ms (120 Hz)'],[16.7,'16.7 ms (60 Hz)']];
 function label(g,text,x,y,color){g.font='12px system-ui';g.lineWidth=3;g.strokeStyle='rgba(255,255,255,.9)';g.strokeText(text,x,y);g.fillStyle=color;g.fillText(text,x,y);}
-function draw(){const n=[+$('L').value,+$('M').value,+$('H').value],V=+$('V').value,F=+$('F').value,budget=4,f=F/100;
+function draw(){const n=[+$('L').value,+$('M').value,+$('H').value],V=+$('V').value,F=+$('F').value,budget=BUDGET,f=F/100;
 $('Lv').textContent=n[0];$('Mv').textContent=n[1];$('Hv').textContent=n[2];$('Vv').textContent=V;$('Fv').textContent=F;
 const tm=tmain(n),tb=tbranch(n,f,V);$('tm').textContent=fmt(tm);$('tb').textContent=fmt(tb);
 const t0=tbranch(n,0,V),t1=tbranch(n,1,V);
 const N=n[0]+n[1]+n[2];const sm=scale(s=>tmain(n.map(x=>x*s)),budget),sb=scale(s=>tbranch(n.map(x=>x*s),f,V),budget);
 $('sm').textContent=sm.toFixed(2)+'×';$('sb').textContent=sb.toFixed(2)+'×';$('em').textContent=Math.round(N*sm);$('eb').textContent=Math.round(N*sb);
 // Where the branch curve crosses the budget (it is linear in f between 0 and 100%%).
-const fBudget=t1===t0?null:(4000-t0)/(t1-t0);
-$('fm').textContent=tm<=4000?'always':'never';$('fb').textContent=fBudget===null?(t0<=4000?'always':'never'):fBudget>=1?'always':fBudget<=0?'never':Math.round(fBudget*100)+'%%';
+const fBudget=t1===t0?null:(budget*1000-t0)/(t1-t0);
+$('fm').textContent=tm<=budget*1000?'always':'never';$('fb').textContent=fBudget===null?(t0<=budget*1000?'always':'never'):fBudget>=1?'always':fBudget<=0?'never':Math.round(fBudget*100)+'%%';
 // Break-even: the share of change above which the branch costs what main does.
 const fEven=t1===t0?null:(tm-t0)/(t1-t0);
 const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=44,W=cv.width-2*pad-150,H=cv.height-2*pad;
-const ymax=Math.max(tm,tb,4000)*1.15;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
+const ymax=Math.max(tm,tb,budget*1000)*1.15;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
 g.fillStyle='rgba(150,150,150,.5)';g.fillRect(X(0),Y(tm),W,Y(0)-Y(tm));
 g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(tbranch(n,p/100,V)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(42,157,143,.7)';g.fill();
 g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);for(const [ms,name] of BUDGETS){if(ms*1000<ymax){g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);g.beginPath();g.moveTo(X(0),Y(ms*1000));g.lineTo(X(100),Y(ms*1000));g.stroke();const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);const upTo=cross!==null&&cross>0&&cross<1?' · up to '+Math.round(cross*100)+'%%':'';label(g,name+upTo,X(100)+6,Y(ms*1000)+4,'#e76f51');}}g.setLineDash([]);

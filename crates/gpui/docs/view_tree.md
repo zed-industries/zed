@@ -280,7 +280,8 @@ spends 8.3 ms on it however little changed; the branch spends 2.6 ms when nothin
 3.0 ms at 6% (one pane typing), 3.9 ms at 25%, and meets `main` only when everything is
 dirty. The right panel is 8192 elements, past what either engine fits in a 120 Hz frame
 when it all changes, but 15 ms replayed. `complexity_fit_budget.png` inverts this: how
-many medium elements a 4 ms or 8.3 ms frame affords against the share changing.
+many medium elements a 120 Hz (8.3 ms) or 60 Hz frame affords against the share
+changing.
 `complexity.html` (open it locally) puts sliders on the model — light/medium/heavy
 counts, views, share changing, budget — with presets and the measured `Workbench` rows
 beside it.
