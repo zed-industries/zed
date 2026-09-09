@@ -133,11 +133,12 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <h2>GPUI view tree — frame cost model</h2>
 <p>Fitted to the <code>Complexity</code> sweep (<code>complexity.csv</code>, %(npoints)d points, <code>main</code> at 5a9b9558db). An element is <b>light</b> (a quad), <b>medium</b> (quad + 3-glyph label) or <b>heavy</b> (quad + shadow + 10-glyph label). <code>main</code>: <code>t = c + Σ n<sub>k</sub>·m<sub>k</sub> + q·(N/100)²</code>; branch: the same per <em>dirty</em> element plus a cheaper <em>clean</em> (replayed) cost per element, plus 0.55 µs per dirty view from the Siblings sweep. Mean |error| %(errm).0f%% / %(errb).0f%% (main / branch), worst %(maxm).0f%% / %(maxb).0f%%, at the 8k-element points where the frame grows faster than the scene.</p>
 <p>Presets: <span id=presets></span></p>
-<label>light elements (a quad) <input id=L type=range min=0 max=20000 step=50 value=0> <span id=Lv></span></label>
-<label>medium elements (quad + 3 glyphs) <input id=M type=range min=0 max=20000 step=50 value=2048> <span id=Mv></span></label>
-<label>heavy elements (quad + shadow + 10 glyphs) <input id=H type=range min=0 max=5000 step=10 value=0> <span id=Hv></span></label>
-<label>views <input id=V type=range min=1 max=512 value=16> <span id=Vv></span> <small>(0.55 µs per dirty view; not fitted)</small></label>
-<label>elements changing per frame <input id=F type=range min=0 max=100 value=25> <span id=Fv></span>%%</label>
+<p>Scale note: a real Zed window is a few hundred layout elements of chrome around custom-painted editors (the 3-pane workspace in <code>test_workspace_rendering_stress</code> has ~160 layout nodes and 20 views), so the ranges below stop where a frame budget does, not where the sweep did; the sweep went to 8192 elements to pin the slopes.</p>
+<label>light elements (a quad) <input id=L type=range min=0 max=4000 step=10 value=200> <span id=Lv></span></label>
+<label>medium elements (quad + 3 glyphs) <input id=M type=range min=0 max=1500 step=10 value=300> <span id=Mv></span></label>
+<label>heavy elements (quad + shadow + 10 glyphs) <input id=H type=range min=0 max=400 step=5 value=20> <span id=Hv></span></label>
+<label>views <input id=V type=range min=1 max=128 value=20> <span id=Vv></span> <small>(0.55 µs per dirty view; not fitted)</small></label>
+<label>elements changing per frame <input id=F type=range min=0 max=100 value=10> <span id=Fv></span>%%</label>
 <label>frame budget <input id=B type=range min=1 max=17 step=0.1 value=4> <span id=Bv></span> ms</label>
 <table><tr><th></th><th>main</th><th>branch</th></tr>
 <tr><td>frame time</td><td class=m id=tm></td><td class=n id=tb></td></tr>
@@ -158,11 +159,12 @@ function scale(f,budget){let lo=0,hi=1024;for(let i=0;i<40;i++){const mid=(lo+hi
 const $=id=>document.getElementById(id);
 function fmt(us){return us>=1000?(us/1000).toFixed(2)+' ms':us.toFixed(0)+' µs';}
 const PRESETS={
- 'sweep baseline: 2048 medium, 25%% changing':[0,2048,0,16,25],
- 'typing in one of 16 panes: 8192 medium, 6%%':[0,8192,0,16,6],
- 'dashboard: 10k light, one widget animating (1%%)':[10000,0,0,50,1],
- 'scrolling list: 1000 heavy rows, all changing':[0,0,1000,1,100],
- 'everything dirty (resize): 2048 medium':[0,2048,0,16,100],
+ 'Zed-shaped chrome: 200 light + 300 medium + 20 heavy, 20 views, 10%% changing':[200,300,20,20,10],
+ 'typing in one of 3 panes: same scene, 3%%':[200,300,20,20,3],
+ 'dashboard: 3000 light tiles, one animating (1%%)':[3000,0,0,40,1],
+ 'list: 300 heavy rows scrolling (all changing)':[0,0,300,1,100],
+ 'everything dirty (resize / focus change)':[200,300,20,20,100],
+ 'sweep-sized: 1500 medium, 25%%':[0,1500,0,16,25],
 };
 function draw(){const n=[+$('L').value,+$('M').value,+$('H').value],V=+$('V').value,F=+$('F').value,budget=+$('B').value,f=F/100;
 $('Lv').textContent=n[0];$('Mv').textContent=n[1];$('Hv').textContent=n[2];$('Vv').textContent=V;$('Fv').textContent=F;$('Bv').textContent=budget;
