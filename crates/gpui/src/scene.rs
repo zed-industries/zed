@@ -45,8 +45,8 @@ impl From<bool> for PaddedBool32 {
 #[expect(missing_docs)]
 pub struct Scene {
     operation_count: usize,
-    node_scene: Option<crate::view_node::ViewNodeScene>,
-    node_scene_stack: Vec<crate::view_node::ViewNodeScene>,
+    node_scene: Option<crate::view_node::ViewNodeSceneRecorder>,
+    node_scene_stack: Vec<crate::view_node::ViewNodeSceneRecorder>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
     painted: PaintedLanes,
@@ -314,8 +314,8 @@ impl Scene {
         &self.surfaces[self.positions.surfaces[painted as usize] as usize]
     }
 
-    pub(crate) fn begin_node_scene(&mut self, mut recording: crate::view_node::ViewNodeScene) {
-        recording.begin();
+    pub(crate) fn begin_node_scene(&mut self, scene: crate::view_node::ViewNodeScene) {
+        let recording = crate::view_node::ViewNodeSceneRecorder::begin(scene);
         if let Some(parent) = self.node_scene.replace(recording) {
             self.node_scene_stack.push(parent);
         }
@@ -325,13 +325,12 @@ impl Scene {
         &mut self,
         node_id: crate::view_tree::ViewNodeId,
     ) -> crate::view_node::ViewNodeScene {
-        let mut recording = self.node_scene.take().expect("balanced node painting");
-        recording.finish();
+        let recording = self.node_scene.take().expect("balanced node painting");
         self.node_scene = self.node_scene_stack.pop();
         if let Some(parent) = &mut self.node_scene {
             parent.push_child(node_id);
         }
-        recording
+        recording.finish()
     }
 
     #[cfg(any(test, feature = "test-support"))]

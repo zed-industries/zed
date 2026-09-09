@@ -393,7 +393,7 @@ impl BoxShadow {
 }
 
 /// How to handle whitespace in text
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum WhiteSpace {
     /// Normal line wrapping when text overflows the width of the element
     #[default]
@@ -403,7 +403,7 @@ pub enum WhiteSpace {
 }
 
 /// How to truncate text that overflows the width of the element
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum TextOverflow {
     /// Truncate the text at the end when it doesn't fit, and represent this truncation by
     /// displaying the provided string (e.g., "very long te…").
@@ -419,7 +419,7 @@ pub enum TextOverflow {
 }
 
 /// How to align text within the element
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum TextAlign {
     /// Align the text to the left of the element
     #[default]
@@ -480,6 +480,60 @@ pub struct TextStyle {
 
     /// The number of lines to display before truncating the text
     pub line_clamp: Option<usize>,
+}
+
+/// Hashes the style bitwise, so `-0.0` and `0.0` hash differently although they compare
+/// equal; fine for the view tree's cache key, where that only forces a redraw.
+impl std::hash::Hash for TextStyle {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        fn hsla<H: std::hash::Hasher>(color: &Hsla, state: &mut H) {
+            for component in [color.h, color.s, color.l, color.a] {
+                component.to_bits().hash(state);
+            }
+        }
+        fn absolute<H: std::hash::Hasher>(length: &AbsoluteLength, state: &mut H) {
+            match length {
+                AbsoluteLength::Pixels(pixels) => (0u8, pixels).hash(state),
+                AbsoluteLength::Rems(rems) => (1u8, rems.0.to_bits()).hash(state),
+            }
+        }
+        hsla(&self.color, state);
+        self.font_family.hash(state);
+        self.font_features.hash(state);
+        self.font_fallbacks.hash(state);
+        absolute(&self.font_size, state);
+        match &self.line_height {
+            DefiniteLength::Absolute(length) => absolute(length, state),
+            DefiniteLength::Fraction(fraction) => (2u8, fraction.to_bits()).hash(state),
+        }
+        self.font_weight.0.to_bits().hash(state);
+        self.font_style.hash(state);
+        self.background_color.is_some().hash(state);
+        if let Some(color) = &self.background_color {
+            hsla(color, state);
+        }
+        self.underline.is_some().hash(state);
+        if let Some(underline) = &self.underline {
+            underline.thickness.hash(state);
+            underline.wavy.hash(state);
+            underline.color.is_some().hash(state);
+            if let Some(color) = &underline.color {
+                hsla(color, state);
+            }
+        }
+        self.strikethrough.is_some().hash(state);
+        if let Some(strikethrough) = &self.strikethrough {
+            strikethrough.thickness.hash(state);
+            strikethrough.color.is_some().hash(state);
+            if let Some(color) = &strikethrough.color {
+                hsla(color, state);
+            }
+        }
+        self.white_space.hash(state);
+        self.text_overflow.hash(state);
+        self.text_align.hash(state);
+        self.line_clamp.hash(state);
+    }
 }
 
 impl Default for TextStyle {

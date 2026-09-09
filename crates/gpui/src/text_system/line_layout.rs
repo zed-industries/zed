@@ -499,56 +499,39 @@ impl FrameCache {
 
 /// The line layouts one scope looked up while drawing. A node keeps its `TextUse`s so the
 /// layouts stay shaped for as long as the node is reused, and seeds them back into the
-/// frame cache when it redraws.
+/// frame cache when it redraws. One list for the three lookups, since every node holds three
+/// of these between frames.
 #[derive(Default)]
 pub(crate) struct TextUse {
-    lines: Vec<(Arc<CacheKey>, Arc<LineLayout>)>,
-    wrapped_lines: Vec<(Arc<CacheKey>, Arc<WrappedLineLayout>)>,
-    lines_by_hash: Vec<(Arc<HashedCacheKey>, Arc<LineLayout>)>,
-    wrapped_lines_by_hash: Vec<(Arc<HashedCacheKey>, Arc<WrappedLineLayout>)>,
+    entries: Vec<TextUseEntry>,
+}
+
+enum TextUseEntry {
+    Line(Arc<CacheKey>, Arc<LineLayout>),
+    WrappedLine(Arc<CacheKey>, Arc<WrappedLineLayout>),
+    LineByHash(Arc<HashedCacheKey>, Arc<LineLayout>),
 }
 
 impl TextUse {
     fn clear(&mut self) {
-        self.lines.clear();
-        self.wrapped_lines.clear();
-        self.lines_by_hash.clear();
-        self.wrapped_lines_by_hash.clear();
+        self.entries.clear();
     }
 
     pub(crate) fn append(&mut self, mut other: TextUse) {
-        self.lines.append(&mut other.lines);
-        self.wrapped_lines.append(&mut other.wrapped_lines);
-        self.lines_by_hash.append(&mut other.lines_by_hash);
-        self.wrapped_lines_by_hash
-            .append(&mut other.wrapped_lines_by_hash);
+        self.entries.append(&mut other.entries);
     }
 
     fn checkpoint(&self) -> TextUseCheckpoint {
-        TextUseCheckpoint {
-            lines: self.lines.len(),
-            wrapped_lines: self.wrapped_lines.len(),
-            lines_by_hash: self.lines_by_hash.len(),
-            wrapped_lines_by_hash: self.wrapped_lines_by_hash.len(),
-        }
+        TextUseCheckpoint(self.entries.len())
     }
 
     fn rollback(&mut self, checkpoint: TextUseCheckpoint) {
-        self.lines.truncate(checkpoint.lines);
-        self.wrapped_lines.truncate(checkpoint.wrapped_lines);
-        self.lines_by_hash.truncate(checkpoint.lines_by_hash);
-        self.wrapped_lines_by_hash
-            .truncate(checkpoint.wrapped_lines_by_hash);
+        self.entries.truncate(checkpoint.0);
     }
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct TextUseCheckpoint {
-    lines: usize,
-    wrapped_lines: usize,
-    lines_by_hash: usize,
-    wrapped_lines_by_hash: usize,
-}
+pub(crate) struct TextUseCheckpoint(usize);
 
 impl LineLayoutCache {
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
@@ -590,19 +573,18 @@ impl LineLayoutCache {
     /// redraw finds them without reshaping.
     pub(crate) fn seed(&self, text_use: &TextUse) {
         let mut frame = self.current_frame.borrow_mut();
-        for (key, layout) in &text_use.lines {
-            frame.lines.insert(key.clone(), layout.clone());
-        }
-        for (key, layout) in &text_use.wrapped_lines {
-            frame.wrapped_lines.insert(key.clone(), layout.clone());
-        }
-        for (key, layout) in &text_use.lines_by_hash {
-            frame.lines_by_hash.insert(key.clone(), layout.clone());
-        }
-        for (key, layout) in &text_use.wrapped_lines_by_hash {
-            frame
-                .wrapped_lines_by_hash
-                .insert(key.clone(), layout.clone());
+        for entry in &text_use.entries {
+            match entry {
+                TextUseEntry::Line(key, layout) => {
+                    frame.lines.insert(key.clone(), layout.clone());
+                }
+                TextUseEntry::WrappedLine(key, layout) => {
+                    frame.wrapped_lines.insert(key.clone(), layout.clone());
+                }
+                TextUseEntry::LineByHash(key, layout) => {
+                    frame.lines_by_hash.insert(key.clone(), layout.clone());
+                }
+            }
         }
     }
 
@@ -650,8 +632,8 @@ impl LineLayoutCache {
             let mut current_frame = current_frame;
             current_frame
                 .current_use()
-                .wrapped_lines
-                .push((key, layout.clone()));
+                .entries
+                .push(TextUseEntry::WrappedLine(key, layout.clone()));
             return layout;
         }
 
@@ -667,8 +649,8 @@ impl LineLayoutCache {
                 .insert(key.clone(), layout.clone());
             current_frame
                 .current_use()
-                .wrapped_lines
-                .push((key, layout.clone()));
+                .entries
+                .push(TextUseEntry::WrappedLine(key, layout.clone()));
             layout
         } else {
             drop(current_frame);
@@ -698,8 +680,8 @@ impl LineLayoutCache {
                 .insert(key.clone(), layout.clone());
             current_frame
                 .current_use()
-                .wrapped_lines
-                .push((key, layout.clone()));
+                .entries
+                .push(TextUseEntry::WrappedLine(key, layout.clone()));
 
             layout
         }
@@ -730,8 +712,8 @@ impl LineLayoutCache {
             let mut current_frame = current_frame;
             current_frame
                 .current_use()
-                .lines
-                .push((key, layout.clone()));
+                .entries
+                .push(TextUseEntry::Line(key, layout.clone()));
             return layout;
         }
 
@@ -741,8 +723,8 @@ impl LineLayoutCache {
             current_frame.lines.insert(key.clone(), layout.clone());
             current_frame
                 .current_use()
-                .lines
-                .push((key, layout.clone()));
+                .entries
+                .push(TextUseEntry::Line(key, layout.clone()));
             layout
         } else {
             let text = SharedString::from(text);
@@ -765,8 +747,8 @@ impl LineLayoutCache {
             current_frame.lines.insert(key.clone(), layout.clone());
             current_frame
                 .current_use()
-                .lines
-                .push((key, layout.clone()));
+                .entries
+                .push(TextUseEntry::Line(key, layout.clone()));
             layout
         }
     }
@@ -869,8 +851,8 @@ impl LineLayoutCache {
             let mut current_frame = current_frame;
             current_frame
                 .current_use()
-                .lines_by_hash
-                .push((key, layout.clone()));
+                .entries
+                .push(TextUseEntry::LineByHash(key, layout.clone()));
             return layout;
         }
 
@@ -901,8 +883,8 @@ impl LineLayoutCache {
                 .insert(key.clone(), layout.clone());
             current_frame
                 .current_use()
-                .lines_by_hash
-                .push((key, layout.clone()));
+                .entries
+                .push(TextUseEntry::LineByHash(key, layout.clone()));
             return layout;
         }
         drop(previous_frame);
@@ -930,8 +912,8 @@ impl LineLayoutCache {
             .insert(key.clone(), layout.clone());
         current_frame
             .current_use()
-            .lines_by_hash
-            .push((key, layout.clone()));
+            .entries
+            .push(TextUseEntry::LineByHash(key, layout.clone()));
         layout
     }
 }

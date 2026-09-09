@@ -3640,10 +3640,12 @@ impl Window {
         for refinement in &self.text_style_stack {
             text_style.refine(refinement);
         }
+        let mut hasher = collections::FxHasher::default();
+        std::hash::Hash::hash(&text_style, &mut hasher);
         ViewNodeCacheKey {
             bounds,
             content_mask: self.content_mask(),
-            text_style,
+            text_style_hash: std::hash::Hasher::finish(&hasher),
             rem_size: self.rem_size(),
             scale_factor: self.scale_factor(),
             opacity: self.element_opacity(),

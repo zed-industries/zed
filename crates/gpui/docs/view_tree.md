@@ -229,8 +229,19 @@ measurement at +1.9/+2.6 MB on `main` and +2.0/+2.3 MB on the branch. The one
 systematic difference is in the `*_rss_max` columns, the high-water mark after all
 ~20 Criterion samples (each a fresh app in the same process): `Siblings/1024` ends 10%
 higher on the branch (240–245 vs 260–275 MB), which is a thousand nodes' records that
-the allocator keeps around between apps, about 1 KB per node; the Zed-shaped fixtures
-end equal or lower (`Workbench/full` 140 vs 130 MB, `editor_render` 155 vs 150 MB).
+the allocator keeps around between apps; the Zed-shaped fixtures end equal or lower
+(`Workbench/full` 140 vs 130 MB, `editor_render` 155 vs 150 MB).
+
+**What a node weighs.** Probing a trivial leaf view (one id'd `div` with one glyph) at
+that measurement put it at about 2.5 KB, of which 1488 bytes was the `ViewNode` struct
+itself: three 296-byte `PhaseOutput`s each carrying a four-`Vec` `TextUse` and a scene
+record although text is used in one phase and the scene only by paint, and a cache key
+holding a whole `TextStyle`. The struct is now 680 bytes (`const`-asserted under 704):
+the dispatch record and the scene live once in `NodeOutput`, the mid-paint run state
+lives in the `Scene`'s recorder, `TextUse` is one list, the cache key stores a 64-bit
+hash of the text style, and scene runs use `u32` ranges. What remains per trivial node is
+~680 inline + ~450 of record heap (segments, text handles, kinds) + ~150 of tree
+bookkeeping (`consumers`, `occurrences`) + ~200 of element state that `main` keeps too.
 
 There is no in-engine byte count: an estimate from container capacities was a second
 bookkeeping to keep in step with every structure, and the process number is what

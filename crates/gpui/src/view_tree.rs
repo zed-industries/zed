@@ -213,13 +213,13 @@ impl ViewTree {
     pub(crate) fn take_scene(&mut self, node_id: ViewNodeId) -> ViewNodeScene {
         self.nodes
             .get_mut(node_id)
-            .map(|node| std::mem::take(&mut node.output.phase_mut(MetadataPhase::Paint).scene))
+            .map(|node| std::mem::take(&mut node.output.scene))
             .unwrap_or_default()
     }
 
     pub(crate) fn store_scene(&mut self, node_id: ViewNodeId, scene: ViewNodeScene) {
         if let Some(node) = self.nodes.get_mut(node_id) {
-            node.output.phase_mut(MetadataPhase::Paint).scene = scene;
+            node.output.scene = scene;
             node.painted_frame = self.frame;
         }
     }
@@ -238,7 +238,7 @@ impl ViewTree {
         let Some(node) = self.nodes.get_mut(node_id) else {
             return;
         };
-        let previous = std::mem::take(&mut node.output.phase_mut(MetadataPhase::Paint).scene);
+        let previous = std::mem::take(&mut node.output.scene);
         let fresh = self.spare_scenes.pop().unwrap_or_default();
         scene.begin_node_scene(fresh);
         previous.replay(rendered, scene, self);
@@ -312,8 +312,8 @@ impl ViewTree {
         priority: usize,
         under: Option<crate::DispatchNodeId>,
     ) {
-        if let Some((_, phase, output)) = self.current_output() {
-            output.phase_mut(phase).dispatch.push(DispatchOp::Root(
+        if let Some((_, _, output)) = self.current_output() {
+            output.dispatch.push(DispatchOp::Root(
                 node,
                 priority,
                 DispatchParent::Live(under),
@@ -325,8 +325,12 @@ impl ViewTree {
     /// everything drawn after it.
     pub(crate) fn checkpoint(&mut self) -> OutputCheckpoint {
         OutputCheckpoint(self.current_output().map(|(node_id, phase, output)| {
-            let output = output.phase(phase);
-            (node_id, phase, output.items.len(), output.dispatch.len())
+            (
+                node_id,
+                phase,
+                output.phase(phase).items.len(),
+                output.dispatch.len(),
+            )
         }))
     }
 
@@ -334,9 +338,8 @@ impl ViewTree {
         if let Some((node_id, phase, items, dispatch)) = checkpoint.0
             && let Some(node) = self.nodes.get_mut(node_id)
         {
-            let output = node.output.phase_mut(phase);
-            output.items.truncate(items);
-            output.dispatch.truncate(dispatch);
+            node.output.phase_mut(phase).items.truncate(items);
+            node.output.dispatch.truncate(dispatch);
         }
     }
 
@@ -460,7 +463,6 @@ impl ViewTree {
         let Some(output) = self.output(node_id) else {
             return false;
         };
-        let output = output.phase(MetadataPhase::Prepaint);
         let mut contains_focus = false;
         // Most scopes keep a handful of nodes: a view's, a focusable's, a key context's.
         let mut rebuilt: SmallVec<[crate::DispatchNodeId; 8]> = SmallVec::new();
@@ -507,15 +509,14 @@ impl ViewTree {
     /// Records where the live dispatch nodes a node is about to push will start.
     pub(crate) fn begin_dispatch_range(&mut self, node_id: ViewNodeId, start: usize) {
         if let Some(node) = self.nodes.get_mut(node_id) {
-            let output = node.output.phase_mut(MetadataPhase::Prepaint);
-            output.dispatch_range = start..start;
+            node.output.dispatch_range = start as u32..start as u32;
         }
     }
 
     pub(crate) fn end_dispatch_range(&mut self, node_id: ViewNodeId, end: usize) {
         if let Some(node) = self.nodes.get_mut(node_id) {
-            let output = node.output.phase_mut(MetadataPhase::Prepaint);
-            output.dispatch_range.end = end.max(output.dispatch_range.start);
+            let range = &mut node.output.dispatch_range;
+            range.end = (end as u32).max(range.start);
         }
     }
 
@@ -533,11 +534,8 @@ impl ViewTree {
         let Some(node) = self.nodes.get(node_id) else {
             return;
         };
-        let range = node
-            .output
-            .phase(MetadataPhase::Prepaint)
-            .dispatch_range
-            .clone();
+        let range =
+            node.output.dispatch_range.start as usize..node.output.dispatch_range.end as usize;
         let mut resolution = std::mem::take(&mut self.dispatch_resolution);
         resolution.clear();
         resolution.resize(range.len(), DispatchParent::Attachment);
@@ -554,16 +552,12 @@ impl ViewTree {
         // node's `children`: a deferred root draws views that belong to its owner.
         let child_ranges: Vec<Range<usize>> = node
             .output
-            .phase(MetadataPhase::Prepaint)
             .dispatch
             .iter()
             .filter_map(|op| match op {
                 DispatchOp::Child(child, _) => self.nodes.get(*child).map(|child| {
-                    child
-                        .output
-                        .phase(MetadataPhase::Prepaint)
-                        .dispatch_range
-                        .clone()
+                    let range = &child.output.dispatch_range;
+                    range.start as usize..range.end as usize
                 }),
                 DispatchOp::Root(..) => None,
             })
@@ -572,9 +566,7 @@ impl ViewTree {
         let mut kept = 0u32;
         let mut live = range.start;
         let mut skip_until = None;
-        let output = self.nodes[node_id]
-            .output
-            .phase_mut(MetadataPhase::Prepaint);
+        let output = &mut self.nodes[node_id].output;
         output.dispatch_nodes.clear();
         while live < range.end {
             if skip_until.is_none()
@@ -664,10 +656,9 @@ impl ViewTree {
         } else {
             self.push(OutputItem::Child(node, phase));
             if phase == MetadataPhase::Prepaint
-                && let Some((_, parent_phase, output)) = self.current_output()
+                && let Some((_, _, output)) = self.current_output()
             {
                 output
-                    .phase_mut(parent_phase)
                     .dispatch
                     .push(DispatchOp::Child(node, DispatchParent::Live(under)));
             }
@@ -681,9 +672,13 @@ impl ViewTree {
         self.spare_dependency_sets.pop().unwrap_or_default()
     }
 
+    /// Keeps a cleared set for reuse when it has a heap buffer worth keeping; an inline one
+    /// costs nothing to make.
     pub(crate) fn recycle_dependency_set(&mut self, mut set: DependencySet) {
-        set.clear();
-        self.spare_dependency_sets.push(set);
+        if set.spilled() && self.spare_dependency_sets.len() < 64 {
+            set.clear();
+            self.spare_dependency_sets.push(set);
+        }
     }
 
     pub(crate) fn discard_dirty_layouts(&mut self) -> bool {
@@ -977,10 +972,9 @@ impl ViewTree {
     /// node, after its phase has been finished.
     pub(crate) fn abandon_occurrence(&mut self, node_id: ViewNodeId) {
         if let Some((_, phase, output)) = self.current_output() {
-            let output = output.phase_mut(phase);
-            if matches!(output.items.last(), Some(OutputItem::Child(child, _)) if *child == node_id)
-            {
-                output.items.pop();
+            let items = &mut output.phase_mut(phase).items;
+            if matches!(items.last(), Some(OutputItem::Child(child, _)) if *child == node_id) {
+                items.pop();
             }
             if matches!(output.dispatch.last(), Some(DispatchOp::Child(child, _)) if *child == node_id)
             {

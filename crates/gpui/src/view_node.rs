@@ -1,17 +1,20 @@
 use crate::{
     Bounds, ContentMask, CursorStyleRequest, EntityId, GlobalElementId, Hitbox, LayoutId, Pixels,
-    ScaledPixels, Scene, TextStyle, TooltipRequest,
+    ScaledPixels, Scene, TooltipRequest,
     scene::{LaneCursors, PrimitiveKind},
 };
 use collections::FxHashMap;
 use std::any::TypeId;
 use std::ops::Range;
 
+/// The ambient inputs a node's output was recorded under. Every node holds one, so the
+/// text style is kept as a 64-bit hash rather than by value; a collision would reuse
+/// output under a different style, the same bet occurrence identity makes on its path hash.
 #[derive(Clone, PartialEq)]
 pub(crate) struct ViewNodeCacheKey {
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) content_mask: ContentMask<Pixels>,
-    pub(crate) text_style: TextStyle,
+    pub(crate) text_style_hash: u64,
     pub(crate) rem_size: Pixels,
     pub(crate) scale_factor: f32,
     pub(crate) opacity: f32,
@@ -28,7 +31,7 @@ impl ViewNodeCacheKey {
             && self.scale_factor == other.scale_factor
             && self.opacity == other.opacity
             && self.image_cache == other.image_cache
-            && self.text_style == other.text_style
+            && self.text_style_hash == other.text_style_hash
     }
 }
 
@@ -50,67 +53,76 @@ pub(crate) enum MetadataPhase {
 pub(crate) struct ViewNodeScene {
     kinds: Vec<PrimitiveKind>,
     segments: Vec<ViewNodeSceneSegment>,
-    kind_count: usize,
-    /// The run being recorded: where its kinds start, and the frame's cursors at that
-    /// point. `None` between runs.
-    open_run: Option<(usize, LaneCursors)>,
 }
 
 enum ViewNodeSceneSegment {
     /// A run of this scope's own primitives: their kinds, and the lane cursors at the first.
-    Run(Range<usize>, LaneCursors),
+    Run(Range<u32>, LaneCursors),
     Child(crate::view_tree::ViewNodeId),
     StartLayer(Bounds<ScaledPixels>),
     EndLayer,
 }
 
-impl ViewNodeScene {
-    pub(crate) fn begin(&mut self) {
-        self.segments.clear();
-        self.kind_count = 0;
-        self.open_run = None;
+/// Records a [`ViewNodeScene`] while its scope paints. The run being recorded — where its
+/// kinds start and the frame's cursors at that point — lives here rather than in the
+/// record, since it only exists mid-paint and every node holds a record between frames.
+#[derive(Default)]
+pub(crate) struct ViewNodeSceneRecorder {
+    scene: ViewNodeScene,
+    open_run: Option<(u32, LaneCursors)>,
+}
+
+impl ViewNodeSceneRecorder {
+    pub(crate) fn begin(mut scene: ViewNodeScene) -> Self {
+        scene.kinds.clear();
+        scene.segments.clear();
+        Self {
+            scene,
+            open_run: None,
+        }
     }
 
     /// Records a primitive the frame has just taken, given the frame's cursors before it.
     pub(crate) fn record_primitive(&mut self, kind: PrimitiveKind, cursors: LaneCursors) {
         if self.open_run.is_none() {
-            self.open_run = Some((self.kind_count, cursors));
+            self.open_run = Some((self.scene.kinds.len() as u32, cursors));
         }
-        if let Some(slot) = self.kinds.get_mut(self.kind_count) {
-            *slot = kind;
-        } else {
-            self.kinds.push(kind);
-        }
-        self.kind_count += 1;
+        self.scene.kinds.push(kind);
     }
 
     pub(crate) fn record_start_layer(&mut self, bounds: Bounds<ScaledPixels>) {
         self.close_run();
-        self.segments.push(ViewNodeSceneSegment::StartLayer(bounds));
+        self.scene
+            .segments
+            .push(ViewNodeSceneSegment::StartLayer(bounds));
     }
 
     pub(crate) fn record_end_layer(&mut self) {
         self.close_run();
-        self.segments.push(ViewNodeSceneSegment::EndLayer);
+        self.scene.segments.push(ViewNodeSceneSegment::EndLayer);
     }
 
     fn close_run(&mut self) {
         if let Some((start, cursors)) = self.open_run.take() {
-            self.segments
-                .push(ViewNodeSceneSegment::Run(start..self.kind_count, cursors));
+            self.scene.segments.push(ViewNodeSceneSegment::Run(
+                start..self.scene.kinds.len() as u32,
+                cursors,
+            ));
         }
     }
 
     pub(crate) fn push_child(&mut self, child: crate::view_tree::ViewNodeId) {
         self.close_run();
-        self.segments.push(ViewNodeSceneSegment::Child(child));
+        self.scene.segments.push(ViewNodeSceneSegment::Child(child));
     }
 
-    pub(crate) fn finish(&mut self) {
+    pub(crate) fn finish(mut self) -> ViewNodeScene {
         self.close_run();
-        self.kinds.truncate(self.kind_count);
+        self.scene
     }
+}
 
+impl ViewNodeScene {
     /// Paints the scope's primitives from `rendered`, the frame they were last drawn in,
     /// into `scene`, descending into children where they were painted. `scene` is
     /// recording the scope anew, so the record comes out addressing the new frame.
@@ -134,12 +146,12 @@ impl ViewNodeScene {
 
     fn replay_run(
         &self,
-        kinds: Range<usize>,
+        kinds: Range<u32>,
         mut cursor: LaneCursors,
         rendered: &Scene,
         scene: &mut Scene,
     ) {
-        for kind in &self.kinds[kinds] {
+        for kind in &self.kinds[kinds.start as usize..kinds.end as usize] {
             match kind {
                 PrimitiveKind::Shadow => {
                     scene.insert_primitive(*rendered.painted_shadow(cursor.shadows));
@@ -244,27 +256,27 @@ pub(crate) enum DispatchOp {
 pub(crate) struct PhaseOutput {
     /// In production order.
     pub(crate) items: Vec<OutputItem>,
-    /// The children and roots the scope attached while prepainting, in production order.
-    pub(crate) dispatch: Vec<DispatchOp>,
-    /// The live dispatch nodes pushed while the scope prepainted, children's included:
-    /// pushes are sequential, so they are a range of the frame's tree.
-    pub(crate) dispatch_range: Range<usize>,
     /// The line layouts looked up, held so they stay shaped while the scope is reused.
     pub(crate) text: crate::text_system::TextUse,
     /// The engine frame `text` was looked up in. Zero until the phase first draws.
     pub(crate) text_frame: u64,
-    /// The primitives painted, with the children spliced where they were painted. Only
-    /// the paint phase records one.
-    pub(crate) scene: ViewNodeScene,
-    /// The scope's own non-empty dispatch nodes, in push order, copied out after paint.
-    pub(crate) dispatch_nodes: Vec<RecordedDispatchNode>,
 }
 
-/// Everything one scope produced while drawing, by phase. A reused node keeps its output
-/// untouched; a redrawn node overwrites it in place.
+/// Everything one scope produced while drawing. Items and text are produced by each phase;
+/// the dispatch record is prepaint's and the scene is paint's, so they live once. A reused
+/// node keeps its output untouched; a redrawn node overwrites it in place.
 #[derive(Default)]
 pub(crate) struct NodeOutput {
     phases: [PhaseOutput; 3],
+    /// The children and roots the scope attached while prepainting, in production order.
+    pub(crate) dispatch: Vec<DispatchOp>,
+    /// The live dispatch nodes pushed while the scope prepainted, children's included:
+    /// pushes are sequential, so they are a range of the frame's tree.
+    pub(crate) dispatch_range: Range<u32>,
+    /// The scope's own non-empty dispatch nodes, in push order, copied out after paint.
+    pub(crate) dispatch_nodes: Vec<RecordedDispatchNode>,
+    /// The primitives painted, with the children spliced where they were painted.
+    pub(crate) scene: ViewNodeScene,
     /// Bumped whenever the output is rebuilt, so slots issued earlier stop resolving.
     pub(crate) generation: u64,
     /// State kept for elements drawn in this scope, by element id and state type. It
@@ -304,12 +316,15 @@ impl NodeOutput {
     pub(crate) fn reset(&mut self) {
         for phase in &mut self.phases {
             phase.items.clear();
-            phase.dispatch.clear();
         }
+        self.dispatch.clear();
         self.inline_views.clear();
         self.generation += 1;
     }
 }
+
+// Every node holds one of these between frames, so its size is a floor on memory per view.
+const _: () = assert!(size_of::<ViewNode>() <= 704);
 
 /// The position of one item in a scope's output. Held instead of the item when the item
 /// must stay in place, such as a callback that is leased out for a call.
