@@ -22,7 +22,7 @@ use agent_settings::{
     SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT, builtin_profiles,
 };
 use anyhow::{Context as _, Result, anyhow};
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, FixedOffset, Local, Utc};
 use client::UserStore;
 use cloud_api_types::Plan;
 use collections::{HashMap, HashSet, IndexMap};
@@ -283,6 +283,9 @@ impl Message {
 pub struct UserMessage {
     pub id: ClientUserMessageId,
     pub content: Arc<[UserMessageContent]>,
+    /// The creation time and original local UTC offset for temporal model context.
+    #[serde(default)]
+    pub created_at: Option<DateTime<FixedOffset>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -486,6 +489,16 @@ impl UserMessage {
             };
 
             message.content.push(chunk);
+        }
+
+        if let Some(ref timestamp) = self.created_at {
+            let time_tag = format!(
+                "<time>{}</time>\n",
+                timestamp.format("%a %Y-%m-%dT%H:%M:%S%:z")
+            );
+            message
+                .content
+                .insert(0, language_model::MessageContent::Text(time_tag));
         }
 
         let len_before_context = message.content.len();
@@ -2533,8 +2546,11 @@ impl Thread {
         let content = content.into_iter().map(Into::into).collect::<Arc<_>>();
         log::debug!("Thread::send content: {:?}", content);
 
-        self.messages
-            .push(Arc::new(Message::User(UserMessage { id, content })));
+        self.messages.push(Arc::new(Message::User(UserMessage {
+            id,
+            content,
+            created_at: Some(Local::now().fixed_offset()),
+        })));
         cx.notify();
 
         self.send_existing(cx)
@@ -2660,8 +2676,11 @@ impl Thread {
             .into_iter()
             .map(|block| UserMessageContent::from_content_block(block, path_style))
             .collect::<Arc<_>>();
-        self.messages
-            .push(Arc::new(Message::User(UserMessage { id, content })));
+        self.messages.push(Arc::new(Message::User(UserMessage {
+            id,
+            content,
+            created_at: Some(Local::now().fixed_offset()),
+        })));
         cx.notify();
     }
 
@@ -3264,6 +3283,7 @@ impl Thread {
                     this.messages.push(Arc::new(Message::User(UserMessage {
                         id: marker_id,
                         content: Arc::from([]),
+                        created_at: None,
                     })));
                     this.messages.push(compaction);
                 }
@@ -4325,7 +4345,6 @@ impl Thread {
             project: self.project_context.read(cx),
             available_tools,
             model_name: self.model().map(|m| m.name().0.to_string()),
-            date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
             sandboxing: crate::sandboxing::sandboxing_enabled_for_project(
                 self.project.read(cx),
@@ -6879,6 +6898,72 @@ mod tests {
     }
 
     #[test]
+    fn test_user_message_timestamp_renders_in_context() {
+        let timestamp = DateTime::parse_from_rfc3339("2026-05-26T16:53:58+02:00").unwrap();
+        let message = UserMessage {
+            id: ClientUserMessageId::new(),
+            content: vec![UserMessageContent::Text("hello".to_string())].into(),
+            created_at: Some(timestamp),
+        };
+
+        let request = message.to_request();
+        let texts = request
+            .content
+            .iter()
+            .map(|content| {
+                let language_model::MessageContent::Text(text) = content else {
+                    panic!("expected text content");
+                };
+                text.as_str()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            texts[0],
+            format!(
+                "<time>{}</time>\n",
+                timestamp.format("%a %Y-%m-%dT%H:%M:%S%:z")
+            )
+        );
+        assert_eq!(texts[1], "hello");
+    }
+
+    #[test]
+    fn test_user_message_without_timestamp_has_no_context() {
+        let message = UserMessage {
+            id: ClientUserMessageId::new(),
+            content: vec![UserMessageContent::Text("hello".to_string())].into(),
+            created_at: None,
+        };
+
+        let request = message.to_request();
+        assert_eq!(request.content.len(), 1);
+        let language_model::MessageContent::Text(text) = &request.content[0] else {
+            panic!("expected text content");
+        };
+        assert_eq!(text, "hello");
+    }
+
+    #[test]
+    fn test_user_message_timestamp_serialization() {
+        let timestamp =
+            DateTime::parse_from_rfc3339("2026-05-26T16:53:58.123456789+05:30").unwrap();
+        let message = UserMessage {
+            id: ClientUserMessageId::new(),
+            content: vec![UserMessageContent::Text("hello".to_string())].into(),
+            created_at: Some(timestamp),
+        };
+
+        let mut serialized = serde_json::to_value(&message).unwrap();
+        let deserialized: UserMessage = serde_json::from_value(serialized.clone()).unwrap();
+        assert_eq!(deserialized.created_at, Some(timestamp));
+
+        serialized.as_object_mut().unwrap().remove("created_at");
+        let deserialized: UserMessage = serde_json::from_value(serialized).unwrap();
+        assert_eq!(deserialized.created_at, None);
+    }
+
+    #[test]
     fn test_summary_compaction_renders_for_request_and_markdown() {
         let message = Message::Compaction(CompactionInfo::Summary("Older context".into()));
 
@@ -6904,6 +6989,7 @@ mod tests {
         Arc::new(Message::User(UserMessage {
             id,
             content: vec![UserMessageContent::Text(text.to_string())].into(),
+            created_at: None,
         }))
     }
 
@@ -7309,14 +7395,15 @@ mod tests {
 
         let final_request = model.pending_completions().pop().unwrap();
         assert_eq!(final_request.intent, Some(CompletionIntent::UserPrompt));
+        let request_texts = request_texts_after_system(&final_request.messages);
+        assert_eq!(request_texts.len(), 3);
+        assert_eq!(request_texts[0], "old user");
         assert_eq!(
-            request_texts_after_system(&final_request.messages),
-            vec![
-                "old user".to_string(),
-                summary_request_text("compacted old context"),
-                "new prompt".to_string(),
-            ]
+            request_texts[1],
+            summary_request_text("compacted old context")
         );
+        assert!(request_texts[2].ends_with("new prompt"));
+        assert!(request_texts[2].starts_with("<time>"));
 
         model.send_completion_stream_text_chunk(&final_request, "answer");
         model.end_completion_stream(&final_request);
@@ -7391,7 +7478,7 @@ mod tests {
                 assert!(matches!(&*thread.messages[1], Message::Agent(_)));
                 assert!(matches!(
                     &*thread.messages[2],
-                    Message::User(UserMessage { id, content }) if id == &compact_message_id && content.is_empty()
+                    Message::User(UserMessage { id, content, .. }) if id == &compact_message_id && content.is_empty()
                 ));
                 assert!(matches!(
                     &*thread.messages[3],
@@ -7541,6 +7628,7 @@ mod tests {
                 thread.messages.push(Arc::new(Message::User(UserMessage {
                     id: marker_id.clone(),
                     content: Arc::from([]),
+                    created_at: None,
                 })));
                 thread.messages.push(summary_compaction("summary"));
                 thread.replay(cx)

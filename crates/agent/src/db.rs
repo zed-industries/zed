@@ -250,6 +250,7 @@ impl DbThread {
                         // MessageId from old format can't be meaningfully converted, so generate a new one
                         id,
                         content: Arc::from(content),
+                        created_at: None,
                     })
                 }
                 language_model::Role::Assistant => {

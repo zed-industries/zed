@@ -42,7 +42,6 @@ pub struct SystemPromptTemplate<'a> {
     pub project: &'a prompt_store::ProjectContext,
     pub available_tools: Vec<SharedString>,
     pub model_name: Option<String>,
-    pub date: String,
     /// Contents of the user-global `~/.config/zed/AGENTS.md` file (or the
     /// platform equivalent), if present and non-empty.
     pub user_agents_md: Option<SharedString>,
@@ -103,7 +102,6 @@ mod tests {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
-            date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
             is_linux: false,
@@ -112,7 +110,6 @@ mod tests {
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
         assert!(rendered.contains("You are the Zed coding agent"));
-        assert!(rendered.contains("Today's Date: 2026-01-01"));
         assert!(rendered.contains("## Fixing Diagnostics"));
         assert!(rendered.contains("test-model"));
     }
@@ -136,7 +133,6 @@ mod tests {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
-            date: "2026-01-01".to_string(),
             user_agents_md: Some("always be concise".into()),
             sandboxing: false,
             is_linux: false,
@@ -165,7 +161,6 @@ mod tests {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
-            date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
             is_linux: false,
@@ -198,7 +193,6 @@ mod tests {
             project: &project,
             available_tools: vec!["echo".into(), "terminal".into()],
             model_name: Some("test-model".to_string()),
-            date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: true,
             is_linux: false,
@@ -241,7 +235,6 @@ mod tests {
             project: &project,
             available_tools: vec!["echo".into(), "terminal".into()],
             model_name: Some("test-model".to_string()),
-            date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: true,
             is_linux: true,
@@ -274,7 +267,6 @@ mod tests {
             project: &project,
             available_tools: vec!["echo".into(), "terminal".into()],
             model_name: Some("test-model".to_string()),
-            date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: true,
             is_linux: false,
@@ -304,7 +296,6 @@ mod tests {
             project: &project,
             available_tools: vec!["echo".into(), "terminal".into()],
             model_name: Some("test-model".to_string()),
-            date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: true,
             is_linux: false,
@@ -326,7 +317,6 @@ mod tests {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
-            date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: true,
             is_linux: false,
@@ -346,7 +336,6 @@ mod tests {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
-            date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
             is_linux: false,
@@ -364,7 +353,6 @@ mod tests {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
-            date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
             is_linux: false,
