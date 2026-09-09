@@ -174,18 +174,20 @@ const t0=tbranch(n,0,V),t1=tbranch(n,1,V);const fBudget=t1===t0?null:(4000-t0)/(
 $('fm').textContent=tm<=4000?'always':'never';$('fb').textContent=fBudget===null?(t0<=4000?'always':'never'):fBudget>=1?'always':fBudget<=0?'never':Math.round(fBudget*100)+'%%';
 // Break-even: the share of change above which the branch costs what main does.
 const fEven=t1===t0?null:(tm-t0)/(t1-t0);
-const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=44,W=cv.width-2*pad,H=cv.height-2*pad;
+const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=44,W=cv.width-2*pad-40,H=cv.height-2*pad;
 const ymax=Math.max(tm,tb,4000)*1.15;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
 g.fillStyle='rgba(150,150,150,.5)';g.fillRect(X(0),Y(tm),W,Y(0)-Y(tm));
 g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(tbranch(n,p/100,V)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(42,157,143,.7)';g.fill();
-g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);for(const [ms,name] of BUDGETS){if(ms*1000<ymax){g.beginPath();g.moveTo(X(0),Y(ms*1000));g.lineTo(X(100),Y(ms*1000));g.stroke();label(g,name,X(100)-46,Y(ms*1000)-4,'#e76f51');}}g.setLineDash([]);
+g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);for(const [ms,name] of BUDGETS){if(ms*1000<ymax){g.beginPath();g.moveTo(X(0),Y(ms*1000));g.lineTo(X(100),Y(ms*1000));g.stroke();label(g,name,X(100)+6,Y(ms*1000)+4,'#e76f51');}}g.setLineDash([]);
 g.lineWidth=1;g.strokeStyle='#e76f51';g.beginPath();g.moveTo(X(F),Y(0));g.lineTo(X(F),Y(ymax/1.15));g.stroke();
-label(g,'0%%',X(0)-8,Y(0)+16,'#333');label(g,'100%% of elements changing',X(100)-140,Y(0)+16,'#333');label(g,fmt(ymax/1.15),2,Y(ymax/1.15)+4,'#333');label(g,'0',24,Y(0)+4,'#333');
-if(F>3&&F<92)label(g,F+'%%',X(F)-10,Y(0)+16,'#e76f51');
+label(g,'0%%',X(0)-8,Y(0)+16,'#333');label(g,'100%%',X(100)-14,Y(0)+16,'#333');label(g,'elements changing per frame',X(50)-80,Y(0)+32,'#333');label(g,fmt(ymax/1.15),2,Y(ymax/1.15)+4,'#333');label(g,'0',24,Y(0)+4,'#333');
+if(F>6&&F<94)label(g,F+'%%',X(F)-10,Y(0)+16,'#e76f51');
 const faster=tm/tb;const gain=faster>=1?faster.toFixed(1)+'× faster ('+Math.round(100*(1-tb/tm))+'%%)':(tb/tm).toFixed(2)+'× slower';
-label(g,'main '+fmt(tm),X(2),Y(tm)-4,'#555');label(g,'branch '+fmt(tb)+' — '+gain,Math.min(X(F)+6,X(100)-220),Y(tb)-6,'#1b6f65');
-if(fBudget!==null&&fBudget>0&&fBudget<1){g.fillStyle='#e76f51';g.beginPath();g.arc(X(fBudget*100),Y(4000),4,0,7);g.fill();label(g,'fits 4 ms up to '+Math.round(fBudget*100)+'%%',X(fBudget*100)-60,Y(4000)+16,'#e76f51');}
-if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tm),4,0,7);g.fill();label(g,'break-even '+Math.round(fEven*100)+'%%',X(fEven*100)-40,Y(tm)-8,'#555');}else if(fEven!==null&&fEven>=1){label(g,'never costs more than main below 100%% changing',X(100)-250,Y(tm)-8,'#555');}}
+const branchText='branch '+fmt(tb)+' — '+gain;const bw=g.measureText(branchText).width+8;
+const bx=F>55?X(F)-bw:X(F)+6;const by=(Y(tb)-Y(tm))<22?Y(tb)+18:Y(tb)-6;
+label(g,'main '+fmt(tm),X(2),Y(tm)-6,'#555');label(g,branchText,bx,by,'#1b6f65');
+if(fBudget!==null&&fBudget>0&&fBudget<1){g.fillStyle='#e76f51';g.beginPath();g.arc(X(fBudget*100),Y(4000),4,0,7);g.fill();label(g,'fits 4 ms up to '+Math.round(fBudget*100)+'%%',Math.min(X(fBudget*100)+6,X(100)-130),Y(4000)-6,'#e76f51');}
+if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tm),4,0,7);g.fill();const t='break-even '+Math.round(fEven*100)+'%%';const tw=g.measureText(t).width;label(g,t,Math.min(X(fEven*100)-tw/2,X(100)-tw),Y(tm)-22,'#555');}else if(fEven!==null&&fEven>=1){const t='never slower than main below 100%%';label(g,t,X(100)-g.measureText(t).width-4,Y(tm)-6,'#555');}}
 for(const id of ['L','M','H','V','F'])$(id).addEventListener('input',draw);
 for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value]=v;draw();};$('presets').appendChild(b);}
 draw();
