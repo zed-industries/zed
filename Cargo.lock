@@ -6246,6 +6246,7 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
+ "http_client",
  "language",
  "log",
  "markdown",
