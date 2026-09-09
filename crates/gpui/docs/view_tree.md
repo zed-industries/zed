@@ -232,16 +232,17 @@ higher on the branch (240–245 vs 260–275 MB), which is a thousand nodes' rec
 the allocator keeps around between apps; the Zed-shaped fixtures end equal or lower
 (`Workbench/full` 140 vs 130 MB, `editor_render` 155 vs 150 MB).
 
-**What a node weighs.** Probing a trivial leaf view (one id'd `div` with one glyph) at
-that measurement put it at about 2.5 KB, of which 1488 bytes was the `ViewNode` struct
-itself: three 296-byte `PhaseOutput`s each carrying a four-`Vec` `TextUse` and a scene
-record although text is used in one phase and the scene only by paint, and a cache key
-holding a whole `TextStyle`. The struct is now 680 bytes (`const`-asserted under 704):
-the dispatch record and the scene live once in `NodeOutput`, the mid-paint run state
-lives in the `Scene`'s recorder, `TextUse` is one list, the cache key stores a 64-bit
-hash of the text style, and scene runs use `u32` ranges. What remains per trivial node is
-~680 inline + ~450 of record heap (segments, text handles, kinds) + ~150 of tree
-bookkeeping (`consumers`, `occurrences`) + ~200 of element state that `main` keeps too.
+**What a node weighs.** A `ViewNode` is 552 bytes inline (`const`-asserted under 560 so
+it cannot quietly grow): 320 of `NodeOutput` — three `PhaseOutput`s of items, text
+handles and a frame stamp (56 each), the dispatch record and scene record once each,
+the element-state map — plus a 64-byte cache key (the text style as a 64-bit hash), the
+occurrence, the children lists, a 4-entity inline dependency set, ids and flags. Rarely
+used parts are boxed (`owned_entity`, `inline_views`); the kinds of painted primitives
+are the frame's, not the record's; the run being recorded mid-paint lives in the `Scene`'s
+recorder, not in the record kept between frames. Per trivial leaf view (one id'd `div`
+with one glyph) the heap adds ~350 of scene segments (five, at 44 bytes, in a capacity of
+eight), ~100 of text handles, ~150 of tree bookkeeping (`consumers`, `occurrences`) and
+~200 of element state that `main` keeps per element too: about 1.3 KB in all.
 
 There is no in-engine byte count: an estimate from container capacities was a second
 bookkeeping to keep in step with every structure, and the process number is what

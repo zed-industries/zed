@@ -80,7 +80,7 @@ pub struct ViewTreeStats {
 
 /// The entities one node's render read. Nodes read a handful, so a small vector with a
 /// linear scan is cheaper than a hash set; it is sorted and deduplicated when stored.
-pub(crate) type DependencySet = SmallVec<[EntityId; 8]>;
+pub(crate) type DependencySet = SmallVec<[EntityId; 4]>;
 
 /// Adds `entity_id` to a set being recorded. Reads of one entity tend to repeat back to
 /// back, so the last entry is checked before the rest.
@@ -864,7 +864,6 @@ impl ViewTree {
                 view_id: None,
                 owned_entity: None,
                 cache_key: cache_key.clone(),
-                previous_bounds: cache_key.bounds,
                 accessed_entities: DependencySet::new(),
                 painted_frame: 0,
                 dirty: true,
@@ -913,7 +912,6 @@ impl ViewTree {
                 view_id: None,
                 owned_entity: None,
                 cache_key: cache_key.clone(),
-                previous_bounds: cache_key.bounds,
                 accessed_entities: DependencySet::new(),
                 painted_frame: 0,
                 dirty: true,
@@ -943,7 +941,11 @@ impl ViewTree {
     /// The entity the node created for its view on a previous mount, taken so the view can
     /// reuse or replace it; return it with `store_owned_entity`.
     pub(crate) fn take_owned_entity(&mut self, node_id: ViewNodeId) -> Option<crate::AnyEntity> {
-        self.nodes.get_mut(node_id)?.owned_entity.take()
+        self.nodes
+            .get_mut(node_id)?
+            .owned_entity
+            .take()
+            .map(|entity| *entity)
     }
 
     pub(crate) fn store_owned_entity(
@@ -952,7 +954,7 @@ impl ViewTree {
         entity: Option<crate::AnyEntity>,
     ) {
         if let Some(node) = self.nodes.get_mut(node_id) {
-            node.owned_entity = entity;
+            node.owned_entity = entity.map(Box::new);
         }
     }
 
@@ -962,7 +964,11 @@ impl ViewTree {
         let Some((_, _, output)) = self.current_output() else {
             return 0;
         };
-        let occurrence = output.inline_views.entry(type_name).or_default();
+        let occurrence = output
+            .inline_views
+            .get_or_insert_default()
+            .entry(type_name)
+            .or_default();
         let index = *occurrence;
         *occurrence += 1;
         index
@@ -1147,13 +1153,12 @@ impl ViewTree {
         let Some(node) = self.nodes.get_mut(node_id) else {
             return;
         };
-        let old_bounds = node.previous_bounds;
+        let old_bounds = node.cache_key.bounds;
         let new_bounds = cache_key.bounds;
         accessed_entities.extend(node.view_id);
         accessed_entities.sort_unstable();
         accessed_entities.dedup();
         node.cache_key = cache_key;
-        node.previous_bounds = new_bounds;
         node.output.retain_accessed_element_states();
         let previous_accesses = std::mem::replace(&mut node.accessed_entities, accessed_entities);
         Self::replace_dependencies(
@@ -1259,7 +1264,7 @@ impl ViewTree {
             Self::remove_dependency(&mut self.consumers, node_id, *source);
         }
         self.recycle_dependency_set(node.accessed_entities);
-        self.include_changed_bounds(node.previous_bounds);
+        self.include_changed_bounds(node.cache_key.bounds);
         for child_id in node.children {
             self.remove_subtree(child_id);
         }

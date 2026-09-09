@@ -50,6 +50,9 @@ pub struct Scene {
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
     painted: PaintedLanes,
+    /// The kind of every primitive, in paint order: what a node's scene record addresses
+    /// its runs by, so no record keeps kinds of its own.
+    painted_kinds: Vec<PrimitiveKind>,
     /// Painted index → position in the sorted lane, per kind; valid once finished.
     positions: LanePositions,
     sort_scratch: Vec<(u64, u32)>,
@@ -184,6 +187,7 @@ impl Scene {
         self.painted.subpixel_sprites.clear();
         self.painted.polychrome_sprites.clear();
         self.painted.surfaces.clear();
+        self.painted_kinds.clear();
         self.paths.clear();
         self.shadows.clear();
         self.quads.clear();
@@ -283,8 +287,14 @@ impl Scene {
         }
         self.operation_count += 1;
         if let Some(recording) = &mut self.node_scene {
-            recording.record_primitive(kind, cursors);
+            recording.record_primitive(self.painted_kinds.len() as u32, cursors);
         }
+        self.painted_kinds.push(kind);
+    }
+
+    /// The kinds of the primitives painted at `range` of the paint order.
+    pub(crate) fn painted_kinds(&self, range: Range<u32>) -> &[PrimitiveKind] {
+        &self.painted_kinds[range.start as usize..range.end as usize]
     }
 
     /// The primitive at `painted` index of its kind in a finished scene, for replaying a

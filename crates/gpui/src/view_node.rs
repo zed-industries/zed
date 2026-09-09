@@ -43,20 +43,20 @@ pub(crate) enum MetadataPhase {
 }
 
 /// Where in the last drawn frame's scene a scope's primitives are, so the scope can be
-/// replayed into the next frame without painting again. The frame owns the primitives;
-/// the record is the order they were painted in — one `PrimitiveKind` each — split into
-/// runs by the children and layers between them, with each run remembering how far along
-/// each kind's lane the frame was when the run began. Replaying walks the kinds, copies
-/// each primitive out of the rendered frame at that cursor, and paints it, which records
-/// the scope afresh at its positions in the new frame.
+/// replayed into the next frame without painting again. The frame owns the primitives and
+/// their kinds in paint order; the record is the scope's runs of that order, split by the
+/// children and layers between them, with each run remembering how far along each kind's
+/// lane the frame was when the run began. Replaying walks the run's kinds, copies each
+/// primitive out of the rendered frame at that cursor, and paints it, which records the
+/// scope afresh at its positions in the new frame.
 #[derive(Default)]
 pub(crate) struct ViewNodeScene {
-    kinds: Vec<PrimitiveKind>,
     segments: Vec<ViewNodeSceneSegment>,
 }
 
 enum ViewNodeSceneSegment {
-    /// A run of this scope's own primitives: their kinds, and the lane cursors at the first.
+    /// A run of this scope's own primitives: their range of the frame's paint order, and
+    /// the lane cursors at the first.
     Run(Range<u32>, LaneCursors),
     Child(crate::view_tree::ViewNodeId),
     StartLayer(Bounds<ScaledPixels>),
@@ -70,24 +70,25 @@ enum ViewNodeSceneSegment {
 pub(crate) struct ViewNodeSceneRecorder {
     scene: ViewNodeScene,
     open_run: Option<(u32, LaneCursors)>,
+    open_run_end: u32,
 }
 
 impl ViewNodeSceneRecorder {
     pub(crate) fn begin(mut scene: ViewNodeScene) -> Self {
-        scene.kinds.clear();
         scene.segments.clear();
         Self {
             scene,
             open_run: None,
+            open_run_end: 0,
         }
     }
 
-    /// Records a primitive the frame has just taken, given the frame's cursors before it.
-    pub(crate) fn record_primitive(&mut self, kind: PrimitiveKind, cursors: LaneCursors) {
+    /// Records that the frame is taking its `index`th primitive, given its cursors before it.
+    pub(crate) fn record_primitive(&mut self, index: u32, cursors: LaneCursors) {
         if self.open_run.is_none() {
-            self.open_run = Some((self.scene.kinds.len() as u32, cursors));
+            self.open_run = Some((index, cursors));
         }
-        self.scene.kinds.push(kind);
+        self.open_run_end = index + 1;
     }
 
     pub(crate) fn record_start_layer(&mut self, bounds: Bounds<ScaledPixels>) {
@@ -104,10 +105,9 @@ impl ViewNodeSceneRecorder {
 
     fn close_run(&mut self) {
         if let Some((start, cursors)) = self.open_run.take() {
-            self.scene.segments.push(ViewNodeSceneSegment::Run(
-                start..self.scene.kinds.len() as u32,
-                cursors,
-            ));
+            self.scene
+                .segments
+                .push(ViewNodeSceneSegment::Run(start..self.open_run_end, cursors));
         }
     }
 
@@ -134,8 +134,8 @@ impl ViewNodeScene {
     ) {
         for segment in &self.segments {
             match segment {
-                ViewNodeSceneSegment::Run(kinds, cursors) => {
-                    self.replay_run(kinds.clone(), *cursors, rendered, scene)
+                ViewNodeSceneSegment::Run(range, cursors) => {
+                    Self::replay_run(range.clone(), *cursors, rendered, scene)
                 }
                 ViewNodeSceneSegment::Child(child) => engine.replay_scene(*child, rendered, scene),
                 ViewNodeSceneSegment::StartLayer(bounds) => scene.push_layer(*bounds),
@@ -144,14 +144,8 @@ impl ViewNodeScene {
         }
     }
 
-    fn replay_run(
-        &self,
-        kinds: Range<u32>,
-        mut cursor: LaneCursors,
-        rendered: &Scene,
-        scene: &mut Scene,
-    ) {
-        for kind in &self.kinds[kinds.start as usize..kinds.end as usize] {
+    fn replay_run(range: Range<u32>, mut cursor: LaneCursors, rendered: &Scene, scene: &mut Scene) {
+        for kind in rendered.painted_kinds(range) {
             match kind {
                 PrimitiveKind::Shadow => {
                     scene.insert_primitive(*rendered.painted_shadow(cursor.shadows));
@@ -286,8 +280,8 @@ pub(crate) struct NodeOutput {
     pub(crate) element_states:
         FxHashMap<(GlobalElementId, TypeId), (u64, crate::window::ElementStateBox)>,
     /// How many views of each type have rendered inline in this scope so far, so siblings
-    /// of one type get distinct element-id scopes.
-    pub(crate) inline_views: FxHashMap<&'static str, u64>,
+    /// of one type get distinct element-id scopes. Boxed: few scopes render views inline.
+    pub(crate) inline_views: Option<Box<FxHashMap<&'static str, u64>>>,
 }
 
 impl NodeOutput {
@@ -318,13 +312,15 @@ impl NodeOutput {
             phase.items.clear();
         }
         self.dispatch.clear();
-        self.inline_views.clear();
+        if let Some(inline_views) = &mut self.inline_views {
+            inline_views.clear();
+        }
         self.generation += 1;
     }
 }
 
 // Every node holds one of these between frames, so its size is a floor on memory per view.
-const _: () = assert!(size_of::<ViewNode>() <= 704);
+const _: () = assert!(size_of::<ViewNode>() <= 560);
 
 /// The position of one item in a scope's output. Held instead of the item when the item
 /// must stay in place, such as a callback that is leased out for a call.
@@ -346,10 +342,11 @@ pub(crate) struct ViewNode {
     /// The entity whose notification re-renders this node, once the view has mounted.
     pub(crate) view_id: Option<EntityId>,
     /// An entity the view asked the node to keep for it, such as a component's instance;
-    /// dropped with the node.
-    pub(crate) owned_entity: Option<crate::AnyEntity>,
+    /// dropped with the node. Boxed: most views keep none.
+    pub(crate) owned_entity: Option<Box<crate::AnyEntity>>,
+    /// The ambient inputs of the last stored render; its bounds are also the node's last
+    /// known bounds, which the window repaints when the node is retired.
     pub(crate) cache_key: ViewNodeCacheKey,
-    pub(crate) previous_bounds: Bounds<Pixels>,
     pub(crate) accessed_entities: crate::view_tree::DependencySet,
     /// The engine frame the node's scene record was last stored in, by a paint or a
     /// replay; zero until it first paints. The record addresses that frame's scene, so the
