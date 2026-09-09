@@ -17,6 +17,7 @@ pub use animation::*;
 pub use canvas::*;
 pub use container_query::*;
 pub use deferred::*;
+pub(crate) use div::GroupHitboxes;
 pub use div::*;
 pub use image_cache::*;
 pub use img::*;

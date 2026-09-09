@@ -1084,6 +1084,10 @@ pub struct Window {
     /// current element path is the last entry and never needs a walk.
     element_id_hashes: SmallVec<[u64; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
+    /// The hitboxes of the `.group()` elements being prepainted, for their descendants'
+    /// group styles. Frame-local: it is part of drawing, not app state, so touching it
+    /// must not count as a dependency of the node being drawn.
+    pub(crate) group_hitboxes: crate::elements::GroupHitboxes,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
@@ -1912,6 +1916,7 @@ impl Window {
             element_id_stack: SmallVec::default(),
             element_id_hashes: SmallVec::default(),
             text_style_stack: Vec::new(),
+            group_hitboxes: Default::default(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),

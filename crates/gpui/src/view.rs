@@ -838,6 +838,92 @@ mod tests {
         assert_eq!((left.get(), right.get()), (4, 2));
     }
 
+    /// Group styles resolve through per-frame bookkeeping that every prepaint of a grouped
+    /// element writes. That bookkeeping is drawing, not state: a view whose subtree uses
+    /// `.group()` and `group_hover` stays clean across frames nothing changed, and its
+    /// group hover still resolves once it does re-render.
+    #[gpui::test]
+    fn group_styles_do_not_invalidate_clean_views(cx: &mut TestAppContext) {
+        struct Grouped {
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for Grouped {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                div().id("group").group("row").size(px(40.)).child(
+                    div()
+                        .id("member")
+                        .size(px(20.))
+                        .bg(rgb(0x0000ff))
+                        .group_hover("row", |style| style.bg(rgb(0xff0000))),
+                )
+            }
+        }
+        struct Host {
+            grouped: Entity<Grouped>,
+            revision: usize,
+        }
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .child(self.grouped.clone())
+                    .child(div().size(px(10.)).bg(rgb(self.revision as u32)))
+            }
+        }
+        let renders = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| Host {
+            grouped: cx.new(|_| Grouped {
+                renders: renders.clone(),
+            }),
+            revision: 0,
+        });
+        cx.run_until_parked();
+        assert_eq!(renders.get(), 1);
+        for _ in 0..3 {
+            window
+                .update(cx, |host, _, cx| {
+                    host.revision += 1;
+                    cx.notify();
+                })
+                .expect("window open");
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            renders.get(),
+            1,
+            "a grouped view is replayed while nothing it depends on changes"
+        );
+        let snapshot = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |_, window, _| {
+                    window.rendered_frame.scene.snapshot_for_test()
+                })
+                .expect("window open")
+        };
+        let mut visual = crate::VisualTestContext::from_window(window.into(), cx);
+        // The pointer starts at the origin, inside the group; leave it first.
+        visual.simulate_mouse_move(
+            crate::point(px(80.), px(80.)),
+            None,
+            crate::Modifiers::default(),
+        );
+        cx.run_until_parked();
+        let unhovered = snapshot(cx);
+        // Over the group but outside the member: the member's group hover applies.
+        visual.simulate_mouse_move(
+            crate::point(px(35.), px(35.)),
+            None,
+            crate::Modifiers::default(),
+        );
+        cx.run_until_parked();
+        assert_ne!(
+            snapshot(cx),
+            unhovered,
+            "group hover resolves through the window's group hitboxes"
+        );
+    }
+
     #[gpui::test]
     fn shared_image_completion_invalidates_every_consumer(cx: &mut TestAppContext) {
         use futures::FutureExt as _;

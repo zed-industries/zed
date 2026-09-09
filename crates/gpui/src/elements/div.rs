@@ -18,7 +18,7 @@
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
     Display, Element, ElementId, Entity, EntityId, ExternalDragPayload, ExternalDragPayloadSource,
-    FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId,
+    FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId,
     IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent,
     LayoutId, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
     MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
@@ -2475,7 +2475,7 @@ impl Interactivity {
                     window.record_debug_bounds(debug_selector, bounds);
                 }
 
-                self.paint_hover_group_handler(window, cx);
+                self.paint_hover_group_handler(window);
 
                 if style.visibility == Visibility::Hidden {
                     return ((), element_state);
@@ -2521,7 +2521,7 @@ impl Interactivity {
                                             }
 
                                             if let Some(group) = self.group.clone() {
-                                                GroupHitboxes::push(group, hitbox.id, cx);
+                                                window.group_hitboxes.push(group, hitbox.id);
                                             }
 
                                             if let Some(area) = self.window_control {
@@ -2568,7 +2568,7 @@ impl Interactivity {
                                             );
 
                                             if let Some(group) = self.group.as_ref() {
-                                                GroupHitboxes::pop(group, cx);
+                                                window.group_hitboxes.pop(group);
                                             }
                                         }
                                     })
@@ -2808,7 +2808,7 @@ impl Interactivity {
         }
 
         if let Some(group_hover) = self.group_hover_style.as_ref() {
-            if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
+            if let Some(group_hitbox_id) = window.group_hitboxes.get(&group_hover.group) {
                 let hover_state = element_state
                     .as_ref()
                     .and_then(|element| element.hover_state.as_ref())
@@ -3184,7 +3184,7 @@ impl Interactivity {
                 let active_group_hitbox = self
                     .group_active_style
                     .as_ref()
-                    .and_then(|group_active| GroupHitboxes::get(&group_active.group, cx));
+                    .and_then(|group_active| window.group_hitboxes.get(&group_active.group));
                 let hitbox = hitbox.clone();
                 window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Bubble && !window.default_prevented() {
@@ -3236,11 +3236,11 @@ impl Interactivity {
         }
     }
 
-    fn paint_hover_group_handler(&self, window: &mut Window, cx: &mut App) {
+    fn paint_hover_group_handler(&self, window: &mut Window) {
         let group_hitbox = self
             .group_hover_style
             .as_ref()
-            .and_then(|group_hover| GroupHitboxes::get(&group_hover.group, cx));
+            .and_then(|group_hover| window.group_hitboxes.get(&group_hover.group));
 
         if let Some(group_hitbox) = group_hitbox {
             let was_hovered = group_hitbox.is_hovered(window);
@@ -3370,7 +3370,7 @@ impl Interactivity {
         if !cx.has_active_drag() {
             if let Some(group_hover) = self.group_hover_style.as_ref() {
                 let is_group_hovered =
-                    if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
+                    if let Some(group_hitbox_id) = window.group_hitboxes.get(&group_hover.group) {
                         !window.last_input_was_touch() && group_hitbox_id.is_hovered(window)
                     } else if let Some(element_state) = element_state.as_ref() {
                         !window.last_input_was_touch()
@@ -3418,7 +3418,7 @@ impl Interactivity {
                 if can_drop {
                     for (state_type, group_drag_style) in &self.group_drag_over_styles {
                         if let Some(group_hitbox_id) =
-                            GroupHitboxes::get(&group_drag_style.group, cx)
+                            window.group_hitboxes.get(&group_drag_style.group)
                             && *state_type == drag.value.as_ref().type_id()
                             && group_hitbox_id.is_hovered(window)
                         {
@@ -3906,30 +3906,29 @@ fn handle_tooltip_check_visible_and_update(
     active_tooltip.borrow().is_some()
 }
 
+/// The hitboxes of the `.group()` elements currently being prepainted, by group name, so
+/// their descendants can resolve `group_hover` and the other group styles. Lives in the
+/// [`Window`] (see [`Window::group_hitboxes`]) rather than as an app global, since it is
+/// frame scratch and reading it must not make the reading node depend on anything.
 #[derive(Default)]
 pub(crate) struct GroupHitboxes(HashMap<SharedString, SmallVec<[HitboxId; 1]>>);
 
-impl Global for GroupHitboxes {}
-
 impl GroupHitboxes {
-    pub fn get(name: &SharedString, cx: &mut App) -> Option<HitboxId> {
-        cx.default_global::<Self>()
-            .0
+    pub fn get(&self, name: &SharedString) -> Option<HitboxId> {
+        self.0
             .get(name)
             .and_then(|bounds_stack| bounds_stack.last())
             .cloned()
     }
 
-    pub fn push(name: SharedString, hitbox_id: HitboxId, cx: &mut App) {
-        cx.default_global::<Self>()
-            .0
-            .entry(name)
-            .or_default()
-            .push(hitbox_id);
+    pub fn push(&mut self, name: SharedString, hitbox_id: HitboxId) {
+        self.0.entry(name).or_default().push(hitbox_id);
     }
 
-    pub fn pop(name: &SharedString, cx: &mut App) {
-        cx.default_global::<Self>().0.get_mut(name).unwrap().pop();
+    pub fn pop(&mut self, name: &SharedString) {
+        if let Some(bounds_stack) = self.0.get_mut(name) {
+            bounds_stack.pop();
+        }
     }
 }
 
