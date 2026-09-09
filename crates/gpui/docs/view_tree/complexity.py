@@ -176,7 +176,8 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <tr><td>scale of this scene that fits a 120 Hz frame, 8.3 ms (× the element counts above)</td><td class=m id=sm></td><td class=n id=sb></td></tr>
 <tr><td>… i.e. total elements</td><td class=m id=em></td><td class=n id=eb></td></tr>
 <tr><td>share changing up to which the frame fits 8.3 ms</td><td class=m id=fm></td><td class=n id=fb></td></tr></table>
-<canvas id=c width=900 height=320></canvas>
+<p style="margin:.6em 0 0">y axis: <label style="display:inline"><input type=radio name=ys value=fit checked> fit the curves</label> <label style="display:inline"><input type=radio name=ys value=4> 4 ms</label> <label style="display:inline"><input type=radio name=ys value=8.3> 8.3 ms</label></p>
+<canvas id=c width=900 height=340></canvas>
 <h3>The model</h3>
 <p>Element kinds <i>k</i> ∈ {div, button, card} with counts <i>n<sub>k</sub></i>, <i>N</i> = Σ <i>n<sub>k</sub></i>; a share <i>f</i> of the elements and <i>D</i> of the <i>K</i> editors change per frame.</p>
 <pre id=formula></pre>
@@ -244,11 +245,12 @@ const fBudget=t1===t0?null:(budget*1000-t0)/(t1-t0);
 // Break-even: the share of change above which the branch costs what main does.
 let fEven=null;for(let p=0;p<=100;p++){if(tbranch(n,p/100,V)>=tmain(n,p/100)){fEven=p/100;break;}}if(fEven===null)fEven=1;
 const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=44,W=cv.width-2*pad-200,H=cv.height-2*pad;
-const ymax=Math.max(tmain(n,1),tb,budget*1000)*1.15;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
+const ys=document.querySelector('input[name=ys]:checked').value;const ymax=ys==='fit'?Math.max(tmain(n,1),tb)*1.15:(+ys)*1000*1.05;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
 const mainAt=p=>tmain(n,p/100);const tmMax=Math.max(...Array.from({length:101},(_,p)=>mainAt(p)));
 g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(mainAt(p)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(150,150,150,.5)';g.fill();
 if(MC){g.save();g.setLineDash([2,3]);g.lineWidth=1;g.strokeStyle='#777';for(const mode of ['best','worst']){g.beginPath();for(let p=0;p<=100;p++){const y=Y(tmain(n,p/100,mode));if(p===0)g.moveTo(X(p),y);else g.lineTo(X(p),y);}g.stroke();}g.restore();
- label(g,'every panel clean',X(50)-50,Y(tmain(n,.5,'best'))+14,'#777');label(g,'no panel clean',X(50)-44,Y(tmain(n,.5,'worst'))-6,'#777');}
+ const best=tmain(n,f,'best'),worst=tmain(n,f,'worst');const lx=F>55?X(F)-190:X(F)+8;
+ label(g,'every panel clean: '+fmt(best),lx,Y(best)+14,'#666');label(g,'no panel clean: '+fmt(worst),lx,Y(worst)-6,'#666');}
 g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(tbranch(n,p/100,V)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(42,157,143,.7)';g.fill();
 g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);for(const [ms,name] of BUDGETS){if(ms*1000<ymax){g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);g.beginPath();g.moveTo(X(0),Y(ms*1000));g.lineTo(X(100),Y(ms*1000));g.stroke();const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);const upTo=cross!==null&&cross>0&&cross<1?' · up to '+Math.round(cross*100)+'%%':'';label(g,name+upTo,X(100)+6,Y(ms*1000)+4,'#e76f51');}}g.setLineDash([]);
 g.lineWidth=1;g.strokeStyle='#e76f51';g.beginPath();g.moveTo(X(F),Y(0));g.lineTo(X(F),Y(ymax/1.15));g.stroke();
@@ -257,13 +259,14 @@ label(g,F+'%%',X(F)-10,Y(0)+16,'#e76f51');
 const faster=tm/tb;const gain=faster>=1?faster.toFixed(1)+'× faster ('+Math.round(100*(1-tb/tm))+'%%)':(tb/tm).toFixed(2)+'× slower';
 const branchText='branch '+fmt(tb)+' — '+gain;const bw=g.measureText(branchText).width+8;
 const bx=F>55?X(F)-bw:X(F)+6;const by=(Y(tb)-Y(tm))<22?Y(tb)+18:Y(tb)-6;
-label(g,'main '+fmt(tm)+(MC?' expected at '+F+'%%':''),X(2),Y(tmMax)-6,'#555');label(g,branchText,bx,by,'#1b6f65');
+label(g,'main '+fmt(tm)+(MC?' expected':''),MC?(F>55?X(F)-150:X(F)+8):X(2),MC?Y(tm)-6:Y(tmMax)-6,'#555');label(g,branchText,bx,by,'#1b6f65');
 for(const b of $('presets').children)b.classList.toggle('active',b.textContent===preset);
 g.font='bold 13px system-ui';label(g,preset?preset:'custom scene',pad,pad-14,'#222');g.font='12px system-ui';
 for(const [ms] of BUDGETS){const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);if(cross!==null&&cross>0&&cross<1&&ms*1000<ymax){g.fillStyle='#e76f51';g.beginPath();g.arc(X(cross*100),Y(ms*1000),4,0,7);g.fill();}}
 if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tmain(n,fEven)),4,0,7);g.fill();const t='break-even '+Math.round(fEven*100)+'%%';const tw=g.measureText(t).width;label(g,t,Math.min(X(fEven*100)-tw/2,X(100)-tw),Y(tmain(n,fEven))-22,'#555');}else if(fEven!==null&&fEven>=1){const t='≈ main at 100%% (measured ±5%% by scene shape)';label(g,t,X(100)-g.measureText(t).width-4,Y(tmain(n,1))-6,'#555');}}
 for(const id of ['L','M','H','K','D','R','V','F'])$(id).addEventListener('input',()=>{preset=null;draw();});
 for(const id of ['MC','PN','PS'])$(id).addEventListener('input',()=>{preset=null;draw();});
+for(const r of document.querySelectorAll('input[name=ys]'))r.addEventListener('input',draw);
 for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value]=v;$('D').max=v[5];$('D').value=v[6];$('R').checked=v[7];$('MC').checked=v[8];$('PN').value=v[9];$('PS').value=v[10];preset=name;draw();};$('presets').appendChild(b);}
 $('presets').firstChild.click();
 </script>
