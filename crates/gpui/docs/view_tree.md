@@ -131,7 +131,13 @@ reuse fires. `Workbench/update/full`, `editor_render`, the multi-cursor and Mark
 fixtures dirty everything, so they show what a Zed-shaped or text-heavy frame pays when
 nothing is reused. `Siblings/all dirty/N` is N trivially cheap *views* all notified every
 frame, which isolates the fixed cost of a node; `Elements/{all dirty,incremental}/N` is
-one view rendering N plain id'd `div`s, which isolates the cost per element.
+one view rendering N plain id'd `div`s, which isolates the cost per element. The two
+synthetic sweeps are reported as what they measure — microseconds per node and per
+element — rather than as a percentage of a frame made of nothing else; the element cost
+is also given as a share of a trivial `div`, since that is a real penalty on a real
+element. Neither shape is how GPUI is meant to be used (a view is a component with
+state, rendering many elements), so a window sees the per-node cost amortized away and
+the per-element cost partly returned by retention.
 
 ![overview](view_tree/overview.png)
 
@@ -148,7 +154,8 @@ one view rendering N plain id'd `div`s, which isolates the cost per element.
 | Markdown render 5000 / 10000 / 50000 | 1.17 / 1.63 / 6.64 ms | 1.09 / 1.56 / 6.71 ms | **−7.3% / −4.4%** / +1.5% (−3.5, +6.7) |
 | Elements/all dirty 256 / 2048 / 8192 | 754 µs / 6.84 ms / 25.1 ms | 769 µs / 7.00 ms / 25.9 ms | **+2.0% / +3.1% / +4.6%** |
 | Elements/incremental 256 / 2048 / 8192 | 758 µs / 6.93 ms / 25.5 ms | 778 µs / 7.11 ms / 26.1 ms | **+2.6% / +3.1% / +3.0%** |
-| Siblings/all dirty 64 / 256 / 1024 | 213 µs / 758 µs / 3.21 ms | 248 µs / 898 µs / 3.81 ms | **+16.7% / +18.6% / +18.9%** |
+| Elements: tax per element 256 / 2048 / 8192 | 2.95 / 3.34 / 3.06 µs per element | | **+0.06 / +0.08 / +0.11 µs** (±0.01 / 0.02 / 0.03) |
+| Siblings/all dirty 64 / 256 / 1024 | 213 µs / 758 µs / 3.21 ms | 248 µs / 898 µs / 3.81 ms | **+0.55 / +0.55 / +0.59 µs per dirty node** |
 
 `main` at `5a9b9558db`, branch at `b7f55c0437`, M-series laptop, load average 3–7
 (other builds running; the intervals are still narrow because the pairs run back to
@@ -156,7 +163,12 @@ back). Since the previous run of this table (at `46c3ffa866`), the rendered fram
 became the scene cache and the dispatch tree is snapshotted rather than rewritten from
 ops: the reuse rows gained 6–14 points, the Zed-shaped all-dirty rows turned from
 +0.5–1.6% to −2–5%, Markdown from +2–4% to −7–+1%, and the synthetic per-element tax
-roughly halved.
+roughly halved. The per-element tax rises with N (0.06 → 0.11 µs from 256 to 8192):
+not reallocation, since every container keeps its capacity across frames on both sides,
+but the per-primitive arrays the branch adds (a kind byte, a `u32` position, the sort
+keys) leaving cache along with `main`'s own ones at that size, plus the log N in the
+lane sort — both sides sort, but the branch's sort-then-gather touches more bytes per
+primitive.
 
 **The cost model.** Two synthetic sweeps pin the engine's tax on a frame in which nothing
 is reused:
@@ -190,8 +202,8 @@ passes taken (the line layout cache behind `RefCell`s, no reseeding of text stil
 cached, no bubbling of reads into the parent, empty dispatch nodes dropped, node flags
 instead of hash sets, `SmallVec` dependency sets, occurrence keys from a running path
 hash, 56-byte items, generation-stamped element states, the frame as the scene cache,
-the dispatch tree snapshotted instead of rewritten) took `Siblings/1024` from +24% to
-+19% and halved the per-element cost. Getting materially lower needs the per-node steps
+the dispatch tree snapshotted instead of rewritten) took the per-node cost from ≈0.75 µs to
+≈0.55 µs and halved the per-element cost. Getting materially lower needs the per-node steps
 themselves to go — fused per-phase choreography — which is follow-up work.
 `crates/gpui/docs/view_tree_render_path.md` walks the render path step by step.
 

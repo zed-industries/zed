@@ -37,25 +37,25 @@ with open(matrix, encoding="utf-8") as rows:
 D = {label: D[label] for label in LABELS.values() if label in D}
 plt.rcParams.update({"font.size": 10, "figure.dpi": 130})
 
-# 1. Overview: % change per fixture
-names = list(D); pct = [100*(b-m)/m for m,b in D.values()]
+# 1. Overview: % change per fixture. Siblings is left out: a percentage of a frame that is
+# nothing but trivial nodes says little, so it is reported as the flat cost per node (chart 2).
+names = [n for n in D if not n.startswith("Siblings")]; pct = [100*(D[n][1]-D[n][0])/D[n][0] for n in names]
 lo = [max(0,pct[i]-CI[n][0]) for i,n in enumerate(names)]; hi = [max(0,CI[n][1]-pct[i]) for i,n in enumerate(names)]
 colors = ["#2a9d8f" if p < 0 else "#e76f51" for p in pct]
-fig, ax = plt.subplots(figsize=(9, 7))
+fig, ax = plt.subplots(figsize=(9, 6.2))
 y = np.arange(len(names))
 ax.barh(y, pct, color=colors, xerr=[lo,hi], error_kw=dict(ecolor="#444", capsize=2, lw=0.8))
 ax.set_yticks(y); ax.set_yticklabels(names); ax.invert_yaxis()
 ax.axvline(0, color="k", lw=0.8)
-for sep in [3.5, 8.5, 11.5, 17.5]: ax.axhline(sep, color="#bbb", lw=0.6, ls="--")
+for sep in [3.5, 8.5, 11.5]: ax.axhline(sep, color="#bbb", lw=0.6, ls="--")
 ax.text(-66, 1.5, "reuse fires", va="center", color="#2a9d8f")
 ax.text(-66, 6, "Zed-shaped, all dirty", va="center", color="#555")
 ax.text(-66, 10, "one view, all elements dirty", va="center", color="#555")
-ax.text(-66, 14.5, "per-element cost (synthetic)", va="center", color="#e76f51")
-ax.text(-66, 19, "per-node cost (synthetic worst case)", va="center", color="#e76f51")
+ax.text(-66, 14.5, "per-element cost (synthetic:\none view, N trivial divs)", va="center", color="#e76f51")
 ax.set_xlabel("frame time change vs main (%), Criterion median, 95% CI")
 ax.set_title("GPUI view tree vs main — paired Criterion runs, same machine")
-for i,p in enumerate(pct): ax.text(p + (1 if p>=0 else -1), i, f"{p:+.1f}%", va="center", ha="left" if p>=0 else "right", fontsize=8)
-ax.set_xlim(-72, 32)
+for i,p in enumerate(pct): ax.text(p + (0.5 if p>=0 else -0.5), i, f"{p:+.1f}%", va="center", ha="left" if p>=0 else "right", fontsize=8)
+ax.set_xlim(-72, 12)
 fig.tight_layout(); fig.savefig(f"{out}/overview.png"); plt.close(fig)
 
 # 2. Siblings: fixed per-node cost
@@ -83,9 +83,9 @@ fig.tight_layout(); fig.savefig(f"{out}/per_element.png"); plt.close(fig)
 
 # 4. Model vs Zed-shaped fixtures
 fig, ax = plt.subplots(figsize=(8,4))
-labels = ["Workbench/full\n(48 rows, 4 panels,\neditor; all dirty)", "editor_render", "Markdown\n10000", "Elements/all dirty\n2048", "Siblings\n1024"]
-vals = [100*(D[k][1]-D[k][0])/D[k][0] for k in ["Workbench/full","editor_render","Markdown 10000","Elements/all dirty/2048","Siblings/1024"]]
-ax.bar(labels, vals, color=["#2a9d8f","#999","#e9c46a","#e76f51","#e76f51"])
+labels = ["Workbench/full\n(48 rows, 4 panels,\neditor; all dirty)", "editor_render", "Markdown\n10000", "Elements/all dirty\n2048"]
+vals = [100*(D[k][1]-D[k][0])/D[k][0] for k in ["Workbench/full","editor_render","Markdown 10000","Elements/all dirty/2048"]]
+ax.bar(labels, vals, color=["#2a9d8f","#999","#e9c46a","#e76f51"])
 ax.axhline(0, color="k", lw=0.8); ax.set_ylabel("% vs main, everything dirty")
 for i,v in enumerate(vals): ax.text(i, v + (0.5 if v>=0 else -1.5), f"{v:+.1f}%", ha="center")
 ax.set_title("All-dirty tax by shape: ≈≈0.55 µs × nodes + ≈0.08 µs × elements − retention wins", fontsize=10)
