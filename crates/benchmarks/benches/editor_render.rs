@@ -719,6 +719,184 @@ fn bench_elements(count: usize, with_clean_sibling: bool, cx: &mut BenchAppConte
     cx.bench_renderer(host, update);
 }
 
+/// One point of the `Complexity` sweep: `views` child views (each its own node), each
+/// rendering `elements` id'd `div`s that paint about `primitives` primitives each, with
+/// `dirty_percent` of the views notified on every update.
+#[derive(Clone, Copy)]
+struct ComplexityPoint {
+    views: usize,
+    elements: usize,
+    primitives: usize,
+    dirty_percent: usize,
+}
+
+impl std::fmt::Display for ComplexityPoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "v{}-e{}-p{}-f{}",
+            self.views, self.elements, self.primitives, self.dirty_percent
+        )
+    }
+}
+
+/// One-factor sweeps around a Zed-like baseline (16 views of 128 four-primitive elements,
+/// a quarter of the views changing per frame), plus a few interactions, to fit the frame
+/// cost model `t = c + dirty (a·views + b·elements + p·primitives) + clean (a'·views +
+/// h·elements + r·primitives)`; `main` has only the dirty terms.
+fn complexity_points() -> Vec<ComplexityPoint> {
+    let point = |views, elements, primitives, dirty_percent| ComplexityPoint {
+        views,
+        elements,
+        primitives,
+        dirty_percent,
+    };
+    vec![
+        point(16, 128, 4, 25),
+        point(4, 128, 4, 25),
+        point(64, 128, 4, 25),
+        point(16, 32, 4, 25),
+        point(16, 512, 4, 25),
+        point(16, 128, 1, 25),
+        point(16, 128, 12, 25),
+        point(16, 128, 4, 0),
+        point(16, 128, 4, 6),
+        point(16, 128, 4, 100),
+        point(64, 128, 4, 6),
+        point(16, 512, 4, 6),
+        point(4, 512, 4, 100),
+        point(64, 32, 4, 100),
+        // Primitive and element counts at 0% and 100% pin the clean and dirty
+        // per-primitive and per-element terms apart; at 25% alone they are collinear.
+        point(16, 128, 1, 100),
+        point(16, 128, 12, 100),
+        point(16, 128, 1, 0),
+        point(16, 128, 12, 0),
+        point(16, 512, 4, 0),
+        point(16, 512, 4, 100),
+    ]
+}
+
+/// `primitives` is approximate and composed as: 1 — a background quad; 4 — the quad and a
+/// three-glyph label (three monochrome sprites); 12 — the quad, a small shadow and a
+/// ten-glyph label. Elements are 16×8 px so every point fits in the 1600×1000 window and
+/// nothing is culled; labels may overflow their box, which still paints them.
+#[gpui::bench(
+    inputs = complexity_points(),
+    group = "Complexity",
+    input_name = "scene",
+    sample_size = 20
+)]
+fn complexity(point: &ComplexityPoint, cx: &mut BenchAppContext) {
+    use gpui::{
+        AnyElement, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
+        Styled, Window, div, px, rgb,
+    };
+
+    struct View {
+        index: usize,
+        revision: usize,
+        elements: usize,
+        primitives: usize,
+    }
+    impl Render for View {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let revision = self.revision;
+            let primitives = self.primitives;
+            let view_index = self.index;
+            div()
+                .w_full()
+                .flex()
+                .flex_wrap()
+                .children((0..self.elements).map(|index| -> AnyElement {
+                    let element = div()
+                        .id(index)
+                        .w(px(16.))
+                        .h(px(8.))
+                        .m(px(0.5))
+                        .bg(rgb(if (index + revision).is_multiple_of(2) {
+                            0x336699
+                        } else {
+                            0x996633
+                        }));
+                    match primitives {
+                        1 => element.into_any_element(),
+                        4 => element
+                            .child(format!("{}{}", view_index % 10, (index + revision) % 100))
+                            .into_any_element(),
+                        _ => element
+                            .shadow_sm()
+                            .child(format!("{:03}{:03}{:04}", view_index % 1000, index % 1000, revision % 10000))
+                            .into_any_element(),
+                    }
+                }))
+        }
+    }
+    struct Host {
+        views: Vec<Entity<View>>,
+        dirty_per_update: usize,
+        next_dirty: usize,
+    }
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .bg(rgb(0x18202a))
+                .text_color(rgb(0xdde5ef))
+                .text_size(px(5.))
+                .children(self.views.iter().cloned())
+        }
+    }
+
+    init_context(cx);
+    let point = *point;
+    let mut window = cx.add_empty_window();
+    let host = window.update(|window, cx| {
+        window.resize(gpui::size(px(1600.), px(1000.)));
+        window.bounds_changed(cx);
+        let views = (0..point.views)
+            .map(|index| {
+                cx.new(|_| View {
+                    index,
+                    revision: 0,
+                    elements: point.elements,
+                    primitives: point.primitives,
+                })
+            })
+            .collect();
+        let dirty_per_update = if point.dirty_percent == 0 {
+            0
+        } else {
+            (point.dirty_percent * point.views).div_ceil(100).max(1)
+        };
+        window.replace_root(cx, |_, _| Host {
+            views,
+            dirty_per_update,
+            next_dirty: 0,
+        })
+    });
+    // The dirty views rotate, so the same nodes are not the changing ones every frame; with
+    // none dirty the host alone is notified and every view is reused.
+    let update = move |host: &mut Host, _: &mut Window, cx: &mut Context<Host>| {
+        for _ in 0..host.dirty_per_update {
+            let view = &host.views[host.next_dirty % host.views.len()];
+            view.update(cx, |view, cx| {
+                view.revision += 1;
+                cx.notify();
+            });
+            host.next_dirty += 1;
+        }
+        cx.notify();
+    };
+    for _ in 0..4 {
+        cx.run_until_idle();
+        window.update(|window, cx| host.update(cx, |host, cx| update(host, window, cx)));
+    }
+    cx.bench_renderer(host, update);
+}
+
 fn init_context(cx: &mut BenchAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
@@ -746,6 +924,7 @@ gpui::bench_group!(
     workbench_render,
     siblings_all_dirty,
     elements_all_dirty,
-    elements_incremental
+    elements_incremental,
+    complexity
 );
 gpui::bench_main!(benches);
