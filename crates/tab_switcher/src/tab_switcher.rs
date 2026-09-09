@@ -11,12 +11,12 @@ use gpui::{
     Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Point,
     Render, Styled, Task, TaskExt, WeakEntity, Window, actions, rems,
 };
-use std::time::Duration;
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
+use std::time::Duration;
 use std::{cmp::Reverse, sync::Arc};
 use ui::{
     DecoratedIcon, IconDecoration, IconDecorationKind, ListItem, ListItemSpacing, Tooltip,
@@ -256,12 +256,7 @@ impl Render for TabSwitcher {
             .on_action(cx.listener(Self::handle_close_selected_item))
             .when(self.visible, |el| el.child(picker.clone()))
             .when(!self.visible, |el| {
-                el.child(
-                    div()
-                        .size_0()
-                        .overflow_hidden()
-                        .child(picker.clone()),
-                )
+                el.child(div().size_0().overflow_hidden().child(picker.clone()))
             })
     }
 }
