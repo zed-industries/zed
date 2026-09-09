@@ -1802,14 +1802,24 @@ impl ConversationView {
                         .entry(self.thread_id)
                         .and_then(|m| m.title_override.clone())
                 });
-                let title = override_title.or_else(|| thread.read(cx).title());
-                if let Some(title) = title
+                let generated_title = thread.read(cx).title();
+                let display_title = override_title.clone().or_else(|| generated_title.clone());
+                if let Some(display_title) = display_title
                     && let Some(active_thread) = self.thread_view(&session_id)
                 {
                     let title_editor = active_thread.read(cx).title_editor.clone();
                     title_editor.update(cx, |editor, cx| {
-                        if editor.text(cx) != title {
-                            editor.set_text(title, window, cx);
+                        if editor.text(cx) != display_title {
+                            editor.set_text(display_title, window, cx);
+                        }
+                    });
+                }
+                if let Some(generated_title) = generated_title
+                    && let Some(store) = ThreadMetadataStore::try_global(cx)
+                {
+                    store.update(cx, |store, cx| {
+                        if override_title.is_none() {
+                            store.set_generated_title(self.thread_id, generated_title, cx);
                         }
                     });
                 }
