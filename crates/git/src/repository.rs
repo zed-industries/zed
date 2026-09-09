@@ -1177,6 +1177,11 @@ pub struct RealGitRepository {
     any_git_binary_help_output: Arc<Mutex<Option<SharedString>>>,
     executor: BackgroundExecutor,
     is_trusted: Arc<AtomicBool>,
+    /// When true, the git directory lives outside the working tree, so every
+    /// command must be told about both explicitly via `GIT_DIR`/`GIT_WORK_TREE`.
+    /// This is used for the checkpoint repositories Zed maintains for projects
+    /// that are not under version control.
+    detached_work_tree: bool,
 }
 
 #[derive(Debug)]
@@ -1266,7 +1271,47 @@ impl RealGitRepository {
             executor,
             any_git_binary_help_output: Arc::new(Mutex::new(None)),
             is_trusted: Arc::new(AtomicBool::new(false)),
+            detached_work_tree: false,
         })
+    }
+
+    /// Opens a checkpoint repository whose git directory (`git_dir`) is stored
+    /// separately from its working tree (`work_directory_abs_path`). The git
+    /// directory is initialized on demand by [`Self::initialize_checkpoint`].
+    pub fn open_checkpoint(
+        git_dir: PathBuf,
+        work_directory_abs_path: PathBuf,
+        bundled_git_binary_path: Option<PathBuf>,
+        system_git_binary_path: Option<PathBuf>,
+        executor: BackgroundExecutor,
+    ) -> Result<Self> {
+        let any_git_binary_path = system_git_binary_path
+            .clone()
+            .or(bundled_git_binary_path)
+            .context("no git binary available")?;
+        Ok(Self {
+            git_dir: git_dir.clone(),
+            common_dir: git_dir,
+            working_directory: Some(work_directory_abs_path),
+            system_git_binary_path,
+            any_git_binary_path,
+            executor,
+            any_git_binary_help_output: Arc::new(Mutex::new(None)),
+            // This repository is created and managed by Zed, so we always trust it.
+            is_trusted: Arc::new(AtomicBool::new(true)),
+            detached_work_tree: true,
+        })
+    }
+
+    /// Initializes the git directory of a checkpoint repository if it does not
+    /// exist yet. Safe to call repeatedly.
+    pub async fn initialize_checkpoint(&self) -> Result<()> {
+        if self.git_dir.join("HEAD").exists() {
+            return Ok(());
+        }
+        let git = self.git_binary_in_worktree()?;
+        git.run(&["init"]).await?;
+        Ok(())
     }
 
     fn working_directory(&self) -> Result<PathBuf> {
@@ -1282,13 +1327,25 @@ impl RealGitRepository {
     }
 
     fn git_binary_in_worktree(&self) -> Result<GitBinary> {
-        Ok(GitBinary::new(
+        let working_directory = self.working_directory()?;
+        let git = GitBinary::new(
             self.any_git_binary_path.clone(),
-            self.working_directory()?,
+            working_directory.clone(),
             self.path(),
             self.executor.clone(),
             self.is_trusted(),
-        ))
+        );
+        if self.detached_work_tree {
+            Ok(git.envs(HashMap::from_iter([
+                ("GIT_DIR".to_owned(), self.git_dir.to_string_lossy().into_owned()),
+                (
+                    "GIT_WORK_TREE".to_owned(),
+                    working_directory.to_string_lossy().into_owned(),
+                ),
+            ])))
+        } else {
+            Ok(git)
+        }
     }
 
     fn git_binary(&self) -> GitBinary {
@@ -3904,7 +3961,7 @@ impl GitBinary {
     }
 
     fn envs(mut self, envs: HashMap<String, String>) -> Self {
-        self.envs = envs;
+        self.envs.extend(envs);
         self
     }
 
@@ -5726,6 +5783,48 @@ mod tests {
         //         .ok(),
         //     None
         // );
+    }
+
+    #[gpui::test]
+    async fn test_checkpoint_detached_work_tree(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        // A working tree that is not itself a git repository.
+        let work_dir = tempfile::tempdir().unwrap();
+        // The git directory lives somewhere else entirely.
+        let git_dir = tempfile::tempdir().unwrap();
+
+        let file_path = work_dir.path().join("file");
+        smol::fs::write(&file_path, "before checkpoint")
+            .await
+            .unwrap();
+
+        let repo = RealGitRepository::open_checkpoint(
+            git_dir.path().join("checkpoint.git"),
+            work_dir.path().to_path_buf(),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        repo.initialize_checkpoint().await.unwrap();
+
+        let checkpoint = repo.checkpoint().await.unwrap();
+
+        smol::fs::write(&file_path, "after checkpoint")
+            .await
+            .unwrap();
+
+        repo.restore_checkpoint(checkpoint).await.unwrap();
+
+        assert_eq!(
+            smol::fs::read_to_string(&file_path).await.unwrap(),
+            "before checkpoint"
+        );
+        // The working tree must stay clean of any git metadata.
+        assert!(!work_dir.path().join(".git").exists());
     }
 
     #[cfg(unix)]

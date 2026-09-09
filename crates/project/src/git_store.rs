@@ -83,6 +83,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
+use sha2::{Digest, Sha256};
 use sum_tree::{Edit, SumTree, TreeMap};
 use task::Shell;
 use text::{Bias, BufferId, OffsetRangeExt, Rope, ToOffset};
@@ -107,6 +108,9 @@ pub struct GitStore {
     parked_repositories: Vec<ParkedRepository>,
     diff_base: GitDiffBaseSetting,
     display_diffs: HashMap<RepositoryId, DisplayDiff>,
+    /// Git directories Zed maintains to checkpoint the agent's edits in
+    /// worktrees that are not under version control, keyed by worktree root.
+    checkpoint_repositories: HashMap<Arc<Path>, Arc<dyn GitRepository>>,
     worktree_ids: HashMap<RepositoryId, HashSet<WorktreeId>>,
     active_repo_id: Option<RepositoryId>,
     #[allow(clippy::type_complexity)]
@@ -1014,6 +1018,7 @@ impl GitStore {
             parked_repositories: Vec::new(),
             diff_base: diff_base_setting,
             display_diffs: HashMap::default(),
+            checkpoint_repositories: HashMap::default(),
             worktree_ids: HashMap::default(),
             active_repo_id: None,
             _subscriptions,
@@ -2130,7 +2135,7 @@ impl GitStore {
         Some(repo.read(cx).status_for_path(&repo_path)?.status)
     }
 
-    pub fn checkpoint(&self, cx: &mut App) -> Task<Result<GitStoreCheckpoint>> {
+    pub fn checkpoint(&mut self, cx: &mut Context<Self>) -> Task<Result<GitStoreCheckpoint>> {
         let mut work_directory_abs_paths = Vec::new();
         let mut checkpoints = Vec::new();
         for repository in self.repositories.values() {
@@ -2140,79 +2145,238 @@ impl GitStore {
             });
         }
 
-        cx.background_executor().spawn(async move {
+        let shadow_repositories = self
+            .worktrees_without_repository(cx)
+            .into_iter()
+            .map(|work_directory_abs_path| {
+                let backend = self.checkpoint_repository(work_directory_abs_path.clone(), cx);
+                (work_directory_abs_path, backend)
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(async move |_, cx| {
             let checkpoints = future::try_join_all(checkpoints).await?;
+            let mut checkpoints_by_work_dir_abs_path = work_directory_abs_paths
+                .into_iter()
+                .zip(checkpoints)
+                .collect::<HashMap<_, _>>();
+
+            for (work_directory_abs_path, backend) in shadow_repositories {
+                // A worktree without a git repository shouldn't prevent
+                // checkpointing the rest of the project, so failures are logged
+                // and skipped rather than propagated.
+                let Some(backend) = backend.await.log_err() else {
+                    continue;
+                };
+                if let Some(checkpoint) = cx
+                    .background_spawn(async move { backend.checkpoint().await })
+                    .await
+                    .log_err()
+                {
+                    checkpoints_by_work_dir_abs_path.insert(work_directory_abs_path, checkpoint);
+                }
+            }
+
             Ok(GitStoreCheckpoint {
-                checkpoints_by_work_dir_abs_path: work_directory_abs_paths
-                    .into_iter()
-                    .zip(checkpoints)
-                    .collect(),
+                checkpoints_by_work_dir_abs_path,
             })
         })
     }
 
     pub fn restore_checkpoint(
-        &self,
+        &mut self,
         checkpoint: GitStoreCheckpoint,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let repositories_by_work_dir_abs_path = self
             .repositories
             .values()
-            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
+            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo.clone()))
             .collect::<HashMap<_, _>>();
 
         let mut tasks = Vec::new();
+        let mut shadow_checkpoints = Vec::new();
         for (work_dir_abs_path, checkpoint) in checkpoint.checkpoints_by_work_dir_abs_path {
             if let Some(repository) = repositories_by_work_dir_abs_path.get(&work_dir_abs_path) {
                 let restore = repository.update(cx, |repository, _| {
                     repository.restore_checkpoint(checkpoint)
                 });
                 tasks.push(async move { restore.await? });
+            } else {
+                shadow_checkpoints.push((work_dir_abs_path, checkpoint));
             }
         }
-        cx.background_spawn(async move {
+
+        let shadow_repositories = shadow_checkpoints
+            .into_iter()
+            .map(|(work_dir_abs_path, checkpoint)| {
+                let backend = self.checkpoint_repository(work_dir_abs_path, cx);
+                (backend, checkpoint)
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(async move |_, cx| {
             future::try_join_all(tasks).await?;
+            for (backend, checkpoint) in shadow_repositories {
+                let backend = backend.await?;
+                cx.background_spawn(async move { backend.restore_checkpoint(checkpoint).await })
+                    .await?;
+            }
             Ok(())
         })
     }
 
     /// Compares two checkpoints, returning true if they are equal.
     pub fn compare_checkpoints(
-        &self,
+        &mut self,
         left: GitStoreCheckpoint,
         mut right: GitStoreCheckpoint,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
         let repositories_by_work_dir_abs_path = self
             .repositories
             .values()
-            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
+            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo.clone()))
             .collect::<HashMap<_, _>>();
 
         let mut tasks = Vec::new();
+        let mut shadow_checkpoints = Vec::new();
         for (work_dir_abs_path, left_checkpoint) in left.checkpoints_by_work_dir_abs_path {
-            if let Some(right_checkpoint) = right
+            let Some(right_checkpoint) = right
                 .checkpoints_by_work_dir_abs_path
                 .remove(&work_dir_abs_path)
-            {
-                if let Some(repository) = repositories_by_work_dir_abs_path.get(&work_dir_abs_path)
-                {
-                    let compare = repository.update(cx, |repository, _| {
-                        repository.compare_checkpoints(left_checkpoint, right_checkpoint)
-                    });
-
-                    tasks.push(async move { compare.await? });
-                }
-            } else {
+            else {
                 return Task::ready(Ok(false));
+            };
+            if let Some(repository) = repositories_by_work_dir_abs_path.get(&work_dir_abs_path) {
+                let compare = repository.update(cx, |repository, _| {
+                    repository.compare_checkpoints(left_checkpoint, right_checkpoint)
+                });
+
+                tasks.push(async move { compare.await? });
+            } else {
+                shadow_checkpoints.push((work_dir_abs_path, left_checkpoint, right_checkpoint));
             }
         }
-        cx.background_spawn(async move {
-            Ok(future::try_join_all(tasks)
+
+        let shadow_repositories = shadow_checkpoints
+            .into_iter()
+            .map(|(work_dir_abs_path, left_checkpoint, right_checkpoint)| {
+                let backend = self.checkpoint_repository(work_dir_abs_path, cx);
+                (backend, left_checkpoint, right_checkpoint)
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(async move |_, cx| {
+            let mut equal = future::try_join_all(tasks)
                 .await?
                 .into_iter()
-                .all(|result| result))
+                .all(|result| result);
+            for (backend, left_checkpoint, right_checkpoint) in shadow_repositories {
+                if !equal {
+                    break;
+                }
+                let backend = backend.await?;
+                equal = cx
+                    .background_spawn(async move {
+                        backend
+                            .compare_checkpoints(left_checkpoint, right_checkpoint)
+                            .await
+                    })
+                    .await?;
+            }
+            Ok(equal)
+        })
+    }
+
+    /// Returns the roots of visible worktrees that are not covered by any git
+    /// repository, so the agent can still checkpoint them.
+    fn worktrees_without_repository(&self, cx: &App) -> Vec<Arc<Path>> {
+        if !matches!(self.state, GitStoreState::Local { .. }) {
+            return Vec::new();
+        }
+        let repository_work_dirs = self
+            .repositories
+            .values()
+            .map(|repo| repo.read(cx).snapshot.work_directory_abs_path.clone())
+            .collect::<Vec<_>>();
+        self.worktree_store
+            .read(cx)
+            .visible_worktrees(cx)
+            .filter_map(|worktree| {
+                let root_dir = worktree.read(cx).root_dir()?;
+                let covered = repository_work_dirs
+                    .iter()
+                    .any(|work_dir| root_dir.starts_with(work_dir.as_ref()));
+                if covered { None } else { Some(root_dir) }
+            })
+            .collect()
+    }
+
+    /// Returns the git directory Zed uses to checkpoint edits in the given
+    /// worktree, creating and initializing it on first use.
+    fn checkpoint_repository(
+        &mut self,
+        work_directory_abs_path: Arc<Path>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Arc<dyn GitRepository>>> {
+        if let Some(backend) = self.checkpoint_repositories.get(&work_directory_abs_path) {
+            return Task::ready(Ok(backend.clone()));
+        }
+        let GitStoreState::Local {
+            fs,
+            project_environment,
+            ..
+        } = &self.state
+        else {
+            return Task::ready(Err(anyhow!(
+                "checkpoints without a git repository are only supported in local projects"
+            )));
+        };
+        let fs = fs.clone();
+        let environment = project_environment.update(cx, |project_environment, cx| {
+            project_environment.local_directory_environment(
+                &Shell::System,
+                work_directory_abs_path.clone(),
+                cx,
+            )
+        });
+        let mut hasher = Sha256::new();
+        hasher.update(work_directory_abs_path.to_string_lossy().as_bytes());
+        let git_dir_abs_path = paths::checkpoints_dir().join(format!("{:x}", hasher.finalize()));
+
+        cx.spawn(async move |this, cx| {
+            let environment = environment.await.unwrap_or_default();
+            let search_paths = environment.get("PATH").map(|value| value.to_owned());
+            let backend = cx
+                .background_spawn({
+                    let fs = fs.clone();
+                    let work_directory_abs_path = work_directory_abs_path.clone();
+                    async move {
+                        let system_git_binary_path = search_paths
+                            .and_then(|search_paths| {
+                                which::which_in(
+                                    "git",
+                                    Some(search_paths),
+                                    work_directory_abs_path.as_ref(),
+                                )
+                                .ok()
+                            })
+                            .or_else(|| which::which("git").ok());
+                        fs.open_checkpoint_repo(
+                            &git_dir_abs_path,
+                            &work_directory_abs_path,
+                            system_git_binary_path.as_deref(),
+                        )
+                        .await
+                    }
+                })
+                .await?;
+            this.update(cx, |this, _| {
+                this.checkpoint_repositories
+                    .insert(work_directory_abs_path, backend.clone());
+                backend
+            })
         })
     }
 
