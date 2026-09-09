@@ -2933,7 +2933,9 @@ impl ConversationView {
         let root_thread = root_thread.read(cx).thread.read(cx);
         let root_thread_id = self.thread_id;
         let root_work_dirs = root_thread.work_dirs().cloned();
-        let root_title = root_thread.title();
+        let root_title = ThreadMetadataStore::try_global(cx)
+            .and_then(|store| store.read(cx).entry(root_thread_id)?.title())
+            .or_else(|| root_thread.title());
 
         let title = root_title
             .clone()
@@ -3693,13 +3695,14 @@ pub(crate) mod tests {
     use action_log::ActionLog;
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
     use agent_servers::FakeAcpAgentServer;
+    use chrono::Utc;
     use editor::MultiBufferOffset;
     use editor::actions::Paste;
     use feature_flags::{AcpBetaFeatureFlag, FeatureFlag as _, FeatureFlagAppExt as _};
     use fs::FakeFs;
     use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, point, size};
     use parking_lot::Mutex;
-    use project::Project;
+    use project::{AgentId as ProjectAgentId, Project, WorktreePaths};
     use serde_json::json;
     use settings::SettingsStore;
     use std::any::Any;
@@ -3711,7 +3714,7 @@ pub(crate) mod tests {
     use crate::agent_panel;
     use crate::completion_provider::AgentContextSource;
     use crate::test_support::register_test_sidebar;
-    use crate::thread_metadata_store::ThreadMetadataStore;
+    use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 
     use super::*;
 
@@ -4097,6 +4100,60 @@ pub(crate) mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some())
         );
+    }
+
+    #[gpui::test]
+    async fn test_notification_uses_renamed_thread_title(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let (thread_id, session_id) = conversation_view.read_with(cx, |view, cx| {
+            let session_id = view
+                .root_thread(cx)
+                .expect("root thread should exist")
+                .read(cx)
+                .session_id()
+                .clone();
+            (view.thread_id, session_id)
+        });
+        cx.update(|_, cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(
+                    ThreadMetadata {
+                        thread_id,
+                        session_id: Some(session_id),
+                        agent_id: ProjectAgentId::new("Test"),
+                        title: Some("Original title".into()),
+                        title_override: Some("Renamed title".into()),
+                        updated_at: Utc::now(),
+                        created_at: Some(Utc::now()),
+                        interacted_at: None,
+                        worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
+                        remote_connection: None,
+                        archived: false,
+                    },
+                    cx,
+                );
+            });
+        });
+
+        message_editor(&conversation_view, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+        cx.deactivate_window();
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        let notification = cx
+            .windows()
+            .iter()
+            .find_map(|window| window.downcast::<AgentNotification>())
+            .expect("notification should be shown");
+        notification.read_with(cx, |notification, _cx| {
+            assert_eq!(notification.title().as_ref(), "Renamed title");
+        });
     }
 
     #[gpui::test]
