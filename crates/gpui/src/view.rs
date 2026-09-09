@@ -367,6 +367,8 @@ struct NodeViewLayout {
     /// Entities read while rendering at layout time. Empty when layout was grafted, since
     /// the node's stored dependencies already cover it.
     accessed_entities: DependencySet,
+    /// The layout-time cache key's text style hash, reused by prepaint's key.
+    text_style_hash: u64,
 }
 
 #[doc(hidden)]
@@ -437,6 +439,7 @@ impl<V: View> Element for ViewElement<V> {
                         node_id,
                         grafted: true,
                         accessed_entities: window.view_tree.take_dependency_set(),
+                        text_style_hash: cache_key.text_style_hash,
                     });
                     (layout, None)
                 } else {
@@ -458,6 +461,7 @@ impl<V: View> Element for ViewElement<V> {
                         node_id,
                         grafted: false,
                         accessed_entities,
+                        text_style_hash: cache_key.text_style_hash,
                     });
                     (layout, Some(element))
                 };
@@ -491,10 +495,12 @@ impl<V: View> Element for ViewElement<V> {
                 node_id,
                 grafted,
                 accessed_entities,
+                text_style_hash,
             } = node_layout;
             // Ambient inputs such as content masks and image caches are pushed during
-            // prepaint, so the key is built here rather than carried over from layout.
-            let cache_key = window.view_node_key(bounds);
+            // prepaint, so the key is built here rather than carried over from layout;
+            // only its text style hash, the costly part, is.
+            let cache_key = window.view_node_key_with_text_style(bounds, text_style_hash);
             let entity_id = self.entity_id.expect("node views have an entity");
             window.set_view_id(entity_id);
             window.enter_node_prepaint(node_id);

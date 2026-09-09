@@ -3633,6 +3633,11 @@ impl Window {
     }
 
     pub(crate) fn view_node_key(&self, bounds: Bounds<Pixels>) -> ViewNodeCacheKey {
+        self.view_node_key_with_text_style(bounds, self.text_style_hash())
+    }
+
+    /// A hash of the composed text style, for [`ViewNodeCacheKey::text_style_hash`].
+    pub(crate) fn text_style_hash(&self) -> u64 {
         // Cache keys do not need a freshly allocated empty font-feature set.
         static DEFAULT_TEXT_STYLE: std::sync::LazyLock<TextStyle> =
             std::sync::LazyLock::new(TextStyle::default);
@@ -3642,10 +3647,21 @@ impl Window {
         }
         let mut hasher = collections::FxHasher::default();
         std::hash::Hash::hash(&text_style, &mut hasher);
+        std::hash::Hasher::finish(&hasher)
+    }
+
+    /// The cache key with a text style hash computed earlier in the frame: the elements
+    /// around a view push the same styles in every phase, so the hash from layout holds
+    /// for prepaint.
+    pub(crate) fn view_node_key_with_text_style(
+        &self,
+        bounds: Bounds<Pixels>,
+        text_style_hash: u64,
+    ) -> ViewNodeCacheKey {
         ViewNodeCacheKey {
             bounds,
             content_mask: self.content_mask(),
-            text_style_hash: std::hash::Hasher::finish(&hasher),
+            text_style_hash,
             rem_size: self.rem_size(),
             scale_factor: self.scale_factor(),
             opacity: self.element_opacity(),
