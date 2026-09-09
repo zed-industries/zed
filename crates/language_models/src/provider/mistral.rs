@@ -367,6 +367,7 @@ pub fn into_mistral(
     model: mistral::Model,
     max_output_tokens: Option<u64>,
 ) -> Result<(mistral::Request, Option<String>)> {
+    let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
     if request.contains_custom_tool_input() {
         anyhow::bail!("Mistral does not support custom tools");
     }
@@ -782,6 +783,22 @@ mod tests {
     use super::*;
     use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
 
+    #[test]
+    fn request_output_limits_reach_mistral_payloads() -> Result<()> {
+        for (limit, expected) in [(None, 4096), (Some(1024), 1024), (Some(8192), 4096)] {
+            let (request, _) = into_mistral(
+                LanguageModelRequest {
+                    max_output_tokens: limit,
+                    ..Default::default()
+                },
+                mistral::Model::MistralSmallLatest,
+                Some(4096),
+            )?;
+            assert_eq!(serde_json::to_value(request)?["max_tokens"], expected);
+        }
+        Ok(())
+    }
+
     fn tool_call_chunk(
         id: Option<&str>,
         name: Option<&str>,
@@ -883,6 +900,7 @@ mod tests {
             thinking_effort: None,
             speed: Default::default(),
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let (mistral_request, affinity) =
@@ -915,6 +933,7 @@ mod tests {
             thinking_effort: None,
             speed: Default::default(),
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let (mistral_request, _) =
@@ -958,6 +977,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let (mistral_request, _) =

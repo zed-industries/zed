@@ -290,6 +290,9 @@ pub fn into_anthropic(
     cache_mode: AnthropicPromptCacheMode,
     compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<crate::Request> {
+    let max_output_tokens = request
+        .max_output_tokens
+        .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
     let mut new_messages: Vec<Message> = Vec::new();
     let mut system_message = String::new();
     let mut any_message_wants_cache = false;
@@ -871,6 +874,26 @@ mod tests {
     }
 
     #[test]
+    fn request_output_limits_reach_anthropic_payloads() -> Result<()> {
+        for (requested, expected) in [(None, 4096), (Some(1024), 1024), (Some(8192), 4096)] {
+            let request = into_anthropic(
+                LanguageModelRequest {
+                    max_output_tokens: requested,
+                    ..Default::default()
+                },
+                "claude-sonnet-4-6".into(),
+                1.0,
+                4096,
+                AnthropicModelMode::Default,
+                AnthropicPromptCacheMode::Automatic,
+                &ANTHROPIC_PROVIDER_ID,
+            )?;
+            assert_eq!(serde_json::to_value(request)?["max_tokens"], expected);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_caching_uses_top_level_auto_and_long_lived_prefix() {
         let request = LanguageModelRequest {
             messages: vec![
@@ -907,6 +930,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1015,6 +1039,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1075,6 +1100,7 @@ mod tests {
             thinking_effort: Some("xhigh".into()),
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1126,6 +1152,7 @@ mod tests {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             };
 
             let anthropic_request = into_anthropic(
@@ -1195,6 +1222,7 @@ mod tests {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             };
 
             let anthropic_request = into_anthropic(
@@ -1261,6 +1289,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1301,6 +1330,7 @@ mod tests {
             thinking_allowed: true,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
         request.messages.push(LanguageModelRequestMessage {
             role: Role::Assistant,

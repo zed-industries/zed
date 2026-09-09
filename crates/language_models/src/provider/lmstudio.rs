@@ -425,7 +425,13 @@ impl LmStudioLanguageModel {
             stream_options: Some(lmstudio::StreamOptions {
                 include_usage: true,
             }),
-            max_tokens: Some(-1),
+            max_tokens: Some(
+                request
+                    .max_output_tokens
+                    .map(i32::try_from)
+                    .transpose()?
+                    .unwrap_or(-1),
+            ),
             stop: Some(request.stop),
             // In LM Studio you can configure specific settings you'd like to use for your model.
             // For example Qwen3 is recommended to be used with 0.7 temperature.

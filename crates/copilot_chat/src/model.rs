@@ -814,6 +814,9 @@ fn into_copilot_chat(
     model: &CopilotChatModel,
     request: LanguageModelRequest,
 ) -> Result<CopilotChatRequest> {
+    let max_tokens = request
+        .max_output_tokens
+        .and_then(|_| request.effective_max_output_tokens(Some(model.max_output_tokens() as u64)));
     let temperature = request.temperature;
     let tool_choice = request.tool_choice;
     let thinking_allowed = request.thinking_allowed;
@@ -1008,6 +1011,7 @@ fn into_copilot_chat(
         temperature: temperature.unwrap_or(0.1),
         model: model.id().to_string(),
         messages,
+        max_tokens,
         tools,
         tool_choice: tool_choice.map(|choice| match choice {
             LanguageModelToolChoice::Auto => ToolChoice::Auto,
@@ -1064,6 +1068,9 @@ fn into_copilot_responses(
 ) -> Result<copilot_responses::Request> {
     use copilot_responses as responses;
 
+    let max_output_tokens = request
+        .max_output_tokens
+        .and_then(|_| request.effective_max_output_tokens(Some(model.max_output_tokens() as u64)));
     let LanguageModelRequest {
         thread_id: _,
         prompt_id: _,
@@ -1077,6 +1084,7 @@ fn into_copilot_responses(
         thinking_effort,
         speed: _,
         compact_at_tokens: _,
+        max_output_tokens: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();
@@ -1255,6 +1263,7 @@ fn into_copilot_responses(
         input: input_items,
         stream: model.uses_streaming(),
         temperature,
+        max_output_tokens,
         tools: converted_tools,
         tool_choice: mapped_tool_choice,
         reasoning: if thinking_allowed {
@@ -1521,6 +1530,32 @@ mod tests {
                 ]
             })]
         );
+    }
+
+    #[test]
+    fn request_output_limits_reach_copilot_payloads() -> Result<()> {
+        let model = test_responses_model();
+        for (limit, expected) in [
+            (None, None),
+            (Some(1024), Some(1024)),
+            (Some(u64::MAX), Some(model.max_output_tokens() as u64)),
+        ] {
+            let request = LanguageModelRequest {
+                max_output_tokens: limit,
+                ..Default::default()
+            };
+            let responses = serde_json::to_value(into_copilot_responses(&model, request.clone())?)?;
+            let chat = serde_json::to_value(into_copilot_chat(&model, request)?)?;
+            assert_eq!(
+                responses.get("max_output_tokens").cloned(),
+                expected.map(|value| json!(value))
+            );
+            assert_eq!(
+                chat.get("max_tokens").cloned(),
+                expected.map(|value| json!(value))
+            );
+        }
+        Ok(())
     }
 
     #[test]

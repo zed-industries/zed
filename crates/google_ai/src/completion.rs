@@ -113,6 +113,10 @@ pub fn into_google(
     }
 
     let thinking_config = thinking_config_for_request(&request, &model_id, mode);
+    let max_output_tokens = request
+        .effective_max_output_tokens(None)
+        .map(usize::try_from)
+        .transpose()?;
 
     let system_instructions = if request
         .messages
@@ -179,7 +183,7 @@ pub fn into_google(
         generation_config: Some(GenerationConfig {
             candidate_count: Some(1),
             stop_sequences: Some(request.stop),
-            max_output_tokens: None,
+            max_output_tokens,
             temperature: request.temperature.map(|t| t as f64),
             thinking_config,
             top_p: None,
@@ -488,6 +492,26 @@ mod tests {
     };
     use language_model_core::{LanguageModelRequestMessage, LanguageModelRequestTool};
     use serde_json::json;
+
+    #[test]
+    fn request_output_limits_reach_google_payloads() -> Result<()> {
+        for limit in [None, Some(0), Some(1024)] {
+            let request = into_google(
+                LanguageModelRequest {
+                    max_output_tokens: limit,
+                    ..Default::default()
+                },
+                "gemini-3.5-flash".into(),
+                GoogleModelMode::Default,
+            )?;
+            let payload = serde_json::to_value(request)?;
+            assert_eq!(
+                payload["generationConfig"].get("maxOutputTokens").cloned(),
+                limit.map(|limit| json!(limit)),
+            );
+        }
+        Ok(())
+    }
 
     fn text_request() -> LanguageModelRequest {
         LanguageModelRequest {

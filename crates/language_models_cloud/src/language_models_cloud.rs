@@ -609,6 +609,11 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         ) && self.model.supports_server_side_compaction
     }
 
+    fn supports_explicit_compaction_output_limit(&self) -> bool {
+        self.model.provider == cloud_llm_client::LanguageModelProvider::Anthropic
+            && self.supports_explicit_compaction()
+    }
+
     fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
         (self.model.provider == cloud_llm_client::LanguageModelProvider::Anthropic
             && self.supports_explicit_compaction())
@@ -687,6 +692,13 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         self.model.max_token_count as u64
     }
 
+    fn max_total_tokens(&self) -> Option<u64> {
+        match self.model.provider {
+            cloud_llm_client::LanguageModelProvider::Anthropic => None,
+            _ => Some(self.max_token_count()),
+        }
+    }
+
     fn max_output_tokens(&self) -> Option<u64> {
         Some(self.model.max_output_tokens as u64)
     }
@@ -710,6 +722,11 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             .boxed();
         }
 
+        let mut request = request;
+        if request.max_output_tokens.is_some() {
+            request.max_output_tokens =
+                request.effective_max_output_tokens(self.max_output_tokens());
+        }
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let app_version = self.app_version.clone();
@@ -1805,10 +1822,19 @@ mod tests {
         let model = cloud_anthropic_test_model(FakeHttpClient::with_404_response());
 
         assert!(model.supports_explicit_compaction());
+        assert!(model.supports_explicit_compaction_output_limit());
         assert_eq!(
             model.minimum_explicit_compaction_input_tokens(),
             Some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
         );
+    }
+
+    #[test]
+    fn cloud_openai_explicit_compaction_does_not_support_output_limits() {
+        let model = cloud_test_model(FakeHttpClient::with_404_response());
+
+        assert!(model.supports_explicit_compaction());
+        assert!(!model.supports_explicit_compaction_output_limit());
     }
 
     fn compact_test_request() -> LanguageModelRequest {

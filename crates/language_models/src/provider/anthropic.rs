@@ -798,6 +798,10 @@ impl LanguageModel for AnthropicModel {
         self.model.supports_compaction
     }
 
+    fn supports_explicit_compaction_output_limit(&self) -> bool {
+        self.supports_explicit_compaction()
+    }
+
     fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
         self.supports_explicit_compaction()
             .then_some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
@@ -879,6 +883,10 @@ impl LanguageModel for AnthropicModel {
 
     fn max_token_count(&self) -> u64 {
         self.model.max_input_tokens
+    }
+
+    fn max_total_tokens(&self) -> Option<u64> {
+        None
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
