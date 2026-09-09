@@ -85,6 +85,7 @@ CREATE TABLE "worktree_entries" (
     "git_status" INTEGER,
     "is_fifo" BOOL NOT NULL,
     "is_unloaded" BOOL NOT NULL DEFAULT FALSE,
+    "is_always_included" BOOL NOT NULL DEFAULT FALSE,
     PRIMARY KEY (project_id, worktree_id, id),
     FOREIGN KEY (project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );

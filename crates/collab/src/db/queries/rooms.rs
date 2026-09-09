@@ -680,6 +680,7 @@ impl Database {
                             size: None,
                             is_fifo: db_entry.is_fifo,
                             is_unloaded: db_entry.is_unloaded,
+                            is_always_included: db_entry.is_always_included,
                         });
                     }
                 }

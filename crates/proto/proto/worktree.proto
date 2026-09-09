@@ -30,6 +30,7 @@ message Entry {
   optional string canonical_path = 12;
   bool is_hidden = 13;
   bool is_unloaded = 14;
+  bool is_always_included = 15;
 }
 
 message AddWorktree {

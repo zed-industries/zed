@@ -170,6 +170,35 @@ impl TestServer {
         self.server.reset(epoch);
     }
 
+    pub async fn create_user(&mut self, name: &str) -> UserId {
+        if let Some(user) = self
+            .app_state
+            .user_service
+            .get_user_by_github_login(name)
+            .await
+            .expect("failed to look up test user")
+        {
+            user.id
+        } else {
+            let github_user_id = self.next_github_user_id;
+            self.next_github_user_id += 1;
+            self.app_state
+                .user_service
+                .as_fake()
+                .create_user(
+                    &format!("{name}@example.com"),
+                    None,
+                    false,
+                    NewUserParams {
+                        github_login: String::from(name),
+                        github_user_id,
+                    },
+                )
+                .await
+                .expect("failed to create test user")
+        }
+    }
+
     pub async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
         const ACCESS_TOKEN: &str = "the-token";
 
@@ -187,30 +216,7 @@ impl TestServer {
 
         let clock = Arc::new(FakeSystemClock::new());
 
-        let user_id = if let Ok(Some(user)) = self
-            .app_state
-            .user_service
-            .get_user_by_github_login(name)
-            .await
-        {
-            user.id
-        } else {
-            let github_user_id = self.next_github_user_id;
-            self.next_github_user_id += 1;
-            self.app_state
-                .user_service
-                .as_fake()
-                .create_user(
-                    &format!("{name}@example.com"),
-                    None,
-                    false,
-                    NewUserParams {
-                        github_login: name.into(),
-                        github_user_id,
-                    },
-                )
-                .await
-        };
+        let user_id = self.create_user(name).await;
 
         let http = FakeHttpClient::create({
             let name = name.to_string();

@@ -18,7 +18,7 @@ use crate::{
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use collections::{HashMap, HashSet};
 use fs::Fs as _;
-use futures::{StreamExt, channel::oneshot};
+use futures::{StreamExt, channel::oneshot, future::Shared};
 use gpui::{
     BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
     VisualTestContext, WindowBounds, WindowOptions, div,
@@ -59,6 +59,7 @@ use settings::{
 use std::{
     borrow::Cow,
     cmp::Ordering,
+    slice,
     sync::{Arc, atomic},
 };
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -46050,4 +46051,892 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
             "a rewrap after release keeps the last settled pair frozen"
         );
     });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_passive_lsp_cold_multibuffer_inclusion_and_cache(cx: &mut TestAppContext) {
+    let fixture = PassiveLspFixture::new(cx).await;
+    let ordinary = fixture.open_buffer(path!("/a/ordinary.rs"), cx).await;
+    let buffer = fixture
+        .open_buffer(path!("/a/generated/sample.rs"), cx)
+        .await;
+    let version = buffer.read_with(cx, |buffer, _| buffer.version());
+    let editor = fixture.editor(&[ordinary, buffer.clone()], 900.0, cx);
+    fixture.settle(cx).await;
+    assert_eq!(
+        fixture.requests(),
+        passive_lsp_requests(&[path!("/a/ordinary.rs")])
+    );
+    editor
+        .update(cx, |editor, _, _| {
+            assert_eq!(editor.registered_buffers.len(), 1)
+        })
+        .expect("editor");
+    assert_passive_lsp_presentation(editor, &buffer, PassiveLspPresentation::default(), cx);
+    set_passive_lsp_file_inclusion(Some("generated-extra/**"), cx);
+    fixture.settle(cx).await;
+    assert_eq!(
+        fixture.requests(),
+        passive_lsp_requests(&[path!("/a/ordinary.rs")])
+    );
+
+    for inclusion in [
+        Some("generated/sample.rs"),
+        None,
+        Some("generated/sample.rs"),
+    ] {
+        set_passive_lsp_file_inclusion(inclusion, cx);
+        fixture.settle(cx).await;
+        assert_eq!(
+            fixture.requests(),
+            passive_lsp_requests(&[path!("/a/ordinary.rs"), path!("/a/generated/sample.rs")])
+        );
+        assert_passive_lsp_presentation(editor, &buffer, PassiveLspPresentation::populated(), cx);
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(editor.registered_buffers.len(), 2);
+                assert_eq!(
+                    editor.is_lsp_relevant(buffer.read(cx).file(), cx),
+                    inclusion.is_some()
+                );
+                assert_eq!(buffer.read(cx).version(), version);
+                assert_eq!(
+                    editor
+                        .selections
+                        .newest_anchor()
+                        .head()
+                        .to_point(&editor.buffer.read(cx).snapshot(cx)),
+                    Point::new(0, 0)
+                );
+            })
+            .expect("editor");
+    }
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_passive_lsp_simultaneous_cold_inclusions(cx: &mut TestAppContext) {
+    let fixture = PassiveLspFixture::new(cx).await;
+    let paths = [
+        path!("/a/ordinary.rs"),
+        path!("/a/generated/sample.rs"),
+        path!("/b/generated/sample.rs"),
+    ];
+    let mut buffers = Vec::new();
+    for path in paths {
+        buffers.push(fixture.open_buffer(path, cx).await);
+    }
+    let editor = fixture.editor(&buffers, 900.0, cx);
+    fixture.settle(cx).await;
+    assert_eq!(fixture.requests(), passive_lsp_requests(&[paths[0]]));
+    set_passive_lsp_file_inclusion(Some("generated/sample.rs"), cx);
+    fixture.settle(cx).await;
+    assert_eq!(fixture.requests(), passive_lsp_requests(&paths));
+    for buffer in &buffers {
+        assert_passive_lsp_presentation(editor, buffer, PassiveLspPresentation::populated(), cx);
+    }
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_passive_lsp_visible_inclusion_preserves_offscreen_activation(
+    cx: &mut TestAppContext,
+) {
+    let fixture = PassiveLspFixture::new(cx).await;
+    let paths = [
+        path!("/a/ordinary.rs"),
+        path!("/a/generated/sample.rs"),
+        path!("/a/generated/sibling.rs"),
+    ];
+    let mut buffers = Vec::new();
+    for path in paths {
+        buffers.push(fixture.open_buffer(path, cx).await);
+    }
+    let editor = fixture.editor(&buffers, 240.0, cx);
+    fixture.settle(cx).await;
+    editor
+        .update(cx, |editor, _, cx| {
+            assert_eq!(editor.visible_buffers(cx), buffers[..2]);
+        })
+        .expect("editor");
+    assert_eq!(fixture.requests(), passive_lsp_requests(&paths[..1]));
+
+    set_passive_lsp_file_inclusion(Some("generated/**"), cx);
+    fixture.settle(cx).await;
+    editor
+        .update(cx, |editor, _, cx| {
+            assert_eq!(editor.visible_buffers(cx), buffers[..2]);
+        })
+        .expect("editor");
+    assert_eq!(fixture.requests(), passive_lsp_requests(&paths[..2]));
+    assert_passive_lsp_presentation(editor, &buffers[1], PassiveLspPresentation::populated(), cx);
+    assert_passive_lsp_presentation(editor, &buffers[2], PassiveLspPresentation::default(), cx);
+
+    VisualTestContext::from_window(*editor, cx).simulate_resize(size(px(1200.0), px(900.0)));
+    fixture.settle(cx).await;
+    editor
+        .update(cx, |editor, _, cx| {
+            assert_eq!(editor.visible_buffers(cx), buffers);
+        })
+        .expect("editor");
+    assert_eq!(fixture.requests(), passive_lsp_requests(&paths));
+    for buffer in &buffers {
+        assert_passive_lsp_presentation(editor, buffer, PassiveLspPresentation::populated(), cx);
+    }
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_passive_lsp_exact_and_glob_inclusion_boundaries(cx: &mut TestAppContext) {
+    let fixture = PassiveLspFixture::new(cx).await;
+    fixture
+        .fs
+        .insert_file(
+            path!("/b/ordinary.rs"),
+            PASSIVE_LSP_SOURCE.as_bytes().to_vec(),
+        )
+        .await;
+    let (_ordinary, _registration) = fixture.registered_buffer(path!("/b/ordinary.rs"), cx).await;
+    let paths = [
+        path!("/a/ordinary.rs"),
+        path!("/a/generated/sample.rs"),
+        path!("/a/generated/sibling.rs"),
+        path!("/a/generated/nested/deep.rs"),
+        path!("/a/generated-extra/sample.rs"),
+        path!("/b/generated/sample.rs"),
+    ];
+    let mut buffers = Vec::new();
+    for path in paths {
+        buffers.push(fixture.open_buffer(path, cx).await);
+    }
+    let editor = fixture.editor(&buffers, 1800.0, cx);
+    fixture.settle(cx).await;
+    assert_eq!(fixture.requests(), passive_lsp_requests(&[paths[0]]));
+    editor
+        .update(cx, |editor, _, _| {
+            assert_eq!(editor.registered_buffers.len(), 1)
+        })
+        .expect("editor");
+    for buffer in &buffers[1..] {
+        assert_passive_lsp_presentation(editor, buffer, PassiveLspPresentation::default(), cx);
+    }
+
+    for (pattern, requested) in [
+        ("generated/sample.rs", vec![paths[0], paths[1], paths[5]]),
+        (
+            "generated/**",
+            vec![paths[0], paths[1], paths[2], paths[3], paths[5]],
+        ),
+    ] {
+        set_passive_lsp_file_inclusion(Some(pattern), cx);
+        fixture.settle(cx).await;
+        assert_eq!(
+            fixture.requests(),
+            passive_lsp_requests(&requested),
+            "{pattern:?}"
+        );
+        for (path, buffer) in paths.iter().zip(&buffers) {
+            let expected = if requested.contains(path) {
+                PassiveLspPresentation::populated()
+            } else {
+                PassiveLspPresentation::default()
+            };
+            assert_passive_lsp_presentation(editor, buffer, expected, cx);
+        }
+    }
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_passive_lsp_held_responses_survive_inclusion_removal(cx: &mut TestAppContext) {
+    let fixture = PassiveLspFixture::new(cx).await;
+    let path = path!("/a/generated/sample.rs");
+    let buffer = fixture.open_buffer(path, cx).await;
+    set_passive_lsp_file_inclusion(Some("generated/sample.rs"), cx);
+    cx.run_until_parked();
+    let release = fixture.hold_responses();
+    let editor = fixture.editor(slice::from_ref(&buffer), 900.0, cx);
+    fixture.settle(cx).await;
+    let expected_requests = passive_lsp_requests(&[path]);
+    assert_eq!(fixture.requests(), expected_requests);
+    assert_passive_lsp_presentation(editor, &buffer, PassiveLspPresentation::default(), cx);
+
+    set_passive_lsp_file_inclusion(None, cx);
+    fixture.settle(cx).await;
+    editor
+        .update(cx, |editor, _, cx| {
+            assert!(!editor.is_lsp_relevant(buffer.read(cx).file(), cx))
+        })
+        .expect("editor");
+    assert_eq!(fixture.requests(), expected_requests);
+    assert_passive_lsp_presentation(editor, &buffer, PassiveLspPresentation::default(), cx);
+    release.send(()).expect("held responses");
+    fixture.settle(cx).await;
+    assert_eq!(fixture.requests(), expected_requests);
+    assert_passive_lsp_presentation(editor, &buffer, PassiveLspPresentation::populated(), cx);
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_passive_lsp_explicit_ignored_refresh_survives_save(cx: &mut TestAppContext) {
+    let fixture = PassiveLspFixture::new(cx).await;
+    let path = path!("/a/generated/sample.rs");
+    let (buffer, _registration) = fixture.registered_buffer(path, cx).await;
+    let editor = fixture.editor(slice::from_ref(&buffer), 900.0, cx);
+    fixture.settle(cx).await;
+    assert_eq!(fixture.requests(), BTreeMap::new());
+    fixture.highlight_requests.lock().clear();
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([Point::new(0, 3)..Point::new(0, 3)]);
+            });
+        })
+        .expect("editor");
+    fixture.settle(cx).await;
+    assert_eq!(
+        *fixture.highlight_requests.lock(),
+        vec![(
+            lsp::Uri::from_file_path(path).expect("URI"),
+            lsp::Position::new(0, 3)
+        )]
+    );
+    let release = fixture.hold_responses();
+    editor
+        .update(cx, |editor, window, cx| {
+            let snapshot = editor.buffer.read(cx).snapshot(cx);
+            assert_eq!(
+                editor
+                    .background_highlights
+                    .get(&HighlightKey::DocumentHighlightRead)
+                    .expect("document highlights")
+                    .1
+                    .iter()
+                    .map(|range| range.to_offset(&snapshot))
+                    .collect::<Vec<_>>(),
+                vec![MultiBufferOffset(3)..MultiBufferOffset(10)]
+            );
+            editor.update_lsp_data(Some(buffer.read(cx).remote_id()), window, cx);
+        })
+        .expect("editor");
+    fixture.settle(cx).await;
+    let mut expected_requests = passive_lsp_requests(&[path]);
+    expected_requests.remove("textDocument/documentSymbol");
+    expected_requests.remove("textDocument/inlayHint");
+    assert_eq!(fixture.requests(), expected_requests);
+    let version = buffer.read_with(cx, |buffer, _| buffer.version());
+    let mut events = cx.events(&buffer);
+    let writes = fixture.fs.write_count_for_path(path);
+    fixture
+        .project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .expect("save");
+    fixture.settle(cx).await;
+    assert_eq!(fixture.fs.write_count_for_path(path), writes + 1);
+    assert_eq!(
+        fixture.fs.load(path.as_ref()).await.expect("saved source"),
+        PASSIVE_LSP_SOURCE
+    );
+    let mut file_changes = 0;
+    while let Some(Some(event)) = events.next().now_or_never() {
+        if let language::BufferEvent::FileHandleChanged = event {
+            file_changes += 1;
+        }
+    }
+    assert_eq!(file_changes, 1);
+    assert_eq!(buffer.read_with(cx, |buffer, _| buffer.version()), version);
+    assert_eq!(fixture.requests(), expected_requests);
+    assert_passive_lsp_presentation(editor, &buffer, PassiveLspPresentation::default(), cx);
+    release.send(()).expect("held responses");
+    fixture.settle(cx).await;
+    let mut expected = PassiveLspPresentation::populated();
+    expected.symbols.clear();
+    expected.hints.clear();
+    expected.cached_hints.clear();
+    assert_eq!(fixture.requests(), expected_requests);
+    assert_passive_lsp_presentation(editor, &buffer, expected, cx);
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_passive_lsp_inclusion_preserves_other_buffer_pending_refresh(
+    cx: &mut TestAppContext,
+) {
+    let fixture = PassiveLspFixture::new(cx).await;
+    let paths = [
+        path!("/a/ordinary.rs"),
+        path!("/a/generated/sample.rs"),
+        path!("/a/generated/sibling.rs"),
+    ];
+    let ordinary = fixture.open_buffer(paths[0], cx).await;
+    let (ignored, _ignored_registration) = fixture.registered_buffer(paths[1], cx).await;
+    let (included, _included_registration) = fixture.registered_buffer(paths[2], cx).await;
+    let editor = fixture.editor(&[ordinary, ignored.clone(), included.clone()], 900.0, cx);
+    editor
+        .update(cx, |editor, _, cx| {
+            for buffer in [&ignored, &included] {
+                editor.register_buffer(buffer.read(cx).remote_id(), cx);
+            }
+        })
+        .expect("editor");
+    fixture.settle(cx).await;
+    assert_eq!(fixture.requests(), passive_lsp_requests(&[paths[0]]));
+
+    let release = fixture.hold_responses();
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.update_lsp_data(Some(ignored.read(cx).remote_id()), window, cx);
+        })
+        .expect("editor");
+    fixture.settle(cx).await;
+    let mut expected_requests = passive_lsp_requests(&paths[..2]);
+    let ignored_uri = lsp::Uri::from_file_path(paths[1]).expect("URI").to_string();
+    for method in ["textDocument/documentSymbol", "textDocument/inlayHint"] {
+        expected_requests
+            .get_mut(method)
+            .expect("method")
+            .retain(|uri| uri != &ignored_uri);
+    }
+    assert_eq!(fixture.requests(), expected_requests);
+    assert_passive_lsp_presentation(editor, &ignored, PassiveLspPresentation::default(), cx);
+
+    *fixture.response_gate.lock() = None;
+    set_passive_lsp_file_inclusion(Some("generated/sibling.rs"), cx);
+    fixture.settle(cx).await;
+    let included_uri = lsp::Uri::from_file_path(paths[2]).expect("URI").to_string();
+    for uris in expected_requests.values_mut() {
+        uris.push(included_uri.clone());
+        uris.sort();
+    }
+    assert_eq!(fixture.requests(), expected_requests);
+    assert_passive_lsp_presentation(editor, &ignored, PassiveLspPresentation::default(), cx);
+    assert_passive_lsp_presentation(editor, &included, PassiveLspPresentation::populated(), cx);
+    release.send(()).expect("held responses");
+    fixture.settle(cx).await;
+    let mut expected = PassiveLspPresentation::populated();
+    expected.symbols.clear();
+    expected.hints.clear();
+    expected.cached_hints.clear();
+    assert_eq!(fixture.requests(), expected_requests);
+    assert_passive_lsp_presentation(editor, &ignored, expected, cx);
+    assert_passive_lsp_presentation(editor, &included, PassiveLspPresentation::populated(), cx);
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_passive_lsp_zero_height_file_change_then_resize(cx: &mut TestAppContext) {
+    let fixture = PassiveLspFixture::new(cx).await;
+    let path = path!("/a/generated/sample.rs");
+    let (buffer, _registration) = fixture.registered_buffer(path, cx).await;
+    let editor = fixture.editor(slice::from_ref(&buffer), 0.0, cx);
+    fixture.settle(cx).await;
+    assert_eq!(fixture.requests(), BTreeMap::new());
+    fixture
+        .fs
+        .insert_file(path!("/a/.gitignore"), b"generated-extra\n".to_vec())
+        .await;
+    fixture.settle(cx).await;
+    assert_eq!(fixture.requests(), BTreeMap::new());
+    editor
+        .update(cx, |editor, _, cx| {
+            assert!(editor.is_lsp_relevant(buffer.read(cx).file(), cx));
+            assert_eq!(editor.visible_line_count(), Some(0.0));
+            assert_eq!(editor.visible_buffers(cx), Vec::<Entity<Buffer>>::new());
+        })
+        .expect("editor");
+    assert_passive_lsp_presentation(editor, &buffer, PassiveLspPresentation::default(), cx);
+    VisualTestContext::from_window(*editor, cx).simulate_resize(size(px(1200.0), px(900.0)));
+    fixture.settle(cx).await;
+    assert_eq!(fixture.requests(), passive_lsp_requests(&[path]));
+    assert_passive_lsp_presentation(editor, &buffer, PassiveLspPresentation::populated(), cx);
+}
+
+const PASSIVE_LSP_SOURCE: &str = "fn compute() {\n    let number = 42;\n}\n";
+const PASSIVE_LSP_METHODS: [&str; 7] = [
+    "textDocument/semanticTokens/full",
+    "textDocument/documentColor",
+    "textDocument/documentLink",
+    "textDocument/foldingRange",
+    "textDocument/codeLens",
+    "textDocument/documentSymbol",
+    "textDocument/inlayHint",
+];
+
+type PassiveLspRequests = BTreeMap<&'static str, Vec<String>>;
+type PassiveLspResponseGate = Arc<Mutex<Option<Shared<oneshot::Receiver<()>>>>>;
+
+struct PassiveLspFixture {
+    project: Entity<Project>,
+    fs: Arc<FakeFs>,
+    requests: Arc<Mutex<PassiveLspRequests>>,
+    highlight_requests: Arc<Mutex<Vec<(lsp::Uri, lsp::Position)>>>,
+    response_gate: PassiveLspResponseGate,
+    _registration: project::lsp_store::OpenLspBufferHandle,
+    _servers: futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer>,
+}
+
+impl PassiveLspFixture {
+    async fn new(cx: &mut TestAppContext) -> Self {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                show_other_hints: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                ..InlayHintSettingsContent::default()
+            });
+            settings.defaults.semantic_tokens = Some(settings::SemanticTokens::Full);
+            settings.defaults.document_folding_ranges = Some(settings::DocumentFoldingRanges::On);
+            settings.defaults.document_symbols = Some(settings::DocumentSymbols::On);
+        });
+        update_test_editor_settings(cx, &|settings| {
+            settings.lsp_document_colors = Some(settings::DocumentColorsRenderMode::Inlay);
+            settings.lsp_document_links = Some(true);
+            settings.code_lens = Some(settings::CodeLens::On);
+            settings.lsp_highlight_debounce = Some(DelayMs(0));
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                ".gitignore": "generated\ngenerated-extra\n",
+                "ordinary.rs": PASSIVE_LSP_SOURCE,
+                "generated": {
+                    "sample.rs": PASSIVE_LSP_SOURCE,
+                    "sibling.rs": PASSIVE_LSP_SOURCE,
+                    "nested": { "deep.rs": PASSIVE_LSP_SOURCE },
+                },
+                "generated-extra": { "sample.rs": PASSIVE_LSP_SOURCE },
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/b"),
+            json!({
+                ".gitignore": "generated\n",
+                "generated": { "sample.rs": PASSIVE_LSP_SOURCE },
+            }),
+        )
+        .await;
+        let project =
+            Project::test(fs.clone(), [path!("/a").as_ref(), path!("/b").as_ref()], cx).await;
+        let languages = project.read_with(cx, |project, _| project.languages().clone());
+        languages.add(rust_lang());
+        let requests = Arc::new(Mutex::new(BTreeMap::new()));
+        let highlight_requests = Arc::new(Mutex::new(Vec::new()));
+        let response_gate = Arc::new(Mutex::new(None));
+        let servers = languages.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: serde_json::from_value(json!({
+                    "inlayHintProvider": true,
+                    "semanticTokensProvider": {
+                        "legend": { "tokenTypes": ["function"], "tokenModifiers": [] },
+                        "full": true,
+                    },
+                    "colorProvider": true,
+                    "documentLinkProvider": { "resolveProvider": false },
+                    "foldingRangeProvider": true,
+                    "codeLensProvider": { "resolveProvider": false },
+                    "executeCommandProvider": { "commands": ["test.references"] },
+                    "documentSymbolProvider": true,
+                    "documentHighlightProvider": true,
+                })).expect("capabilities"),
+                initializer: Some(Box::new({
+                    let requests = requests.clone();
+                    let highlight_requests = highlight_requests.clone();
+                    let response_gate = response_gate.clone();
+                    move |server| {
+                        let uri = lsp::Uri::from_file_path(path!("/a/ordinary.rs")).expect("URI");
+                        let name_range =
+                            lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 10));
+                        record_passive_lsp_requests::<lsp::request::SemanticTokensFullRequest>(
+                            server,
+                            &requests,
+                            &response_gate,
+                            |params| params.text_document.uri,
+                            json!({ "data": [0, 3, 7, 0, 0] }),
+                        );
+                        record_passive_lsp_requests::<lsp::request::DocumentColor>(
+                            server, &requests, &response_gate,
+                            |params| params.text_document.uri,
+                            json!([{ "range": name_range, "color": { "red": 1.0, "green": 0.0, "blue": 0.0, "alpha": 1.0 } }]),
+                        );
+                        record_passive_lsp_requests::<lsp::request::DocumentLinkRequest>(
+                            server, &requests, &response_gate,
+                            |params| params.text_document.uri,
+                            json!([{ "range": name_range, "target": uri }]),
+                        );
+                        record_passive_lsp_requests::<lsp::request::FoldingRangeRequest>(
+                            server, &requests, &response_gate,
+                            |params| params.text_document.uri,
+                            json!([{ "startLine": 0, "startCharacter": 13, "endLine": 2, "endCharacter": 1 }]),
+                        );
+                        record_passive_lsp_requests::<lsp::request::CodeLensRequest>(
+                            server, &requests, &response_gate,
+                            |params| params.text_document.uri,
+                            json!([{ "range": name_range, "command": { "title": "1 reference", "command": "test.references" } }]),
+                        );
+                        record_passive_lsp_requests::<lsp::request::DocumentSymbolRequest>(
+                            server, &requests, &response_gate,
+                            |params| params.text_document.uri,
+                            json!([{
+                                "name": "compute", "kind": 12,
+                                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 2, "character": 1 } },
+                                "selectionRange": name_range,
+                            }]),
+                        );
+                        server.set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>(
+                            {
+                                let highlight_requests = highlight_requests.clone();
+                                move |params, _| {
+                                    highlight_requests.lock().push((
+                                        params.text_document_position_params.text_document.uri,
+                                        params.text_document_position_params.position,
+                                    ));
+                                    async move {
+                                        Ok(Some(vec![lsp::DocumentHighlight {
+                                            range: name_range,
+                                            kind: Some(lsp::DocumentHighlightKind::READ),
+                                        }]))
+                                    }
+                                }
+                            },
+                        );
+
+                        record_passive_lsp_requests::<lsp::request::InlayHintRequest>(
+                            server,
+                            &requests,
+                            &response_gate,
+                            |params| {
+                                assert_eq!(
+                                    params.range,
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 0),
+                                        lsp::Position::new(3, 0)
+                                    )
+                                );
+                                params.text_document.uri
+                            },
+                            json!([{ "position": { "line": 1, "character": 14 }, "label": ": i32" }]),
+                        );
+                    }
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+        let mut events = cx.events(&project);
+        let (_, registration) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/a/ordinary.rs"), cx)
+            })
+            .await
+            .expect("server buffer");
+
+        while !matches!(
+            events.next().await.expect("registration event"),
+            project::Event::LanguageServerBufferRegistered { .. }
+        ) {}
+        cx.run_until_parked();
+        Self {
+            project,
+            fs,
+            requests,
+            highlight_requests,
+            response_gate,
+            _registration: registration,
+            _servers: servers,
+        }
+    }
+
+    async fn open_buffer(&self, path: &str, cx: &mut TestAppContext) -> Entity<Buffer> {
+        let buffer = self
+            .project
+            .update(cx, |project, cx| project.open_local_buffer(path, cx))
+            .await
+            .expect("buffer");
+        cx.run_until_parked();
+        buffer
+    }
+
+    async fn registered_buffer(
+        &self,
+        path: &str,
+        cx: &mut TestAppContext,
+    ) -> (Entity<Buffer>, project::lsp_store::OpenLspBufferHandle) {
+        let mut events = cx.events(&self.project);
+        let (buffer, registration) = self
+            .project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path, cx)
+            })
+            .await
+            .expect("registered buffer");
+        let expected_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+        loop {
+            if let project::Event::LanguageServerBufferRegistered { buffer_id, .. } =
+                events.next().await.expect("registration event")
+                && buffer_id == expected_id
+            {
+                break;
+            }
+        }
+        cx.run_until_parked();
+        (buffer, registration)
+    }
+
+    fn editor(
+        &self,
+        buffers: &[Entity<Buffer>],
+        height: f32,
+        cx: &mut TestAppContext,
+    ) -> gpui::WindowHandle<Editor> {
+        let multi_buffer = cx.new(|cx| {
+            if let [buffer] = buffers {
+                return MultiBuffer::singleton(buffer.clone(), cx);
+            }
+            let mut multi_buffer = MultiBuffer::new(ReadWrite);
+            for (index, buffer) in buffers.iter().enumerate() {
+                let range = Point::new(0, 0)..buffer.read(cx).snapshot().max_point();
+                multi_buffer.set_excerpts_for_path(
+                    PathKey::sorted(index as u64),
+                    buffer.clone(),
+                    [range],
+                    0,
+                    cx,
+                );
+            }
+            multi_buffer
+        });
+        cx.open_window(size(px(1200.0), px(height)), |window, cx| {
+            Editor::for_multibuffer(multi_buffer, Some(self.project.clone()), window, cx)
+        })
+    }
+
+    fn hold_responses(&self) -> oneshot::Sender<()> {
+        let (release, gate) = oneshot::channel();
+        *self.response_gate.lock() = Some(gate.shared());
+        release
+    }
+
+    async fn settle(&self, cx: &mut TestAppContext) {
+        for _ in 0..2 {
+            cx.run_until_parked();
+            cx.executor().timer(LSP_REQUEST_DEBOUNCE_TIMEOUT * 2).await;
+        }
+        cx.run_until_parked();
+    }
+
+    fn requests(&self) -> PassiveLspRequests {
+        let mut requests = self.requests.lock().clone();
+        for uris in requests.values_mut() {
+            uris.sort();
+        }
+        requests
+    }
+}
+
+#[derive(Debug, Default, PartialEq)]
+struct PassiveLspPresentation {
+    semantic_highlights: Vec<Range<Point>>,
+    hints: Vec<(Point, String)>,
+    cached_hints: Vec<(Point, String)>,
+    colors: Vec<gpui::Rgba>,
+    links: Vec<(Range<Point>, Option<String>)>,
+    folding_ranges: Vec<Range<Point>>,
+    code_lens_blocks: usize,
+    symbols: Vec<(String, Range<Point>)>,
+}
+
+impl PassiveLspPresentation {
+    fn populated() -> Self {
+        Self {
+            semantic_highlights: vec![Point::new(0, 3)..Point::new(0, 10)],
+            hints: vec![(Point::new(1, 14), String::from(": i32"))],
+            cached_hints: vec![(Point::new(1, 14), String::from(": i32"))],
+            colors: vec![gpui::Rgba {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            }],
+            links: vec![(
+                Point::new(0, 3)..Point::new(0, 10),
+                Some(
+                    lsp::Uri::from_file_path(path!("/a/ordinary.rs"))
+                        .expect("URI")
+                        .to_string(),
+                ),
+            )],
+            folding_ranges: vec![Point::new(0, 13)..Point::new(2, 1)],
+            code_lens_blocks: 1,
+            symbols: vec![(
+                String::from("fn compute"),
+                Point::new(0, 0)..Point::new(2, 1),
+            )],
+        }
+    }
+}
+
+fn assert_passive_lsp_presentation(
+    editor: gpui::WindowHandle<Editor>,
+    buffer: &Entity<Buffer>,
+    expected: PassiveLspPresentation,
+    cx: &mut TestAppContext,
+) {
+    editor
+        .update(cx, |editor, _, cx| {
+            assert_eq!(buffer.read(cx).text(), PASSIVE_LSP_SOURCE);
+            assert_eq!(passive_lsp_presentation(editor, buffer, cx), expected);
+        })
+        .expect("editor");
+}
+
+fn passive_lsp_requests(paths: &[&str]) -> PassiveLspRequests {
+    let mut uris = paths
+        .iter()
+        .map(|path| lsp::Uri::from_file_path(path).expect("URI").to_string())
+        .collect::<Vec<_>>();
+    uris.sort();
+    PASSIVE_LSP_METHODS
+        .into_iter()
+        .map(|method| (method, uris.clone()))
+        .collect()
+}
+
+fn record_passive_lsp_requests<Request>(
+    server: &lsp::FakeLanguageServer,
+    requests: &Arc<Mutex<PassiveLspRequests>>,
+    response_gate: &PassiveLspResponseGate,
+    uri: fn(Request::Params) -> lsp::Uri,
+    response: serde_json::Value,
+) where
+    Request: lsp::request::Request + 'static,
+    Request::Params: Send + 'static,
+    Request::Result: Clone + Send + 'static,
+{
+    let response = serde_json::from_value::<Request::Result>(response).expect("LSP response");
+    server.set_request_handler::<Request, _, _>({
+        let requests = requests.clone();
+        let response_gate = response_gate.clone();
+        move |params, _| {
+            requests
+                .lock()
+                .entry(Request::METHOD)
+                .or_default()
+                .push(uri(params).to_string());
+            let response = response.clone();
+            let response_gate = response_gate.lock().clone();
+            async move {
+                if let Some(response_gate) = response_gate {
+                    response_gate
+                        .await
+                        .expect("LSP responses should be released");
+                }
+                Ok(response)
+            }
+        }
+    });
+}
+
+fn set_passive_lsp_file_inclusion(inclusion: Option<&str>, cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_inclusions =
+                    Some(inclusion.into_iter().map(String::from).collect());
+            });
+        });
+    });
+}
+
+fn passive_lsp_presentation(
+    editor: &mut Editor,
+    buffer: &Entity<Buffer>,
+    cx: &mut Context<Editor>,
+) -> PassiveLspPresentation {
+    let snapshot = editor.display_snapshot(cx);
+    let buffer_entity = buffer.clone();
+    let buffer = buffer.read(cx).snapshot();
+    let buffer_id = buffer.remote_id();
+    let to_buffer_range = |range: &Range<Anchor>| {
+        let start = range.start.raw_text_anchor().expect("LSP range start");
+        let end = range.end.raw_text_anchor().expect("LSP range end");
+        (start..end).to_point(&buffer)
+    };
+    PassiveLspPresentation {
+        semantic_highlights: editor
+            .display_map
+            .read(cx)
+            .semantic_token_highlights
+            .get(&buffer_id)
+            .into_iter()
+            .flat_map(|(highlights, _)| highlights.iter())
+            .map(|highlight| to_buffer_range(&highlight.range))
+            .collect(),
+        hints: editor
+            .all_inlays(cx)
+            .into_iter()
+            .filter(|hint| matches!(hint.id, project::InlayId::Hint(_)))
+            .filter(|hint| hint.position.buffer_id() == Some(buffer_id))
+            .map(|hint| {
+                (
+                    hint.position
+                        .raw_text_anchor()
+                        .expect("hint anchor")
+                        .to_point(&buffer),
+                    hint.text().to_string(),
+                )
+            })
+            .collect(),
+        cached_hints: editor
+            .project()
+            .expect("project")
+            .read(cx)
+            .lsp_store()
+            .update(cx, |store, cx| {
+                store
+                    .latest_lsp_data(&buffer_entity, cx)
+                    .inlay_hints()
+                    .all_cached_hints()
+                    .into_iter()
+                    .map(|hint| (hint.position.to_point(&buffer), hint.text().to_string()))
+                    .collect()
+            }),
+        colors: editor
+            .all_inlays(cx)
+            .into_iter()
+            .filter(|inlay| inlay.position.buffer_id() == Some(buffer_id))
+            .filter_map(|inlay| inlay.get_color())
+            .map(gpui::Rgba::from)
+            .collect(),
+        links: editor
+            .lsp_document_links
+            .per_buffer
+            .get(&buffer_id)
+            .into_iter()
+            .flat_map(|servers| servers.values())
+            .flat_map(|links| links.values())
+            .map(|link| {
+                (
+                    link.range.to_point(&buffer),
+                    link.target.as_ref().map(ToString::to_string),
+                )
+            })
+            .collect(),
+        folding_ranges: snapshot
+            .crease_snapshot
+            .creases()
+            .filter(|(_, crease)| crease.range().start.buffer_id() == Some(buffer_id))
+            .map(|(_, crease)| to_buffer_range(crease.range()))
+            .collect(),
+        code_lens_blocks: editor
+            .code_lens
+            .as_ref()
+            .and_then(|state| state.blocks.get(&buffer_id))
+            .map_or(0, Vec::len),
+        symbols: editor
+            .lsp_document_symbols
+            .get(&buffer_id)
+            .into_iter()
+            .flatten()
+            .map(|symbol| (symbol.text.to_string(), symbol.range.to_point(&buffer)))
+            .collect(),
+    }
 }

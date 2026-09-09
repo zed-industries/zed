@@ -1,8 +1,6 @@
 use std::ops::Range;
 
-use collections::HashMap;
 use futures::FutureExt;
-use futures::future::join_all;
 use gpui::{App, Context, HighlightStyle, Task};
 use itertools::Itertools as _;
 use language::language_settings::LanguageSettings;
@@ -33,9 +31,11 @@ impl Editor {
         };
 
         if lsp_symbols_enabled(buffer.read(cx), cx) {
-            let refresh_task = self.refresh_document_symbols_task.clone();
+            let refresh_task = self.refresh_document_symbols_tasks.get(&buffer_id).cloned();
             cx.spawn(async move |editor, cx| {
-                refresh_task.await;
+                if let Some(refresh_task) = refresh_task {
+                    refresh_task.await;
+                }
                 editor
                     .read_with(cx, |editor, _| {
                         editor
@@ -184,64 +184,58 @@ impl Editor {
             self.refresh_outline_symbols_at_cursor(cx);
         }
 
-        if buffers_to_query.is_empty() {
-            return;
-        }
+        for buffer in buffers_to_query {
+            let buffer_id = buffer.read(cx).remote_id();
+            let task = cx
+                .spawn({
+                    let project = project.clone();
+                    async move |editor, cx| {
+                        cx.background_executor()
+                            .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
+                            .await;
 
-        self.refresh_document_symbols_task = cx
-            .spawn(async move |editor, cx| {
-                cx.background_executor()
-                    .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
-                    .await;
-
-                let Some(tasks) = project
-                    .update(cx, |project, cx| {
-                        project.lsp_store().update(cx, |lsp_store, cx| {
-                            buffers_to_query
-                                .into_iter()
-                                .map(|buffer| {
-                                    let buffer_id = buffer.read(cx).remote_id();
-                                    let task = lsp_store.fetch_document_symbols(&buffer, cx);
-                                    async move { (buffer_id, task.await) }
+                        let Some(task) = project
+                            .update(cx, |project, cx| {
+                                project.lsp_store().update(cx, |lsp_store, cx| {
+                                    lsp_store.fetch_document_symbols(&buffer, cx)
                                 })
-                                .collect::<Vec<_>>()
-                        })
-                    })
-                    .ok()
-                else {
-                    return;
-                };
+                            })
+                            .ok()
+                        else {
+                            return;
+                        };
 
-                let results = join_all(tasks).await.into_iter().collect::<HashMap<_, _>>();
-                editor
-                    .update(cx, |editor, cx| {
-                        let syntax = cx.theme().syntax().clone();
-                        let display_snapshot =
-                            editor.display_map.update(cx, |map, cx| map.snapshot(cx));
-                        let mut highlighted_results = results;
-                        for (buffer_id, items) in highlighted_results.iter_mut() {
-                            let language = editor
-                                .buffer
-                                .read(cx)
-                                .buffer(*buffer_id)
-                                .and_then(|buffer| buffer.read(cx).language().cloned());
-                            for item in items {
-                                if let Some(highlights) =
-                                    highlights_from_buffer(&display_snapshot, &item, &syntax)
-                                {
-                                    item.highlight_ranges = highlights;
-                                } else if let Some(language) = &language {
-                                    item.highlight_ranges =
-                                        highlight_ranges_from_text(&item.text, language, &syntax);
+                        let mut items = task.await;
+                        editor
+                            .update(cx, |editor, cx| {
+                                let syntax = cx.theme().syntax().clone();
+                                let display_snapshot =
+                                    editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+                                let language = editor
+                                    .buffer
+                                    .read(cx)
+                                    .buffer(buffer_id)
+                                    .and_then(|buffer| buffer.read(cx).language().cloned());
+                                for item in &mut items {
+                                    if let Some(highlights) =
+                                        highlights_from_buffer(&display_snapshot, &item, &syntax)
+                                    {
+                                        item.highlight_ranges = highlights;
+                                    } else if let Some(language) = &language {
+                                        item.highlight_ranges = highlight_ranges_from_text(
+                                            &item.text, language, &syntax,
+                                        );
+                                    }
                                 }
-                            }
-                        }
-                        editor.lsp_document_symbols.extend(highlighted_results);
-                        editor.refresh_outline_symbols_at_cursor(cx);
-                    })
-                    .ok();
-            })
-            .shared();
+                                editor.lsp_document_symbols.insert(buffer_id, items);
+                                editor.refresh_outline_symbols_at_cursor(cx);
+                            })
+                            .ok();
+                    }
+                })
+                .shared();
+            self.refresh_document_symbols_tasks.insert(buffer_id, task);
+        }
     }
 }
 

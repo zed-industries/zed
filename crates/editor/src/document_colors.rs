@@ -1,7 +1,6 @@
 use std::{cmp, ops::Range};
 
 use collections::HashMap;
-use futures::future::join_all;
 use gpui::{Hsla, Rgba};
 use itertools::Itertools;
 use language::range_from_lsp;
@@ -156,6 +155,7 @@ impl Editor {
             .as_ref()
             .is_none_or(|colors| colors.render_mode == DocumentColorsRenderMode::None)
         {
+            self.refresh_colors_tasks.clear();
             return;
         }
 
@@ -173,98 +173,77 @@ impl Editor {
             .collect::<Vec<_>>();
 
         let project = project.downgrade();
-        self.refresh_colors_task = cx.spawn(async move |editor, cx| {
-            cx.background_executor()
-                .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
-                .await;
+        for buffer in buffers_to_query {
+            let buffer_id = buffer.read(cx).remote_id();
+            let project = project.clone();
+            let task = cx.spawn(async move |editor, cx| {
+                cx.background_executor()
+                    .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
+                    .await;
 
-            let Some(all_colors_task) = project
-                .update(cx, |project, cx| {
-                    project.lsp_store().update(cx, |lsp_store, cx| {
-                        buffers_to_query
-                            .into_iter()
-                            .filter_map(|buffer| {
-                                let buffer_snapshot = buffer.read(cx).snapshot();
-                                let colors_task = lsp_store.document_colors(buffer, cx)?;
-                                Some(async move { (buffer_snapshot, colors_task.await) })
-                            })
-                            .collect::<Vec<_>>()
+                let Some((buffer_snapshot, colors_task)) = project
+                    .update(cx, |project, cx| {
+                        project.lsp_store().update(cx, |lsp_store, cx| {
+                            let buffer_snapshot = buffer.read(cx).snapshot();
+                            let colors_task = lsp_store.document_colors(buffer, cx)?;
+                            Some((buffer_snapshot, colors_task))
+                        })
                     })
-                })
-                .ok()
-            else {
-                return;
-            };
+                    .ok()
+                    .flatten()
+                else {
+                    return;
+                };
 
-            let all_colors = join_all(all_colors_task).await;
-            if all_colors.is_empty() {
-                return;
-            }
-            let Some(multi_buffer_snapshot) = editor
-                .update(cx, |editor, cx| editor.buffer.read(cx).snapshot(cx))
-                .ok()
-            else {
-                return;
-            };
-
-            let mut new_editor_colors: HashMap<BufferId, Vec<(Range<Anchor>, DocumentColor)>> =
-                HashMap::default();
-            for (buffer_snapshot, colors) in all_colors {
-                match colors {
-                    Ok(colors) => {
-                        if colors.colors.is_empty() {
-                            new_editor_colors
-                                .entry(buffer_snapshot.remote_id())
-                                .or_insert_with(Vec::new)
-                                .clear();
-                        } else {
-                            for color in colors.colors {
-                                let color_range = range_from_lsp(color.lsp_range);
-                                let color_start = color_range.start;
-                                let color_end = color_range.end;
-
-                                let Some(range) = multi_buffer_snapshot
-                                    .buffer_anchor_range_to_anchor_range(
-                                        buffer_snapshot.anchor_range_outside(
-                                            buffer_snapshot
-                                                .clip_point_utf16(color_start, Bias::Left)
-                                                ..buffer_snapshot
-                                                    .clip_point_utf16(color_end, Bias::Right),
-                                        ),
-                                    )
-                                else {
-                                    continue;
-                                };
-
-                                let new_buffer_colors = new_editor_colors
-                                    .entry(buffer_snapshot.remote_id())
-                                    .or_insert_with(Vec::new);
-
-                                let (Ok(i) | Err(i)) =
-                                    new_buffer_colors.binary_search_by(|(probe, _)| {
-                                        probe
-                                            .start
-                                            .cmp(&range.start, &multi_buffer_snapshot)
-                                            .then_with(|| {
-                                                probe.end.cmp(&range.end, &multi_buffer_snapshot)
-                                            })
-                                    });
-                                new_buffer_colors.insert(i, (range, color));
-                            }
-                        }
-                    }
-                    Err(e) => log::error!("Failed to retrieve document colors: {e}"),
-                }
-            }
-
-            editor
-                .update(cx, |editor, cx| {
-                    let mut colors_splice = InlaySplice::default();
-                    let Some(colors) = &mut editor.colors else {
+                let colors = match colors_task.await {
+                    Ok(colors) => colors,
+                    Err(error) => {
+                        log::error!("Failed to retrieve document colors: {error}");
                         return;
+                    }
+                };
+                let Some(multi_buffer_snapshot) = editor
+                    .update(cx, |editor, cx| editor.buffer.read(cx).snapshot(cx))
+                    .ok()
+                else {
+                    return;
+                };
+
+                let clear_colors = colors.colors.is_empty();
+                let mut new_buffer_colors = Vec::<(Range<Anchor>, DocumentColor)>::new();
+                for color in colors.colors {
+                    let color_range = range_from_lsp(color.lsp_range);
+                    let color_start = color_range.start;
+                    let color_end = color_range.end;
+
+                    let Some(range) = multi_buffer_snapshot.buffer_anchor_range_to_anchor_range(
+                        buffer_snapshot.anchor_range_outside(
+                            buffer_snapshot.clip_point_utf16(color_start, Bias::Left)
+                                ..buffer_snapshot.clip_point_utf16(color_end, Bias::Right),
+                        ),
+                    ) else {
+                        continue;
                     };
-                    let mut updated = false;
-                    for (buffer_id, new_buffer_colors) in new_editor_colors {
+
+                    let (Ok(index) | Err(index)) =
+                        new_buffer_colors.binary_search_by(|(probe, _)| {
+                            probe
+                                .start
+                                .cmp(&range.start, &multi_buffer_snapshot)
+                                .then_with(|| probe.end.cmp(&range.end, &multi_buffer_snapshot))
+                        });
+                    new_buffer_colors.insert(index, (range, color));
+                }
+                if new_buffer_colors.is_empty() && !clear_colors {
+                    return;
+                }
+
+                editor
+                    .update(cx, |editor, cx| {
+                        let mut colors_splice = InlaySplice::default();
+                        let Some(colors) = &mut editor.colors else {
+                            return;
+                        };
                         let mut new_buffer_color_inlays =
                             Vec::with_capacity(new_buffer_colors.len());
                         let mut existing_buffer_colors = colors
@@ -358,22 +337,27 @@ impl Editor {
                                 .to_remove
                                 .extend(existing_buffer_colors.map(|(_, _, id)| *id));
                         }
-                        updated |= colors.set_colors(buffer_id, new_buffer_color_inlays);
-                    }
+                        let mut updated = colors.set_colors(buffer_id, new_buffer_color_inlays);
 
-                    if colors.render_mode == DocumentColorsRenderMode::Inlay
-                        && !colors_splice.is_empty()
-                    {
-                        editor.splice_inlays(&colors_splice.to_remove, colors_splice.to_insert, cx);
-                        updated = true;
-                    }
+                        if colors.render_mode == DocumentColorsRenderMode::Inlay
+                            && !colors_splice.is_empty()
+                        {
+                            editor.splice_inlays(
+                                &colors_splice.to_remove,
+                                colors_splice.to_insert,
+                                cx,
+                            );
+                            updated = true;
+                        }
 
-                    if updated {
-                        cx.notify();
-                    }
-                })
-                .ok();
-        });
+                        if updated {
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+            });
+            self.refresh_colors_tasks.insert(buffer_id, task);
+        }
     }
 }
 

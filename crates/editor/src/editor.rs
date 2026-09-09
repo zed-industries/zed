@@ -1163,6 +1163,8 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: TypeIdHashMap<Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
+    lsp_relevant_buffers: HashSet<BufferId>,
+    pending_lsp_buffer_refreshes: HashSet<BufferId>,
     language_detection_task: Task<()>,
     load_diff_task: Option<Shared<Task<()>>>,
     diff_hunk_renderer: Option<Arc<dyn DiffHunkRenderer>>,
@@ -1181,10 +1183,10 @@ pub struct Editor {
     colors: Option<LspColorData>,
     code_lens: Option<CodeLensState>,
     post_scroll_update: Task<()>,
-    refresh_colors_task: Task<()>,
-    refresh_code_lens_task: Task<()>,
+    refresh_colors_tasks: HashMap<BufferId, Task<()>>,
+    refresh_code_lens_tasks: HashMap<BufferId, Task<()>>,
     use_document_folding_ranges: bool,
-    refresh_folding_ranges_task: Task<()>,
+    refresh_folding_ranges_tasks: HashMap<BufferId, Task<()>>,
     inlay_hints: Option<LspInlayHintData>,
     folding_newlines: Task<()>,
     select_next_is_case_sensitive: Option<bool>,
@@ -1197,7 +1199,7 @@ pub struct Editor {
     bracket_fetched_tree_sitter_chunks: HashMap<Range<text::Anchor>, HashSet<Range<BufferRow>>>,
     semantic_token_state: SemanticTokenState,
     pub(crate) refresh_matching_bracket_highlights_task: Task<()>,
-    refresh_document_symbols_task: Shared<Task<()>>,
+    refresh_document_symbols_tasks: HashMap<BufferId, Shared<Task<()>>>,
     lsp_document_links: LspDocumentLinks,
     lsp_document_symbols: HashMap<BufferId, Vec<OutlineItem<text::Anchor>>>,
     refresh_outline_symbols_at_cursor_at_cursor_task: Task<()>,
@@ -2050,6 +2052,29 @@ impl Editor {
                 project,
                 window,
                 |editor, _, event, window, cx| match event {
+                    project::Event::WorktreeUpdatedEntries(worktree_id, changes) => {
+                        let mut buffer_paths = HashSet::default();
+                        let mut buffer_entry_ids = HashSet::default();
+                        for buffer in editor.buffer.read(cx).all_buffers_iter() {
+                            if let Some(file) = project::File::from_dyn(buffer.read(cx).file())
+                                && file.worktree_id(cx) == *worktree_id
+                            {
+                                buffer_paths.insert(file.path.clone());
+                                buffer_entry_ids.extend(file.project_entry_id());
+                            }
+                        }
+                        if !buffer_paths.is_empty()
+                            && changes.iter().any(|(path, entry_id, _)| {
+                                buffer_paths.contains(path) || buffer_entry_ids.contains(entry_id)
+                            })
+                        {
+                            editor.refresh_lsp_data_for_file_changes(window, cx);
+                        }
+                    }
+
+                    project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
+                        editor.refresh_lsp_data_for_file_changes(window, cx);
+                    }
                     project::Event::RefreshCodeLens { .. } => {
                         editor.refresh_code_lenses(None, window, cx);
                     }
@@ -2500,10 +2525,10 @@ impl Editor {
             pull_diagnostics_task: Task::ready(()),
             colors: None,
             code_lens: None,
-            refresh_colors_task: Task::ready(()),
-            refresh_code_lens_task: Task::ready(()),
+            refresh_colors_tasks: HashMap::default(),
+            refresh_code_lens_tasks: HashMap::default(),
             use_document_folding_ranges: false,
-            refresh_folding_ranges_task: Task::ready(()),
+            refresh_folding_ranges_tasks: HashMap::default(),
             inlay_hints: None,
             next_color_inlay_id: 0,
             post_scroll_update: Task::ready(()),
@@ -2515,6 +2540,8 @@ impl Editor {
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: Default::default(),
             registered_buffers: HashMap::default(),
+            lsp_relevant_buffers: HashSet::default(),
+            pending_lsp_buffer_refreshes: HashSet::default(),
             language_detection_task: Task::ready(()),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
@@ -2540,7 +2567,7 @@ impl Editor {
             bracket_fetched_tree_sitter_chunks: HashMap::default(),
             number_deleted_lines: false,
             refresh_matching_bracket_highlights_task: Task::ready(()),
-            refresh_document_symbols_task: Task::ready(()).shared(),
+            refresh_document_symbols_tasks: HashMap::default(),
             lsp_document_links: LspDocumentLinks::new(cx),
             lsp_document_symbols: HashMap::default(),
             refresh_outline_symbols_at_cursor_at_cursor_task: Task::ready(()),
@@ -2691,6 +2718,7 @@ impl Editor {
             if let Some(buffer) = multi_buffer.read(cx).as_singleton() {
                 editor.register_buffer(buffer.read(cx).remote_id(), cx);
             }
+            editor.lsp_relevant_buffers = editor.collect_lsp_relevant_buffers(cx);
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
 
@@ -9988,6 +10016,11 @@ impl Editor {
                     self.update_uncommitted_diff_for_buffer(&project, [buffer.clone()], cx)
                         .detach();
                 }
+                if self.is_lsp_relevant(buffer.read(cx).file(), cx) {
+                    self.lsp_relevant_buffers.insert(buffer_id);
+                } else {
+                    self.lsp_relevant_buffers.remove(&buffer_id);
+                }
                 self.register_visible_buffers(cx);
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
@@ -10013,8 +10046,15 @@ impl Editor {
                 );
                 for buffer_id in removed_buffer_ids {
                     self.registered_buffers.remove(buffer_id);
+                    self.lsp_relevant_buffers.remove(buffer_id);
+                    self.pending_lsp_buffer_refreshes.remove(buffer_id);
+                    self.refresh_colors_tasks.remove(buffer_id);
+                    self.refresh_code_lens_tasks.remove(buffer_id);
+                    self.refresh_folding_ranges_tasks.remove(buffer_id);
+                    self.refresh_document_symbols_tasks.remove(buffer_id);
+                    self.lsp_document_links.refresh_tasks.remove(buffer_id);
                     self.clear_runnables(Some(*buffer_id));
-                    self.semantic_token_state.invalidate_buffer(buffer_id);
+                    self.semantic_token_state.remove_buffer(buffer_id);
                     self.lsp_document_symbols.remove(buffer_id);
                     self.lsp_document_links.per_buffer.remove(buffer_id);
                     self.display_map.update(cx, |display_map, cx| {
@@ -10081,6 +10121,7 @@ impl Editor {
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
             multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
             multi_buffer::Event::FileHandleChanged => {
+                self.refresh_lsp_data_for_file_changes(window, cx);
                 cx.emit(EditorEvent::TitleChanged);
                 cx.emit(EditorEvent::FileHandleChanged);
             }
@@ -10289,7 +10330,7 @@ impl Editor {
                     self.refresh_document_links(None, cx);
                 } else {
                     self.lsp_document_links.per_buffer.clear();
-                    self.lsp_document_links.refresh_task = Task::ready(());
+                    self.lsp_document_links.refresh_tasks.clear();
                 }
             }
 
@@ -11246,6 +11287,44 @@ impl Editor {
         self.refresh_document_symbols(for_buffer, cx);
     }
 
+    fn refresh_lsp_data_for_file_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.lsp_data_enabled() {
+            return;
+        }
+
+        let relevant_buffers = self.collect_lsp_relevant_buffers(cx);
+        let previously_relevant_buffers =
+            mem::replace(&mut self.lsp_relevant_buffers, relevant_buffers);
+        self.pending_lsp_buffer_refreshes
+            .retain(|buffer_id| self.lsp_relevant_buffers.contains(buffer_id));
+        let newly_relevant_buffers = self
+            .lsp_relevant_buffers
+            .difference(&previously_relevant_buffers)
+            .copied()
+            .collect::<Vec<_>>();
+        self.pending_lsp_buffer_refreshes
+            .extend(newly_relevant_buffers.iter().copied());
+        self.invalidate_runnables_for_buffers(newly_relevant_buffers);
+        if self.visible_buffers(cx).into_iter().any(|buffer| {
+            self.pending_lsp_buffer_refreshes
+                .contains(&buffer.read(cx).remote_id())
+        }) {
+            self.do_update_data_on_scroll(window, cx);
+        }
+    }
+
+    fn collect_lsp_relevant_buffers(&self, cx: &App) -> HashSet<BufferId> {
+        self.buffer
+            .read(cx)
+            .all_buffers_iter()
+            .filter_map(|buffer| {
+                let buffer = buffer.read(cx);
+                self.is_lsp_relevant(buffer.file(), cx)
+                    .then_some(buffer.remote_id())
+            })
+            .collect()
+    }
+
     fn is_eligible_for_language_detection(buffer: &Buffer) -> bool {
         buffer.file().is_none()
             && buffer.content_language_detection_enabled()
@@ -11468,8 +11547,21 @@ impl Editor {
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
         self.resolve_visible_code_lenses(cx);
 
-        if !self.buffer().read(cx).is_singleton() || self.needs_initial_data_update {
+        let visible_buffers = self.visible_buffers(cx);
+        let has_pending_refresh = visible_buffers.iter().any(|buffer| {
+            self.pending_lsp_buffer_refreshes
+                .contains(&buffer.read(cx).remote_id())
+        });
+        if (!self.buffer().read(cx).is_singleton()
+            || self.needs_initial_data_update
+            || has_pending_refresh)
+            && !visible_buffers.is_empty()
+        {
             self.needs_initial_data_update = false;
+            for buffer in visible_buffers {
+                self.pending_lsp_buffer_refreshes
+                    .remove(&buffer.read(cx).remote_id());
+            }
             self.update_lsp_data(None, window, cx);
             self.refresh_runnables(None, window, cx);
         }

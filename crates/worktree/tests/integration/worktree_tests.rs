@@ -3,6 +3,7 @@ mod worktree_settings_tests;
 use anyhow::Result;
 use encoding_rs;
 use fs::{FakeFs, Fs, PathEventKind, RealFs, RemoveOptions};
+use futures::poll;
 use git::{DOT_GIT, GITIGNORE, REPO_EXCLUDE};
 use gpui::{
     AppContext as _, BackgroundExecutor, BorrowAppContext, Context, Entity, Task, TestAppContext,
@@ -2680,11 +2681,8 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         let snapshot = Arc::new(Mutex::new(tree.snapshot()));
         tree.observe_updates(0, cx, {
             let snapshot = snapshot.clone();
-            let settings = tree.settings();
             move |update| {
-                snapshot
-                    .lock()
-                    .apply_remote_update(update, &settings.file_scan_inclusions);
+                snapshot.lock().apply_remote_update(update);
                 async { true }
             }
         });
@@ -3117,14 +3115,11 @@ async fn test_random_worktree_operations_during_initial_scan(
         snapshot
     });
 
-    let settings = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().settings());
-
     for (i, snapshot) in snapshots.into_iter().enumerate().rev() {
         let mut updated_snapshot = snapshot.clone();
         for update in updates.lock().iter() {
             if update.scan_id >= updated_snapshot.scan_id() as u64 {
-                updated_snapshot
-                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions);
+                updated_snapshot.apply_remote_update(update.clone());
             }
         }
 
@@ -3269,12 +3264,10 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         );
     }
 
-    let settings = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().settings());
-
     for (i, mut prev_snapshot) in snapshots.into_iter().enumerate().rev() {
         for update in updates.lock().iter() {
             if update.scan_id >= prev_snapshot.scan_id() as u64 {
-                prev_snapshot.apply_remote_update(update.clone(), &settings.file_scan_inclusions);
+                prev_snapshot.apply_remote_update(update.clone());
             }
         }
 
@@ -6082,6 +6075,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                     size: None,
                     canonical_path: None,
                     is_unloaded: false,
+                    is_always_included: false,
                 }],
                 removed_entries: vec![],
                 scan_id: 1,
@@ -6177,6 +6171,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                     size: None,
                     canonical_path: None,
                     is_unloaded: false,
+                    is_always_included: false,
                 }],
                 removed_entries: vec![],
                 scan_id: 1,
@@ -7094,6 +7089,312 @@ async fn test_file_scan_depth_git_init_above_deferred_dirs(cx: &mut TestAppConte
     });
 }
 
+#[gpui::test]
+async fn test_remote_worktree_file_scan_inclusions_host_only(
+    host_cx: &mut TestAppContext,
+    receiver_cx: &mut TestAppContext,
+) {
+    let host = build_inclusion_host(
+        &["keep.rs", "vendor/keep.rs", "vendor/excluded.rs"],
+        &["vendor/excluded.rs"],
+        host_cx,
+    )
+    .await;
+    let receiver = build_inclusion_receiver(&[], receiver_cx);
+    let updates = observe_worktree_updates(&host, host_cx);
+    relay_worktree_updates(&receiver, &updates, host_cx, receiver_cx);
+
+    for (path, expected) in [
+        ("keep.rs", (true, true)),
+        ("other.rs", (true, false)),
+        ("vendor", (false, true)),
+        ("vendor/keep.rs", (true, true)),
+        ("vendor/other.rs", (true, false)),
+    ] {
+        assert_eq!(worktree_inclusion_flags(&host, path, host_cx), expected);
+        assert_eq!(
+            worktree_inclusion_flags(&receiver, path, receiver_cx),
+            expected
+        );
+    }
+    host.read_with(host_cx, |host, _| {
+        assert_eq!(host.entry_for_path(rel_path("vendor/excluded.rs")), None);
+    });
+    receiver.read_with(receiver_cx, |receiver, _| {
+        assert_eq!(
+            receiver.entry_for_path(rel_path("vendor/excluded.rs")),
+            None
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_remote_worktree_file_scan_inclusions_receiver_only(
+    host_cx: &mut TestAppContext,
+    receiver_cx: &mut TestAppContext,
+) {
+    let host = build_inclusion_host(&[], &[], host_cx).await;
+    let receiver = build_inclusion_receiver(&["vendor/keep.rs"], receiver_cx);
+    let updates = observe_worktree_updates(&host, host_cx);
+    relay_worktree_updates(&receiver, &updates, host_cx, receiver_cx);
+
+    for path in ["vendor/keep.rs", "vendor/other.rs"] {
+        assert_eq!(
+            worktree_inclusion_flags(&host, path, host_cx),
+            (true, false)
+        );
+        assert_eq!(
+            worktree_inclusion_flags(&receiver, path, receiver_cx),
+            (true, false)
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_remote_worktree_file_scan_inclusions_settings_changes(
+    host_cx: &mut TestAppContext,
+    intermediary_cx: &mut TestAppContext,
+    receiver_cx: &mut TestAppContext,
+) {
+    let host = build_inclusion_host(&[], &[], host_cx).await;
+    let intermediary = build_inclusion_receiver(&[], intermediary_cx);
+    let updates = observe_worktree_updates(&host, host_cx);
+    relay_worktree_updates(&intermediary, &updates, host_cx, intermediary_cx);
+    for (worktree, cx) in [(&host, &*host_cx), (&intermediary, &*intermediary_cx)] {
+        assert_eq!(
+            worktree_inclusion_flags(worktree, "keep.rs", cx),
+            (true, false)
+        );
+    }
+
+    set_file_scan_inclusions(&["keep.rs"], host_cx);
+    set_file_scan_inclusions(&["keep.rs"], intermediary_cx);
+    relay_worktree_updates(&intermediary, &updates, host_cx, intermediary_cx);
+
+    let receiver = build_inclusion_receiver(&["vendor/other.rs"], receiver_cx);
+    let reshared_updates = observe_worktree_updates(&intermediary, intermediary_cx);
+    relay_worktree_updates(&receiver, &reshared_updates, intermediary_cx, receiver_cx);
+    for (worktree, cx) in [
+        (&host, &*host_cx),
+        (&intermediary, &*intermediary_cx),
+        (&receiver, &*receiver_cx),
+    ] {
+        for (path, included) in [
+            ("keep.rs", true),
+            ("other.rs", false),
+            ("vendor/other.rs", false),
+        ] {
+            assert_eq!(
+                worktree_inclusion_flags(worktree, path, cx),
+                (true, included)
+            );
+        }
+    }
+
+    set_file_scan_inclusions(&[], intermediary_cx);
+    intermediary_cx.run_until_parked();
+    assert_eq!(
+        worktree_inclusion_flags(&intermediary, "keep.rs", intermediary_cx),
+        (true, true)
+    );
+
+    set_file_scan_inclusions(&["keep.rs"], intermediary_cx);
+    set_file_scan_inclusions(&[], host_cx);
+    relay_worktree_updates(&intermediary, &updates, host_cx, intermediary_cx);
+    relay_worktree_updates(&receiver, &reshared_updates, intermediary_cx, receiver_cx);
+    for (worktree, cx) in [
+        (&host, &*host_cx),
+        (&intermediary, &*intermediary_cx),
+        (&receiver, &*receiver_cx),
+    ] {
+        assert_eq!(
+            worktree_inclusion_flags(worktree, "keep.rs", cx),
+            (true, false)
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_remote_worktree_file_scan_inclusions_updates(cx: &mut TestAppContext) {
+    for path_style in [PathStyle::Unix, PathStyle::Windows] {
+        let receiver = build_inclusion_receiver_with_path_style(
+            &[
+                "guest/receiver.rs",
+                "receiver_dir/**",
+                "guest/legacy.rs",
+                "guest/visible_receiver.rs",
+            ],
+            path_style,
+            cx,
+        );
+        let mut entries = [
+            ("host/naïve.rs", false, false, true, true),
+            ("guest/receiver.rs", false, false, true, false),
+            ("host_dir", true, false, true, true),
+            ("receiver_dir", true, true, true, false),
+            ("guest/legacy.rs", false, false, true, false),
+            ("visible.rs", false, false, false, true),
+            ("guest/visible_receiver.rs", false, false, false, false),
+            ("unloaded_host", true, true, true, true),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, (path, is_dir, is_unloaded, is_ignored, is_always_included))| proto::Entry {
+                id: index as u64 + 1,
+                path: String::from(path),
+                is_dir,
+                is_unloaded,
+                is_ignored,
+                is_always_included,
+                ..proto::Entry::default()
+            },
+        )
+        .collect::<Vec<_>>();
+        let mut expected = vec![
+            ("guest/legacy.rs", EntryKind::File, true, false),
+            ("guest/receiver.rs", EntryKind::File, true, false),
+            ("guest/visible_receiver.rs", EntryKind::File, false, false),
+            ("host/naïve.rs", EntryKind::File, true, true),
+            ("host_dir", EntryKind::Dir, true, true),
+            ("receiver_dir", EntryKind::UnloadedDir, true, false),
+            ("unloaded_host", EntryKind::UnloadedDir, true, true),
+            ("visible.rs", EntryKind::File, false, true),
+        ];
+        if path_style == PathStyle::Unix {
+            entries.push(proto::Entry {
+                id: 9,
+                path: String::from(r"host/literal\name.rs"),
+                is_ignored: true,
+                is_always_included: true,
+                ..proto::Entry::default()
+            });
+            expected.insert(3, (r"host/literal\name.rs", EntryKind::File, true, true));
+        }
+        receiver.update(cx, |receiver, _| {
+            let mut update = remote_inclusion_update(entries, 1, true);
+            update.abs_path = receiver.abs_path().to_string_lossy().into_owned();
+            receiver
+                .as_remote()
+                .expect("worktree should be remote")
+                .update_from_remote(update);
+        });
+        cx.run_until_parked();
+        receiver.read_with(cx, |receiver, _| {
+            assert_eq!(receiver.path_style(), path_style);
+            assert_eq!(
+                receiver
+                    .entries(true, 0)
+                    .map(|entry| (
+                        entry.path.as_unix_str(),
+                        entry.kind,
+                        entry.is_ignored,
+                        entry.is_always_included,
+                    ))
+                    .collect::<Vec<_>>(),
+                expected,
+                "path style: {path_style:?}",
+            );
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_remote_worktree_file_scan_inclusions_insert_entry(cx: &mut TestAppContext) {
+    let receiver = build_inclusion_receiver(&["guest/receiver.rs"], cx);
+    let mut insertion = receiver.update(cx, |receiver, cx| {
+        receiver
+            .as_remote_mut()
+            .expect("worktree should be remote")
+            .insert_entry(
+                proto::Entry {
+                    id: 1,
+                    path: String::from("host.rs"),
+                    is_ignored: true,
+                    is_always_included: true,
+                    ..proto::Entry::default()
+                },
+                1,
+                cx,
+            )
+    });
+    cx.run_until_parked();
+    assert!(poll!(&mut insertion).is_pending());
+    receiver.read_with(cx, |receiver, _| {
+        assert_eq!(receiver.entry_count(), 0);
+    });
+
+    receiver.update(cx, |receiver, _| {
+        receiver
+            .as_remote()
+            .expect("worktree should be remote")
+            .update_from_remote(remote_inclusion_update(Vec::new(), 1, false));
+    });
+    cx.run_until_parked();
+    assert!(poll!(&mut insertion).is_pending());
+    receiver.read_with(cx, |receiver, _| {
+        assert_eq!(receiver.entry_count(), 0);
+    });
+
+    receiver.update(cx, |receiver, _| {
+        receiver
+            .as_remote()
+            .expect("worktree should be remote")
+            .update_from_remote(remote_inclusion_update(Vec::new(), 1, true));
+    });
+    let entry = insertion.await.expect("remote entry should be inserted");
+    assert_eq!(
+        (
+            entry.id.to_proto(),
+            entry.path.as_unix_str(),
+            entry.is_ignored,
+            entry.is_always_included
+        ),
+        (1, "host.rs", true, true),
+    );
+    receiver.read_with(cx, |receiver, _| {
+        assert_eq!(receiver.entry_for_path(rel_path("host.rs")), Some(&entry));
+        assert_eq!(receiver.entry_count(), 1);
+    });
+
+    for (path, old_path, is_always_included) in [
+        ("guest/receiver.rs", "host.rs", false),
+        ("host.rs", "guest/receiver.rs", true),
+    ] {
+        let entry = receiver
+            .update(cx, |receiver, cx| {
+                receiver
+                    .as_remote_mut()
+                    .expect("worktree should be remote")
+                    .insert_entry(
+                        proto::Entry {
+                            path: String::from(path),
+                            is_always_included,
+                            ..proto::Entry::from(&entry)
+                        },
+                        1,
+                        cx,
+                    )
+            })
+            .await
+            .expect("renamed remote entry should be inserted");
+        assert_eq!(
+            (
+                entry.id.to_proto(),
+                entry.path.as_unix_str(),
+                entry.is_ignored,
+                entry.is_always_included
+            ),
+            (1, path, true, is_always_included),
+        );
+        receiver.read_with(cx, |receiver, _| {
+            assert_eq!(receiver.entry_for_path(rel_path(path)), Some(&entry));
+            assert_eq!(receiver.entry_for_path(rel_path(old_path)), None);
+            assert_eq!(receiver.entry_count(), 1);
+        });
+    }
+}
+
 async fn build_worktree(fs: Arc<FakeFs>, root: &str, cx: &mut TestAppContext) -> Entity<Worktree> {
     let tree = Worktree::local(
         Path::new(root),
@@ -7119,4 +7420,149 @@ fn set_file_scan_depth(cx: &mut TestAppContext, depth: Option<u32>) {
             });
         });
     });
+}
+
+async fn build_inclusion_host(
+    inclusions: &[&str],
+    exclusions: &[&str],
+    cx: &mut TestAppContext,
+) -> Entity<Worktree> {
+    init_test(cx);
+    set_file_scan_inclusions(inclusions, cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(
+                    std::iter::once(String::from("..."))
+                        .chain(exclusions.iter().map(|path| String::from(*path)))
+                        .collect::<Vec<_>>(),
+                ));
+            });
+        });
+    });
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".gitignore": "keep.rs\nother.rs\nexcluded.rs\n",
+            "keep.rs": "fn sample() {}",
+            "other.rs": "fn other() {}",
+            "vendor": {
+                "keep.rs": "fn sample() {}",
+                "other.rs": "fn other() {}",
+                "excluded.rs": "fn excluded() {}",
+            },
+        }),
+    )
+    .await;
+    build_worktree(fs, path!("/root"), cx).await
+}
+
+fn build_inclusion_receiver(inclusions: &[&str], cx: &mut TestAppContext) -> Entity<Worktree> {
+    build_inclusion_receiver_with_path_style(inclusions, PathStyle::local(), cx)
+}
+
+fn build_inclusion_receiver_with_path_style(
+    inclusions: &[&str],
+    path_style: PathStyle,
+    cx: &mut TestAppContext,
+) -> Entity<Worktree> {
+    init_test(cx);
+    set_file_scan_inclusions(inclusions, cx);
+    cx.update(|cx| {
+        Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 0,
+                root_name: String::from("root"),
+                visible: true,
+                abs_path: String::from(match path_style {
+                    PathStyle::Unix => "/root",
+                    PathStyle::Windows => r"C:\root",
+                }),
+                ..proto::WorktreeMetadata::default()
+            },
+            AnyProtoClient::new(NoopProtoClient::new()),
+            path_style,
+            cx,
+        )
+    })
+}
+
+fn set_file_scan_inclusions(inclusions: &[&str], cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_inclusions =
+                    Some(inclusions.iter().map(|path| String::from(*path)).collect());
+            });
+        });
+    });
+}
+
+fn observe_worktree_updates(
+    worktree: &Entity<Worktree>,
+    cx: &mut TestAppContext,
+) -> Arc<Mutex<Vec<proto::UpdateWorktree>>> {
+    let updates = Arc::new(Mutex::new(Vec::new()));
+    worktree.update(cx, |worktree, cx| {
+        let updates = updates.clone();
+        worktree.observe_updates(1, cx, move |update| {
+            updates.lock().push(update);
+            async { true }
+        });
+    });
+    updates
+}
+
+fn relay_worktree_updates(
+    receiver: &Entity<Worktree>,
+    updates: &Arc<Mutex<Vec<proto::UpdateWorktree>>>,
+    sender_cx: &mut TestAppContext,
+    receiver_cx: &mut TestAppContext,
+) {
+    sender_cx.run_until_parked();
+    let updates = mem::take(&mut *updates.lock());
+    assert!(
+        !updates.is_empty(),
+        "sender should produce worktree updates"
+    );
+    receiver.update(receiver_cx, |receiver, _| {
+        let receiver = receiver.as_remote().expect("worktree should be remote");
+        for update in updates {
+            receiver.update_from_remote(update);
+        }
+    });
+    receiver_cx.run_until_parked();
+}
+
+fn worktree_inclusion_flags(
+    worktree: &Entity<Worktree>,
+    path: &str,
+    cx: &TestAppContext,
+) -> (bool, bool) {
+    worktree.read_with(cx, |worktree, _| {
+        let entry = worktree
+            .entry_for_path(rel_path(path))
+            .expect("file should be present");
+        (entry.is_ignored, entry.is_always_included)
+    })
+}
+
+fn remote_inclusion_update(
+    updated_entries: Vec<proto::Entry>,
+    scan_id: u64,
+    is_last_update: bool,
+) -> proto::UpdateWorktree {
+    proto::UpdateWorktree {
+        project_id: 1,
+        worktree_id: 0,
+        root_name: String::from("root"),
+        abs_path: String::from(path!("/root")),
+        updated_entries,
+        scan_id,
+        is_last_update,
+        ..proto::UpdateWorktree::default()
+    }
 }

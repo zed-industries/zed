@@ -1111,6 +1111,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_entry_inclusion_encoding() {
+        let ignored_bytes = [
+            0x08, 0x01, 0x1a, 0x07, b'k', b'e', b'e', b'p', b'.', b'r', b's', 0x38, 0x01,
+        ];
+        let mut included_bytes = Vec::from(ignored_bytes);
+        included_bytes.extend([0x78, 0x01]);
+
+        for (bytes, is_always_included) in [
+            (ignored_bytes.as_slice(), false),
+            (included_bytes.as_slice(), true),
+        ] {
+            let expected = Entry {
+                id: 1,
+                path: String::from("keep.rs"),
+                is_ignored: true,
+                is_always_included,
+                ..Entry::default()
+            };
+            assert_eq!(Entry::decode(bytes).expect("entry should decode"), expected);
+            assert_eq!(expected.encode_to_vec(), bytes);
+        }
+    }
+
+    #[test]
     fn test_converting_peer_id_from_and_to_u64() {
         let peer_id = PeerId {
             owner_id: 10,

@@ -24,6 +24,7 @@ pub struct Model {
     pub is_fifo: bool,
     pub canonical_path: Option<String>,
     pub is_unloaded: bool,
+    pub is_always_included: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

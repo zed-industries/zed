@@ -14,7 +14,7 @@ use crate::{Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, editor_settings::EditorSetting
 pub(super) struct LspDocumentLinks {
     pub(super) enabled: bool,
     pub(super) per_buffer: HashMap<BufferId, BufferDocumentLinks>,
-    pub(super) refresh_task: Task<()>,
+    pub(super) refresh_tasks: HashMap<BufferId, Task<()>>,
 }
 
 impl LspDocumentLinks {
@@ -22,7 +22,7 @@ impl LspDocumentLinks {
         Self {
             enabled: EditorSettings::get_global(cx).lsp_document_links,
             per_buffer: HashMap::default(),
-            refresh_task: Task::ready(()),
+            refresh_tasks: HashMap::default(),
         }
     }
 }
@@ -52,41 +52,30 @@ impl Editor {
             })
             .unique_by(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
-        if buffers_to_query.is_empty() {
-            self.lsp_document_links.refresh_task = Task::ready(());
-            return;
-        }
+        for buffer in buffers_to_query {
+            let buffer_id = buffer.read(cx).remote_id();
+            let project = project.clone();
+            let task = cx.spawn(async move |editor, cx| {
+                cx.background_executor()
+                    .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
+                    .await;
 
-        self.lsp_document_links.refresh_task = cx.spawn(async move |editor, cx| {
-            cx.background_executor()
-                .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
-                .await;
-
-            let Some(tasks_for_buffers) = project
-                .update(cx, |project, cx| {
-                    project.lsp_store().update(cx, |lsp_store, cx| {
-                        buffers_to_query
-                            .into_iter()
-                            .map(|buffer| {
-                                let buffer_id = buffer.read(cx).remote_id();
-                                let task = lsp_store.fetch_document_links(&buffer, cx);
-                                async move { (buffer_id, task.await) }
-                            })
-                            .collect::<Vec<_>>()
+                let Some(links_task) = project
+                    .update(cx, |project, cx| {
+                        project.lsp_store().update(cx, |lsp_store, cx| {
+                            lsp_store.fetch_document_links(&buffer, cx)
+                        })
                     })
-                })
-                .ok()
-            else {
-                return;
-            };
+                    .ok()
+                else {
+                    return;
+                };
 
-            let new_links_for_buffers = join_all(tasks_for_buffers).await;
-            editor
-                .update(cx, |editor, _| {
-                    for (buffer_id, links) in new_links_for_buffers {
-                        let Some(links) = links else {
-                            continue;
-                        };
+                let Some(links) = links_task.await else {
+                    return;
+                };
+                editor
+                    .update(cx, |editor, _| {
                         if links.is_empty() {
                             editor.lsp_document_links.per_buffer.remove(&buffer_id);
                         } else {
@@ -95,10 +84,13 @@ impl Editor {
                                 .per_buffer
                                 .insert(buffer_id, links);
                         }
-                    }
-                })
-                .ok();
-        });
+                    })
+                    .ok();
+            });
+            self.lsp_document_links
+                .refresh_tasks
+                .insert(buffer_id, task);
+        }
     }
 
     /// Returns a task yielding the resolved document links covering `position`

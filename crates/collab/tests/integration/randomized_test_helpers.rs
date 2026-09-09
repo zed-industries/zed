@@ -221,13 +221,7 @@ impl<T: RandomizedTest> TestPlan<T> {
         let mut users = Vec::new();
         for ix in 0..max_peers() {
             let username = format!("user-{}", ix + 1);
-            let user_id = server
-                .app_state
-                .db
-                .create_user(false)
-                .await
-                .unwrap()
-                .user_id;
+            let user_id = server.create_user(&username).await;
             users.push(UserTestPlan {
                 user_id,
                 username,

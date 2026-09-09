@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use collections::{HashMap, HashSet};
-use futures::{StreamExt as _, future::join_all, stream::FuturesUnordered};
+use futures::{StreamExt as _, stream::FuturesUnordered};
 use gpui::{MouseButton, SharedString, Task, TaskExt, WeakEntity};
 use itertools::Itertools;
 use language::{BufferId, ClientCommand};
@@ -232,59 +232,48 @@ impl Editor {
             .unique_by(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
 
-        if buffers_to_query.is_empty() {
-            return;
-        }
+        for buffer in buffers_to_query {
+            let buffer_id = buffer.read(cx).remote_id();
+            let project = project.downgrade();
+            let task = cx.spawn(async move |editor, cx| {
+                cx.background_executor()
+                    .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
+                    .await;
 
-        let project = project.downgrade();
-        self.refresh_code_lens_task = cx.spawn(async move |editor, cx| {
-            cx.background_executor()
-                .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
-                .await;
-
-            let Some(tasks_per_buffer) = project
-                .update(cx, |project, cx| {
-                    project.lsp_store().update(cx, |lsp_store, cx| {
-                        buffers_to_query
-                            .into_iter()
-                            .map(|buffer| {
-                                let buffer_id = buffer.read(cx).remote_id();
-                                let task = lsp_store.code_lens_actions(&buffer, cx);
-                                async move { (buffer_id, task.await) }
-                            })
-                            .collect::<Vec<_>>()
+                let Some(task) = project
+                    .update(cx, |project, cx| {
+                        project
+                            .lsp_store()
+                            .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx))
                     })
-                })
-                .ok()
-            else {
-                return;
-            };
+                    .ok()
+                else {
+                    return;
+                };
 
-            let code_lens_per_buffer = join_all(tasks_per_buffer).await;
-            if code_lens_per_buffer.is_empty() {
-                return;
-            }
-
-            editor
-                .update(cx, |editor, cx| {
-                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    for (buffer_id, result) in code_lens_per_buffer {
-                        let actions = match result {
-                            Ok(Some(actions)) => actions,
-                            Ok(None) => continue,
-                            Err(e) => {
-                                log::error!(
-                                    "Failed to fetch code lenses for buffer {buffer_id:?}: {e:#}"
+                let result = task.await;
+                editor
+                    .update(cx, |editor, cx| {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        match result {
+                            Ok(Some(actions)) => {
+                                editor.apply_lens_actions_for_buffer(
+                                    buffer_id, actions, &snapshot, cx,
                                 );
-                                continue;
                             }
-                        };
-                        editor.apply_lens_actions_for_buffer(buffer_id, actions, &snapshot, cx);
-                    }
-                    editor.resolve_visible_code_lenses(cx);
-                })
-                .ok();
-        });
+                            Ok(None) => {}
+                            Err(error) => {
+                                log::error!(
+                                    "Failed to fetch code lenses for buffer {buffer_id:?}: {error:#}"
+                                );
+                            }
+                        }
+                        editor.resolve_visible_code_lenses(cx);
+                    })
+                    .ok();
+            });
+            self.refresh_code_lens_tasks.insert(buffer_id, task);
+        }
     }
 
     /// Reconcile blocks for `buffer_id` against the latest `actions`.
@@ -551,7 +540,7 @@ impl Editor {
             }
             cx.notify();
         }
-        self.refresh_code_lens_task = Task::ready(());
+        self.refresh_code_lens_tasks.clear();
     }
 }
 

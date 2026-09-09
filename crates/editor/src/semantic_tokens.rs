@@ -1,7 +1,8 @@
 use std::{collections::hash_map, sync::Arc, time::Duration};
 
 use collections::{HashMap, HashSet};
-use futures::future::join_all;
+#[cfg(test)]
+use futures::{Future, future::join_all};
 use gpui::{
     App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
 };
@@ -30,8 +31,9 @@ use crate::{
 pub(super) struct SemanticTokenState {
     rules: SemanticTokenRules,
     enabled: bool,
-    update_task: Task<()>,
+    update_tasks: HashMap<BufferId, Task<()>>,
     fetched_for_buffers: HashMap<BufferId, clock::Global>,
+    pending_invalidations: HashSet<BufferId>,
 }
 
 impl SemanticTokenState {
@@ -42,8 +44,9 @@ impl SemanticTokenState {
                 .semantic_token_rules
                 .clone(),
             enabled,
-            update_task: Task::ready(()),
+            update_tasks: HashMap::default(),
             fetched_for_buffers: HashMap::default(),
+            pending_invalidations: HashSet::default(),
         }
     }
 
@@ -56,12 +59,21 @@ impl SemanticTokenState {
     }
 
     #[cfg(test)]
-    pub(super) fn take_update_task(&mut self) -> Task<()> {
-        std::mem::replace(&mut self.update_task, Task::ready(()))
+    pub(super) fn take_update_task(&mut self) -> impl Future<Output = ()> + use<> {
+        let tasks = std::mem::take(&mut self.update_tasks);
+        async move {
+            join_all(tasks.into_values()).await;
+        }
     }
 
     pub(super) fn invalidate_buffer(&mut self, buffer_id: &BufferId) {
         self.fetched_for_buffers.remove(buffer_id);
+    }
+
+    pub(super) fn remove_buffer(&mut self, buffer_id: &BufferId) {
+        self.update_tasks.remove(buffer_id);
+        self.fetched_for_buffers.remove(buffer_id);
+        self.pending_invalidations.remove(buffer_id);
     }
 
     pub(super) fn update_rules(&mut self, new_rules: SemanticTokenRules) -> bool {
@@ -126,14 +138,15 @@ impl Editor {
                     None => display_map.semantic_token_highlights = Arc::new(Default::default()),
                 };
             });
-            self.semantic_token_state.update_task = Task::ready(());
+            self.semantic_token_state.update_tasks.clear();
+            self.semantic_token_state.pending_invalidations.clear();
             cx.notify();
             return;
         }
 
-        let mut invalidate_semantic_highlights_for_buffers = HashSet::default();
         if server_refreshed {
-            invalidate_semantic_highlights_for_buffers.extend(
+            self.semantic_token_state.update_tasks.clear();
+            self.semantic_token_state.pending_invalidations.extend(
                 self.semantic_token_state
                     .fetched_for_buffers
                     .drain()
@@ -156,7 +169,8 @@ impl Editor {
             .chain(buffer_id.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))
             .filter_map(|editor_buffer| {
                 let editor_buffer_id = editor_buffer.read(cx).remote_id();
-                if self.registered_buffers.contains_key(&editor_buffer_id)
+                if buffer_id.is_none_or(|buffer_id| buffer_id == editor_buffer_id)
+                    && self.registered_buffers.contains_key(&editor_buffer_id)
                     && LanguageSettings::for_buffer(editor_buffer.read(cx), cx)
                         .semantic_tokens
                         .enabled()
@@ -168,43 +182,50 @@ impl Editor {
             })
             .collect::<HashMap<_, _>>();
 
-        for buffer_with_disabled_tokens in self
+        for buffer_to_clear in self
             .display_map
             .read(cx)
             .semantic_token_highlights
             .keys()
+            .chain(self.semantic_token_state.update_tasks.keys())
+            .chain(self.semantic_token_state.pending_invalidations.iter())
             .copied()
             .filter(|buffer_id| !buffers_to_query.contains_key(buffer_id))
             .filter(|buffer_id| {
-                !self
-                    .buffer
-                    .read(cx)
-                    .buffer(*buffer_id)
-                    .is_some_and(|buffer| {
-                        let buffer = buffer.read(cx);
-                        LanguageSettings::for_buffer(&buffer, cx)
-                            .semantic_tokens
-                            .enabled()
-                    })
+                self.semantic_token_state
+                    .pending_invalidations
+                    .contains(buffer_id)
+                    || !self
+                        .buffer
+                        .read(cx)
+                        .buffer(*buffer_id)
+                        .is_some_and(|buffer| {
+                            let buffer = buffer.read(cx);
+                            LanguageSettings::for_buffer(&buffer, cx)
+                                .semantic_tokens
+                                .enabled()
+                        })
             })
+            .unique()
             .collect::<Vec<_>>()
         {
-            self.semantic_token_state
-                .invalidate_buffer(&buffer_with_disabled_tokens);
+            self.semantic_token_state.remove_buffer(&buffer_to_clear);
             self.display_map.update(cx, |display_map, _| {
-                display_map.invalidate_semantic_highlights(buffer_with_disabled_tokens);
+                display_map.invalidate_semantic_highlights(buffer_to_clear);
             });
+            cx.notify();
         }
 
-        self.semantic_token_state.update_task = cx.spawn(async move |editor, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(50))
-                .await;
-            let Some(all_semantic_tokens_task) = editor
-                .update(cx, |editor, cx| {
-                    buffers_to_query
-                        .into_iter()
-                        .filter_map(|(buffer_id, buffer)| {
+        for (buffer_id, buffer) in buffers_to_query {
+            let task = cx.spawn({
+                let sema = sema.clone();
+                let project = project.clone();
+                async move |editor, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(50))
+                        .await;
+                    let request = editor
+                        .update(cx, |editor, cx| {
                             let known_version = editor
                                 .semantic_token_state
                                 .fetched_for_buffers
@@ -215,130 +236,142 @@ impl Editor {
                             }) {
                                 None
                             } else {
-                                sema.semantic_tokens(buffer, cx).map(|task| async move {
-                                    (buffer_id, query_version, task.await)
-                                })
+                                sema.semantic_tokens(buffer, cx)
+                                    .map(|task| (query_version, task))
                             }
                         })
-                        .collect::<Vec<_>>()
-                })
-                .ok()
-            else {
-                return;
-            };
+                        .ok()
+                        .flatten();
+                    let result = match request {
+                        Some((query_version, task)) => Some((query_version, task.await)),
+                        None => None,
+                    };
 
-            let all_semantic_tokens = join_all(all_semantic_tokens_task).await;
-            editor
-                .update(cx, |editor, cx| {
-                    editor.display_map.update(cx, |display_map, _| {
-                        for buffer_id in invalidate_semantic_highlights_for_buffers {
-                            display_map.invalidate_semantic_highlights(buffer_id);
-                            editor.semantic_token_state.invalidate_buffer(&buffer_id);
-                        }
-                    });
-
-                    if all_semantic_tokens.is_empty() {
-                        return;
-                    }
-                    let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-
-                    for (buffer_id, query_version, tokens) in all_semantic_tokens {
-                        let tokens = match tokens {
-                            Ok(BufferSemanticTokens {
-                                tokens: Some(tokens),
-                            }) => tokens,
-                            Ok(BufferSemanticTokens { tokens: None }) => {
+                    editor
+                        .update(cx, |editor, cx| {
+                            if editor
+                                .semantic_token_state
+                                .pending_invalidations
+                                .remove(&buffer_id)
+                            {
+                                editor.semantic_token_state.invalidate_buffer(&buffer_id);
                                 editor.display_map.update(cx, |display_map, _| {
                                     display_map.invalidate_semantic_highlights(buffer_id);
                                 });
-                                continue;
+                                cx.notify();
                             }
-                            Err(e) => {
-                                log::error!(
-                                    "Failed to fetch semantic tokens for buffer \
-                                    {buffer_id:?}: {e:#}"
-                                );
-                                continue;
-                            }
-                        };
 
-                        match editor
-                            .semantic_token_state
-                            .fetched_for_buffers
-                            .entry(buffer_id)
-                        {
-                            hash_map::Entry::Occupied(mut o) => {
-                                if query_version.changed_since(o.get()) {
-                                    o.insert(query_version);
-                                } else {
-                                    continue;
+                            let Some((query_version, tokens)) = result else {
+                                return;
+                            };
+                            let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                            let tokens = match tokens {
+                                Ok(BufferSemanticTokens {
+                                    tokens: Some(tokens),
+                                }) => tokens,
+                                Ok(BufferSemanticTokens { tokens: None }) => {
+                                    editor.display_map.update(cx, |display_map, _| {
+                                        display_map.invalidate_semantic_highlights(buffer_id);
+                                    });
+                                    cx.notify();
+                                    return;
+                                }
+                                Err(e) => {
+                                    log::error!(
+                                        "Failed to fetch semantic tokens for buffer \
+                                        {buffer_id:?}: {e:#}"
+                                    );
+                                    return;
+                                }
+                            };
+
+                            match editor
+                                .semantic_token_state
+                                .fetched_for_buffers
+                                .entry(buffer_id)
+                            {
+                                hash_map::Entry::Occupied(mut o) => {
+                                    if query_version.changed_since(o.get()) {
+                                        o.insert(query_version);
+                                    } else {
+                                        return;
+                                    }
+                                }
+                                hash_map::Entry::Vacant(v) => {
+                                    v.insert(query_version);
                                 }
                             }
-                            hash_map::Entry::Vacant(v) => {
-                                v.insert(query_version);
-                            }
-                        }
 
-                        let language_name = editor
-                            .buffer()
-                            .read(cx)
-                            .buffer(buffer_id)
-                            .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
+                            let language_name = editor
+                                .buffer()
+                                .read(cx)
+                                .buffer(buffer_id)
+                                .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
 
-                        let Some(project) = project.upgrade() else {
-                            return;
-                        };
-                        let precedences = {
-                            let project = project.read(cx);
-                            server_precedences(
-                                project.lsp_store().read(cx),
-                                project.languages(),
-                                language_name.as_ref(),
-                                &tokens,
-                            )
-                        };
-                        editor.display_map.update(cx, |display_map, cx| {
-                            project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
-                                let mut token_highlights = Vec::new();
-                                let mut interner = HighlightStyleInterner::default();
-                                for (server_id, server_tokens) in tokens {
-                                    let Some(stylizer) = lsp_store.get_or_create_token_stylizer(
-                                        server_id,
-                                        language_name.as_ref(),
-                                        cx,
-                                    ) else {
-                                        continue;
-                                    };
-                                    let theme = cx.theme().syntax();
-                                    token_highlights.reserve(2 * server_tokens.len());
-                                    token_highlights.extend(buffer_into_editor_highlights(
-                                        &server_tokens,
-                                        stylizer,
-                                        precedences.get(&server_id).copied().unwrap_or_default(),
-                                        &multi_buffer_snapshot,
-                                        &mut interner,
-                                        theme,
-                                    ));
-                                }
+                            let Some(project) = project.upgrade() else {
+                                return;
+                            };
+                            let precedences = {
+                                let project = project.read(cx);
+                                server_precedences(
+                                    project.lsp_store().read(cx),
+                                    project.languages(),
+                                    language_name.as_ref(),
+                                    &tokens,
+                                )
+                            };
+                            editor.display_map.update(cx, |display_map, cx| {
+                                project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+                                    let mut token_highlights = Vec::new();
+                                    let mut interner = HighlightStyleInterner::default();
+                                    for (server_id, server_tokens) in tokens {
+                                        let Some(stylizer) = lsp_store
+                                            .get_or_create_token_stylizer(
+                                                server_id,
+                                                language_name.as_ref(),
+                                                cx,
+                                            )
+                                        else {
+                                            continue;
+                                        };
+                                        let theme = cx.theme().syntax();
+                                        token_highlights.reserve(2 * server_tokens.len());
+                                        token_highlights.extend(buffer_into_editor_highlights(
+                                            &server_tokens,
+                                            stylizer,
+                                            precedences
+                                                .get(&server_id)
+                                                .copied()
+                                                .unwrap_or_default(),
+                                            &multi_buffer_snapshot,
+                                            &mut interner,
+                                            theme,
+                                        ));
+                                    }
 
-                                token_highlights.sort_by(|a, b| {
-                                    a.range
-                                        .start
-                                        .cmp(&b.range.start, &multi_buffer_snapshot)
-                                        .then_with(|| a.precedence.cmp(&b.precedence))
+                                    token_highlights.sort_by(|a, b| {
+                                        a.range
+                                            .start
+                                            .cmp(&b.range.start, &multi_buffer_snapshot)
+                                            .then_with(|| a.precedence.cmp(&b.precedence))
+                                    });
+                                    Arc::make_mut(&mut display_map.semantic_token_highlights)
+                                        .insert(
+                                            buffer_id,
+                                            (Arc::from(token_highlights), Arc::new(interner)),
+                                        );
                                 });
-                                Arc::make_mut(&mut display_map.semantic_token_highlights).insert(
-                                    buffer_id,
-                                    (Arc::from(token_highlights), Arc::new(interner)),
-                                );
                             });
-                        });
-                    }
 
-                    cx.notify();
-                })
-                .ok();
-        });
+                            cx.notify();
+                        })
+                        .ok();
+                }
+            });
+            self.semantic_token_state
+                .update_tasks
+                .insert(buffer_id, task);
+        }
     }
 }
 

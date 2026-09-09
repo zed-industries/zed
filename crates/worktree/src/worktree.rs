@@ -75,7 +75,7 @@ use sum_tree::{Bias, Dimensions, Edit, KeyedItem, SeekTarget, SumTree, Summary, 
 use text::{LineEnding, Rope};
 use util::{
     ResultExt, maybe,
-    paths::{PathMatcher, PathStyle, SanitizedPath, home_dir},
+    paths::{PathStyle, SanitizedPath, home_dir},
     rel_path::RelPath,
 };
 pub use worktree_settings::WorktreeSettings;
@@ -170,7 +170,6 @@ pub struct RemoteWorktree {
     background_snapshot: Arc<Mutex<(Snapshot, Vec<proto::UpdateWorktree>)>>,
     project_id: u64,
     client: AnyProtoClient,
-    file_scan_inclusions: PathMatcher,
     updates_tx: Option<UnboundedSender<proto::UpdateWorktree>>,
     update_observer: Option<mpsc::UnboundedSender<proto::UpdateWorktree>>,
     snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
@@ -646,19 +645,11 @@ impl Worktree {
                 mpsc::unbounded::<proto::UpdateWorktree>();
             let (mut snapshot_updated_tx, mut snapshot_updated_rx) = watch::channel();
 
-            let worktree_id = snapshot.id();
-            let settings_location = Some(SettingsLocation {
-                worktree_id,
-                path: RelPath::empty(),
-            });
-
-            let settings = WorktreeSettings::get(settings_location, cx).clone();
             let worktree = RemoteWorktree {
                 client,
                 project_id,
                 replica_id,
                 snapshot,
-                file_scan_inclusions: settings.parent_dir_scan_inclusions.clone(),
                 background_snapshot: background_snapshot.clone(),
                 updates_tx: Some(background_updates_tx),
                 update_observer: None,
@@ -674,10 +665,7 @@ impl Worktree {
                 while let Some(update) = background_updates_rx.next().await {
                     {
                         let mut lock = background_snapshot.lock();
-                        lock.0.apply_remote_update(
-                            update.clone(),
-                            &settings.parent_dir_scan_inclusions,
-                        );
+                        lock.0.apply_remote_update(update.clone());
                         lock.1.push(update);
                     }
                     snapshot_updated_tx.send(()).await.ok();
@@ -2365,7 +2353,7 @@ impl RemoteWorktree {
             this.update(cx, |worktree, _| {
                 let worktree = worktree.as_remote_mut().unwrap();
                 let snapshot = &mut worktree.background_snapshot.lock().0;
-                let entry = snapshot.insert_entry(entry, &worktree.file_scan_inclusions);
+                let entry = snapshot.insert_entry(entry);
                 worktree.snapshot = snapshot.clone();
                 entry
             })?
@@ -2632,12 +2620,8 @@ impl Snapshot {
         self.entries_by_id.get(&entry_id, ()).is_some()
     }
 
-    fn insert_entry(
-        &mut self,
-        entry: proto::Entry,
-        always_included_paths: &PathMatcher,
-    ) -> Result<Entry> {
-        let entry = Entry::try_from((&self.root_char_bag, always_included_paths, entry))?;
+    fn insert_entry(&mut self, entry: proto::Entry) -> Result<Entry> {
+        let entry = Entry::try_from((&self.root_char_bag, entry))?;
         let old_entry = self.entries_by_id.insert_or_replace(
             PathEntry {
                 id: entry.id,
@@ -2687,11 +2671,7 @@ impl Snapshot {
         }
     }
 
-    pub fn apply_remote_update(
-        &mut self,
-        update: proto::UpdateWorktree,
-        always_included_paths: &PathMatcher,
-    ) {
+    pub fn apply_remote_update(&mut self, update: proto::UpdateWorktree) {
         log::debug!(
             "applying remote worktree update. {} entries updated, {} removed",
             update.updated_entries.len(),
@@ -2716,9 +2696,7 @@ impl Snapshot {
         }
 
         for entry in update.updated_entries {
-            let Some(entry) =
-                Entry::try_from((&self.root_char_bag, always_included_paths, entry)).log_err()
-            else {
+            let Some(entry) = Entry::try_from((&self.root_char_bag, entry)).log_err() else {
                 continue;
             };
             if let Some(PathEntry { path, .. }) = self.entries_by_id.get(&entry.id, ()) {
@@ -7046,16 +7024,15 @@ impl<'a> From<&'a Entry> for proto::Entry {
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
             is_unloaded: entry.kind == EntryKind::UnloadedDir,
+            is_always_included: entry.is_always_included,
         }
     }
 }
 
-impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
+impl TryFrom<(&CharBag, proto::Entry)> for Entry {
     type Error = anyhow::Error;
 
-    fn try_from(
-        (root_char_bag, always_included, entry): (&CharBag, &PathMatcher, proto::Entry),
-    ) -> Result<Self> {
+    fn try_from((root_char_bag, entry): (&CharBag, proto::Entry)) -> Result<Self> {
         let kind = if entry.is_dir {
             if entry.is_unloaded {
                 EntryKind::UnloadedDir
@@ -7069,7 +7046,7 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
         let path = RelPath::from_unix_str(&entry.path)
             .context("invalid relative path in proto message")?;
         let char_bag = char_bag_for_path(*root_char_bag, &path);
-        let is_always_included = always_included.is_match(&path);
+
         Ok(Entry {
             id: ProjectEntryId::from_proto(entry.id),
             kind,
@@ -7082,7 +7059,7 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
                 .map(|path_string| Arc::from(PathBuf::from(path_string))),
             is_ignored: entry.is_ignored,
             is_hidden: entry.is_hidden,
-            is_always_included,
+            is_always_included: entry.is_always_included,
             is_external: entry.is_external,
             is_private: false,
             char_bag,

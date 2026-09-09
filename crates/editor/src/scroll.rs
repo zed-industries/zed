@@ -631,9 +631,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let opened_first_time = self.scroll_manager.visible_line_count.is_none();
-        self.scroll_manager.visible_line_count = Some(lines);
-        if opened_first_time {
+        let previous_line_count = self.scroll_manager.visible_line_count.replace(lines);
+        if previous_line_count.is_none()
+            || (lines > 0.0
+                && previous_line_count != Some(lines)
+                && (self.needs_initial_data_update
+                    || !self.pending_lsp_buffer_refreshes.is_empty()))
+        {
             self.update_data_on_scroll(false, window, cx);
         }
     }

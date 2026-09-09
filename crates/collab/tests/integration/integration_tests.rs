@@ -2602,6 +2602,112 @@ async fn test_unloaded_entries_sync_to_guests(
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_always_included_entries_sync_to_guests(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_a.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_inclusions = Some(vec![
+                    String::from("ignored.txt"),
+                    String::from("ordinary.txt"),
+                ]);
+            });
+        });
+    });
+    cx_b.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_inclusions =
+                    Some(vec![String::from("omitted.txt")]);
+            });
+        });
+    });
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                ".gitignore": "ignored.txt\nomitted.txt\n",
+                "ignored.txt": "",
+                "ordinary.txt": "",
+                "omitted.txt": ""
+            }),
+        )
+        .await;
+
+    let (project_a, _) = client_a.build_local_project(path!("/a"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let included_entries = [
+        ("ignored.txt", true, true),
+        ("ordinary.txt", false, true),
+        ("omitted.txt", true, false),
+    ];
+    let reset_entries = [
+        ("ignored.txt", true, false),
+        ("ordinary.txt", false, false),
+        ("omitted.txt", true, false),
+    ];
+    assert_worktree_inclusions(&project_a, &included_entries, cx_a);
+    assert_worktree_inclusions(&project_b, &included_entries, cx_b);
+
+    cx_a.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_inclusions = Some(Vec::new());
+            });
+        });
+    });
+    executor.run_until_parked();
+    assert_worktree_inclusions(&project_a, &reset_entries, cx_a);
+    assert_worktree_inclusions(&project_b, &reset_entries, cx_b);
+
+    server.forbid_connections();
+    server.disconnect_client(client_b.peer_id().unwrap());
+    executor.advance_clock(RECEIVE_TIMEOUT);
+    cx_a.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_inclusions = Some(vec![
+                    String::from("ignored.txt"),
+                    String::from("ordinary.txt"),
+                ]);
+            });
+        });
+    });
+    executor.run_until_parked();
+    assert_worktree_inclusions(&project_a, &included_entries, cx_a);
+    assert_worktree_inclusions(&project_b, &reset_entries, cx_b);
+
+    server.allow_connections();
+    client_b
+        .connect(false, &cx_b.to_async())
+        .await
+        .into_response()
+        .unwrap();
+    executor.run_until_parked();
+    project_b.read_with(cx_b, |project, cx| assert!(!project.is_disconnected(cx)));
+    assert_worktree_inclusions(&project_b, &included_entries, cx_b);
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_git_diff_base_change(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
@@ -7768,4 +7874,24 @@ async fn test_project_search_excludes_private_files(
         &[PathBuf::from("dir-1/a.txt")],
         "the guest's search returned a file the host marked private"
     );
+}
+
+fn assert_worktree_inclusions(
+    project: &Entity<Project>,
+    expected: &[(&str, bool, bool)],
+    cx: &TestAppContext,
+) {
+    project.read_with(cx, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap();
+        let worktree = worktree.read(cx);
+        for (path, is_ignored, is_always_included) in expected {
+            assert_eq!(
+                worktree
+                    .entry_for_path(rel_path(path))
+                    .map(|entry| (entry.is_ignored, entry.is_always_included)),
+                Some((*is_ignored, *is_always_included)),
+                "{path}"
+            );
+        }
+    });
 }

@@ -295,6 +295,7 @@ impl Database {
                         scan_id: ActiveValue::set(update.scan_id as i64),
                         is_fifo: ActiveValue::set(entry.is_fifo),
                         is_unloaded: ActiveValue::set(entry.is_unloaded),
+                        is_always_included: ActiveValue::set(entry.is_always_included),
                     }
                 }))
                 .on_conflict(
@@ -314,6 +315,7 @@ impl Database {
                         worktree_entry::Column::IsHidden,
                         worktree_entry::Column::ScanId,
                         worktree_entry::Column::IsUnloaded,
+                        worktree_entry::Column::IsAlwaysIncluded,
                     ])
                     .to_owned(),
                 )
@@ -813,6 +815,7 @@ impl Database {
                         size: None,
                         is_fifo: db_entry.is_fifo,
                         is_unloaded: db_entry.is_unloaded,
+                        is_always_included: db_entry.is_always_included,
                     });
                 }
             }

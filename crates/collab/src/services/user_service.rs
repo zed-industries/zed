@@ -240,18 +240,9 @@ mod fake_user_service {
         database: Arc<Database>,
     }
 
+    #[derive(Default)]
     struct FakeUserServiceState {
-        next_user_id: UserId,
         users: HashMap<UserId, User>,
-    }
-
-    impl Default for FakeUserServiceState {
-        fn default() -> Self {
-            Self {
-                next_user_id: UserId(1),
-                users: HashMap::default(),
-            }
-        }
     }
 
     impl FakeUserService {
@@ -269,10 +260,10 @@ mod fake_user_service {
             name: Option<&str>,
             admin: bool,
             params: NewUserParams,
-        ) -> UserId {
+        ) -> Result<UserId> {
             let mut state = self.state.lock().await;
 
-            let user_id = state.next_user_id;
+            let user_id = self.database.create_user(admin).await?.user_id;
             let _ = email_address;
             state.users.insert(
                 user_id,
@@ -288,9 +279,7 @@ mod fake_user_service {
                 },
             );
 
-            state.next_user_id = UserId(state.next_user_id.0 + 1);
-
-            user_id
+            Ok(user_id)
         }
 
         pub async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>> {

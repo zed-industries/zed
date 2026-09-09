@@ -3074,45 +3074,60 @@ async fn test_inlay_hint_refresh_is_forwarded(
         .unwrap();
 
     let other_hints = Arc::new(AtomicBool::new(false));
+    let request_counts = Arc::new(Mutex::new(HashMap::default()));
+    let main_uri = lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap();
+    let cold_uri = lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap();
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    let closure_other_hints = Arc::clone(&other_hints);
     fake_language_server
-        .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-            let task_other_hints = Arc::clone(&closure_other_hints);
-            async move {
-                assert_eq!(
-                    params.text_document.uri,
-                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
-                );
-                let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
-                let character = if other_hints { 0 } else { 2 };
-                let label = if other_hints {
-                    "other hint"
-                } else {
-                    "initial hint"
-                };
-                Ok(Some(vec![
-                    lsp::InlayHint {
-                        position: lsp::Position::new(0, character),
-                        label: lsp::InlayHintLabel::String(label.to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    },
-                    lsp::InlayHint {
-                        position: lsp::Position::new(1090, 1090),
-                        label: lsp::InlayHintLabel::String("out-of-bounds hint".to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    },
-                ]))
+        .set_request_handler::<lsp::request::InlayHintRequest, _, _>({
+            let other_hints = other_hints.clone();
+            let request_counts = request_counts.clone();
+            let main_uri = main_uri.clone();
+            let cold_uri = cold_uri.clone();
+            move |params, _| {
+                let other_hints = other_hints.clone();
+                let request_counts = request_counts.clone();
+                let main_uri = main_uri.clone();
+                let cold_uri = cold_uri.clone();
+                async move {
+                    *request_counts
+                        .lock()
+                        .await
+                        .entry(params.text_document.uri.clone())
+                        .or_insert(0usize) += 1;
+                    let (character, label) = if params.text_document.uri == main_uri {
+                        if other_hints.load(atomic::Ordering::Acquire) {
+                            (0, "other hint")
+                        } else {
+                            (2, "initial hint")
+                        }
+                    } else {
+                        assert_eq!(params.text_document.uri, cold_uri);
+                        (0, "cold hint")
+                    };
+                    Ok(Some(vec![
+                        lsp::InlayHint {
+                            position: lsp::Position::new(0, character),
+                            label: lsp::InlayHintLabel::String(label.to_string()),
+                            kind: None,
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        },
+                        lsp::InlayHint {
+                            position: lsp::Position::new(1090, 1090),
+                            label: lsp::InlayHintLabel::String("out-of-bounds hint".to_string()),
+                            kind: None,
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        },
+                    ]))
+                }
             }
         })
         .next()
@@ -3135,6 +3150,10 @@ async fn test_inlay_hint_refresh_is_forwarded(
             "Client should get its first hints when opens an editor"
         );
     });
+    assert_eq!(
+        *request_counts.lock().await,
+        HashMap::from_iter([(main_uri.clone(), 1)])
+    );
 
     other_hints.fetch_or(true, atomic::Ordering::Release);
     fake_language_server
@@ -3157,7 +3176,112 @@ async fn test_inlay_hint_refresh_is_forwarded(
             extract_hint_labels(editor, cx),
             "Guest should get a /refresh LSP request propagated by host despite host hints are off"
         );
+        assert_eq!(
+            editor
+                .all_inlays(cx)
+                .iter()
+                .map(|inlay| inlay.text().to_string())
+                .collect::<Vec<_>>(),
+            ["other hint"],
+        );
     });
+
+    assert_eq!(
+        *request_counts.lock().await,
+        HashMap::from_iter([(main_uri.clone(), 2)])
+    );
+
+    cx_b.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_inclusions =
+                    Some(vec![String::from("main.rs"), String::from("other.rs")]);
+            });
+        });
+    });
+    executor.run_until_parked();
+
+    client_a
+        .fs()
+        .insert_file(path!("/a/.gitignore"), b"main.rs\nother.rs\n".to_vec())
+        .await;
+    executor.run_until_parked();
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(
+            editor
+                .all_inlays(cx)
+                .iter()
+                .map(|inlay| inlay.text().to_string())
+                .collect::<Vec<_>>(),
+            ["other hint"]
+        );
+        assert_eq!(extract_hint_labels(editor, cx), ["other hint"]);
+    });
+
+    let cold_editor_a = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("other.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let cold_editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("other.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    executor.run_until_parked();
+    cold_editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(editor.all_inlays(cx).len(), 0);
+        assert_eq!(extract_hint_labels(editor, cx), Vec::<String>::new());
+    });
+    assert_eq!(
+        *request_counts.lock().await,
+        HashMap::from_iter([(main_uri.clone(), 2)])
+    );
+
+    for included in [true, false, true] {
+        cx_a.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_inclusions = Some(if included {
+                        vec![String::from("main.rs"), String::from("other.rs")]
+                    } else {
+                        Vec::new()
+                    });
+                });
+            });
+        });
+        executor.run_until_parked();
+        assert_eq!(
+            *request_counts.lock().await,
+            HashMap::from_iter([(main_uri.clone(), 2), (cold_uri.clone(), 1)])
+        );
+        for (editor, label) in [(&editor_b, "other hint"), (&cold_editor_b, "cold hint")] {
+            editor.update(cx_b, |editor, cx| {
+                assert_eq!(
+                    editor
+                        .all_inlays(cx)
+                        .iter()
+                        .map(|inlay| inlay.text().to_string())
+                        .collect::<Vec<_>>(),
+                    [label],
+                    "Guest presentation should preserve fetched hints: {included}",
+                );
+                assert_eq!(extract_hint_labels(editor, cx), [label]);
+            });
+        }
+        for editor in [&editor_a, &cold_editor_a] {
+            editor.update(cx_a, |editor, cx| {
+                assert_eq!(editor.all_inlays(cx).len(), 0);
+                assert_eq!(extract_hint_labels(editor, cx), Vec::<String>::new());
+            });
+        }
+    }
 }
 
 #[gpui::test(iterations = 10)]
