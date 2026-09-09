@@ -23,7 +23,7 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <tr><td>scale of this scene that fits a 120 Hz frame, 8.3 ms (× the element counts above)</td><td class=m id=sm></td><td class=n id=sb></td></tr>
 <tr><td>… i.e. total elements</td><td class=m id=em></td><td class=n id=eb></td></tr>
 <tr><td>share changing up to which the frame fits 8.3 ms</td><td class=m id=fm></td><td class=n id=fb></td></tr></table>
-<p style="margin:.6em 0 0">y axis top <input id=YS type=range min=2 max=20 step=0.1 value=4> <span id=YSv></span> ms <button id=fit>fit the curves</button></p>
+<p style="margin:.6em 0 0">y axis top <input id=YS type=range min=2 max=20 step=0.1 value=4> <span id=YSv></span> ms <label style="display:inline;margin-left:1em"><input id=fit type=checkbox checked> fit the curves</label></p>
 <canvas id=c width=900 height=340></canvas>
 <h3>The model</h3>
 <p>Element kinds <i>k</i> ∈ {div, button, card} with counts <i>n<sub>k</sub></i>, <i>N</i> = Σ <i>n<sub>k</sub></i>; a share <i>f</i> of the elements and <i>D</i> of the <i>K</i> editors change per frame.</p>
@@ -37,7 +37,7 @@ const M=[-139.84289721337763, 0.8524987970794011, 3.5736393700495634, 11.8923414
 // until the .cached() fixture variants have been measured: a replayed element on main is
 // taken as the branch's replay cost, an idle cached editor as the branch's clean editor.
 const MAIN_CACHE={measured:false, replay:[B[4],B[5],B[6]], editor_replay:ED?ED.branch_clean:0};
-let K=0,D=0,R=false,preset=null,MC=false,PN=3,PS=0.6,fitRequested=true;
+let K=0,D=0,R=false,preset=null,MC=false,PN=3,PS=0.6;
 function cacheStats(n,f){const inside=n.map(x=>x*PS);const per=inside.reduce((a,b)=>a+b,0)/PN;const pClean=Math.pow(1-f,per);return {inside,per,pClean};}
 const us=v=>v.toFixed(2);
 document.getElementById('formula').textContent=
@@ -103,7 +103,7 @@ const fBudget=t1===t0?null:(budget*1000-t0)/(t1-t0);
 // Break-even: the share of change above which the branch costs what main does.
 let fEven=null;for(let p=0;p<=100;p++){if(tbranch(n,p/100,V)>=tmain(n,p/100)){fEven=p/100;break;}}if(fEven===null)fEven=1;
 const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=44,W=cv.width-2*pad-215,H=cv.height-2*pad;
-const fitTop=Math.max(2000,Math.max(tmain(n,1),tb)*1.15);$('YS').max=Math.max(20,fitTop/1000).toFixed(1);if(fitRequested){$('YS').value=(fitTop/1000).toFixed(1);fitRequested=false;}const ymax=(+$('YS').value)*1000;$('YSv').textContent=(+$('YS').value).toFixed(1);const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
+const fitTop=Math.max(2000,Math.max(tmain(n,1),tb)*1.15);$('YS').max=Math.max(20,fitTop/1000).toFixed(1);if($('fit').checked){$('YS').value=(fitTop/1000).toFixed(1);}const ymax=(+$('YS').value)*1000;$('YSv').textContent=(+$('YS').value).toFixed(1);const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
 const mainAt=p=>tmain(n,p/100);const tmMax=Math.max(...Array.from({length:101},(_,p)=>mainAt(p)));
 g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(mainAt(p)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(150,150,150,.5)';g.fill();
 if(MC){g.save();g.setLineDash([2,3]);g.lineWidth=1;g.strokeStyle='#777';for(const mode of ['best','worst']){g.beginPath();for(let p=0;p<=100;p++){const y=Y(tmain(n,p/100,mode));if(p===0)g.moveTo(X(p),y);else g.lineTo(X(p),y);}g.stroke();}g.restore();
@@ -124,7 +124,7 @@ for(const [ms] of BUDGETS){const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);if(cros
 if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tmain(n,fEven)),4,0,7);g.fill();const t='break-even '+Math.round(fEven*100)+'%';const tw=g.measureText(t).width;label(g,t,Math.min(X(fEven*100)-tw/2,X(100)-tw),Y(tmain(n,fEven))-22,'#555');}else if(fEven!==null&&fEven>=1){const t='≈ main at 100% (measured ±5% by scene shape)';label(g,t,X(100)-g.measureText(t).width-4,Y(tmain(n,1))-6,'#555');}}
 for(const id of ['L','M','H','K','D','R','V','F'])$(id).addEventListener('input',()=>{preset=null;draw();});
 for(const id of ['MC','PN','PS'])$(id).addEventListener('input',()=>{preset=null;draw();});
-$('YS').addEventListener('input',draw);$('fit').addEventListener('click',()=>{fitRequested=true;draw();});
-for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value]=v;$('D').max=v[5];$('D').value=v[6];$('R').checked=v[7];$('MC').checked=v[8];$('PN').value=v[9];$('PS').value=v[10];preset=name;fitRequested=true;draw();};$('presets').appendChild(b);}
+$('YS').addEventListener('input',()=>{$('fit').checked=false;draw();});$('fit').addEventListener('input',draw);
+for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value]=v;$('D').max=v[5];$('D').value=v[6];$('R').checked=v[7];$('MC').checked=v[8];$('PN').value=v[9];$('PS').value=v[10];preset=name;draw();};$('presets').appendChild(b);}
 $('presets').firstChild.click();
 </script>
