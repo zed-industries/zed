@@ -254,7 +254,9 @@ pub mod dev {
             ToggleFpsOverlay,
             /// Resets the debug frame-time overlay's statistics, except for the
             /// total frame count.
-            ResetFrameOverlayStats
+            ResetFrameOverlayStats,
+            /// Opens the key context view for debugging keybindings.
+            OpenKeyContextView
         ]
     );
 }
@@ -815,6 +817,10 @@ actions!(
         /// Opens the git integration onboarding modal.
         OpenGitIntegrationOnboarding
     ]
+);
+actions!(
+    call_hierarchy,
+    [ShowIncomingCalls, ShowOutgoingCalls, ToggleDirection]
 );
 
 pub mod debug_panel {

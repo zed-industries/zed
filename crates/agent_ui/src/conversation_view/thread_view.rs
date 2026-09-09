@@ -1928,11 +1928,9 @@ impl ThreadView {
                         .into()
                     }),
                 ),
-                ThreadError::RequestFailed => (
-                    "request_failed",
-                    None,
-                    "Request could not be completed after multiple attempts.".into(),
-                ),
+                ThreadError::ProviderRejection { message } => {
+                    ("provider_rejection", None, message.clone())
+                }
                 ThreadError::MaxOutputTokens => (
                     "max_output_tokens",
                     None,
@@ -7568,29 +7566,36 @@ impl ThreadView {
                             },
                         );
 
-                    let has_selection = chunks
-                        .map(|chunks| {
-                            chunks.iter().any(|chunk| {
-                                let md = match chunk {
-                                    AssistantMessageChunk::Message { block, .. } => {
-                                        block.markdown()
-                                    }
-                                    AssistantMessageChunk::Thought { block, .. } => {
-                                        block.markdown()
-                                    }
-                                };
-                                md.map_or(false, |m| m.read(cx).has_selection())
-                            })
-                        })
-                        .unwrap_or(false);
-
                     let context_menu_link = chunks.and_then(|chunks| {
                         chunks.iter().find_map(|chunk| {
-                            let md = match chunk {
+                            let markdown = match chunk {
                                 AssistantMessageChunk::Message { block, .. } => block.markdown(),
                                 AssistantMessageChunk::Thought { block, .. } => block.markdown(),
                             };
-                            md.and_then(|m| m.read(cx).context_menu_link().cloned())
+                            markdown
+                                .and_then(|markdown| markdown.read(cx).context_menu_link().cloned())
+                        })
+                    });
+                    let selected_text = chunks.and_then(|chunks| {
+                        chunks.iter().find_map(|chunk| {
+                            let markdown = match chunk {
+                                AssistantMessageChunk::Message { block, .. } => block.markdown(),
+                                AssistantMessageChunk::Thought { block, .. } => block.markdown(),
+                            };
+                            markdown.and_then(|markdown| {
+                                markdown.read(cx).context_menu_selected_text().cloned()
+                            })
+                        })
+                    });
+                    let selected_markdown = chunks.and_then(|chunks| {
+                        chunks.iter().find_map(|chunk| {
+                            let markdown = match chunk {
+                                AssistantMessageChunk::Message { block, .. } => block.markdown(),
+                                AssistantMessageChunk::Thought { block, .. } => block.markdown(),
+                            };
+                            markdown.and_then(|markdown| {
+                                markdown.read(cx).context_menu_selected_markdown().cloned()
+                            })
                         })
                     });
 
@@ -7651,11 +7656,24 @@ impl ThreadView {
                             })
                             .separator()
                         })
-                        .action_disabled_when(
-                            !has_selection,
-                            "Copy Selection",
-                            Box::new(markdown::CopyAsMarkdown),
-                        )
+                        .when_some(selected_text, |menu, selected_text| {
+                            menu.entry("Copy", Some(Box::new(markdown::Copy)), move |_, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    selected_text.to_string(),
+                                ));
+                            })
+                        })
+                        .when_some(selected_markdown, |menu, selected_markdown| {
+                            menu.entry(
+                                "Copy as Markdown",
+                                Some(Box::new(markdown::CopyAsMarkdown)),
+                                move |_, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        selected_markdown.to_string(),
+                                    ));
+                                },
+                            )
+                        })
                         .item(copy_this_agent_response)
                         .separator()
                         .item(scroll_item)
@@ -11089,15 +11107,9 @@ impl ThreadView {
 
                 self.render_error_callout("Permission Denied", message, false, false, cx)
             }
-            ThreadError::RequestFailed => self.render_error_callout(
-                "Request Failed",
-                "The request could not be completed after multiple attempts. \
-                Try again in a moment."
-                    .into(),
-                true,
-                false,
-                cx,
-            ),
+            ThreadError::ProviderRejection { message } => {
+                self.render_error_callout("Request Failed", message.clone(), true, false, cx)
+            }
             ThreadError::MaxOutputTokens => self.render_error_callout(
                 "Output Limit Reached",
                 "The model stopped because it reached its maximum output length. \
@@ -11682,7 +11694,7 @@ impl ThreadView {
                     .gap_1()
                     .child(
                         Label::new(format!(
-                            "Ensure skill descriptions are at most {MAX_SKILL_DESCRIPTION_LEN} bytes; longer ones may consume more model-context tokens."
+                            "Ensure skill descriptions are at most {MAX_SKILL_DESCRIPTION_LEN} characters; longer ones may consume more model-context tokens."
                         ))
                         .size(LabelSize::Small)
                         .color(Color::Muted),

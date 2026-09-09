@@ -43,6 +43,7 @@ pub(crate) struct ParsedMarkdownData {
     /// Source spans of link reference definitions (`[id]: https://example.com`), which are
     /// consumed by the parser and never appear in any event range.
     pub link_definition_spans: Vec<Range<usize>>,
+    pub has_untagged_code_block: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -240,6 +241,7 @@ pub(crate) fn parse_markdown_with_options(
     let mut state = ParseState::default();
     let mut language_names = HashSet::default();
     let mut language_paths = HashSet::default();
+    let mut has_untagged_code_block = false;
     let mut html_blocks = BTreeMap::default();
     let mut metadata_blocks = BTreeMap::default();
     let mut within_link = false;
@@ -359,6 +361,7 @@ pub(crate) fn parse_markdown_with_options(
 
                         let info = info.trim();
                         let kind = if info.is_empty() {
+                            has_untagged_code_block = true;
                             CodeBlockKind::Fenced
                             // Languages should never contain a slash, and PathRanges always should.
                             // (Models are told to specify them relative to a workspace root.)
@@ -686,6 +689,7 @@ pub(crate) fn parse_markdown_with_options(
         heading_slugs,
         footnote_definitions,
         link_definition_spans,
+        has_untagged_code_block,
     }
 }
 

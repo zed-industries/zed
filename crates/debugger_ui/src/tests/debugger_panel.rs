@@ -892,6 +892,142 @@ async fn test_shutdown_parent_session_if_all_children_are_shutdown(
 }
 
 #[gpui::test]
+async fn test_continue_response_updates_thread_statuses(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let session = start_debug_session(&workspace, cx, |client| {
+        client.on_request::<Continue, _>(move |_, args| {
+            assert_eq!(args.single_thread, None);
+            Ok(dap::ContinueResponse {
+                all_threads_continued: None,
+            })
+        });
+    })
+    .unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Breakpoint,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: Some(true),
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+    cx.run_until_parked();
+
+    session.update(cx, |session, cx| {
+        assert_eq!(session.thread_status(ThreadId(1)), ThreadStatus::Stopped);
+        assert_eq!(session.thread_status(ThreadId(2)), ThreadStatus::Stopped);
+        session.continue_program(ThreadId(1), cx);
+    });
+    cx.run_until_parked();
+
+    session.update(cx, |session, _| {
+        assert_eq!(session.thread_status(ThreadId(1)), ThreadStatus::Running);
+        assert_eq!(session.thread_status(ThreadId(2)), ThreadStatus::Running);
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Breakpoint,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: Some(true),
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+    cx.run_until_parked();
+
+    cx.dispatch_action(ContinueThread);
+    cx.run_until_parked();
+
+    session.update(cx, |session, _| {
+        assert_eq!(session.thread_status(ThreadId(1)), ThreadStatus::Stopped);
+        assert_eq!(session.thread_status(ThreadId(2)), ThreadStatus::Stopped);
+    });
+}
+
+#[gpui::test]
+async fn test_continue_thread_action_only_resumes_selected_thread(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let continue_requested = Arc::new(AtomicBool::new(false));
+
+    let session = start_debug_session(&workspace, cx, {
+        let continue_requested = continue_requested.clone();
+        move |client| {
+            client.on_request::<dap::requests::Initialize, _>(move |_, _| {
+                Ok(dap::Capabilities {
+                    supports_single_thread_execution_requests: Some(true),
+                    ..Default::default()
+                })
+            });
+            client.on_request::<Continue, _>({
+                let continue_requested = continue_requested.clone();
+                move |_, args| {
+                    assert_eq!(args.single_thread, Some(true));
+                    continue_requested.store(true, Ordering::SeqCst);
+                    Ok(dap::ContinueResponse {
+                        all_threads_continued: Some(false),
+                    })
+                }
+            });
+        }
+    })
+    .unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Breakpoint,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: Some(true),
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+    cx.run_until_parked();
+
+    cx.dispatch_action(ContinueThread);
+    cx.run_until_parked();
+
+    assert!(continue_requested.load(Ordering::SeqCst));
+    session.update(cx, |session, _| {
+        assert_eq!(session.thread_status(ThreadId(1)), ThreadStatus::Running);
+        assert_eq!(session.thread_status(ThreadId(2)), ThreadStatus::Stopped);
+    });
+}
+
+#[gpui::test]
 async fn test_debug_panel_item_thread_status_reset_on_failure(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
@@ -1035,14 +1171,14 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
 
     for operation in &[
         "step_over",
-        "continue_thread",
+        "continue_program",
         "step_back",
         "step_in",
         "step_out",
     ] {
         running_state.update(cx, |running_state, cx| match *operation {
             "step_over" => running_state.step_over(cx),
-            "continue_thread" => running_state.continue_thread(cx),
+            "continue_program" => running_state.continue_program(cx),
             "step_back" => running_state.step_back(cx),
             "step_in" => running_state.step_in(cx),
             "step_out" => running_state.step_out(cx),
@@ -1056,7 +1192,7 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
                     .thread_status(cx)
                     .expect("There should be an active thread selected"),
                 match *operation {
-                    "continue_thread" => ThreadStatus::Running,
+                    "continue_program" => ThreadStatus::Running,
                     _ => ThreadStatus::Stepping,
                 },
                 "Thread status was not set to correct intermediate state after {} request",
@@ -1079,7 +1215,7 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
             // update state to running, so we can test it actually changes the status back to stopped
             running_state
                 .session()
-                .update(cx, |session, cx| session.continue_thread(thread_id, cx));
+                .update(cx, |session, cx| session.continue_program(thread_id, cx));
         });
     }
 }
