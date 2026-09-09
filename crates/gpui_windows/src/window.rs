@@ -701,11 +701,22 @@ impl PlatformWindow for WindowsWindow {
         let (done_tx, done_rx) = oneshot::channel();
         let msg = msg.to_string();
         let detail_string = detail.map(|detail| detail.to_string());
-        let handle = self.0.hwnd;
+        let handle = self.0.hwnd.0 as isize;
         let answers = answers.to_vec();
-        self.0
-            .executor
-            .spawn(async move {
+        // `TaskDialogIndirect` blocks in its own modal message loop. It must not run on
+        // the UI thread: that loop keeps servicing WM_PAINT for the (disabled) main
+        // window, so when frames are expensive and constantly re-requested (e.g. an
+        // actively streaming agent session) the loop starves and both the dialog and
+        // the window appear hung. Run it on a dedicated thread instead, and serialize
+        // prompts to preserve the previous one-prompt-at-a-time behavior.
+        static PROMPT_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let spawn_result = std::thread::Builder::new()
+            .name("gpui-prompt".into())
+            .spawn(move || {
+                let _prompt_guard = PROMPT_MUTEX
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                let handle = HWND(handle as _);
                 unsafe {
                     let mut config = TASKDIALOGCONFIG::default();
                     config.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as _;
@@ -769,8 +780,10 @@ impl PlatformWindow for WindowsWindow {
                         let _ = done_tx.send(clicked);
                     }
                 }
-            })
-            .detach();
+            });
+        if let Err(error) = spawn_result {
+            log::error!("failed to spawn prompt thread: {error}");
+        }
 
         Some(done_rx)
     }
