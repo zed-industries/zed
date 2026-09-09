@@ -906,6 +906,7 @@ impl ConversationView {
                 project,
                 initial_content,
                 source,
+                Task::ready(()),
                 window,
                 cx,
             ),
@@ -927,7 +928,10 @@ impl ConversationView {
         let next_request_elicitation_connection =
             Self::request_elicitation_connection_for_state(&state);
 
-        if let Some(connected) = self.as_connected() {
+        // `reset` transfers close ownership to `Loading`, which awaits it before reloading.
+        if !matches!(&state, ServerState::Loading { .. })
+            && let Some(connected) = self.as_connected()
+        {
             connected.close_all_sessions(cx).detach();
         }
 
@@ -1031,6 +1035,10 @@ impl ConversationView {
 
         self.clear_resolved_request_elicitations(cx);
         self.loading_status = None;
+        let close_task = self
+            .as_connected()
+            .map(|connected| connected.close_all_sessions(cx))
+            .unwrap_or_else(|| Task::ready(()));
 
         let state = Self::initial_state(
             self.agent.clone(),
@@ -1042,6 +1050,7 @@ impl ConversationView {
             self.project.clone(),
             None,
             AgentThreadSource::AgentPanel,
+            close_task,
             window,
             cx,
         );
@@ -1067,6 +1076,7 @@ impl ConversationView {
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
         source: AgentThreadSource,
+        close_task: Task<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
@@ -1107,6 +1117,9 @@ impl ConversationView {
         let thread_location = "current_worktree";
 
         let load_task = cx.spawn_in(window, async move |this, cx| {
+            // A reset must finish closing its previous sessions before starting the replacement.
+            close_task.await;
+
             let connection = match connect_result.await {
                 Ok(AgentConnectedState { connection, .. }) => connection,
                 Err(err) => {
@@ -11320,6 +11333,38 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_reset_waits_for_session_close_before_loading(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = CloseCapableConnection::new();
+        let load_session_count = connection.load_session_count.clone();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        let close_gate = connection.gate_next_close();
+
+        conversation_view.update_in(cx, |view, window, cx| view.reset(window, cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            load_session_count.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "load_session should wait for close_session to complete"
+        );
+
+        close_gate
+            .send(())
+            .await
+            .expect("close gate should remain open");
+        cx.run_until_parked();
+
+        assert_eq!(
+            load_session_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "load_session should start after close_session completes"
+        );
+    }
+
+    #[gpui::test]
     async fn test_close_session_returns_error_when_unsupported(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -11358,13 +11403,23 @@ pub(crate) mod tests {
     #[derive(Clone)]
     struct CloseCapableConnection {
         closed_sessions: Arc<Mutex<Vec<acp::SessionId>>>,
+        load_session_count: Arc<std::sync::atomic::AtomicUsize>,
+        close_gate: Arc<Mutex<Option<async_channel::Receiver<()>>>>,
     }
 
     impl CloseCapableConnection {
         fn new() -> Self {
             Self {
                 closed_sessions: Arc::new(Mutex::new(Vec::new())),
+                load_session_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                close_gate: Arc::new(Mutex::new(None)),
             }
+        }
+
+        fn gate_next_close(&self) -> async_channel::Sender<()> {
+            let (close_tx, close_rx) = async_channel::bounded(1);
+            *self.close_gate.lock() = Some(close_rx);
+            close_tx
         }
     }
 
@@ -11409,12 +11464,35 @@ pub(crate) mod tests {
             true
         }
 
+        fn supports_load_session(&self) -> bool {
+            true
+        }
+
+        fn load_session(
+            self: Rc<Self>,
+            _session_id: acp::SessionId,
+            project: Entity<Project>,
+            work_dirs: PathList,
+            _title: Option<SharedString>,
+            cx: &mut App,
+        ) -> Task<Result<Entity<AcpThread>>> {
+            self.load_session_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.new_session(project, work_dirs, cx)
+        }
+
         fn close_session(
             self: Rc<Self>,
             session_id: &acp::SessionId,
-            _cx: &mut App,
+            cx: &mut App,
         ) -> Task<Result<()>> {
             self.closed_sessions.lock().push(session_id.clone());
+            if let Some(close_gate) = self.close_gate.lock().take() {
+                return cx.background_spawn(async move {
+                    close_gate.recv().await?;
+                    Ok(())
+                });
+            }
             Task::ready(Ok(()))
         }
 
