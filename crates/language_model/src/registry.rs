@@ -488,7 +488,7 @@ impl LanguageModelRegistry {
 
         self.inline_assistant_model
             .clone()
-            .or_else(|| self.default_model.clone())
+            .or_else(|| self.default_model())
     }
 
     pub fn commit_message_model(&self, cx: &App) -> Option<ConfiguredModel> {
@@ -701,12 +701,18 @@ mod tests {
             );
 
             assert!(registry.default_model().is_none());
+            assert!(registry.inline_assistant_model().is_none());
 
             registry.set_should_use_fallback(true);
 
             let default_model = registry.default_model().unwrap();
             assert_eq!(default_model.model.id(), model.id());
             assert_eq!(default_model.provider.id(), provider.id());
+            assert!(
+                registry
+                    .inline_assistant_model()
+                    .is_some_and(|inline_model| inline_model.is_same_as(&default_model))
+            );
         });
     }
 
