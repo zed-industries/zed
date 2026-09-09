@@ -340,6 +340,7 @@ impl WebWindowInner {
                     == this.visual_viewport_height();
                 if completes_tap && viewport_stable {
                     let preserve_focused_input = should_preserve_focused_input(
+                        !this.ime_mirror.read_only(),
                         focused_input_accepted_text_before_tap,
                         this.focused_input_accepts_text(),
                         dispatch_result,
@@ -1282,11 +1283,13 @@ fn capslock_from_keyboard_event(event: &web_sys::KeyboardEvent) -> Capslock {
 }
 
 fn should_preserve_focused_input(
+    ime_session_live: bool,
     accepted_text_before_tap: bool,
     accepts_text_after_tap: bool,
     dispatch_result: Option<DispatchEventResult>,
 ) -> bool {
-    accepted_text_before_tap
+    ime_session_live
+        && accepted_text_before_tap
         && accepts_text_after_tap
         && dispatch_result.is_some_and(|result| result.default_prevented)
 }
@@ -1450,6 +1453,20 @@ mod tests {
         assert!(should_preserve_focused_input(
             true,
             true,
+            true,
+            Some(DispatchEventResult {
+                propagate: false,
+                default_prevented: true,
+            }),
+        ));
+    }
+
+    #[test]
+    fn tap_does_not_preserve_a_dismissed_ime_session() {
+        assert!(!should_preserve_focused_input(
+            false,
+            true,
+            true,
             Some(DispatchEventResult {
                 propagate: false,
                 default_prevented: true,
@@ -1466,8 +1483,23 @@ mod tests {
             })
         };
 
-        assert!(!should_preserve_focused_input(true, true, result(false),));
-        assert!(!should_preserve_focused_input(false, true, result(true),));
-        assert!(!should_preserve_focused_input(true, false, result(true),));
+        assert!(!should_preserve_focused_input(
+            true,
+            true,
+            true,
+            result(false)
+        ));
+        assert!(!should_preserve_focused_input(
+            true,
+            false,
+            true,
+            result(true)
+        ));
+        assert!(!should_preserve_focused_input(
+            true,
+            true,
+            false,
+            result(true)
+        ));
     }
 }
