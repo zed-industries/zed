@@ -11360,6 +11360,7 @@ async fn test_paste_shifts_block_by_first_line_delta(cx: &mut TestAppContext) {
     ));
     cx.set_state("package test\n\nˇ");
     cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.run_until_parked();
     cx.assert_editor_state("package test\n\nfunc find() {\n\treturn 1\n}ˇ");
 
     // The block moves by however far its first line moved, so a first line that
@@ -11367,6 +11368,7 @@ async fn test_paste_shifts_block_by_first_line_delta(cx: &mut TestAppContext) {
     cx.write_to_clipboard(ClipboardItem::new_string("        foo()\n    bar()".into()));
     cx.set_state("func test() {\nˇ\n}");
     cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.run_until_parked();
     cx.assert_editor_state("func test() {\n    foo()\nbar()ˇ\n}");
 }
 
@@ -35503,6 +35505,150 @@ async fn test_bookmarks_tab_retries_failed_path_when_file_appears(cx: &mut TestA
 }
 
 #[gpui::test]
+async fn test_dynamic_document_highlight_registration_refreshes_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    let debounce = Duration::from_millis(
+        cx.update(|_, cx| EditorSettings::get_global(cx).lsp_highlight_debounce.0),
+    );
+    let project = cx.update_workspace(|workspace, _, _| workspace.project().clone());
+    let server_id = cx.lsp.server.server_id();
+    cx.set_state(indoc! {"
+        fn main() {
+            let foo = 1;
+            fˇoo;
+        }
+    "});
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let _request_handler =
+        cx.set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>({
+            let request_count = request_count.clone();
+            move |_, _, _| {
+                request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move {
+                    Ok(Some(vec![lsp::DocumentHighlight {
+                        range: lsp::Range::new(lsp::Position::new(2, 4), lsp::Position::new(2, 7)),
+                        kind: Some(lsp::DocumentHighlightKind::READ),
+                    }]))
+                }
+            }
+        });
+
+    register_document_highlight_capability(&cx.lsp, "python-document-highlight", "python").await;
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected a registration for another language to not query the server",
+    );
+    assert_eq!(document_highlight_count(&mut cx), 0);
+
+    register_document_highlight_capability(&cx.lsp, "rust-document-highlight", "rust").await;
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected an applicable registration to refresh document highlights",
+    );
+    assert_eq!(document_highlight_count(&mut cx), 1);
+
+    cx.update_editor(|editor, _, cx| {
+        editor.refresh_document_highlights(cx);
+    });
+    for _ in 0..3 {
+        cx.executor().advance_clock(debounce / 4);
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            project.update(cx, |_, cx| {
+                cx.emit(project::Event::RefreshDocumentHighlights {
+                    server_id: Some(LanguageServerId(server_id.0 + 1)),
+                });
+            });
+        });
+        cx.run_until_parked();
+    }
+    cx.executor().advance_clock(debounce / 4);
+    cx.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        2,
+        "expected refreshes of servers unrelated to the buffer to not restart the debounce",
+    );
+
+    cx.update(|_, cx| {
+        project.update(cx, |_, cx| {
+            cx.emit(project::Event::RefreshDocumentHighlights {
+                server_id: Some(server_id),
+            });
+        });
+    });
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        3,
+        "expected a refresh of the buffer's server to query document highlights",
+    );
+
+    cx.lsp
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "rust-document-highlight".to_string(),
+                    method: "textDocument/documentHighlight".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        3,
+        "expected no server query after the applicable registration is removed",
+    );
+    assert_eq!(
+        document_highlight_count(&mut cx),
+        0,
+        "expected stale document highlights to be cleared after unregistration",
+    );
+
+    register_document_highlight_capability(&cx.lsp, "rust-document-highlight", "rust").await;
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+    assert_eq!(request_count.load(atomic::Ordering::SeqCst), 4);
+    assert_eq!(document_highlight_count(&mut cx), 1);
+
+    let buffer = cx.update_editor(|editor, _, cx| editor.buffer().read(cx).as_singleton().unwrap());
+    cx.update(|_, cx| {
+        project.update(cx, |project, cx| {
+            project.stop_language_servers_for_buffers(vec![buffer], HashSet::default(), cx);
+        });
+    });
+    cx.executor().advance_clock(debounce);
+    cx.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        4,
+        "expected no document highlight request after the server is stopped",
+    );
+    assert_eq!(
+        document_highlight_count(&mut cx),
+        0,
+        "expected stale document highlights to be cleared after the server is stopped",
+    );
+}
+
+#[gpui::test]
 async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let capabilities = lsp::ServerCapabilities {
@@ -46211,4 +46357,35 @@ async fn test_lsp_show_document_unsupported_uri(cx: &mut TestAppContext) {
         .into_response()
         .expect("show document request should not error");
     assert_eq!(response, lsp::ShowDocumentResult { success: false });
+}
+
+async fn register_document_highlight_capability(
+    lsp: &lsp::FakeLanguageServer,
+    registration_id: &str,
+    language: &str,
+) {
+    lsp.request::<lsp::request::RegisterCapability>(
+        lsp::RegistrationParams {
+            registrations: vec![lsp::Registration {
+                id: registration_id.to_string(),
+                method: "textDocument/documentHighlight".to_string(),
+                register_options: Some(json!({
+                    "documentSelector": [{ "language": language, "scheme": "file" }],
+                })),
+            }],
+        },
+        DEFAULT_LSP_REQUEST_TIMEOUT,
+    )
+    .await
+    .into_response()
+    .unwrap();
+}
+
+fn document_highlight_count(cx: &mut EditorLspTestContext) -> usize {
+    cx.editor(|editor, _, _| {
+        editor
+            .background_highlights
+            .get(&HighlightKey::DocumentHighlightRead)
+            .map_or(0, |(_, ranges)| ranges.len())
+    })
 }

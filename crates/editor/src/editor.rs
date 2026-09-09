@@ -2080,6 +2080,9 @@ impl Editor {
                     project::Event::RefreshDocumentLinks { .. } => {
                         editor.refresh_document_links(None, cx);
                     }
+                    project::Event::RefreshDocumentHighlights { server_id } => {
+                        editor.refresh_document_highlights_for_server(*server_id, cx);
+                    }
                     project::Event::RefreshFoldingRanges { .. } => {
                         editor.refresh_folding_ranges(None, window, cx);
                     }
@@ -2104,6 +2107,7 @@ impl Editor {
                         editor.refresh_runnables(None, window, cx);
                         editor.update_lsp_data(None, window, cx);
                         editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
+                        editor.refresh_document_highlights(cx);
                     }
                     project::Event::SnippetEdit(id, snippet_edits) => {
                         // todo(lw): Non singletons
@@ -3803,6 +3807,33 @@ impl Editor {
             }
         }));
         None
+    }
+
+    fn refresh_document_highlights_for_server(
+        &mut self,
+        server_id: Option<LanguageServerId>,
+        cx: &mut Context<Self>,
+    ) {
+        let server_relevant = server_id.is_none_or(|server_id| {
+            let Some(project) = self.project.as_ref() else {
+                return false;
+            };
+            let cursor_position = self.selections.newest_anchor().head();
+            self.buffer
+                .read(cx)
+                .text_anchor_for_position(cursor_position, cx)
+                .is_some_and(|(cursor_buffer, _)| {
+                    project
+                        .read(cx)
+                        .lsp_store()
+                        .read(cx)
+                        .relevant_server_ids_for_capability_check(&cursor_buffer, cx)
+                        .contains(&server_id)
+                })
+        });
+        if server_relevant {
+            self.refresh_document_highlights(cx);
+        }
     }
 
     fn prepare_highlight_query_from_selection(
@@ -10086,6 +10117,7 @@ impl Editor {
                     self.invalidate_semantic_tokens(Some(*buffer_id));
                     self.update_lsp_data(Some(*buffer_id), window, cx);
                     self.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
+                    self.refresh_document_highlights(cx);
                 }
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
