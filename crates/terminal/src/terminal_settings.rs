@@ -125,8 +125,13 @@ pub enum MergedShellEntry {
 /// detected entry's `program` both ways:
 /// * exact string match (covers the common "configured `/bin/zsh`,
 ///   detected `/bin/zsh`" case), and
-/// * file-stem match where one side is a bare basename and the other an
-///   absolute path (covers "configured `zsh`, detected `/bin/zsh`").
+/// * bare-basename match when the configured program is a bare name like
+///   `zsh` (no path separator). This covers "configured `zsh`, detected
+///   `/bin/zsh`". Path-bearing configured programs (`/bin/bash`,
+///   `./local/shell`) only shadow via exact path equality — otherwise a
+///   single `program: "/bin/bash"` profile would shadow every bash on the
+///   system, and a future `program: "wsl.exe"` profile would shadow all
+///   WSL distros (which differ only by `args`).
 pub fn merge_with_configured_profiles(
     detected: Vec<DetectedShell>,
     profiles: &IndexMap<String, TerminalProfile>,
@@ -137,7 +142,20 @@ pub fn merge_with_configured_profiles(
         .collect();
     let configured_stems: std::collections::HashSet<String> = profiles
         .values()
-        .filter_map(|p| Path::new(&p.program).file_name().map(|s| s.to_string_lossy().into_owned()))
+        .filter_map(|p| {
+            // Only bare basenames (no path separator) participate in
+            // stem-matching. Path-bearing programs only shadow via exact
+            // path equality above.
+            if p.program.contains(std::path::MAIN_SEPARATOR) {
+                return None;
+            }
+            // On Windows also treat '/' as a separator for cross-platform
+            // configs (a user might write `C:/Program Files/...`).
+            if cfg!(windows) && p.program.contains('/') {
+                return None;
+            }
+            Some(p.program.clone())
+        })
         .collect();
 
     let mut entries: Vec<MergedShellEntry> = profiles
@@ -574,6 +592,36 @@ mod tests {
             MergedShellEntry::Configured { name, .. } => assert_eq!(name, "MyZsh"),
             MergedShellEntry::Detected(_) => panic!("basename match should shadow detected"),
         }
+    }
+
+    #[test]
+    fn merge_does_not_shadow_by_basename_when_configured_is_path() {
+        // Configured profile uses an absolute path "/bin/bash"; detected
+        // shell is at "/usr/bin/bash" — same stem, different path. The
+        // path-bearing configured program should only shadow via exact
+        // match (it doesn't here), so both entries survive.
+        let profiles = profile_map(&[("Bash", "/bin/bash")]);
+        let detected = vec![detected("bash", "/usr/bin/bash")];
+        let merged = merge_with_configured_profiles(detected, &profiles);
+        assert_eq!(
+            merged.len(),
+            2,
+            "path-bearing configured program must NOT shadow detected shells at different paths by basename"
+        );
+        assert!(matches!(merged[0], MergedShellEntry::Configured { .. }));
+        assert!(matches!(merged[1], MergedShellEntry::Detected(_)));
+    }
+
+    #[test]
+    fn merge_shadows_detected_when_configured_path_matches_exactly() {
+        // Path-bearing configured programs still shadow via exact path
+        // equality (the configured program string equals the detected
+        // program string).
+        let profiles = profile_map(&[("Bash", "/bin/bash")]);
+        let detected = vec![detected("bash", "/bin/bash")];
+        let merged = merge_with_configured_profiles(detected, &profiles);
+        assert_eq!(merged.len(), 1);
+        assert!(matches!(merged[0], MergedShellEntry::Configured { .. }));
     }
 
     #[test]

@@ -2024,7 +2024,20 @@ impl SerializableItem for TerminalView {
 
             let terminal = project
                 .update(cx, |project, cx| {
-                    project.create_terminal_shell_with(cwd, shell_override, cx)
+                    // Round-1 fixup made the menu spawn profile-tagged
+                    // terminals with `local: is_remote` so the override
+                    // survives D9's remote-drop. Persisted terminals must
+                    // restore the same way: when the project is remote AND
+                    // we have an override to restore, route through
+                    // `create_local_terminal_with` (force_local=true) so the
+                    // override is honored. Otherwise (local project, or no
+                    // override) the normal spawn path applies.
+                    let is_remote = project.is_via_remote_server();
+                    if is_remote && shell_override.is_some() {
+                        project.create_local_terminal_with(shell_override, cx)
+                    } else {
+                        project.create_terminal_shell_with(cwd, shell_override, cx)
+                    }
                 })
                 .await?;
             cx.update(|window, cx| {

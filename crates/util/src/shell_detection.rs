@@ -106,10 +106,21 @@ fn detect_available_shells_blocking() -> Vec<DetectedShell> {
     } else {
         None
     };
+    let windir = if platform == Platform::Windows {
+        std::env::var_os("WINDIR").map(PathBuf::from)
+    } else {
+        None
+    };
     let path_exists = |p: &Path| p.exists();
 
-    let mut shells =
-        detect_available_shells_inner(platform, etc_shells.as_deref(), &login_shell, path_env.as_deref(), &path_exists);
+    let mut shells = detect_available_shells_inner(
+        platform,
+        etc_shells.as_deref(),
+        &login_shell,
+        path_env.as_deref(),
+        windir.as_deref(),
+        &path_exists,
+    );
 
     if platform == Platform::Windows {
         let wsl = enumerate_wsl_distros();
@@ -127,6 +138,10 @@ fn detect_available_shells_blocking() -> Vec<DetectedShell> {
 /// * `login_shell` — `$SHELL` (Unix) or the resolved Windows system shell.
 /// * `path_env` — `PATH`/`Path` value used to resolve relative names; on
 ///   Unix the separator is `':'`, on Windows `';'`.
+/// * `windir` — value of `%WINDIR%` (Windows only); `None` skips the
+///   PowerShell/cmd probes. Injected rather than read from `std::env`
+///   so tests can exercise those branches in parallel without mutating
+///   global process state.
 /// * `path_exists` — injection point for `Path::exists()` so tests can
 ///   simulate any filesystem layout.
 pub fn detect_available_shells_inner(
@@ -134,6 +149,7 @@ pub fn detect_available_shells_inner(
     etc_shells_content: Option<&str>,
     login_shell: &str,
     path_env: Option<&str>,
+    windir: Option<&Path>,
     path_exists: &dyn Fn(&Path) -> bool,
 ) -> Vec<DetectedShell> {
     match platform {
@@ -143,7 +159,9 @@ pub fn detect_available_shells_inner(
             path_env,
             path_exists,
         ),
-        Platform::Windows => detect_windows_inner(login_shell, path_env, path_exists),
+        Platform::Windows => {
+            detect_windows_inner(login_shell, path_env, windir, path_exists)
+        }
     }
 }
 
@@ -251,6 +269,7 @@ fn resolve_etc_shells_entry(
 fn detect_windows_inner(
     login_shell: &str,
     _path_env: Option<&str>,
+    windir: Option<&Path>,
     path_exists: &dyn Fn(&Path) -> bool,
 ) -> Vec<DetectedShell> {
     let mut shells: Vec<DetectedShell> = Vec::new();
@@ -273,7 +292,6 @@ fn detect_windows_inner(
     // Always probe Windows PowerShell + cmd directly — they ship with the OS
     // and the user may want them even if `get_windows_system_shell` picked
     // pwsh.
-    let windir = std::env::var_os("WINDIR").map(PathBuf::from);
     if let Some(windir) = windir {
         let powershell = windir
             .join("System32")
@@ -560,13 +578,16 @@ mod tests {
     /// Windows: well-known entries (PowerShell + cmd) are emitted via the
     /// injectable `path_exists`, in a stable order.
     #[test]
-    fn windows_probes_emit_powershell_and_cmd_in_order() {
-        // Simulate a Windows environment by setting WINDIR; we can't
-        // actually mutate std::env::var_os safely in a parallel test
-        // suite, so instead we check the behavior when WINDIR is unset:
-        // no PowerShell/cmd entries, but the login shell still appears.
+    fn windows_probes_emit_login_shell_when_windir_unset() {
+        // Pre-fix #3 contract still holds: when windir is None, no
+        // PowerShell/cmd entries, but the login shell still appears.
         let exists = always_exists;
-        let shells = detect_windows_inner("C:\\Program Files\\PowerShell\\7\\pwsh.exe", None, &exists);
+        let shells = detect_windows_inner(
+            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            None,
+            None,
+            &exists,
+        );
         // Login shell always wins when WINDIR is unset.
         assert_eq!(shells.len(), 1);
         assert_eq!(shells[0].source, ShellSource::LoginShell);
@@ -574,35 +595,124 @@ mod tests {
 
     #[test]
     fn windows_emits_powershell_and_cmd_when_windir_set() {
-        // We can't safely mutate env vars in parallel tests; verify the
-        // behavior by exercising the inner fn directly with WINDIR unset
-        // (already covered above) and trust the env-reading code by
-        // inspection. The dedup logic is exercised by other tests.
-        let exists = exists_set(&["C:\\Program Files\\PowerShell\\7\\pwsh.exe"]);
+        // Fix #3 lock: with an injected windir, both Windows PowerShell and
+        // cmd.exe should be emitted in stable order (login shell, then
+        // PowerShell, then cmd), each with its well-known label.
+        // Build expected paths via the same join semantics the production
+        // code uses, so the test is portable across Unix/Windows hosts
+        // (Path::join uses the host separator).
+        let windir = Path::new("C:\\Windows");
+        let pwsh = Path::new("C:\\Program Files\\PowerShell\\7\\pwsh.exe");
+        let powershell = windir
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        let cmd = windir.join("System32").join("cmd.exe");
+        let paths = [
+            pwsh.to_str().expect("utf8"),
+            powershell.to_str().expect("utf8"),
+            cmd.to_str().expect("utf8"),
+        ];
+        let exists = exists_set(&paths);
         let shells = detect_windows_inner(
-            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            pwsh.to_str().expect("utf8"),
             None,
+            Some(windir),
             &exists,
         );
-        assert_eq!(shells.len(), 1);
+        assert_eq!(
+            shells.len(),
+            3,
+            "login shell + PowerShell + cmd should all surface"
+        );
+        assert_eq!(shells[0].source, ShellSource::LoginShell);
+        assert_eq!(shells[0].program.as_os_str(), pwsh.as_os_str());
+
+        assert_eq!(shells[1].label, "PowerShell");
+        assert_eq!(shells[1].source, ShellSource::KnownLocation);
+        assert_eq!(shells[1].program.as_os_str(), powershell.as_os_str());
+
+        assert_eq!(shells[2].label, "Command Prompt");
+        assert_eq!(shells[2].source, ShellSource::KnownLocation);
+        assert_eq!(shells[2].program.as_os_str(), cmd.as_os_str());
+    }
+
+    #[test]
+    fn windows_skips_missing_windir_entries() {
+        // windir is set but the PowerShell file doesn't exist on the
+        // simulated fs — only cmd should surface alongside the login shell.
+        let windir = Path::new("C:\\Windows");
+        let pwsh = Path::new("C:\\pwsh.exe");
+        let cmd = windir.join("System32").join("cmd.exe");
+        let paths = [
+            pwsh.to_str().expect("utf8"),
+            cmd.to_str().expect("utf8"),
+        ];
+        let exists = exists_set(&paths);
+        let shells = detect_windows_inner(
+            pwsh.to_str().expect("utf8"),
+            None,
+            Some(windir),
+            &exists,
+        );
+        assert_eq!(shells.len(), 2);
+        assert_eq!(shells[0].program.as_os_str(), pwsh.as_os_str());
+        assert_eq!(shells[1].label, "Command Prompt");
+        assert!(
+            !shells
+                .iter()
+                .any(|s| s.label == "PowerShell"),
+            "PowerShell should be skipped when its file is missing"
+        );
     }
 
     #[test]
     fn windows_dedupes_when_login_shell_equals_known_location() {
         // If pwsh is both the system shell AND in a well-known location,
-        // only one entry should survive.
-        let exists = exists_set(&[
-            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
-            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-            "C:\\Windows\\System32\\cmd.exe",
-        ]);
+        // only one entry should survive. Here both point at the SAME path
+        // under the injected windir, so the known-location entry dedups
+        // against the login-shell entry.
+        let windir = Path::new("C:\\Windows");
+        let powershell = windir
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        let cmd = windir.join("System32").join("cmd.exe");
+        let paths = [
+            powershell.to_str().expect("utf8"),
+            cmd.to_str().expect("utf8"),
+        ];
+        let exists = exists_set(&paths);
         let shells = detect_windows_inner(
-            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            powershell.to_str().expect("utf8"),
             None,
+            Some(windir),
             &exists,
         );
-        // No WINDIR set here; only the login shell survives.
+        // Login shell (powershell) + cmd; powershell known-location entry
+        // dedups against the login shell.
+        assert_eq!(shells.len(), 2);
+        assert_eq!(shells[0].program.as_os_str(), powershell.as_os_str());
+        assert_eq!(shells[1].label, "Command Prompt");
+    }
+
+    #[test]
+    fn windows_windir_ignored_on_unix_platform_via_inner_fn() {
+        // The public testable entrypoint passes windir through to the
+        // Windows branch but ignores it on Unix. Sanity check: passing a
+        // windir to the Unix branch doesn't change behavior.
+        let shells = detect_available_shells_inner(
+            Platform::Unix,
+            Some("/bin/bash\n"),
+            "",
+            Some("/bin"),
+            Some(Path::new("C:\\should\\be\\ignored")),
+            &exists_set(&["/bin/bash"]),
+        );
         assert_eq!(shells.len(), 1);
+        assert_eq!(shells[0].label, "bash");
     }
 
     #[test]
@@ -623,6 +733,7 @@ mod tests {
             Some("/bin/bash\n"),
             "/bin/zsh",
             Some("/bin"),
+            None,
             &exists_set(&["/bin/bash", "/bin/zsh"]),
         );
         assert!(shells.iter().any(|s| s.label == "bash"));
@@ -636,6 +747,7 @@ mod tests {
             None,
             "C:\\pwsh.exe",
             Some("C:\\Windows\\System32"),
+            None,
             &exists_set(&["C:\\pwsh.exe"]),
         );
         assert_eq!(shells.len(), 1);

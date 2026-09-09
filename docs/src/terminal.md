@@ -138,7 +138,7 @@ If your `terminal.profiles` map plus the detected list exceeds eight entries, th
 
 Profiles whose `program` cannot be resolved (neither an existing absolute path nor found on `PATH`) are **hidden from the menu** but still spawnable via keymap; Zed emits a warning and routes actual spawn failures through the normal terminal-error notification path.
 
-> **Note:** Profiles are honored only for local terminals. In SSH remote projects the profile is ignored (the shell comes from the remote server) and a warning is logged. Use `NewTerminal` with `"local": true` to spawn a local terminal that does honor the profile.
+> **Note:** In remote (SSH) projects, profile and detected-shell entries spawn **LOCAL** terminals alongside your remote project — profiles reference executables on your local machine. The default **New Terminal** entry still opens a shell on the remote host. Keymap-dispatched {#action workspace::NewTerminal} without `"local": true` follows the pre-existing remote-shell behavior; set `"local": true` to spawn a local terminal that honors the profile.
 
 ## Working Directory
 
