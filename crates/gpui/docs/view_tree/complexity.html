@@ -91,7 +91,7 @@ const PRESETS={
  'Long list':[0,0,300,1,100,0,0,false,false,3,60],
 };
 const BUDGET=8.3;const BUDGETS=[[4,'4 ms — half a 120 Hz frame'],[8.3,'8.3 ms (120 Hz)'],[16.7,'16.7 ms (60 Hz)']];
-function label(g,text,x,y,color){g.font='12px system-ui';g.lineWidth=3;g.strokeStyle='rgba(255,255,255,.9)';g.strokeText(text,x,y);g.fillStyle=color;g.fillText(text,x,y);}
+function label(g,text,x,y,color){g.font='12px system-ui';g.lineWidth=3;g.lineJoin='round';g.strokeStyle='rgba(255,255,255,.9)';g.strokeText(text,x,y);g.fillStyle=color;g.fillText(text,x,y);}
 // Labels in the right margin sit at the height of the line they name; when two lines are close
 // the labels are pushed apart (in y order) and a thin leader points back at the line.
 function drawMarginLabels(g,items,x,gap){items.sort((a,b)=>a.y-b.y);for(let i=1;i<items.length;i++)items[i].y=Math.max(items[i].y,items[i-1].y+gap);
