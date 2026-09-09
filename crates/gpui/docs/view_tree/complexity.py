@@ -245,7 +245,7 @@ const fBudget=t1===t0?null:(budget*1000-t0)/(t1-t0);
 // Break-even: the share of change above which the branch costs what main does.
 let fEven=null;for(let p=0;p<=100;p++){if(tbranch(n,p/100,V)>=tmain(n,p/100)){fEven=p/100;break;}}if(fEven===null)fEven=1;
 const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=44,W=cv.width-2*pad-200,H=cv.height-2*pad;
-const ys=document.querySelector('input[name=ys]:checked').value;const ymax=ys==='fit'?Math.max(tmain(n,1),tb)*1.15:(+ys)*1000*1.05;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
+const ys=document.querySelector('input[name=ys]:checked').value;const ymax=ys==='fit'?Math.max(tmain(n,1),tb,4000)*1.15:(+ys)*1000*1.05;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
 const mainAt=p=>tmain(n,p/100);const tmMax=Math.max(...Array.from({length:101},(_,p)=>mainAt(p)));
 g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(mainAt(p)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(150,150,150,.5)';g.fill();
 if(MC){g.save();g.setLineDash([2,3]);g.lineWidth=1;g.strokeStyle='#777';for(const mode of ['best','worst']){g.beginPath();for(let p=0;p<=100;p++){const y=Y(tmain(n,p/100,mode));if(p===0)g.moveTo(X(p),y);else g.lineTo(X(p),y);}g.stroke();}g.restore();
@@ -259,7 +259,7 @@ label(g,F+'%%',X(F)-10,Y(0)+16,'#e76f51');
 const faster=tm/tb;const gain=faster>=1?faster.toFixed(1)+'× faster ('+Math.round(100*(1-tb/tm))+'%%)':(tb/tm).toFixed(2)+'× slower';
 const branchText='branch '+fmt(tb)+' — '+gain;const bw=g.measureText(branchText).width+8;
 const bx=F>55?X(F)-bw:X(F)+6;const by=(Y(tb)-Y(tm))<22?Y(tb)+18:Y(tb)-6;
-label(g,'main '+fmt(tm)+(MC?' expected':''),MC?(F>55?X(F)-150:X(F)+8):X(2),MC?Y(tm)-6:Y(tmMax)-6,'#555');label(g,branchText,bx,by,'#1b6f65');
+{const worstY=MC?Y(tmain(n,f,'worst')):-99;const my=MC?(Math.abs(worstY-Y(tm))<18?Y(tm)+14:Y(tm)-6):Y(tmMax)-6;label(g,'main '+fmt(tm)+(MC?' expected':''),MC?(F>55?X(F)-150:X(F)+8):X(2),my,'#555');}label(g,branchText,bx,by,'#1b6f65');
 for(const b of $('presets').children)b.classList.toggle('active',b.textContent===preset);
 g.font='bold 13px system-ui';label(g,preset?preset:'custom scene',pad,pad-14,'#222');g.font='12px system-ui';
 for(const [ms] of BUDGETS){const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);if(cross!==null&&cross>0&&cross<1&&ms*1000<ymax){g.fillStyle='#e76f51';g.beginPath();g.arc(X(cross*100),Y(ms*1000),4,0,7);g.fill();}}
