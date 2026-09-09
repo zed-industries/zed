@@ -122,6 +122,8 @@ impl WebWindow {
             ("outline", "none"),
             ("touch-action", "none"),
             ("-webkit-touch-callout", "none"),
+            ("user-select", "none"),
+            ("-webkit-user-select", "none"),
         ] {
             style.set_property(property, value).map_err(|error| {
                 anyhow::anyhow!("Failed to set canvas {property} style: {error:?}")
