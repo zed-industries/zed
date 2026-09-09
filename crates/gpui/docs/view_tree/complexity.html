@@ -45,10 +45,12 @@ const M=[-139.84289721337763, 0.8524987970794011, 3.5736393700495634, 11.8923414
 const MAIN_CACHE={measured:false, replay:[B[4],B[5],B[6]], editor_replay:ED?ED.branch_clean:0};
 let K=0,D=0,R=false,preset=null,MC=false,PN=3,PS=0.6,LOC=0.8;
 // Where this frame's change lands: a share LOC of it in the panel being worked in (plus the
-// uncached area), the rest spread uniformly. Each panel is clean iff none of its elements
+// uncached area), the rest spread uniformly. The working area saturates softly (tanh) rather
+// than at a hard cap, so change spills into the other panels gradually as f grows instead of
+// all at once when the working area is full. Each panel is clean iff none of its elements
 // changed; the expected replay is the average over the active and the other P−1 panels.
 function cacheStats(n,f){const N=n[0]+n[1]+n[2];const inside=n.map(x=>x*PS);const per=inside.reduce((a,b)=>a+b,0)/PN;
- const working=N>0?(per+(N-inside.reduce((a,b)=>a+b,0)))/N:1;const fOther=Math.max(0,f-Math.min(LOC*f,working));const fActive=Math.min(1,fOther+(working>0?LOC*f/working:0));
+ const working=N>0?(per+(N-inside.reduce((a,b)=>a+b,0)))/N:1;const absorbed=working>0?working*Math.tanh(LOC*f/working):0;const fOther=Math.max(0,f-absorbed);const fActive=Math.min(1,fOther+(working>0?LOC*f/working:0));
  const pActive=Math.pow(1-fActive,per),pOther=Math.pow(1-fOther,per);const pClean=(pActive+(PN-1)*pOther)/PN;return {inside,per,pClean,pActive,pOther,fActive,fOther};}
 const us=v=>v.toFixed(2);
 document.getElementById('formula').textContent=
