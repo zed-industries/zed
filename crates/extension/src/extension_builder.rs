@@ -30,16 +30,17 @@ const RUST_TARGET: &str = "wasm32-wasip2";
 
 /// Compiling Tree-sitter parsers from C to WebAssembly requires a compiler,
 /// a WASI sysroot, and compiler runtime libraries, provided by `wasi-sdk`.
-const WASI_SDK_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/";
-const WASI_SDK_ASSET_NAME: Option<&str> = cfg_select! {
-    all(target_os = "macos", target_arch = "x86_64") => Some("wasi-sdk-34.0-x86_64-macos.tar.gz"),
-    all(target_os = "macos", target_arch = "aarch64") => Some("wasi-sdk-34.0-arm64-macos.tar.gz"),
-    all(target_os = "linux", target_arch = "x86_64") => Some("wasi-sdk-34.0-x86_64-linux.tar.gz"),
-    all(target_os = "linux", target_arch = "aarch64") => Some("wasi-sdk-34.0-arm64-linux.tar.gz"),
-    all(target_os = "freebsd", target_arch = "x86_64") => Some("wasi-sdk-34.0-x86_64-linux.tar.gz"),
-    all(target_os = "freebsd", target_arch = "aarch64") => Some("wasi-sdk-34.0-arm64-linux.tar.gz"),
-    all(target_os = "windows", target_arch = "x86_64") => Some("wasi-sdk-34.0-x86_64-windows.tar.gz"),
-    all(target_os = "windows", target_arch = "aarch64") => Some("wasi-sdk-34.0-arm64-windows.tar.gz"),
+const WASI_SDK_VERSION: &str = "34";
+const WASI_SDK_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download/";
+const WASI_SDK_PLATFORM: Option<&str> = cfg_select! {
+    all(target_os = "macos", target_arch = "x86_64") => Some("x86_64-macos"),
+    all(target_os = "macos", target_arch = "aarch64") => Some("arm64-macos"),
+    all(target_os = "linux", target_arch = "x86_64") => Some("x86_64-linux"),
+    all(target_os = "linux", target_arch = "aarch64") => Some("arm64-linux"),
+    all(target_os = "freebsd", target_arch = "x86_64") => Some("x86_64-linux"),
+    all(target_os = "freebsd", target_arch = "aarch64") => Some("arm64-linux"),
+    all(target_os = "windows", target_arch = "x86_64") => Some("x86_64-windows"),
+    all(target_os = "windows", target_arch = "aarch64") => Some("arm64-windows"),
     _ => None
 };
 
@@ -500,8 +501,9 @@ impl ExtensionBuilder {
             );
         }
 
-        let url = if let Some(asset_name) = WASI_SDK_ASSET_NAME {
-            format!("{WASI_SDK_URL}{asset_name}")
+        let url = if let Some(platform) = WASI_SDK_PLATFORM {
+            let asset_name = format!("wasi-sdk-{WASI_SDK_VERSION}.0-{platform}.tar.gz");
+            format!("{WASI_SDK_URL}wasi-sdk-{WASI_SDK_VERSION}/{asset_name}")
         } else {
             bail!("wasi-sdk is not available for platform {}", env::consts::OS);
         };
@@ -509,15 +511,23 @@ impl ExtensionBuilder {
         let wasi_sdk_dir = self.cache_dir.join("wasi-sdk");
         let clang_path = wasi_sdk_clang_path(&wasi_sdk_dir);
 
-        log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
-
-        if fs::metadata(&clang_path).is_ok_and(|metadata| metadata.is_file()) {
+        let expected_version = format!("{WASI_SDK_VERSION}.0");
+        if let Ok(installed_version) =
+            fs::read_to_string(wasi_sdk_dir.join("VERSION")).inspect_err(|error| {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!("failed to read cached wasi-sdk version: {error}");
+                }
+            })
+            && installed_version.lines().next() == Some(expected_version.as_str())
+            && fs::metadata(&clang_path).is_ok_and(|metadata| metadata.is_file())
+        {
             return Ok(clang_path);
         }
 
+        log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
+
         let tar_out_dir = self.cache_dir.join("wasi-sdk-temp");
 
-        fs::remove_dir_all(&wasi_sdk_dir).ok();
         fs::remove_dir_all(&tar_out_dir).ok();
         fs::create_dir_all(&tar_out_dir).context("failed to create extraction directory")?;
 
@@ -564,6 +574,11 @@ impl ExtensionBuilder {
             .context("no content")?
             .context("failed to read contents of extracted wasi archive directory")?
             .path();
+        match fs::remove_dir_all(&wasi_sdk_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("failed to remove outdated wasi-sdk"),
+        }
         fs::rename(&inner_dir, &wasi_sdk_dir).context("failed to move extracted wasi dir")?;
         fs::remove_dir_all(&tar_out_dir).ok();
 
