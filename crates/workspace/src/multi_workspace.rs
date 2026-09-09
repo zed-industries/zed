@@ -320,6 +320,7 @@ pub struct MultiWorkspace {
     _serialize_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
     previous_focus_handle: Option<FocusHandle>,
+    window_overlay: Option<AnyView>,
 }
 
 impl EventEmitter<MultiWorkspaceEvent> for MultiWorkspace {}
@@ -381,6 +382,7 @@ impl MultiWorkspace {
             _serialize_task: None,
             _subscriptions: vec![release_subscription, settings_subscription],
             previous_focus_handle: None,
+            window_overlay: None,
         }
     }
 
@@ -404,6 +406,11 @@ impl MultiWorkspace {
 
     pub fn set_sidebar_overlay(&mut self, overlay: Option<AnyView>, cx: &mut Context<Self>) {
         self.sidebar_overlay = overlay;
+        cx.notify();
+    }
+
+    pub fn set_window_overlay(&mut self, overlay: Option<AnyView>, cx: &mut Context<Self>) {
+        self.window_overlay = overlay;
         cx.notify();
     }
 
@@ -2180,6 +2187,9 @@ impl Render for MultiWorkspace {
                 )
                 .children(right_sidebar)
                 .child(self.workspace().read(cx).modal_layer.clone())
+                .children(self.window_overlay.as_ref().map(|overlay| {
+                    deferred(div().absolute().inset_0().child(overlay.clone())).with_priority(3)
+                }))
                 .children(self.sidebar_overlay.as_ref().map(|view| {
                     deferred(div().absolute().size_full().inset_0().occlude().child(
                         v_flex().h(px(0.0)).top_20().items_center().child(

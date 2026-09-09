@@ -2,7 +2,7 @@ use gpui::{Action as _, App};
 use itertools::Itertools as _;
 use settings::{
     AudioInputDeviceName, AudioOutputDeviceName, EditPredictionDataCollectionChoice,
-    LanguageSettingsContent, SemanticTokens, SettingsContent,
+    LanguageSettingsContent, ScreencastSettingsContent, SemanticTokens, SettingsContent,
 };
 use std::sync::{Arc, OnceLock};
 use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
@@ -1246,6 +1246,84 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
+    fn screencast_section() -> [SettingsPageItem; 4] {
+        [
+            SettingsPageItem::SectionHeader("Screencast"),
+            SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
+                title: "Font Size",
+                description: "Font size for keys displayed by the keyboard screencast overlay.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("screencast.font_size"),
+                    pick: |settings_content| {
+                        settings_content.screencast.as_ref()?.font_size.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .screencast
+                            .get_or_insert_default()
+                            .font_size = value;
+                    },
+                }),
+                metadata: None,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
+                title: "Vertical Offset",
+                description: "Controls the vertical offset of the screencast mode overlay from the bottom.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("screencast.vertical_offset"),
+                    pick: |settings_content| {
+                        settings_content
+                            .screencast
+                            .as_ref()?
+                            .vertical_offset
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .screencast
+                            .get_or_insert_default()
+                            .vertical_offset = value.map(|value| {
+                            value.clamp(0.0, ScreencastSettingsContent::MAX_VERTICAL_OFFSET_PERCENT)
+                        });
+                    },
+                }),
+                metadata: None,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
+                title: "Keyboard Overlay Timeout",
+                description: "Controls how long (in milliseconds) the keyboard overlay is shown in screencast mode.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("screencast.keyboard_overlay_timeout"),
+                    pick: |settings_content| {
+                        settings_content
+                            .screencast
+                            .as_ref()?
+                            .keyboard_overlay_timeout
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .screencast
+                            .get_or_insert_default()
+                            .keyboard_overlay_timeout = value.map(|value| {
+                            value.clamp(
+                                ScreencastSettingsContent::MIN_KEYBOARD_OVERLAY_TIMEOUT,
+                                ScreencastSettingsContent::MAX_KEYBOARD_OVERLAY_TIMEOUT,
+                            )
+                        });
+                    },
+                }),
+                metadata: None,
+            }),
+        ]
+    }
+
     fn markdown_preview_font_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Markdown Preview Font"),
@@ -1588,6 +1666,7 @@ fn appearance_page() -> SettingsPage {
         buffer_font_section(),
         ui_font_section(),
         agent_panel_font_section(),
+        screencast_section(),
         markdown_preview_font_section(),
         text_rendering_section(),
         cursor_section(),

@@ -2953,4 +2953,11 @@
       "enabled": false,
     },
   },
+
+  // Keyboard screencast settings
+  "screencast": {
+    "font_size": 56,
+    "vertical_offset": 20,
+    "keyboard_overlay_timeout": 800,
+  },
 }

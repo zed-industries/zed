@@ -329,6 +329,9 @@ pub struct SettingsContent {
     /// Settings for developer-oriented instrumentation tools (profilers,
     /// tracers, etc.) that can be toggled at runtime.
     pub instrumentation: Option<InstrumentationSettingsContent>,
+
+    /// Settings for the keyboard screencast overlay.
+    pub screencast: Option<ScreencastSettingsContent>,
 }
 
 /// Configuration for developer-oriented instrumentation tools that collect
@@ -339,6 +342,41 @@ pub struct InstrumentationSettingsContent {
     /// Configuration for the performance profiler, accessed via the
     /// `zed: open performance profiler` action.
     pub performance_profiler: Option<PerformanceProfilerSettingsContent>,
+}
+
+/// Settings for the keyboard screencast overlay.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ScreencastSettingsContent {
+    /// Font size in pixels used for displayed screencast keys.
+    ///
+    /// Default: 56
+    #[schemars(range(min = 20, max = 100))]
+    pub font_size: Option<FontSize>,
+
+    /// Controls the vertical offset of the screencast mode overlay from bottom.
+    ///
+    /// Default to 20%
+    #[schemars(range(min = 0, max = 90))]
+    pub vertical_offset: Option<f32>,
+
+    /// Controls how long (in milliseconds) the keyboard overlay is shown in screencast mode.
+    ///
+    /// Default: 800 ms
+    #[schemars(range(min = 500, max = 5000))]
+    pub keyboard_overlay_timeout: Option<u64>,
+}
+
+impl ScreencastSettingsContent {
+    pub const DEFAULT_FONT_SIZE: f32 = 56.0;
+    pub const MIN_FONT_SIZE: f32 = 20.0;
+    pub const MAX_FONT_SIZE: f32 = 100.0;
+
+    pub const DEFAULT_VERTICAL_OFFSET_PERCENT: f32 = 20.0;
+    pub const MAX_VERTICAL_OFFSET_PERCENT: f32 = 90.0;
+
+    pub const DEFAULT_KEYBOARD_OVERLAY_TIMEOUT: u64 = 800;
+    pub const MIN_KEYBOARD_OVERLAY_TIMEOUT: u64 = 500;
+    pub const MAX_KEYBOARD_OVERLAY_TIMEOUT: u64 = 5000;
 }
 
 /// Configuration for the performance profiler which collects timing data
@@ -406,7 +444,7 @@ fallible_options::flattened_deserialize!(SettingsContent {
         journal, log, line_indicator_format, language_models, outline_panel, project_panel,
         node, proxy, reduce_motion, server_url, credentials_url, session, telemetry, terminal,
         title_bar, vim_mode, calls, which_key, vim, modeline_lines, feature_flags,
-        instrumentation,
+        instrumentation, screencast,
     },
     defaults: {},
 });
