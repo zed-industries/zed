@@ -244,6 +244,7 @@ impl VsCodeSettings {
             modeline_lines: None,
             feature_flags: None,
             instrumentation: None,
+            screencast: self.screencast_settings_content(),
         }
     }
 
@@ -1033,6 +1034,14 @@ impl VsCodeSettings {
             experimental_theme_overrides: None,
             theme_overrides: Default::default(),
         }
+    }
+
+    fn screencast_settings_content(&self) -> Option<ScreencastSettingsContent> {
+        skip_default(ScreencastSettingsContent {
+            font_size: self.read_f32("screencastMode.fontSize").map(FontSize::from),
+            vertical_offset: self.read_f32("screencastMode.verticalOffset"),
+            keyboard_overlay_timeout: self.read_u64("screencastMode.keyboardOverlayTimeout"),
+        })
     }
 
     fn workspace_settings_content(&self) -> WorkspaceSettingsContent {

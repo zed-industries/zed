@@ -1,0 +1,26 @@
+[package]
+name = "screencast"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/screencast.rs"
+doctest = false
+
+[features]
+test-support = ["gpui/test-support"]
+
+[dependencies]
+gpui.workspace = true
+ui.workspace = true
+workspace.workspace = true
+util.workspace = true
+settings.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
