@@ -10,7 +10,7 @@ prints, per log, the frame count and the p50 / p90 / p95 / p99 / max draw durati
 how many frames exceeded one 120 Hz (8.3 ms) and one 60 Hz (16.7 ms) frame budget. With two
 or more logs it also prints the change of each statistic relative to the first log.
 
-See crates/gpui/docs/node_engine.md, "Measuring real use", for the session to drive.
+See crates/gpui/docs/view_tree.md, "Real use", for the session to drive.
 """
 
 import re
