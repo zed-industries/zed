@@ -19,7 +19,7 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <p id=mcnote style="margin:.3em 0;color:#666"></p>
 <p id=mcwarn style="margin:.3em 0;color:#b00"></p></fieldset>
 <table><tr><th></th><th>main</th><th>branch</th></tr>
-<tr><td>frame time</td><td class=m id=tm></td><td class=n id=tb></td></tr>
+<tr><td>frame time <small id=tmnote></small></td><td class=m id=tm></td><td class=n id=tb></td></tr>
 <tr><td>scale of this scene that fits a 120 Hz frame, 8.3 ms (× the element counts above)</td><td class=m id=sm></td><td class=n id=sb></td></tr>
 <tr><td>… i.e. total elements</td><td class=m id=em></td><td class=n id=eb></td></tr>
 <tr><td>share changing up to which the frame fits 8.3 ms</td><td class=m id=fm></td><td class=n id=fb></td></tr></table>
@@ -63,8 +63,8 @@ branch  t = ${us(B[0])} + (${us(B[1])}·n_div + ${us(B[2])}·n_button + ${us(B[3
 (µs; least squares on relative error over the sweep; main redraws every element every frame)`;
 function editorsMain(){return ED?K*ED.main_each+(R?D*ED.main_reshape:0):0;}
 function editorsBranch(){return ED?(K-D)*ED.branch_clean+D*(R?ED.branch_dirty:ED.branch_clean):0;}
-function tmain(n,f){const N=n[0]+n[1]+n[2];let t=M[0]+M[4]*(N/100)**2;
-if(MC){const {inside,pClean}=cacheStats(n,f);for(let k=0;k<3;k++){const clean=inside[k]*pClean;t+=M[1+k]*(n[k]-clean)+MAIN_CACHE.replay[k]*clean;}
+function tmain(n,f,mode){const N=n[0]+n[1]+n[2];let t=M[0]+M[4]*(N/100)**2;
+if(MC){const {inside}=cacheStats(n,f);const pClean=mode==='best'?1:mode==='worst'?0:cacheStats(n,f).pClean;for(let k=0;k<3;k++){const clean=inside[k]*pClean;t+=M[1+k]*(n[k]-clean)+MAIN_CACHE.replay[k]*clean;}
  t+=ED?(K-D)*MAIN_CACHE.editor_replay+D*(ED.main_each+(R?ED.main_reshape:0)):0;}
 else{t+=M[1]*n[0]+M[2]*n[1]+M[3]*n[2]+editorsMain();}
 return t;}
@@ -73,15 +73,16 @@ for(let k=0;k<3;k++){const d=n[k]*f;t+=B[1+k]*d+B[4+k]*(n[k]-d);}return t;}
 function scale(f,budget){let lo=0,hi=1024;for(let i=0;i<40;i++){const mid=(lo+hi)/2;if(f(mid)<=budget*1000)lo=mid;else hi=mid;}return lo;}
 const $=id=>document.getElementById(id);
 function fmt(us){return us>=1000?(us/1000).toFixed(2)+' ms':us.toFixed(0)+' µs';}
+// [divs, buttons, cards, views, f%, editors, editors changing, reshaped, main caches?, cached panels, share inside them %]
 const PRESETS={
- 'Zed, typing':[200,300,20,20,3,3,1,false],
- 'Zed, scrolling':[200,300,20,20,3,3,1,true],
- 'Zed, resize':[200,300,20,20,100,3,3,true],
- 'Big workspace':[600,800,60,60,5,6,1,false],
- 'Busy UI':[400,1000,200,40,10,0,0,false],
- 'Data table':[4000,600,0,50,5,0,0,false],
- 'Dashboard':[3000,0,0,40,1,0,0,false],
- 'Long list':[0,0,300,1,100,0,0,false],
+ 'Zed, typing':[200,300,20,20,3,3,1,false,true,3,60],
+ 'Zed, scrolling':[200,300,20,20,3,3,1,true,true,3,60],
+ 'Zed, resize':[200,300,20,20,100,3,3,true,true,3,60],
+ 'Big workspace':[600,800,60,60,5,6,1,false,true,4,60],
+ 'Busy UI':[400,1000,200,40,10,0,0,false,false,3,60],
+ 'Data table':[4000,600,0,50,5,0,0,false,false,3,60],
+ 'Dashboard':[3000,0,0,40,1,0,0,false,false,3,60],
+ 'Long list':[0,0,300,1,100,0,0,false,false,3,60],
 };
 const BUDGET=8.3;const BUDGETS=[[4,'4 ms — half a 120 Hz frame'],[8.3,'8.3 ms (120 Hz)'],[16.7,'16.7 ms (60 Hz)']];
 function label(g,text,x,y,color){g.font='12px system-ui';g.lineWidth=3;g.strokeStyle='rgba(255,255,255,.9)';g.strokeText(text,x,y);g.fillStyle=color;g.fillText(text,x,y);}
@@ -91,7 +92,7 @@ MC=$('MC').checked;PN=+$('PN').value;PS=+$('PS').value/100;$('PNv').textContent=
 {const {per,pClean}=cacheStats(n,f);$('mcnote').textContent=MC?`each panel ≈ ${Math.round(per)} elements; clean with probability (1 − f)ⁿ = ${(100*pClean).toFixed(pClean<0.01?2:0)}% at f = ${F}%; expected ${(PN*pClean).toFixed(1)} of ${PN} panels replayed this frame`:'';
  $('mcwarn').textContent=MC&&!MAIN_CACHE.measured?'placeholder coefficients: main’s replay cost is taken as the branch’s until the .cached() fixtures are measured':'';}
 $('Lv').textContent=n[0];$('Mv').textContent=n[1];$('Hv').textContent=n[2];$('Vv').textContent=V;$('Fv').textContent=F;$('Kv').textContent=K;$('Dv').textContent=D;
-const tm=tmain(n,f),tb=tbranch(n,f,V);$('tm').textContent=fmt(tm);$('tb').textContent=fmt(tb);
+const tm=tmain(n,f),tb=tbranch(n,f,V);$('tm').textContent=fmt(tm)+(MC?' (expected)':'');$('tb').textContent=fmt(tb);$('tmnote').textContent=MC?'— main’s is the expectation over which panels stayed clean; the band on the chart is its range':'';
 const t0=tbranch(n,0,V),t1=tbranch(n,1,V);
 const N=n[0]+n[1]+n[2];const sm=scale(s=>tmain(n.map(x=>x*s),f),budget),sb=scale(s=>tbranch(n.map(x=>x*s),f,V),budget);
 $('sm').textContent=sm.toFixed(2)+'×';$('sb').textContent=sb.toFixed(2)+'×';$('em').textContent=Math.round(N*sm);$('eb').textContent=Math.round(N*sb);
@@ -104,6 +105,8 @@ const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const 
 const ymax=Math.max(tmain(n,1),tb,budget*1000)*1.15;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
 const mainAt=p=>tmain(n,p/100);const tmMax=Math.max(...Array.from({length:101},(_,p)=>mainAt(p)));
 g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(mainAt(p)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(150,150,150,.5)';g.fill();
+if(MC){g.save();g.setLineDash([2,3]);g.lineWidth=1;g.strokeStyle='#777';for(const mode of ['best','worst']){g.beginPath();for(let p=0;p<=100;p++){const y=Y(tmain(n,p/100,mode));if(p===0)g.moveTo(X(p),y);else g.lineTo(X(p),y);}g.stroke();}g.restore();
+ label(g,'every panel clean',X(50)-50,Y(tmain(n,.5,'best'))+14,'#777');label(g,'no panel clean',X(50)-44,Y(tmain(n,.5,'worst'))-6,'#777');}
 g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(tbranch(n,p/100,V)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(42,157,143,.7)';g.fill();
 g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);for(const [ms,name] of BUDGETS){if(ms*1000<ymax){g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);g.beginPath();g.moveTo(X(0),Y(ms*1000));g.lineTo(X(100),Y(ms*1000));g.stroke();const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);const upTo=cross!==null&&cross>0&&cross<1?' · up to '+Math.round(cross*100)+'%':'';label(g,name+upTo,X(100)+6,Y(ms*1000)+4,'#e76f51');}}g.setLineDash([]);
 g.lineWidth=1;g.strokeStyle='#e76f51';g.beginPath();g.moveTo(X(F),Y(0));g.lineTo(X(F),Y(ymax/1.15));g.stroke();
@@ -112,13 +115,13 @@ label(g,F+'%',X(F)-10,Y(0)+16,'#e76f51');
 const faster=tm/tb;const gain=faster>=1?faster.toFixed(1)+'× faster ('+Math.round(100*(1-tb/tm))+'%)':(tb/tm).toFixed(2)+'× slower';
 const branchText='branch '+fmt(tb)+' — '+gain;const bw=g.measureText(branchText).width+8;
 const bx=F>55?X(F)-bw:X(F)+6;const by=(Y(tb)-Y(tm))<22?Y(tb)+18:Y(tb)-6;
-label(g,'main '+fmt(tm)+(MC?' at '+F+'%':''),X(2),Y(tmMax)-6,'#555');label(g,branchText,bx,by,'#1b6f65');
+label(g,'main '+fmt(tm)+(MC?' expected at '+F+'%':''),X(2),Y(tmMax)-6,'#555');label(g,branchText,bx,by,'#1b6f65');
 for(const b of $('presets').children)b.classList.toggle('active',b.textContent===preset);
 g.font='bold 13px system-ui';label(g,preset?preset:'custom scene',pad,pad-14,'#222');g.font='12px system-ui';
 for(const [ms] of BUDGETS){const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);if(cross!==null&&cross>0&&cross<1&&ms*1000<ymax){g.fillStyle='#e76f51';g.beginPath();g.arc(X(cross*100),Y(ms*1000),4,0,7);g.fill();}}
 if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tmain(n,fEven)),4,0,7);g.fill();const t='break-even '+Math.round(fEven*100)+'%';const tw=g.measureText(t).width;label(g,t,Math.min(X(fEven*100)-tw/2,X(100)-tw),Y(tmain(n,fEven))-22,'#555');}else if(fEven!==null&&fEven>=1){const t='≈ main at 100% (measured ±5% by scene shape)';label(g,t,X(100)-g.measureText(t).width-4,Y(tmain(n,1))-6,'#555');}}
 for(const id of ['L','M','H','K','D','R','V','F'])$(id).addEventListener('input',()=>{preset=null;draw();});
-for(const id of ['MC','PN','PS'])$(id).addEventListener('input',draw);
-for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value]=v;$('D').max=v[5];$('D').value=v[6];$('R').checked=v[7];preset=name;draw();};$('presets').appendChild(b);}
+for(const id of ['MC','PN','PS'])$(id).addEventListener('input',()=>{preset=null;draw();});
+for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value]=v;$('D').max=v[5];$('D').value=v[6];$('R').checked=v[7];$('MC').checked=v[8];$('PN').value=v[9];$('PS').value=v[10];preset=name;draw();};$('presets').appendChild(b);}
 $('presets').firstChild.click();
 </script>
