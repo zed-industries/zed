@@ -157,6 +157,7 @@ table{border-collapse:collapse;margin:1em 0}td,th{padding:.3em .8em;border-botto
 canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small{color:#666}button{margin:.2em .3em .2em 0}</style>
 <h2>GPUI view tree — frame cost model</h2>
 <p>Presets: <span id=presets></span></p>
+<style>button.active{background:#2a9d8f;color:#fff;border-color:#2a9d8f}</style>
 <p><small>The frame budget at 120 Hz is 8.3 ms, shared by every window and by everything else on the main thread; the 4 ms line is the half of it a draw should stay under.</small></p>
 <label>divs (a quad) <input id=L type=range min=0 max=4000 step=10 value=200> <span id=Lv></span></label>
 <label>buttons (quad + 3-glyph label) <input id=M type=range min=0 max=1500 step=10 value=300> <span id=Mv></span></label>
@@ -179,7 +180,7 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <p><small>Model fitted to <code>complexity.csv</code> (%(npoints)d element points, mean error %(errm).0f%% / %(errb).0f%%; %(neditors)d editor points); see <code>view_tree.md</code>, "Scene complexity". Coefficients (µs): main — %(cm)s; branch — %(cb)s; editors — %(editors_text)s.</small></p>
 <script>
 const M=%(coef_main)s, B=%(coef_branch)s, NODE=%(node)s, ED=%(editors)s;
-let K=0,D=0,R=false;
+let K=0,D=0,R=false,preset=null;
 const us=v=>v.toFixed(2);
 document.getElementById('formula').textContent=
 `main    t = ${us(M[0])} + ${us(M[1])}·n_div + ${us(M[2])}·n_button + ${us(M[3])}·n_card + ${us(M[4])}·(N/100)²`+
@@ -233,11 +234,13 @@ const faster=tm/tb;const gain=faster>=1?faster.toFixed(1)+'× faster ('+Math.rou
 const branchText='branch '+fmt(tb)+' — '+gain;const bw=g.measureText(branchText).width+8;
 const bx=F>55?X(F)-bw:X(F)+6;const by=(Y(tb)-Y(tm))<22?Y(tb)+18:Y(tb)-6;
 label(g,'main '+fmt(tm),X(2),Y(tm)-6,'#555');label(g,branchText,bx,by,'#1b6f65');
+for(const b of $('presets').children)b.classList.toggle('active',b.textContent===preset);
+g.font='bold 13px system-ui';label(g,preset?preset:'custom scene',pad,pad-14,'#222');g.font='12px system-ui';
 for(const [ms] of BUDGETS){const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);if(cross!==null&&cross>0&&cross<1&&ms*1000<ymax){g.fillStyle='#e76f51';g.beginPath();g.arc(X(cross*100),Y(ms*1000),4,0,7);g.fill();}}
 if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tm),4,0,7);g.fill();const t='break-even '+Math.round(fEven*100)+'%%';const tw=g.measureText(t).width;label(g,t,Math.min(X(fEven*100)-tw/2,X(100)-tw),Y(tm)-22,'#555');}else if(fEven!==null&&fEven>=1){const t='never slower than main below 100%%';label(g,t,X(100)-g.measureText(t).width-4,Y(tm)-6,'#555');}}
-for(const id of ['L','M','H','K','D','R','V','F'])$(id).addEventListener('input',draw);
-for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value]=v;$('D').max=v[5];$('D').value=v[6];$('R').checked=v[7];draw();};$('presets').appendChild(b);}
-draw();
+for(const id of ['L','M','H','K','D','R','V','F'])$(id).addEventListener('input',()=>{preset=null;draw();});
+for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value]=v;$('D').max=v[5];$('D').value=v[6];$('R').checked=v[7];preset=name;draw();};$('presets').appendChild(b);}
+$('presets').firstChild.click();
 </script>
 """ % dict(npoints=len(points), errm=100 * abs(err_main).mean(), errb=100 * abs(err_branch).mean(), maxm=100 * abs(err_main).max(), maxb=100 * abs(err_branch).max(),
            cm=describe(names_main, coef_main), cb=describe(names_branch, coef_branch),
