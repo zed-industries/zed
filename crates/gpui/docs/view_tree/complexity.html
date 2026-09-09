@@ -1,30 +1,35 @@
 <!doctype html><meta charset="utf-8"><title>GPUI view tree: frame cost model</title>
-<style>body{font:14px system-ui;margin:2em;max-width:940px;color:#222}label{display:block;margin:.35em 0}input[type=range]{width:300px;vertical-align:middle}
+<style>body{font:14px system-ui;margin:2em;max-width:940px;color:#222}label{display:block;margin:.35em 0}input[type=range]{width:260px;vertical-align:middle}
 table{border-collapse:collapse;margin:1em 0}td,th{padding:.3em .8em;border-bottom:1px solid #ddd;text-align:right}th:first-child,td:first-child{text-align:left}
-canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small{color:#666}button{margin:.2em .3em .2em 0}</style>
+canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small{color:#666}button{margin:.2em .3em .2em 0}
+.controls{display:flex;gap:1.5em;align-items:flex-start}.controls>div{flex:none}.controls fieldset{flex:1;min-width:260px;margin:0;padding:.4em 1em .6em;border:1px solid #ddd}
+.controls fieldset input[type=range]{width:170px}.controls fieldset p{margin:.3em 0}</style>
 <h2>GPUI view tree — frame cost model</h2>
 <p>Presets: <span id=presets></span></p>
 <style>button.active{background:#2a9d8f;color:#fff;border-color:#2a9d8f}</style>
 <p><small>The frame budget at 120 Hz is 8.3 ms, shared by every window and by everything else on the main thread; the 4 ms line is the half of it a draw should stay under.</small></p>
+<div class=controls><div>
 <label>divs (a quad) <input id=L type=range min=0 max=4000 step=10 value=200> <span id=Lv></span></label>
 <label>buttons (quad + 3-glyph label) <input id=M type=range min=0 max=1500 step=10 value=300> <span id=Mv></span></label>
 <label>cards (quad + shadow + 10-glyph label) <input id=H type=range min=0 max=400 step=5 value=20> <span id=Hv></span></label>
 <label>editors (~40 lines of code each) <input id=K type=range min=0 max=8 value=3> <span id=Kv></span></label>
-<label>… of which changing <input id=D type=range min=0 max=8 value=1> <span id=Dv></span> <label style="display:inline;margin-left:1em"><input id=R type=checkbox> showing new text (lines reshaped, e.g. scrolling)</label></label>
+<label>… of which changing <input id=D type=range min=0 max=8 value=1> <span id=Dv></span></label>
+<label style="margin-left:1.2em"><input id=R type=checkbox> … showing new text (lines reshaped, e.g. scrolling)</label>
 <label>views <input id=V type=range min=1 max=128 value=20> <span id=Vv></span></label>
 <label>elements changing per frame <input id=F type=range min=0 max=100 value=10> <span id=Fv></span>%</label>
-<fieldset style="margin:1em 0;padding:.6em 1em;border:1px solid #ddd"><legend><label style="display:inline"><input id=MC type=checkbox> <code>main</code> caches editors and panels, as Zed ships it</label></legend>
-<label>cached panels <input id=PN type=range min=1 max=12 value=3> <span id=PNv></span></label>
-<label>share of divs / buttons / cards inside them <input id=PS type=range min=0 max=100 value=60> <span id=PSv></span>%</label>
-<p id=mcnote style="margin:.3em 0;color:#666"></p>
-<p id=mcwarn style="margin:.3em 0;color:#b00"></p></fieldset>
+</div>
+<fieldset><legend><label style="display:inline"><input id=MC type=checkbox> <code>main</code> caches editors and panels, as Zed ships it</label></legend>
+<label>cached panels<br><input id=PN type=range min=1 max=12 value=3> <span id=PNv></span></label>
+<label>share of divs / buttons / cards inside them<br><input id=PS type=range min=0 max=100 value=60> <span id=PSv></span>%</label>
+<p id=mcnote style="color:#666"></p>
+<p id=mcwarn style="color:#b00"></p></fieldset></div>
+<canvas id=c width=900 height=340></canvas>
+<p style="margin:.4em 0 0"><small>y axis top <input id=YS type=range min=2 max=20 step=0.1 value=4> <span id=YSv></span> ms <label style="display:inline;margin-left:1em"><input id=fit type=checkbox checked> fit the curves</label></small></p>
 <table><tr><th></th><th>main</th><th>branch</th></tr>
 <tr><td>frame time <small id=tmnote></small></td><td class=m id=tm></td><td class=n id=tb></td></tr>
 <tr><td>scale of this scene that fits a 120 Hz frame, 8.3 ms (× the element counts above)</td><td class=m id=sm></td><td class=n id=sb></td></tr>
 <tr><td>… i.e. total elements</td><td class=m id=em></td><td class=n id=eb></td></tr>
 <tr><td>share changing up to which the frame fits 8.3 ms</td><td class=m id=fm></td><td class=n id=fb></td></tr></table>
-<p style="margin:.6em 0 0">y axis top <input id=YS type=range min=2 max=20 step=0.1 value=4> <span id=YSv></span> ms <label style="display:inline;margin-left:1em"><input id=fit type=checkbox checked> fit the curves</label></p>
-<canvas id=c width=900 height=340></canvas>
 <h3>The model</h3>
 <p>Element kinds <i>k</i> ∈ {div, button, card} with counts <i>n<sub>k</sub></i>, <i>N</i> = Σ <i>n<sub>k</sub></i>; a share <i>f</i> of the elements and <i>D</i> of the <i>K</i> editors change per frame.</p>
 <pre id=formula></pre>
