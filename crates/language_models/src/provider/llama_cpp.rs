@@ -2,18 +2,16 @@ use anyhow::Result;
 use collections::{HashMap, HashSet};
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
-use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
-use language_model::util::parse_tool_arguments;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ProviderSettingsView,
-    RateLimiter, Role, StopReason, SubPageProviderSettings, TokenUsage, env_var,
+    LanguageModelToolResultContent, MessageContent, ProviderSettingsView, RateLimiter, Role,
+    SubPageProviderSettings, env_var,
 };
 use llama_cpp::{
     LLAMA_CPP_API_URL, ModelEntry, Props, get_models, get_props, stream_chat_completion,
@@ -21,7 +19,6 @@ use llama_cpp::{
 };
 pub use settings::LlamaCppAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::pin::Pin;
 use std::sync::LazyLock;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
@@ -32,6 +29,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use language_model::chat_completion::ChatCompletionEventMapper;
 
 const LLAMA_CPP_DOWNLOAD_URL: &str = "https://llama.app";
 const LLAMA_CPP_MODELS_URL: &str = "https://huggingface.co/models?library=gguf&sort=trending";
@@ -650,7 +648,7 @@ impl LlamaCppLanguageModel {
     fn to_llama_cpp_request(
         &self,
         request: LanguageModelRequest,
-    ) -> llama_cpp::ChatCompletionRequest {
+    ) -> Result<llama_cpp::ChatCompletionRequest> {
         build_llama_cpp_request(
             &self.name,
             self.supports_images,
@@ -697,7 +695,11 @@ fn build_llama_cpp_request(
     supports_images: bool,
     capabilities: LiveCapabilities,
     request: LanguageModelRequest,
-) -> llama_cpp::ChatCompletionRequest {
+) -> Result<llama_cpp::ChatCompletionRequest> {
+    if request.contains_custom_tool_input() {
+        anyhow::bail!("llama.cpp does not support custom tools");
+    }
+
     let supports_tools = capabilities.supports_tools;
     let supports_thinking = capabilities.supports_thinking;
     let mut messages = Vec::new();
@@ -743,13 +745,15 @@ fn build_llama_cpp_request(
                     }
                 }
                 MessageContent::ToolUse(tool_use) => {
+                    let input = tool_use.input.as_json().ok_or_else(|| {
+                        anyhow::anyhow!("llama.cpp does not support custom tool calls")
+                    })?;
                     let tool_call = llama_cpp::ToolCall {
                         id: tool_use.id.to_string(),
                         content: llama_cpp::ToolCallContent::Function {
                             function: llama_cpp::FunctionContent {
                                 name: tool_use.name.to_string(),
-                                arguments: serde_json::to_string(&tool_use.input)
-                                    .unwrap_or_default(),
+                                arguments: serde_json::to_string(input).unwrap_or_default(),
                             },
                         },
                     };
@@ -811,14 +815,25 @@ fn build_llama_cpp_request(
         request
             .tools
             .into_iter()
-            .map(|tool| llama_cpp::ToolDefinition::Function {
-                function: llama_cpp::FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
-                },
+            .map(|tool| {
+                let input_schema = match tool.input {
+                    language_model::LanguageModelRequestToolInput::Function {
+                        input_schema,
+                        ..
+                    } => input_schema,
+                    language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                        return Err(anyhow::anyhow!("llama.cpp does not support custom tools"));
+                    }
+                };
+                Ok(llama_cpp::ToolDefinition::Function {
+                    function: llama_cpp::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(input_schema),
+                    },
+                })
             })
-            .collect()
+            .collect::<Result<_>>()?
     } else {
         Vec::new()
     };
@@ -834,7 +849,7 @@ fn build_llama_cpp_request(
         })
     };
 
-    llama_cpp::ChatCompletionRequest {
+    Ok(llama_cpp::ChatCompletionRequest {
         model: model_name.to_string(),
         messages,
         stream: true,
@@ -853,7 +868,7 @@ fn build_llama_cpp_request(
         stream_options: Some(llama_cpp::StreamOptions {
             include_usage: true,
         }),
-    }
+    })
 }
 
 impl LanguageModel for LlamaCppLanguageModel {
@@ -919,146 +934,17 @@ impl LanguageModel for LlamaCppLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = self.to_llama_cpp_request(request);
+        let request = match self.to_llama_cpp_request(request) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let completions = self.stream_completion(request, cx);
         async move {
-            let mapper = LlamaCppEventMapper::new();
+            let mapper = ChatCompletionEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())
         }
         .boxed()
     }
-}
-
-struct LlamaCppEventMapper {
-    tool_calls_by_index: HashMap<usize, RawToolCall>,
-}
-
-impl LlamaCppEventMapper {
-    fn new() -> Self {
-        Self {
-            tool_calls_by_index: HashMap::default(),
-        }
-    }
-
-    pub fn map_stream(
-        mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<llama_cpp::ResponseStreamEvent>>>>,
-    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
-    {
-        events.flat_map(move |event| {
-            futures::stream::iter(match event {
-                Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(error))],
-            })
-        })
-    }
-
-    pub fn map_event(
-        &mut self,
-        event: llama_cpp::ResponseStreamEvent,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let mut events = Vec::new();
-
-        if let Some(usage) = event.usage {
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            })));
-        }
-
-        if let Some(choice) = event.choices.into_iter().next() {
-            if let Some(reasoning_content) = choice.delta.reasoning_content {
-                events.push(Ok(LanguageModelCompletionEvent::Thinking {
-                    text: reasoning_content,
-                    signature: None,
-                }));
-            }
-
-            if let Some(content) = choice.delta.content {
-                if !content.is_empty() {
-                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
-                }
-            }
-
-            if let Some(tool_calls) = choice.delta.tool_calls {
-                for tool_call in tool_calls {
-                    let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
-
-                    if let Some(tool_id) = tool_call.id {
-                        entry.id = tool_id;
-                    }
-
-                    if let Some(function) = tool_call.function {
-                        if let Some(name) = function.name {
-                            // Only the first chunk carries the function name;
-                            // later chunks send an empty name with arguments.
-                            if !name.is_empty() {
-                                entry.name = name;
-                            }
-                        }
-
-                        if let Some(arguments) = function.arguments {
-                            entry.arguments.push_str(&arguments);
-                        }
-                    }
-                }
-            }
-
-            if let Some(finish_reason) = choice.finish_reason.as_deref() {
-                match finish_reason {
-                    "stop" => {
-                        events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-                    }
-                    "tool_calls" => {
-                        events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                            match parse_tool_arguments(&tool_call.arguments) {
-                                Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                                    LanguageModelToolUse {
-                                        id: tool_call.id.into(),
-                                        name: tool_call.name.into(),
-                                        is_input_complete: true,
-                                        input,
-                                        raw_input: tool_call.arguments,
-                                        thought_signature: None,
-                                    },
-                                )),
-                                Err(error) => {
-                                    Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                                        id: tool_call.id.into(),
-                                        tool_name: tool_call.name.into(),
-                                        raw_input: tool_call.arguments.into(),
-                                        json_parse_error: error.to_string(),
-                                    })
-                                }
-                            }
-                        }));
-
-                        events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
-                    }
-                    "length" => {
-                        events.push(Ok(LanguageModelCompletionEvent::Stop(
-                            StopReason::MaxTokens,
-                        )));
-                    }
-                    unexpected => {
-                        log::warn!("Unexpected llama.cpp finish_reason: {unexpected:?}");
-                        events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-                    }
-                }
-            }
-        }
-
-        events
-    }
-}
-
-#[derive(Default)]
-struct RawToolCall {
-    id: String,
-    name: String,
-    arguments: String,
 }
 
 fn add_message_content_part(
@@ -1616,6 +1502,7 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
+    use language_model::LanguageModelToolUse;
     use parking_lot::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1829,7 +1716,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-        );
+        )
+        .unwrap();
 
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {
@@ -1872,7 +1760,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-        );
+        )
+        .unwrap();
 
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {
@@ -1882,7 +1771,7 @@ mod tests {
                 tool_calls,
             } => {
                 assert_eq!(content, "answer");
-                assert_eq!(reasoning_content, &None);
+                assert!(reasoning_content.is_none());
                 assert!(tool_calls.is_empty());
             }
             message => panic!("unexpected message: {message:?}"),
@@ -1911,7 +1800,9 @@ mod tests {
                             id: "call_1".into(),
                             name: "weather".into(),
                             raw_input: r#"{"city":"Oslo"}"#.to_string(),
-                            input: serde_json::json!({ "city": "Oslo" }),
+                            input: language_model::LanguageModelToolUseInput::Json(
+                                serde_json::json!({ "city": "Oslo" }),
+                            ),
                             is_input_complete: true,
                             thought_signature: None,
                         }),
@@ -1921,7 +1812,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-        );
+        )
+        .unwrap();
 
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {
@@ -1935,90 +1827,6 @@ mod tests {
             }
             message => panic!("unexpected message: {message:?}"),
         }
-    }
-
-    #[test]
-    fn usage_event_precedes_stop_event() {
-        let mut mapper = LlamaCppEventMapper::new();
-        let events = mapper.map_event(llama_cpp::ResponseStreamEvent {
-            model: "test-model".to_string(),
-            object: "chat.completion.chunk".to_string(),
-            choices: vec![llama_cpp::ChoiceDelta {
-                index: 0,
-                delta: llama_cpp::ResponseMessageDelta {
-                    content: None,
-                    reasoning_content: None,
-                    tool_calls: None,
-                },
-                finish_reason: Some("stop".to_string()),
-            }],
-            usage: Some(llama_cpp::Usage {
-                prompt_tokens: 11,
-                completion_tokens: 7,
-                total_tokens: 18,
-            }),
-        });
-
-        assert!(matches!(
-            events.as_slice(),
-            [
-                Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                    input_tokens: 11,
-                    output_tokens: 7,
-                    cache_creation_input_tokens: 0,
-                    cache_read_input_tokens: 0,
-                })),
-                Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)),
-            ]
-        ));
-    }
-
-    #[test]
-    fn usage_event_precedes_tool_use_stop_event() {
-        let mut mapper = LlamaCppEventMapper::new();
-        let events = mapper.map_event(llama_cpp::ResponseStreamEvent {
-            model: "test-model".to_string(),
-            object: "chat.completion.chunk".to_string(),
-            choices: vec![llama_cpp::ChoiceDelta {
-                index: 0,
-                delta: llama_cpp::ResponseMessageDelta {
-                    content: None,
-                    reasoning_content: None,
-                    tool_calls: Some(vec![llama_cpp::ToolCallChunk {
-                        index: 0,
-                        id: Some("tool-call-id".to_string()),
-                        function: Some(llama_cpp::FunctionChunk {
-                            name: Some("test_tool".to_string()),
-                            arguments: Some(r#"{"value":1}"#.to_string()),
-                        }),
-                    }]),
-                },
-                finish_reason: Some("tool_calls".to_string()),
-            }],
-            usage: Some(llama_cpp::Usage {
-                prompt_tokens: 13,
-                completion_tokens: 5,
-                total_tokens: 18,
-            }),
-        });
-
-        assert!(matches!(
-            events.as_slice(),
-            [
-                Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                    input_tokens: 13,
-                    output_tokens: 5,
-                    cache_creation_input_tokens: 0,
-                    cache_read_input_tokens: 0,
-                })),
-                Ok(LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
-                    id,
-                    name,
-                    ..
-                })),
-                Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)),
-            ] if id.to_string() == "tool-call-id" && name.as_ref() == "test_tool"
-        ));
     }
 
     #[gpui::test]

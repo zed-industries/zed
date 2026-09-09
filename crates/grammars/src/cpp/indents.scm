@@ -25,6 +25,15 @@
   (access_specifier)
   (access_specifier) @outdent)
 
+(compound_statement
+  (case_statement
+    ":" @start)
+  "}" @end) @indent
+
+(compound_statement
+  (case_statement)
+  (case_statement) @outdent)
+
 (_
   "("
   ")" @end) @indent

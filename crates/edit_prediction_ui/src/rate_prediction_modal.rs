@@ -1249,15 +1249,27 @@ impl RatePredictionsModal {
                     PredictEditsRequestTrigger::PredictionPartiallyAccepted => {
                         (IconName::CheckDouble, "Prediction Partially Accepted")
                     }
+                    PredictEditsRequestTrigger::EditorCreated => (IconName::File, "Editor Created"),
+                    PredictEditsRequestTrigger::ProviderChanged => {
+                        (IconName::Settings, "Provider Changed")
+                    }
+                    PredictEditsRequestTrigger::UserInfoChanged => {
+                        (IconName::Person, "User Info Changed")
+                    }
+                    PredictEditsRequestTrigger::VimModeChanged => {
+                        (IconName::Keyboard, "Vim Mode Changed")
+                    }
+                    PredictEditsRequestTrigger::SettingsChanged => {
+                        (IconName::Settings, "Settings Changed")
+                    }
                     PredictEditsRequestTrigger::Other => (IconName::CircleHelp, "Other"),
                 };
 
                 let file = completion.buffer.read(cx).file();
-                let file_name = file
-                    .as_ref()
-                    .map_or(SharedString::new_static("untitled"), |file| {
-                        file.file_name(cx).to_string().into()
-                    });
+                let file_name = file.as_ref().map_or(
+                    SharedString::new_static(MultiBuffer::DEFAULT_TITLE),
+                    |file| file.file_name(cx).to_string().into(),
+                );
                 let file_path = file.map(|file| file.path().as_unix_str().to_string());
 
                 ListItem::new(completion.id.clone())

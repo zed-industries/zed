@@ -13,3 +13,6 @@ gpui.workspace = true
 schemars.workspace = true
 serde.workspace = true
 util.workspace = true
+
+[package.metadata.cargo-shear]
+ignored = ["util"]

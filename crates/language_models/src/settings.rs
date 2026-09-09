@@ -95,6 +95,7 @@ impl settings::Settings for AllLanguageModelSettings {
                 .collect(),
             bedrock: AmazonBedrockSettings {
                 available_models: bedrock.available_models.unwrap_or_default(),
+                mantle_available_models: bedrock.mantle_available_models.unwrap_or_default(),
                 custom_headers: custom_headers_from(
                     "Amazon Bedrock",
                     bedrock.custom_headers,
@@ -157,7 +158,6 @@ impl settings::Settings for AllLanguageModelSettings {
                 ),
                 show_zen_models: opencode.show_zen_models.unwrap_or(true),
                 show_go_models: opencode.show_go_models.unwrap_or(true),
-                show_free_models: opencode.show_free_models.unwrap_or(true),
             },
             open_router: OpenRouterSettings {
                 api_url: open_router.api_url.unwrap(),

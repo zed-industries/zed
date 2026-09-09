@@ -652,7 +652,7 @@ async fn collect_git_log_context(
         .into_iter()
         .enumerate()
     {
-        let Ok(related_path) = RelPath::new(&related_path, PathStyle::Posix) else {
+        let Ok(related_path) = RelPath::new(&related_path, PathStyle::Unix) else {
             continue;
         };
         let project_path = ProjectPath {

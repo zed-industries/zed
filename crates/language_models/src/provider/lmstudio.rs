@@ -1,14 +1,13 @@
 use anyhow::{Result, anyhow};
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
-use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{App, AsyncApp, Context, Entity, Subscription, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, StopReason, TokenUsage, env_var,
+    MessageContent, env_var,
 };
 use language_model::{
     InlineDescription, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -19,17 +18,13 @@ use lmstudio::{LMSTUDIO_API_URL, ModelType, get_models};
 
 pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::pin::Pin;
 use std::sync::LazyLock;
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 use ui::{ButtonLike, ConfiguredApiCard, Divider, List, ListBulletItem, Tooltip, prelude::*};
 use ui_input::InputField;
 
 use crate::AllLanguageModelSettings;
-use language_model::util::parse_tool_arguments;
+use language_model::chat_completion::ChatCompletionEventMapper;
 
 const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
 const LMSTUDIO_CATALOG_URL: &str = "https://lmstudio.ai/models";
@@ -338,7 +333,11 @@ impl LmStudioLanguageModel {
     fn to_lmstudio_request(
         &self,
         request: LanguageModelRequest,
-    ) -> lmstudio::ChatCompletionRequest {
+    ) -> Result<lmstudio::ChatCompletionRequest> {
+        if request.contains_custom_tool_input() {
+            anyhow::bail!("LM Studio does not support custom tools");
+        }
+
         let mut messages = Vec::new();
 
         for message in request.messages {
@@ -365,13 +364,15 @@ impl LmStudioLanguageModel {
                         );
                     }
                     MessageContent::ToolUse(tool_use) => {
+                        let input = tool_use.input.as_json().ok_or_else(|| {
+                            anyhow!("LM Studio does not support custom tool calls")
+                        })?;
                         let tool_call = lmstudio::ToolCall {
                             id: tool_use.id.to_string(),
                             content: lmstudio::ToolCallContent::Function {
                                 function: lmstudio::FunctionContent {
                                     name: tool_use.name.to_string(),
-                                    arguments: serde_json::to_string(&tool_use.input)
-                                        .unwrap_or_default(),
+                                    arguments: serde_json::to_string(input).unwrap_or_default(),
                                 },
                             },
                         };
@@ -417,10 +418,13 @@ impl LmStudioLanguageModel {
             }
         }
 
-        lmstudio::ChatCompletionRequest {
+        Ok(lmstudio::ChatCompletionRequest {
             model: self.model.name.clone(),
             messages,
             stream: true,
+            stream_options: Some(lmstudio::StreamOptions {
+                include_usage: true,
+            }),
             max_tokens: Some(-1),
             stop: Some(request.stop),
             // In LM Studio you can configure specific settings you'd like to use for your model.
@@ -430,20 +434,31 @@ impl LmStudioLanguageModel {
             tools: request
                 .tools
                 .into_iter()
-                .map(|tool| lmstudio::ToolDefinition::Function {
-                    function: lmstudio::FunctionDefinition {
-                        name: tool.name,
-                        description: Some(tool.description),
-                        parameters: Some(tool.input_schema),
-                    },
+                .map(|tool| {
+                    let input_schema = match tool.input {
+                        language_model::LanguageModelRequestToolInput::Function {
+                            input_schema,
+                            ..
+                        } => input_schema,
+                        language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                            return Err(anyhow::anyhow!("LM Studio does not support custom tools"));
+                        }
+                    };
+                    Ok(lmstudio::ToolDefinition::Function {
+                        function: lmstudio::FunctionDefinition {
+                            name: tool.name,
+                            description: Some(tool.description),
+                            parameters: Some(input_schema),
+                        },
+                    })
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
             tool_choice: request.tool_choice.map(|choice| match choice {
                 LanguageModelToolChoice::Auto => lmstudio::ToolChoice::Auto,
                 LanguageModelToolChoice::Any => lmstudio::ToolChoice::Required,
                 LanguageModelToolChoice::None => lmstudio::ToolChoice::None,
             }),
-        }
+        })
     }
 
     fn stream_completion(
@@ -533,142 +548,17 @@ impl LanguageModel for LmStudioLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = self.to_lmstudio_request(request);
+        let request = match self.to_lmstudio_request(request) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let completions = self.stream_completion(request, cx);
         async move {
-            let mapper = LmStudioEventMapper::new();
+            let mapper = ChatCompletionEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())
         }
         .boxed()
     }
-}
-
-struct LmStudioEventMapper {
-    tool_calls_by_index: HashMap<usize, RawToolCall>,
-}
-
-impl LmStudioEventMapper {
-    fn new() -> Self {
-        Self {
-            tool_calls_by_index: HashMap::default(),
-        }
-    }
-
-    pub fn map_stream(
-        mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<lmstudio::ResponseStreamEvent>>>>,
-    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
-    {
-        events.flat_map(move |event| {
-            futures::stream::iter(match event {
-                Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(error))],
-            })
-        })
-    }
-
-    pub fn map_event(
-        &mut self,
-        event: lmstudio::ResponseStreamEvent,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let Some(choice) = event.choices.into_iter().next() else {
-            return vec![Err(LanguageModelCompletionError::from(anyhow!(
-                "Response contained no choices"
-            )))];
-        };
-
-        let mut events = Vec::new();
-        if let Some(content) = choice.delta.content {
-            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
-        }
-
-        if let Some(reasoning_content) = choice.delta.reasoning_content {
-            events.push(Ok(LanguageModelCompletionEvent::Thinking {
-                text: reasoning_content,
-                signature: None,
-            }));
-        }
-
-        if let Some(tool_calls) = choice.delta.tool_calls {
-            for tool_call in tool_calls {
-                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
-
-                if let Some(tool_id) = tool_call.id {
-                    entry.id = tool_id;
-                }
-
-                if let Some(function) = tool_call.function {
-                    if let Some(name) = function.name {
-                        // At the time of writing this code LM Studio (0.3.15) is incompatible with the OpenAI API:
-                        // 1. It sends function name in the first chunk
-                        // 2. It sends empty string in the function name field in all subsequent chunks for arguments
-                        // According to https://platform.openai.com/docs/guides/function-calling?api-mode=responses#streaming
-                        // function name field should be sent only inside the first chunk.
-                        if !name.is_empty() {
-                            entry.name = name;
-                        }
-                    }
-
-                    if let Some(arguments) = function.arguments {
-                        entry.arguments.push_str(&arguments);
-                    }
-                }
-            }
-        }
-
-        if let Some(usage) = event.usage {
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            })));
-        }
-
-        match choice.finish_reason.as_deref() {
-            Some("stop") => {
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            Some("tool_calls") => {
-                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match parse_tool_arguments(&tool_call.arguments) {
-                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
-                                id: tool_call.id.into(),
-                                name: tool_call.name.into(),
-                                is_input_complete: true,
-                                input,
-                                raw_input: tool_call.arguments,
-                                thought_signature: None,
-                            },
-                        )),
-                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                            id: tool_call.id.into(),
-                            tool_name: tool_call.name.into(),
-                            raw_input: tool_call.arguments.into(),
-                            json_parse_error: error.to_string(),
-                        }),
-                    }
-                }));
-
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
-            }
-            Some(stop_reason) => {
-                log::error!("Unexpected LMStudio stop_reason: {stop_reason:?}",);
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            None => {}
-        }
-
-        events
-    }
-}
-
-#[derive(Default)]
-struct RawToolCall {
-    id: String,
-    name: String,
-    arguments: String,
 }
 
 fn add_message_content_part(

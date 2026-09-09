@@ -89,7 +89,7 @@ For this look-up, Zed uses the following environment:
 
 ### Language servers
 
-After looking up a language server, Zed starts them.
+After looking up a language server, Zed starts it.
 
 These language server processes always inherit Zed's process environment. But, depending on the language server look-up, additional environment variables might be set or overwrite the process environment.
 

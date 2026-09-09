@@ -6,9 +6,9 @@ use base64::{Engine as _, write::EncoderWriter};
 use gpui::{
     App, AppContext as _, DevicePixels, Image, ImageFormat, ObjectFit, Size, Task, point, px, size,
 };
+use gpui_util::ResultExt;
 use image::GenericImageView as _;
 use image::codecs::png::PngEncoder;
-use util::ResultExt;
 
 use language_model_core::{ImageSize, LanguageModelImage};
 

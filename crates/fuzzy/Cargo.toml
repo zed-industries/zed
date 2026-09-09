@@ -14,8 +14,6 @@ doctest = false
 
 [dependencies]
 gpui.workspace = true
-util.workspace = true
+gpui_util.workspace = true
+path.workspace = true
 log.workspace = true
-
-[dev-dependencies]
-util = {workspace = true, features = ["test-support"]}

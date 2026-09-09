@@ -136,7 +136,7 @@ impl MarkdownElement {
                 self.render_html_table(table, source_allocator, builder, markdown_end, cx);
             }
             ParsedHtmlElement::Image(image) => {
-                self.render_html_image(image, builder);
+                self.render_html_image(image, builder, cx);
             }
         }
     }
@@ -213,18 +213,18 @@ impl MarkdownElement {
         let total_rows = table.header.len() + table.body.len();
         let mut grid_occupied = vec![vec![false; max_column_count]; total_rows];
 
+        builder.push_div(div().flex(), &table.source_range, markdown_end);
         builder.push_div(
             div()
                 .id(("html-table", table.source_range.start))
+                .min_w_0()
                 .grid()
-                .grid_cols(max_column_count as u16)
                 .when(self.style.table_columns_min_size, |this| {
-                    this.grid_cols_min_content(max_column_count as u16)
+                    this.w_full().grid_cols_min_content(max_column_count as u16)
                 })
                 .when(!self.style.table_columns_min_size, |this| {
-                    this.grid_cols(max_column_count as u16)
+                    this.grid_cols_max_content(max_column_count as u16)
                 })
-                .w_full()
                 .mb_2()
                 .border(px(1.5))
                 .border_color(cx.theme().colors().border)
@@ -342,6 +342,7 @@ impl MarkdownElement {
         }
 
         builder.pop_div();
+        builder.pop_div();
     }
 
     fn render_html_paragraph(
@@ -358,7 +359,7 @@ impl MarkdownElement {
                     self.render_html_text(text, source_allocator, builder, cx);
                 }
                 HtmlParagraphChunk::Image(image) => {
-                    self.render_html_image(image, builder);
+                    self.render_html_image(image, builder, cx);
                 }
             }
         }
@@ -391,9 +392,7 @@ impl MarkdownElement {
         boundaries.sort_unstable();
         boundaries.dedup();
 
-        for segment in boundaries.windows(2) {
-            let start = segment[0];
-            let end = segment[1];
+        for &[start, end] in boundaries.array_windows::<2>() {
             if start >= end {
                 continue;
             }
@@ -449,11 +448,11 @@ impl MarkdownElement {
         }
     }
 
-    fn render_html_image(&self, image: &HtmlImage, builder: &mut MarkdownElementBuilder) {
+    fn render_html_image(&self, image: &HtmlImage, builder: &mut MarkdownElementBuilder, cx: &App) {
         let Some(source) = self
             .image_resolver
             .as_ref()
-            .and_then(|resolve| resolve(image.dest_url.as_ref()))
+            .and_then(|resolve| resolve(image.dest_url.as_ref(), cx))
         else {
             return;
         };

@@ -4,17 +4,16 @@ use std::time::{Duration, Instant};
 use collections::HashMap;
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    AnyElement, App, AvailableSpace, ClickEvent, Context, DefiniteLength, DispatchPhase, Element,
-    MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
-    ParentElement, Pixels, PressureStage, ScrollDelta, ScrollWheelEvent, TextStyleRefinement,
-    Window, anchored, deferred, point, px,
+    AnyElement, App, AvailableSpace, ClickEvent, Context, DispatchPhase, Element, MouseButton,
+    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
+    ParentElement, Pixels, PressureStage, ScrollDelta, ScrollWheelEvent, Window, anchored,
+    deferred, point, px,
 };
 use multi_buffer::MultiBufferRow;
 use project::DisableAiSettings;
 use settings::Settings;
 use sum_tree::Bias;
 use text::SelectionGoal;
-use theme_settings::BufferLineHeight;
 use util::{RangeExt, debug_panic, post_inc};
 
 use super::{EditorElement, EditorLayout, LineNumberLayout, PositionMap, SplitSide};
@@ -184,11 +183,16 @@ impl EditorElement {
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
 
+            // Breakpoints and bookmarks are keyed by absolute file path, so the
+            // gutter button would be a no-op for buffers without a worktree file
+            // (e.g. untitled buffers). Hide it there.
             if position_map
                 .snapshot
                 .buffer_snapshot()
                 .anchor_to_buffer_anchor(buffer_anchor)
-                .is_some()
+                .is_some_and(|(_, buffer_snapshot)| {
+                    project::File::from_dyn(buffer_snapshot.file()).is_some()
+                })
             {
                 let is_visible = editor
                     .gutter_hover_button
@@ -317,33 +321,25 @@ impl EditorElement {
             }
         })?;
 
-        let text_style = TextStyleRefinement {
-            line_height: Some(DefiniteLength::Fraction(
-                BufferLineHeight::Comfortable.value(),
-            )),
-            ..Default::default()
-        };
-        window.with_text_style(Some(text_style), |window| {
-            let mut element = self.editor.read_with(cx, |editor, _| {
-                let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
-                let context_menu = mouse_context_menu.context_menu.clone();
+        let mut element = self.editor.read_with(cx, |editor, _| {
+            let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
+            let context_menu = mouse_context_menu.context_menu.clone();
 
-                Some(
-                    deferred(
-                        anchored()
-                            .position(position)
-                            .child(context_menu)
-                            .anchor(gpui::Anchor::TopLeft)
-                            .snap_to_window_with_margin(px(8.)),
-                    )
-                    .with_priority(1)
-                    .into_any(),
+            Some(
+                deferred(
+                    anchored()
+                        .position(position)
+                        .child(context_menu)
+                        .anchor(gpui::Anchor::TopLeft)
+                        .snap_to_window_with_margin(px(8.)),
                 )
-            })?;
+                .with_priority(1)
+                .into_any(),
+            )
+        })?;
 
-            element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
-            Some(element)
-        })
+        element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
+        Some(element)
     }
 
     pub(super) fn paint_mouse_listeners(
@@ -533,19 +529,18 @@ impl EditorElement {
                         editor.update(cx, |editor, cx| {
                             let line_height = position_map.line_height;
                             let glyph_width = position_map.em_layout_width;
-                            let (delta, axis) = match delta {
+                            let delta = match delta {
                                 gpui::ScrollDelta::Pixels(mut pixels) => {
                                     //Trackpad
-                                    let axis =
-                                        position_map.snapshot.ongoing_scroll.filter(&mut pixels);
-                                    (pixels, axis)
+                                    editor
+                                        .scroll_manager
+                                        .filter_scroll_delta(&mut pixels, event.touch_phase);
+                                    pixels
                                 }
 
                                 gpui::ScrollDelta::Lines(lines) => {
                                     //Not trackpad
-                                    let pixels =
-                                        point(lines.x * glyph_width, lines.y * line_height);
-                                    (pixels, None)
+                                    point(lines.x * glyph_width, lines.y * line_height)
                                 }
                             };
 
@@ -567,17 +562,8 @@ impl EditorElement {
                             }
 
                             if scroll_position != current_scroll_position {
-                                editor.scroll(scroll_position, axis, window, cx);
+                                editor.scroll(scroll_position, window, cx);
                                 cx.stop_propagation();
-                            } else if y < 0. && !forbid_vertical_scroll {
-                                // Due to clamping, we may fail to detect cases of overscroll to the top;
-                                // We want the scroll manager to get an update in such cases and detect the change of direction
-                                // on the next frame.
-                                if editor.scroll_manager.should_notify_top_overscroll(axis) {
-                                    cx.notify();
-                                }
-                            } else {
-                                editor.scroll_manager.reset_top_overscroll_notification();
                             }
                         });
                     }
@@ -627,6 +613,16 @@ impl EditorElement {
             return;
         }
 
+        if !event.modifiers.modified()
+            && text_hitbox.is_hovered(window)
+            && editor.hovered_inlay_hint_command().is_some_and(|command| {
+                command.contains_point(&position_map.snapshot, point_for_position)
+            })
+        {
+            cx.stop_propagation();
+            return;
+        }
+
         if EditorSettings::get_global(cx)
             .drag_and_drop_selection
             .enabled
@@ -638,7 +634,7 @@ impl EditorElement {
             let selection = newest_anchor.map(|anchor| anchor.to_display_point(&snapshot));
             if point_for_position.intersects_selection(&selection) {
                 editor.selection_drag_state = SelectionDragState::ReadyToDrag {
-                    selection: newest_anchor.clone(),
+                    selection: *newest_anchor,
                     click_position: event.position,
                     mouse_down_time: Instant::now(),
                 };
@@ -957,8 +953,6 @@ impl EditorElement {
 
         if let Some(mouse_position) = event.mouse_position()
             && !pending_nonempty_selections
-            && hovered_link_modifier
-            && mouse_down_hovered_link_modifier
             && text_hitbox.is_hovered(window)
             && !matches!(
                 editor.selection_drag_state,
@@ -966,10 +960,27 @@ impl EditorElement {
             )
         {
             let point = position_map.point_for_position(mouse_position);
-            editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
-            editor.selection_drag_state = SelectionDragState::None;
+            if let ClickEvent::Mouse(mouse_event) = event
+                && mouse_event.up.click_count == 1
+                && !mouse_event.down.modifiers.modified()
+                && !mouse_event.up.modifiers.modified()
+                && editor.activate_hovered_inlay_hint_command(
+                    &position_map.snapshot,
+                    position_map.point_for_position(mouse_event.down.position),
+                    point,
+                    cx,
+                )
+            {
+                editor.selection_drag_state = SelectionDragState::None;
+                cx.stop_propagation();
+                return;
+            }
 
-            cx.stop_propagation();
+            if hovered_link_modifier && mouse_down_hovered_link_modifier {
+                editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
+                editor.selection_drag_state = SelectionDragState::None;
+                cx.stop_propagation();
+            }
         }
     }
 
@@ -1002,8 +1013,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if !editor.has_pending_selection()
-            && matches!(editor.selection_drag_state, SelectionDragState::None)
+        if editor.has_autoscroll_request()
+            || !editor.has_pending_selection()
+                && matches!(editor.selection_drag_state, SelectionDragState::None)
         {
             return;
         }
@@ -1085,7 +1097,7 @@ impl EditorElement {
                             goal: SelectionGoal::None,
                         };
                         editor.selection_drag_state = SelectionDragState::Dragging {
-                            selection: selection.clone(),
+                            selection: *selection,
                             drop_cursor,
                             hide_drop_cursor: false,
                         };
@@ -1188,4 +1200,95 @@ fn scale_vertical_mouse_autoscroll_delta(delta: Pixels) -> f32 {
 
 fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
     (delta.pow(1.2) / 300.0).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        SelectionEffects, editor_tests::init_test, scroll::Autoscroll,
+        test::editor_test_context::EditorTestContext,
+    };
+    use gpui::{Modifiers, TestAppContext};
+
+    #[gpui::test]
+    async fn test_mouse_drag_preserves_pending_sticky_header_autoscroll(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        let line_height = cx.update_editor(|editor, window, cx| {
+            editor
+                .style(cx)
+                .text
+                .line_height_in_pixels(window.rem_size())
+        });
+
+        let buffer = indoc::indoc! {"
+                ˇfn foo() {
+                    let abc = 123;
+                }
+                struct Bar;
+                impl Bar {
+                    fn new() -> Self {
+                        Self
+                    }
+                }
+                fn baz() {
+                }
+            "};
+        cx.set_state(&buffer);
+
+        let text_origin_x = cx.update_editor(|editor, _, _| {
+            editor
+                .last_position_map
+                .as_ref()
+                .unwrap()
+                .text_hitbox
+                .bounds
+                .origin
+                .x
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.scroll(gpui::Point { x: 0., y: 5.5 }, window, cx);
+        });
+        cx.run_until_parked();
+
+        let mouse_drag_position = gpui::Point {
+            x: text_origin_x,
+            y: 2.25 * line_height,
+        };
+        cx.update_editor(|editor, window, cx| {
+            let position_map = editor.last_position_map.as_ref().unwrap().clone();
+            let anchor = editor
+                .snapshot(window, cx)
+                .display_snapshot
+                .display_point_to_anchor(DisplayPoint::new(DisplayRow(5), 0), Bias::Left);
+
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::top_relative(1.0)),
+                window,
+                cx,
+                |selections| {
+                    selections.clear_disjoint();
+                    selections
+                        .set_pending_anchor_range(anchor..anchor, crate::SelectMode::Character);
+                },
+            );
+            assert!(editor.has_autoscroll_request());
+
+            EditorElement::mouse_dragged(
+                editor,
+                &MouseMoveEvent {
+                    position: mouse_drag_position,
+                    modifiers: Modifiers::none(),
+                    pressed_button: Some(MouseButton::Left),
+                },
+                &position_map,
+                window,
+                cx,
+            );
+            assert!(editor.has_autoscroll_request());
+        });
+    }
 }

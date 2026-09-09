@@ -7,7 +7,7 @@ use std::{
 use clock::Global;
 use collections::{HashMap, HashSet};
 use futures::future::join_all;
-use gpui::{App, Entity, Pixels, Task};
+use gpui::{App, Entity, Pixels, Task, TaskExt};
 use itertools::Itertools;
 use language::{
     BufferRow,
@@ -16,8 +16,8 @@ use language::{
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, MultiBufferSnapshot};
 use project::{
-    HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip, InlayHintTooltip,
-    InvalidationStrategy, ResolveState,
+    CodeAction, HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip,
+    InlayHintTooltip, InvalidationStrategy, LspAction, ResolveState,
     lsp_store::{CacheInlayHints, ResolvedHint},
 };
 use text::{Bias, BufferId};
@@ -32,6 +32,34 @@ use crate::{
     hover_popover::{self, InlayHover},
     inlays::InlaySplice,
 };
+
+#[derive(Debug)]
+pub(crate) struct HoveredInlayHintCommand {
+    highlight: InlayHighlight,
+    buffer_id: BufferId,
+    action: CodeAction,
+}
+
+impl HoveredInlayHintCommand {
+    pub(crate) fn contains_point(
+        &self,
+        snapshot: &EditorSnapshot,
+        point_for_position: PointForPosition,
+    ) -> bool {
+        if point_for_position.column_overshoot_after_line_end != 0
+            || point_for_position.as_valid().is_some()
+            || !snapshot.can_resolve(&self.highlight.inlay_position)
+        {
+            return false;
+        }
+        let hovered_offset =
+            snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left);
+        let hint_start = snapshot.anchor_to_inlay_offset(self.highlight.inlay_position);
+        let part_range = InlayOffset(hint_start.0 + self.highlight.range.start)
+            ..InlayOffset(hint_start.0 + self.highlight.range.end);
+        part_range.contains(&hovered_offset)
+    }
+}
 
 pub fn inlay_hint_settings(
     location: Anchor,
@@ -53,6 +81,7 @@ pub struct LspInlayHintData {
     hint_chunk_fetching: HashMap<BufferId, (Global, HashSet<Range<BufferRow>>)>,
     invalidate_hints_for_buffers: HashSet<BufferId>,
     pub added_hints: HashMap<InlayId, Option<InlayHintKind>>,
+    hovered_command: Option<HoveredInlayHintCommand>,
 }
 
 impl LspInlayHintData {
@@ -68,6 +97,7 @@ impl LspInlayHintData {
             invalidate_debounce: debounce_value(settings.edit_debounce_ms),
             append_debounce: debounce_value(settings.scroll_debounce_ms),
             allowed_hint_kinds: settings.enabled_inlay_hint_kinds(),
+            hovered_command: None,
         }
     }
 
@@ -76,12 +106,11 @@ impl LspInlayHintData {
             return None;
         }
         self.modifiers_override = new_override;
-        if (self.enabled && self.modifiers_override) || (!self.enabled && !self.modifiers_override)
-        {
+        if self.should_show() {
+            Some(true)
+        } else {
             self.clear();
             Some(false)
-        } else {
-            Some(true)
         }
     }
 
@@ -101,6 +130,7 @@ impl LspInlayHintData {
         self.hint_refresh_tasks.clear();
         self.hint_chunk_fetching.clear();
         self.added_hints.clear();
+        self.hovered_command = None;
     }
 
     /// Like `clear`, but only wipes tracking state for the given buffer IDs.
@@ -112,6 +142,13 @@ impl LspInlayHintData {
         current_hints: impl IntoIterator<Item = Inlay>,
         snapshot: &MultiBufferSnapshot,
     ) {
+        if self
+            .hovered_command
+            .as_ref()
+            .is_some_and(|command| buffer_ids.contains(&command.buffer_id))
+        {
+            self.hovered_command = None;
+        }
         for buffer_id in buffer_ids {
             self.hint_refresh_tasks.remove(buffer_id);
             self.hint_chunk_fetching.remove(buffer_id);
@@ -224,6 +261,25 @@ impl LspInlayHintData {
             self.hint_chunk_fetching.remove(buffer_id);
         }
     }
+
+    pub(super) fn remove_inlay(&mut self, inlay_id: &InlayId) {
+        self.added_hints.remove(inlay_id);
+        if self
+            .hovered_command
+            .as_ref()
+            .is_some_and(|command| command.highlight.inlay == *inlay_id)
+        {
+            self.hovered_command = None;
+        }
+    }
+
+    fn should_refresh(&self) -> bool {
+        self.enabled || self.modifiers_override
+    }
+
+    fn should_show(&self) -> bool {
+        self.enabled != self.modifiers_override
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -234,10 +290,8 @@ pub enum InlayHintRefreshReason {
     NewLinesShown,
     BufferEdited(BufferId),
     ServerRemoved,
-    RefreshRequested {
-        server_id: LanguageServerId,
-        request_id: Option<usize>,
-    },
+    LanguageServerRegistered,
+    RefreshRequested { server_id: LanguageServerId },
     BuffersRemoved(Vec<BufferId>),
 }
 
@@ -323,10 +377,12 @@ impl Editor {
             InlayHintRefreshReason::ModifiersChanged(_)
             | InlayHintRefreshReason::Toggle(_)
             | InlayHintRefreshReason::SettingsChange(_)
-            | InlayHintRefreshReason::ServerRemoved => true,
-            InlayHintRefreshReason::NewLinesShown
-            | InlayHintRefreshReason::RefreshRequested { .. }
-            | InlayHintRefreshReason::BuffersRemoved(_) => false,
+            | InlayHintRefreshReason::ServerRemoved
+            | InlayHintRefreshReason::LanguageServerRegistered
+            | InlayHintRefreshReason::RefreshRequested { .. } => true,
+            InlayHintRefreshReason::NewLinesShown | InlayHintRefreshReason::BuffersRemoved(_) => {
+                false
+            }
             InlayHintRefreshReason::BufferEdited(buffer_id) => {
                 let Some(affected_language) = self
                     .buffer()
@@ -366,7 +422,9 @@ impl Editor {
             return;
         };
 
-        if invalidate_cache.should_invalidate() {
+        if invalidate_cache.should_invalidate()
+            && !matches!(reason, InlayHintRefreshReason::RefreshRequested { .. })
+        {
             if invalidate_hints_for_buffers.is_empty() {
                 inlay_hints.clear();
             } else {
@@ -539,26 +597,22 @@ impl Editor {
                 return None;
             }
             InlayHintRefreshReason::ServerRemoved => InvalidationStrategy::BufferEdited,
-            InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
+            InlayHintRefreshReason::NewLinesShown
+            | InlayHintRefreshReason::LanguageServerRegistered => InvalidationStrategy::None,
             InlayHintRefreshReason::BufferEdited(_) => InvalidationStrategy::BufferEdited,
-            InlayHintRefreshReason::RefreshRequested {
-                server_id,
-                request_id,
-            } => InvalidationStrategy::RefreshRequested {
-                server_id: *server_id,
-                request_id: *request_id,
-            },
-        };
-
-        match &mut self.inlay_hints {
-            Some(inlay_hints) => {
-                if !inlay_hints.enabled
-                    && !matches!(reason, InlayHintRefreshReason::ModifiersChanged(_))
-                {
-                    return None;
+            InlayHintRefreshReason::RefreshRequested { server_id } => {
+                InvalidationStrategy::RefreshRequested {
+                    server_id: *server_id,
                 }
             }
-            None => return None,
+        };
+
+        if !self
+            .inlay_hints
+            .as_ref()
+            .is_some_and(LspInlayHintData::should_refresh)
+        {
+            return None;
         }
 
         Some(invalidate_cache)
@@ -594,6 +648,7 @@ impl Editor {
         };
         let mut go_to_definition_updated = false;
         let mut hover_updated = false;
+        let mut inlay_command_updated = false;
         if let Some(hovered_offset) = hovered_offset {
             let buffer_snapshot = self.buffer().read(cx).snapshot(cx);
             let previous_valid_anchor = buffer_snapshot.anchor_at(
@@ -618,13 +673,12 @@ impl Editor {
                 })
                 .max_by_key(|hint| hint.id)
             {
-                if let Some(ResolvedHint::Resolved(cached_hint)) = buffer_snapshot
-                    .anchor_to_buffer_anchor(hovered_hint.position)
-                    .and_then(|(anchor, _)| {
+                if let Some((buffer_anchor, _)) =
+                    buffer_snapshot.anchor_to_buffer_anchor(hovered_hint.position)
+                    && let Some(ResolvedHint::Resolved(cached_hint)) =
                         lsp_store.update(cx, |lsp_store, cx| {
-                            lsp_store.resolved_hint(anchor.buffer_id, hovered_hint.id, cx)
+                            lsp_store.resolved_hint(buffer_anchor.buffer_id, hovered_hint.id, cx)
                         })
-                    })
                 {
                     match cached_hint.resolve_state {
                         ResolveState::Resolved => {
@@ -692,6 +746,24 @@ impl Editor {
                                             inlay_position: hovered_hint.position,
                                             range: highlight_start..highlight_end,
                                         };
+                                        if let Some((server_id, command)) =
+                                            hovered_hint_part.command
+                                            && let Some(inlay_hints) = self.inlay_hints.as_mut()
+                                        {
+                                            inlay_command_updated = true;
+                                            inlay_hints.hovered_command =
+                                                Some(HoveredInlayHintCommand {
+                                                    highlight: highlight.clone(),
+                                                    buffer_id: buffer_anchor.buffer_id,
+                                                    action: CodeAction {
+                                                        server_id,
+                                                        range: cached_hint.position
+                                                            ..cached_hint.position,
+                                                        lsp_action: LspAction::Command(command),
+                                                        resolved: true,
+                                                    },
+                                                });
+                                        }
                                         if let Some(tooltip) = hovered_hint_part.tooltip {
                                             hover_popover::hover_at_inlay(
                                                 self,
@@ -755,6 +827,40 @@ impl Editor {
         if !hover_updated {
             hover_popover::hover_at(self, None, mouse_position, window, cx);
         }
+        if !inlay_command_updated && let Some(inlay_hints) = self.inlay_hints.as_mut() {
+            inlay_hints.hovered_command = None;
+        }
+    }
+
+    pub(crate) fn hovered_inlay_hint_command(&self) -> Option<&HoveredInlayHintCommand> {
+        self.inlay_hints.as_ref()?.hovered_command.as_ref()
+    }
+
+    pub(crate) fn activate_hovered_inlay_hint_command(
+        &mut self,
+        snapshot: &EditorSnapshot,
+        down: PointForPosition,
+        up: PointForPosition,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(state) = self.hovered_inlay_hint_command().filter(|state| {
+            state.contains_point(snapshot, down) && state.contains_point(snapshot, up)
+        }) else {
+            return false;
+        };
+        let Some(buffer) = self.buffer().read(cx).buffer(state.buffer_id) else {
+            return false;
+        };
+        let Some(project) = self.project().cloned() else {
+            return false;
+        };
+        let action = state.action.clone();
+        project
+            .update(cx, |project, cx| {
+                project.apply_code_action(buffer, action, true, cx)
+            })
+            .detach_and_log_err(cx);
+        true
     }
 
     fn inlay_hints_for_buffer(
@@ -806,6 +912,7 @@ impl Editor {
         let Some(inlay_hints) = &mut self.inlay_hints else {
             return;
         };
+        let should_show = inlay_hints.should_show();
         let Some(buffer_snapshot) = self
             .buffer
             .read(cx)
@@ -825,6 +932,9 @@ impl Editor {
         // Hence, clear all excerpts' hints in the multi buffer: later, the invalidated ones will re-trigger the LSP query, the rest will be restored
         // from the cache.
         if invalidate_cache.should_invalidate() {
+            for hint_id in &visible_inlay_hint_ids {
+                inlay_hints.added_hints.remove(hint_id);
+            }
             hints_to_remove.extend(visible_inlay_hint_ids);
 
             // When invalidating, this task removes ALL visible hints for the buffer
@@ -897,7 +1007,8 @@ impl Editor {
                 hints_deduplicated
             })
             .filter(|(hint_id, lsp_hint)| {
-                inlay_hints.allowed_hint_kinds.contains(&lsp_hint.kind)
+                should_show
+                    && inlay_hints.allowed_hint_kinds.contains(&lsp_hint.kind)
                     && inlay_hints
                         .added_hints
                         .insert(*hint_id, lsp_hint.kind)
@@ -998,34 +1109,91 @@ fn spawn_editor_hints_refresh(
 
 #[cfg(test)]
 pub mod tests {
+    use super::{HoveredInlayHintCommand, LspInlayHintData};
     use crate::editor_tests::update_test_language_settings;
+    use crate::hover_links::InlayHighlight;
     use crate::inlays::inlay_hints::InlayHintRefreshReason;
     use crate::scroll::Autoscroll;
     use crate::scroll::ScrollAmount;
     use crate::{Editor, SelectionEffects};
     use collections::HashSet;
+    use futures::channel::oneshot;
     use futures::{StreamExt, future};
     use gpui::{AppContext as _, Context, TestAppContext, WindowHandle};
     use itertools::Itertools as _;
-    use language::language_settings::InlayHintKind;
+    use language::language_settings::{InlayHintKind, InlayHintSettings};
     use language::{Capability, FakeLspAdapter};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::rust_lang;
-    use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, FakeLanguageServer};
+    use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, FakeLanguageServer, LanguageServerId};
     use multi_buffer::{MultiBuffer, MultiBufferOffset, PathKey};
     use parking_lot::Mutex;
     use pretty_assertions::assert_eq;
-    use project::{FakeFs, Project};
+    use project::{CodeAction, FakeFs, InlayId, InvalidationStrategy, LspAction, Project};
     use serde_json::json;
     use settings::{AllLanguageSettingsContent, InlayHintSettingsContent, SettingsStore};
     use std::ops::Range;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     use std::time::Duration;
-    use text::{OffsetRangeExt, Point};
+    use text::{BufferId, OffsetRangeExt, Point};
     use ui::App;
     use util::path;
     use util::paths::natural_sort;
+
+    #[gpui::test]
+    fn test_clearing_buffers_clears_only_matching_hovered_command(cx: &mut TestAppContext) {
+        let hovered_buffer_id = BufferId::new(1).expect("hovered buffer id");
+        let other_buffer_id = BufferId::new(2).expect("other buffer id");
+        let mut inlay_hints = LspInlayHintData::new(InlayHintSettings {
+            enabled: true,
+            show_value_hints: true,
+            show_type_hints: true,
+            show_parameter_hints: true,
+            show_other_hints: true,
+            show_background: false,
+            edit_debounce_ms: 0,
+            scroll_debounce_ms: 0,
+            toggle_on_modifiers_press: None,
+        });
+        inlay_hints.hovered_command = Some(HoveredInlayHintCommand {
+            highlight: InlayHighlight {
+                inlay: InlayId::Hint(1),
+                inlay_position: multi_buffer::Anchor::Min,
+                range: 0..1,
+            },
+            buffer_id: hovered_buffer_id,
+            action: CodeAction {
+                server_id: LanguageServerId(0),
+                range: language::Anchor::min_min_range_for_buffer(hovered_buffer_id),
+                lsp_action: LspAction::Command(lsp::Command {
+                    title: "command".to_string(),
+                    command: "command".to_string(),
+                    arguments: None,
+                }),
+                resolved: true,
+            },
+        });
+        let multi_buffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let snapshot = cx.update(|cx| multi_buffer.read(cx).snapshot(cx));
+
+        inlay_hints.remove_inlay(&InlayId::Hint(2));
+        assert!(inlay_hints.hovered_command.is_some());
+
+        inlay_hints.clear_for_buffers(
+            &HashSet::from_iter([other_buffer_id]),
+            Vec::new(),
+            &snapshot,
+        );
+        assert!(inlay_hints.hovered_command.is_some());
+
+        inlay_hints.clear_for_buffers(
+            &HashSet::from_iter([hovered_buffer_id]),
+            Vec::new(),
+            &snapshot,
+        );
+        assert!(inlay_hints.hovered_command.is_none());
+    }
 
     #[gpui::test]
     async fn test_basic_cache_update_with_duplicate_hints(cx: &mut gpui::TestAppContext) {
@@ -1196,17 +1364,8 @@ pub mod tests {
             })
             .unwrap();
         cx.executor().advance_clock(Duration::from_millis(5));
-        editor
-            .update(cx, |editor, _window, cx| {
-                editor.refresh_inlay_hints(
-                    InlayHintRefreshReason::RefreshRequested {
-                        server_id: fake_server.server.server_id(),
-                        request_id: Some(1),
-                    },
-                    cx,
-                );
-            })
-            .unwrap();
+        let refresh_request = fake_server
+            .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT);
         cx.executor().advance_clock(Duration::from_millis(5));
         editor
             .update(cx, |editor, _window, cx| {
@@ -1215,10 +1374,99 @@ pub mod tests {
             .unwrap();
         cx.executor().advance_clock(Duration::from_secs(1));
         cx.executor().run_until_parked();
+        refresh_request.await.into_response().unwrap();
         editor
             .update(cx, |editor, _window, cx| {
                 let expected_hints = vec!["2".to_string()];
                 assert_eq!(expected_hints, cached_hint_labels(editor, cx), "Despite multiple simultaneous refreshes, only one inlay hint query should be issued");
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_no_hint_duplication_when_refresh_races_with_fetch(cx: &mut gpui::TestAppContext) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+        let (first_request_unblock, first_request_gate) = oneshot::channel::<()>();
+        let first_request_gate = Arc::new(Mutex::new(Some(first_request_gate)));
+        let lsp_request_count = Arc::new(AtomicU32::new(0));
+        let (_, editor, fake_server) = prepare_test_objects(cx, {
+            let first_request_gate = first_request_gate.clone();
+            let lsp_request_count = lsp_request_count.clone();
+            move |fake_server, file_with_hints| {
+                let lsp_request_count = lsp_request_count.clone();
+                let first_request_gate = first_request_gate.clone();
+                fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                    move |params, _| {
+                        let first_request_gate = first_request_gate.lock().take();
+                        let i = lsp_request_count.fetch_add(1, Ordering::Release) + 1;
+                        async move {
+                            if let Some(first_request_gate) = first_request_gate {
+                                first_request_gate.await.ok();
+                            }
+                            assert_eq!(
+                                params.text_document.uri,
+                                lsp::Uri::from_file_path(file_with_hints).unwrap(),
+                            );
+                            Ok(Some(vec![lsp::InlayHint {
+                                position: lsp::Position::new(0, 1),
+                                label: lsp::InlayHintLabel::String(i.to_string()),
+                                kind: Some(lsp::InlayHintKind::TYPE),
+                                text_edits: None,
+                                tooltip: None,
+                                padding_left: None,
+                                padding_right: None,
+                                data: None,
+                            }]))
+                        }
+                    },
+                );
+            }
+        })
+        .await;
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert!(
+                    cached_hint_labels(editor, cx).is_empty(),
+                    "The initial hint fetch is blocked and should not have populated the cache yet"
+                );
+            })
+            .unwrap();
+
+        // Emulate a server refresh request arriving while the initial fetch is still running.
+        fake_server
+            .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT)
+            .await
+            .into_response()
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+
+        first_request_unblock.send(()).unwrap();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            2,
+            lsp_request_count.load(Ordering::Acquire),
+            "The refresh should have re-queried the server"
+        );
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                let expected_hints = vec!["2".to_string()];
+                assert_eq!(
+                    expected_hints,
+                    cached_hint_labels(editor, cx),
+                    "A refresh racing with an in-flight fetch should replace its hints, not duplicate them"
+                );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             })
             .unwrap();
@@ -1332,6 +1580,52 @@ pub mod tests {
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             })
             .unwrap();
+
+        run_work_cycle(&fake_server, progress_token + 1, cx).await;
+
+        editor
+            .update(cx, |editor, _, cx| {
+                let expected_hints = vec!["1".to_string()];
+                assert_eq!(
+                    expected_hints,
+                    cached_hint_labels(editor, cx),
+                    "Repeated work cycles without buffer changes should not invalidate hints again"
+                );
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.handle_input("~", window, cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                let expected_hints = vec!["2".to_string()];
+                assert_eq!(
+                    expected_hints,
+                    cached_hint_labels(editor, cx),
+                    "A buffer edit should invalidate and re-query the hints"
+                );
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+
+        run_work_cycle(&fake_server, progress_token + 2, cx).await;
+
+        editor
+            .update(cx, |editor, _, cx| {
+                let expected_hints = vec!["3".to_string()];
+                assert_eq!(
+                    expected_hints,
+                    cached_hint_labels(editor, cx),
+                    "A buffer edit should re-allow the work-end hint refresh"
+                );
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            })
+            .unwrap();
     }
 
     #[gpui::test]
@@ -1369,10 +1663,11 @@ pub mod tests {
             language_registry.add(Arc::new(Language::new(
                 LanguageConfig {
                     name: name.into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec![path_suffix.to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
@@ -2077,6 +2372,128 @@ pub mod tests {
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_inlay_hint_response_after_buffer_shrinks(cx: &mut gpui::TestAppContext) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+
+        let (unblock_request, request_gate) = oneshot::channel::<()>();
+        let request_gate = Arc::new(Mutex::new(Some(request_gate)));
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "let value = 1;\n".repeat(500),
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new({
+                    let request_gate = request_gate.clone();
+                    move |fake_server| {
+                        let request_gate = request_gate.clone();
+                        fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                            move |params, _| {
+                                // Only block the request for the far-away chunk, so that any
+                                // hint requests the editor makes for the top of the file do
+                                // not consume the gate.
+                                let request_gate = if params.range.start.line >= 400 {
+                                    request_gate.lock().take()
+                                } else {
+                                    None
+                                };
+                                async move {
+                                    if let Some(request_gate) = request_gate {
+                                        request_gate.await.ok();
+                                    }
+                                    Ok(Some(Vec::new()))
+                                }
+                            },
+                        );
+                    }
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        // An editor is only needed so that the language server starts for this buffer.
+        let _editor = cx.add_window(|window, cx| {
+            Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx)
+        });
+        cx.executor().run_until_parked();
+        let _fake_server = fake_servers.next().await.unwrap();
+
+        // Query a single chunk far into the buffer, so that its chunk id is well past the
+        // number of chunks the buffer will have once shrunk.
+        let hint_tasks = project.update(cx, |project, cx| {
+            let query_range = buffer.read_with(cx, |buffer, _| {
+                buffer.anchor_before(Point::new(460, 0))..buffer.anchor_after(Point::new(460, 0))
+            });
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store.inlay_hints(
+                    InvalidationStrategy::None,
+                    buffer.clone(),
+                    vec![query_range],
+                    None,
+                    cx,
+                )
+            })
+        });
+        assert_eq!(
+            hint_tasks.len(),
+            1,
+            "Should have started a hint fetch for exactly the queried chunk"
+        );
+        cx.executor().run_until_parked();
+        assert!(
+            request_gate.lock().is_none(),
+            "Language server should have received the inlay hint request"
+        );
+
+        // Shrink the buffer while the response is still in flight, so that the buffer has
+        // far fewer chunks than the pending request's chunk id.
+        buffer.update(cx, |buffer, cx| {
+            let entire_buffer = 0..buffer.len();
+            buffer.edit([(entire_buffer, "fn main() {}")], None, cx);
+        });
+        cx.executor().run_until_parked();
+
+        // The stale response must be discarded rather than indexing the rebuilt, much
+        // shorter chunk cache with the pending request's chunk id.
+        unblock_request.send(()).unwrap();
+        for (chunk_range, hint_task) in hint_tasks {
+            let hints = hint_task
+                .await
+                .expect("Stale inlay hint response should not fail the fetch");
+            assert!(
+                hints.is_empty(),
+                "Stale response for chunk {chunk_range:?} should yield no hints, got {hints:?}"
+            );
+        }
     }
 
     #[gpui::test(iterations = 4)]
@@ -3487,6 +3904,19 @@ let c = 3;"#
                 );
             })
             .unwrap();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(Vec::<String>::new(), visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+
         editor
             .update(cx, |editor, _, cx| {
                 editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(true), cx);
@@ -3633,6 +4063,34 @@ let c = 3;"#
                     visible_hint_labels(editor, cx),
                     "Nothing changes on consequent modifiers change of the same kind (3)"
                 );
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.toggle_inlay_hints(&crate::ToggleInlayHints, window, cx);
+                editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(true), cx);
+                editor.handle_input("x", window, cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(vec!["2".to_string()], cached_hint_labels(editor, cx));
+                assert_eq!(Vec::<String>::new(), visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(vec!["2".to_string()], cached_hint_labels(editor, cx));
+                assert_eq!(vec!["2".to_string()], visible_hint_labels(editor, cx));
             })
             .unwrap();
     }
@@ -4124,17 +4582,8 @@ let c = 3;"#
             })
             .unwrap();
         // Emulate a language server refresh request, coming in the background..
-        editor
-            .update(cx, |editor, _, cx| {
-                editor.refresh_inlay_hints(
-                    InlayHintRefreshReason::RefreshRequested {
-                        server_id: fake_server.server.server_id(),
-                        request_id: Some(1),
-                    },
-                    cx,
-                );
-            })
-            .unwrap();
+        let refresh_request = fake_server
+            .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT);
         // Edit the 1st buffer while scrolled down and not seeing that.
         // The edit will auto scroll to the edit (1st buffer).
         editor
@@ -4151,6 +4600,7 @@ let c = 3;"#
 
         cx.executor().advance_clock(Duration::from_millis(1000));
         cx.executor().run_until_parked();
+        refresh_request.await.into_response().unwrap();
         editor
             .update(cx, |editor, _window, cx| {
                 assert_eq!(
@@ -4537,16 +4987,10 @@ let c = 3;"#
 
         // Trigger RefreshRequested from server A. This should re-fetch server A's
         // hints while keeping server B's hints intact.
-        editor
-            .update(cx, |editor, _window, cx| {
-                editor.refresh_inlay_hints(
-                    InlayHintRefreshReason::RefreshRequested {
-                        server_id: fake_server_a.server.server_id(),
-                        request_id: Some(1),
-                    },
-                    cx,
-                );
-            })
+        fake_server_a
+            .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT)
+            .await
+            .into_response()
             .unwrap();
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
@@ -4617,10 +5061,11 @@ let c = 3;"#
             language_registry.add(Arc::new(Language::new(
                 LanguageConfig {
                     name: name.into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec![path_suffix.to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
@@ -4793,6 +5238,81 @@ let c = 3;"#
             .unwrap();
     }
 
+    #[gpui::test]
+    async fn test_hints_cleared_when_language_changes_and_no_server_attaches(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
+                toggle_on_modifiers_press: None,
+            })
+        });
+
+        let (_, editor, _fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
+            fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                move |params, _| async move {
+                    assert_eq!(
+                        params.text_document.uri,
+                        lsp::Uri::from_file_path(file_with_hints).unwrap(),
+                    );
+                    Ok(Some(vec![lsp::InlayHint {
+                        position: lsp::Position::new(0, 1),
+                        label: lsp::InlayHintLabel::String("stale hint".to_string()),
+                        kind: None,
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: None,
+                        padding_right: None,
+                        data: None,
+                    }]))
+                },
+            );
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                let expected_hints = vec!["stale hint".to_string()];
+                assert_eq!(expected_hints, cached_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+
+        let plain_text = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Plain Text".into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+        editor
+            .update(cx, |editor, _, cx| {
+                let project = editor.project().unwrap().clone();
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+                project.update(cx, |project, cx| {
+                    project.set_language_for_buffer(&buffer, plain_text, cx);
+                });
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(Vec::<String>::new(), cached_hint_labels(editor, cx));
+                assert_eq!(Vec::<String>::new(), visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+    }
+
     pub(crate) fn init_test(cx: &mut TestAppContext, f: &dyn Fn(&mut AllLanguageSettingsContent)) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -4914,5 +5434,37 @@ let c = 3;"#
             .unwrap()
             .allowed_hint_kinds
             .clone()
+    }
+
+    async fn run_work_cycle(
+        fake_server: &FakeLanguageServer,
+        progress_token: i32,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        fake_server
+            .request::<lsp::request::WorkDoneProgressCreate>(
+                lsp::WorkDoneProgressCreateParams {
+                    token: lsp::ProgressToken::Number(progress_token),
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .expect("work done progress create request failed");
+        cx.executor().run_until_parked();
+        fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+            token: lsp::ProgressToken::Number(progress_token),
+            value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
+                lsp::WorkDoneProgressBegin::default(),
+            )),
+        });
+        cx.executor().run_until_parked();
+        fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+            token: lsp::ProgressToken::Number(progress_token),
+            value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
+                lsp::WorkDoneProgressEnd::default(),
+            )),
+        });
+        cx.executor().run_until_parked();
     }
 }

@@ -136,8 +136,8 @@ impl WorkflowFile {
             .as_ref()
             .expect("Workflow must have a name at this point");
         let filename = format!(
-            "{}.yml",
-            workflow_name.rsplit("::").next().unwrap_or(workflow_name)
+            "{workflow_name}.yml",
+            workflow_name = workflow_name.rsplit("::").next().unwrap_or(workflow_name)
         );
 
         let workflow_path = workflow_folder.join(filename);

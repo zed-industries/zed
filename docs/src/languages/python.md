@@ -135,10 +135,12 @@ You can use the following configuration:
   "lsp": {
     "basedpyright": {
       "settings": {
-        "basedpyright.analysis": {
-          "diagnosticMode": "workspace",
-          "inlayHints": {
-            "callArgumentNames": false
+        "basedpyright": {
+          "analysis": {
+            "diagnosticMode": "workspace",
+            "inlayHints": {
+              "callArgumentNames": false
+            }
           }
         }
       }
@@ -146,6 +148,8 @@ You can use the following configuration:
   }
 }
 ```
+
+For compatibility with older configurations, Zed also accepts `basedpyright.analysis` as a top-level key within `settings`.
 
 ##### Configuration files
 
@@ -444,4 +448,4 @@ If a language server isn't responding or features like diagnostics or autocomple
 - Verify your `settings.json` or `pyrightconfig.json` is syntactically correct.
 - Restart Zed to reinitialize language server connections, or try restarting the language server using the {#action editor::RestartLanguageServer}
 
-If the language server is failing to resolve imports, and you're using a virtual environment, make sure that the right environment is chosen in the selector. You can use "Server Info" view to confirm which virtual environment Zed is sending to the language server&mdash;look for the `* Configuration` section at the end.
+If the language server is failing to resolve imports, and you're using a virtual environment, make sure that the right environment is chosen in the selector. You can use the "Server Info" view to confirm which virtual environment Zed is sending to the language server&mdash;look for the `* Configuration` section at the end.
