@@ -2358,12 +2358,20 @@ impl Editor {
         let excerpt_anchors = selections
             .iter()
             .flat_map(|selection| {
-                snapshot
+                let mut selection_excerpt_anchors = snapshot
                     .range_to_buffer_ranges(selection.range())
                     .into_iter()
                     .filter_map(|(buffer_snapshot, range, _)| {
                         snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(range.start))
                     })
+                    .collect::<Vec<_>>();
+                // Deleted-hunk cursors have no main-buffer ranges.
+                if selection_excerpt_anchors.is_empty()
+                    && selection.start.cmp(&selection.end, &snapshot).is_eq()
+                {
+                    selection_excerpt_anchors.push(selection.head());
+                }
+                selection_excerpt_anchors
             })
             .collect::<Vec<_>>();
 
