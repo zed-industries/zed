@@ -23547,6 +23547,57 @@ async fn test_toggle_comment_blank_lines_do_not_decide_direction(cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_toggle_comment_uncomments_after_parameter_change(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let skip_blank_lines = &ToggleComments::default();
+    let comment_blank_lines = &ToggleComments {
+        comment_empty_lines: true,
+        ..Default::default()
+    };
+
+    cx.set_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+
+    // Comment with one binding: the blank line gets no marker.
+    cx.update_editor(|e, window, cx| e.toggle_comments(skip_blank_lines, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        //«fn a() {
+        //    b();
+
+        //    c();
+        //}ˇ»
+    "});
+
+    // Toggle with the other binding. The blank line still has no marker, but it must
+    // not make the block look uncommented: the markers are removed, not doubled.
+    cx.update_editor(|e, window, cx| e.toggle_comments(comment_blank_lines, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_toggle_comment_selection_of_only_blank_lines(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
