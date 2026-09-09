@@ -1545,14 +1545,13 @@ impl Editor {
                         .map(|p| p.trim_end_matches(' ').len())
                         .collect::<SmallVec<[usize; 4]>>();
 
-                    let mut all_selection_lines_are_comments = true;
+                    let mut commented_lines = 0;
+                    let mut uncommented_lines = 0;
 
                     for row in start_row.0..=end_row.0 {
                         let row = MultiBufferRow(row);
-                        if !comment_empty_lines
-                            && start_row < end_row
-                            && snapshot.is_line_blank(row)
-                        {
+                        let is_blank = start_row < end_row && snapshot.is_line_blank(row);
+                        if !comment_empty_lines && is_blank {
                             continue;
                         }
 
@@ -1571,14 +1570,29 @@ impl Editor {
                             .max_by_key(|range| range.end.column - range.start.column)
                             .expect("prefixes is non-empty");
 
-                        if prefix_range.is_empty() {
-                            all_selection_lines_are_comments = false;
+                        // Blank rows are left out of the tally. They never carry a marker,
+                        // so counting them would make a commented block that contains one
+                        // look uncommented, and it could then never be uncommented. VS Code
+                        // and IntelliJ exclude them here for the same reason.
+                        // Without this, commenting a block with an empty line in between, and then changing the action parameter of
+                        // ToggleComments with `comment_empty_lines: false` would leave the block
+                        // commented, even though it should be uncommented.
+                        if !is_blank {
+                            if prefix_range.is_empty() {
+                                uncommented_lines += 1;
+                            } else {
+                                commented_lines += 1;
+                            }
                         }
 
                         selection_edit_ranges.push(prefix_range);
                     }
 
-                    if all_selection_lines_are_comments {
+                    // Remove markers only when every counted row has one, and at least one
+                    // row was counted - otherwise there is nothing to remove.
+                    let should_uncomment = uncommented_lines == 0 && commented_lines > 0;
+
+                    if should_uncomment {
                         edits.extend(
                             selection_edit_ranges
                                 .iter()

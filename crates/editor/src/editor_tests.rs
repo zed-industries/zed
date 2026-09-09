@@ -23507,6 +23507,82 @@ async fn test_toggle_comment_commenting_blank_lines(cx: &mut TestAppContext) {
     "});
 }
 #[gpui::test]
+async fn test_toggle_comment_blank_lines_do_not_decide_direction(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let toggle_comments = &ToggleComments {
+        comment_empty_lines: true,
+        ..Default::default()
+    };
+
+    // The code lines carry markers but the blank line does not, which is what a
+    // block commented with `comment_empty_lines: false` looks like. Toggling must
+    // uncomment it rather than add a second layer of markers.
+    cx.set_state(indoc! {"
+        «//fn a() {
+        //    b();
+
+        //    c();
+        //}ˇ»
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        «fn a() {
+            b();
+
+            c();
+        }ˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_comment_selection_of_only_blank_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["//".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let toggle_comments = &ToggleComments {
+        comment_empty_lines: true,
+        ..Default::default()
+    };
+
+    // No line carries a marker, so there is nothing to remove: comment them.
+    cx.set_state(indoc! {"
+        fn a() {
+        «
+
+        ˇ»}
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(toggle_comments, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //«
+        //
+        ˇ»}
+    "});
+}
+
+#[gpui::test]
 async fn test_advance_downward_on_toggle_comment(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
