@@ -268,7 +268,14 @@ cut through. `V` views (nodes) each render `E` id'd `div`s of one of three weigh
 - branch: the same per *dirty* element (1.2 / 4.0 / 11.6 µs), a *clean* element replayed
   at **0.18 / 1.2 / 8.3 µs**, `q` = 0.77, plus 0.55 µs per dirty node from `Siblings`.
 
-Mean error 2% (`main`) and 4% (branch), worst 8% / 14% at the 8k-element points. The
+Mean error 2% (`main`) and 4% (branch), worst 8% / 14% at the 8k-element points. At
+100% dirty the branch measures within ±5% of `main` by scene shape — slower on a single
+view of many elements (`Elements`, +2–4.6%), faster with more views (`v16-e512-p4-f100`
+−8.5%, `Workbench/full` −23%): dirty views seed their text handles back rather than
+missing `main`'s per-line lookup, and retire their Taffy subtrees as units. The fit puts
+that in a smaller superlinear term for the branch (`q` 0.77 vs 2.27), so its all-dirty
+advantage at large N is an extrapolation from the two 8192-element points: trust the
+direction, not the magnitude. The
 distribution of weights does not matter beyond the counts — cost is linear in each kind
 — and cost follows dirty *elements*, not dirty views, so a big node refreshing is many
 dirty elements and a micro node one.
