@@ -234,6 +234,10 @@ const PRESETS={
 };
 const BUDGET=8.3;const BUDGETS=[[4,'4 ms — half a 120 Hz frame'],[8.3,'8.3 ms (120 Hz)'],[16.7,'16.7 ms (60 Hz)']];
 function label(g,text,x,y,color){g.font='12px system-ui';g.lineWidth=3;g.strokeStyle='rgba(255,255,255,.9)';g.strokeText(text,x,y);g.fillStyle=color;g.fillText(text,x,y);}
+// Labels in the right margin sit at the height of the line they name; when two lines are close
+// the labels are pushed apart (in y order) and a thin leader points back at the line.
+function drawMarginLabels(g,items,x,gap){items.sort((a,b)=>a.y-b.y);for(let i=1;i<items.length;i++)items[i].y=Math.max(items[i].y,items[i-1].y+gap);
+ for(const it of items){if(Math.abs(it.y-it.lineY)>1){g.save();g.setLineDash([]);g.lineWidth=1;g.strokeStyle=it.color;g.beginPath();g.moveTo(x-4,it.lineY);g.lineTo(x+2,it.y);g.stroke();g.restore();}label(g,it.text,x+4,it.y+4,it.color);}}
 function draw(){const n=[+$('L').value,+$('M').value,+$('H').value],V=+$('V').value,F=+$('F').value,budget=BUDGET,f=F/100;
 K=+$('K').value;$('D').max=K;D=Math.min(+$('D').value,K);$('D').value=D;R=$('R').checked;
 MC=$('MC').checked;PN=+$('PN').value;PS=+$('PS').value/100;$('PNv').textContent=PN;$('PSv').textContent=Math.round(PS*100);
@@ -249,17 +253,18 @@ const fBudget=t1===t0?null:(budget*1000-t0)/(t1-t0);
 {let fm=null;for(let p=0;p<=100;p++){if(tmain(n,p/100)<=budget*1000)fm=p;else break;}$('fm').textContent=fm===null?'never':fm>=100?'always':fm+'%%';}$('fb').textContent=fBudget===null?(t0<=budget*1000?'always':'never'):fBudget>=1?'always':fBudget<=0?'never':Math.round(fBudget*100)+'%%';
 // Break-even: the share of change above which the branch costs what main does.
 let fEven=null;for(let p=0;p<=100;p++){if(tbranch(n,p/100,V)>=tmain(n,p/100)){fEven=p/100;break;}}if(fEven===null)fEven=1;
-const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=44,W=cv.width-2*pad-215,H=cv.height-2*pad;
+const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=52,W=cv.width-2*pad-215,H=cv.height-2*pad;
 const fitTop=Math.max(2000,Math.max(tmain(n,1),tb)*1.15);$('YS').max=Math.max(20,fitTop/1000).toFixed(1);if($('fit').checked){$('YS').value=(fitTop/1000).toFixed(1);}const ymax=(+$('YS').value)*1000;$('YSv').textContent=(+$('YS').value).toFixed(1);const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
 const mainAt=p=>tmain(n,p/100);const tmMax=Math.max(...Array.from({length:101},(_,p)=>mainAt(p)));
 g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(mainAt(p)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(150,150,150,.5)';g.fill();
+const margin=[];
 if(MC){g.save();g.setLineDash([2,3]);g.lineWidth=1;g.strokeStyle='#777';for(const mode of ['best','worst']){g.beginPath();for(let p=0;p<=100;p++){const y=Y(tmain(n,p/100,mode));if(p===0)g.moveTo(X(p),y);else g.lineTo(X(p),y);}g.stroke();}g.restore();
  const best=tmain(n,f,'best'),worst=tmain(n,f,'worst');
- label(g,'no panel clean · '+fmt(worst),X(100)+6,Y(worst)+4,'#666');label(g,'every panel clean · '+fmt(best),X(100)+6,Math.max(Y(best)+4,Y(worst)+18),'#666');}
+ margin.push({lineY:Y(worst),y:Y(worst),text:'no panel clean · '+fmt(worst),color:'#666'},{lineY:Y(best),y:Y(best),text:'every panel clean · '+fmt(best),color:'#666'});}
 g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(tbranch(n,p/100,V)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(42,157,143,.7)';g.fill();
-g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);for(const [ms,name] of BUDGETS){if(ms*1000<ymax){g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);g.beginPath();g.moveTo(X(0),Y(ms*1000));g.lineTo(X(100),Y(ms*1000));g.stroke();const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);const upTo=cross!==null&&cross>0&&cross<1?' · up to '+Math.round(cross*100)+'%%':'';label(g,name+upTo,X(100)+6,Y(ms*1000)+4,'#e76f51');}}g.setLineDash([]);
+g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);for(const [ms,name] of BUDGETS){if(ms*1000<ymax){g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);g.beginPath();g.moveTo(X(0),Y(ms*1000));g.lineTo(X(100),Y(ms*1000));g.stroke();const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);const upTo=cross!==null&&cross>0&&cross<1?' · up to '+Math.round(cross*100)+'%%':'';margin.push({lineY:Y(ms*1000),y:Y(ms*1000),text:name+upTo,color:'#e76f51'});}}g.setLineDash([]);drawMarginLabels(g,margin,X(100)+4,15);
 g.lineWidth=1;g.strokeStyle='#e76f51';g.beginPath();g.moveTo(X(F),Y(0));g.lineTo(X(F),Y(ymax/1.15));g.stroke();
-if(F>6)label(g,'0%%',X(0)-8,Y(0)+16,'#333');if(F<94)label(g,'100%%',X(100)-14,Y(0)+16,'#333');label(g,'elements changing per frame',X(50)-80,Y(0)+32,'#333');label(g,fmt(ymax/1.15),2,Y(ymax/1.15)+4,'#333');label(g,'0',24,Y(0)+4,'#333');
+if(F>6)label(g,'0%%',X(0)-8,Y(0)+16,'#333');if(F<94)label(g,'100%%',X(100)-14,Y(0)+16,'#333');label(g,'elements changing per frame',X(50)-80,Y(0)+32,'#333');{const t=fmt(ymax/1.15);label(g,t,pad-6-g.measureText(t).width,Y(ymax/1.15)+4,'#333');}label(g,'0',pad-6-g.measureText('0').width,Y(0)+4,'#333');
 label(g,F+'%%',X(F)-10,Y(0)+16,'#e76f51');
 const faster=tm/tb;const gain=faster>=1?faster.toFixed(1)+'× faster ('+Math.round(100*(1-tb/tm))+'%%)':(tb/tm).toFixed(2)+'× slower';
 const branchText='branch '+fmt(tb)+' — '+gain;const bw=g.measureText(branchText).width+8;
@@ -273,7 +278,7 @@ for(const id of ['L','M','H','K','D','R','V','F'])$(id).addEventListener('input'
 for(const id of ['MC','PN','PS'])$(id).addEventListener('input',()=>{preset=null;draw();});
 $('YS').addEventListener('input',()=>{$('fit').checked=false;draw();});$('fit').addEventListener('input',draw);
 for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value]=v;$('D').max=v[5];$('D').value=v[6];$('R').checked=v[7];$('MC').checked=v[8];$('PN').value=v[9];$('PS').value=v[10];preset=name;draw();};$('presets').appendChild(b);}
-$('presets').firstChild.click();
+{const wanted=decodeURIComponent(location.hash.slice(1));const start=[...$('presets').children].find(b=>b.textContent===wanted)||$('presets').firstChild;start.click();}
 </script>
 """ % dict(npoints=len(points), errm=100 * abs(err_main).mean(), errb=100 * abs(err_branch).mean(), maxm=100 * abs(err_main).max(), maxb=100 * abs(err_branch).max(),
            cm=describe(names_main, coef_main), cb=describe(names_branch, coef_branch),
