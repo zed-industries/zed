@@ -1010,7 +1010,7 @@ pub mod tests {
     use collections::HashSet;
     use futures::channel::oneshot;
     use futures::{StreamExt, future};
-    use gpui::{AppContext as _, Context, TestAppContext, WindowHandle};
+    use gpui::{AppContext as _, Context, TestAppContext, UpdateGlobal, WindowHandle};
     use itertools::Itertools as _;
     use language::language_settings::InlayHintKind;
     use language::{Capability, FakeLspAdapter};
@@ -5262,5 +5262,104 @@ let c = 3;"#
             )),
         });
         cx.executor().run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_inlay_hints_for_gitignored_but_included_file(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    use settings::SplicingVec;
+                    settings.project.worktree.file_scan_exclusions =
+                        Some(SplicingVec::from(Vec::<String>::new()));
+                    settings.project.worktree.file_scan_inclusions =
+                        Some(vec!["generated/**".to_string()]);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".gitignore": "generated\n",
+                "generated": {
+                    "lib.rs": "fn helper() -> i32 { 1 } // padding so inlay hints are not trimmed",
+                },
+                "tracked.rs": "fn main() { a } // padding so inlay hints are not trimmed",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+
+        let inlay_hint_requests_for_uri: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let inlay_hint_requests_for_uri_clone = inlay_hint_requests_for_uri.clone();
+        let _fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(move |fake_server| {
+                    let inlay_hint_requests_for_uri = inlay_hint_requests_for_uri_clone.clone();
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                        move |params, _| {
+                            let inlay_hint_requests_for_uri = inlay_hint_requests_for_uri.clone();
+                            async move {
+                                inlay_hint_requests_for_uri
+                                    .lock()
+                                    .push(params.text_document.uri.to_string());
+                                Ok(Some(Vec::new()))
+                            }
+                        },
+                    );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/generated/lib.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor =
+            cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.set_visible_line_count(50.0, window, cx);
+                editor.set_visible_column_count(120.0);
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        let requests = inlay_hint_requests_for_uri.lock().clone();
+        assert!(
+            requests.iter().any(|uri| uri.contains("generated/lib.rs")),
+            "Expected a textDocument/inlayHint request for the gitignored-but-included \
+             file `generated/lib.rs`. is_lsp_relevant dropped the ignored buffer. \
+             Got requests for: {requests:#?}",
+        );
     }
 }
