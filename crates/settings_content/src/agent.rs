@@ -210,10 +210,12 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub flexible: Option<bool>,
-    /// Where to position the threads sidebar.
+    /// Where to position the sidebar holding the threads list and the agent panel.
     ///
     /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
+    /// Settings for the threads list.
+    pub threads: Option<AgentThreadsSettingsContent>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -357,6 +359,19 @@ pub struct AgentSettingsContent {
     /// These are populated when choosing "Allow always" from a sandbox
     /// escalation prompt.
     pub sandbox_permissions: Option<SandboxPermissionsContent>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct AgentThreadsSettingsContent {
+    /// Default width in pixels for the threads list.
+    ///
+    /// Values range from 200 to 800, matching the widths the list can be
+    /// dragged to. Values outside that range are clamped into it.
+    ///
+    /// Default: 300
+    #[schemars(range(min = 200, max = 800))]
+    pub default_width: Option<crate::PixelSetting>,
 }
 
 impl AgentSettingsContent {

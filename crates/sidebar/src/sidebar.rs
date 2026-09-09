@@ -4,7 +4,7 @@ use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent::{ThreadStore, ZED_AGENT_ID};
 use agent_client_protocol::schema::v1 as acp;
-use agent_settings::AgentSettings;
+use agent_settings::{AgentSettings, THREADS_LIST_MAX_WIDTH, THREADS_LIST_MIN_WIDTH};
 use agent_ui::terminal_thread_metadata_store::{
     TerminalThreadMetadata, TerminalThreadMetadataStore, terminal_title_prefix,
 };
@@ -103,10 +103,6 @@ gpui::actions!(
     ]
 );
 
-const DEFAULT_WIDTH: Pixels = px(300.0);
-const MIN_WIDTH: Pixels = px(200.0);
-const MAX_WIDTH: Pixels = px(800.0);
-
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum SerializedSidebarView {
     #[default]
@@ -125,6 +121,17 @@ enum NewEntryTarget {
 struct SerializedSidebar {
     #[serde(default)]
     width: Option<f32>,
+    /// Whether `width` came from the user dragging the divider.
+    ///
+    /// State written before this field existed deserializes to `false`. That
+    /// state recorded every width unconditionally, so nothing distinguishes
+    /// a width the user chose from one that merely mirrored the old hard-coded
+    /// default. Restoring it is therefore skipped and `agent.threads.default_width`
+    /// applies instead, which costs anyone who had deliberately resized
+    /// a single re-drag. The alternative, honoring every legacy width, would
+    /// leave the new setting inert for every existing user.
+    #[serde(default)]
+    width_set_by_user: bool,
     #[serde(default)]
     active_view: SerializedSidebarView,
 }
@@ -763,6 +770,11 @@ fn create_worktree_in_workspace(
 pub struct Sidebar {
     multi_workspace: WeakEntity<MultiWorkspace>,
     width: Pixels,
+    /// Whether `width` came from the user rather than from
+    /// `agent.threads.default_width`. Only a user-chosen width is persisted, so
+    /// that changing the setting is not overridden by a width the user never
+    /// picked. Serialization runs on many triggers besides resizing.
+    width_set_by_user: bool,
     focus_handle: FocusHandle,
     filter_editor: Entity<Editor>,
     rename_editor: Entity<Editor>,
@@ -917,7 +929,8 @@ impl Sidebar {
 
         Self {
             multi_workspace: multi_workspace.downgrade(),
-            width: DEFAULT_WIDTH,
+            width: AgentSettings::get_global(cx).threads_default_width,
+            width_set_by_user: false,
             focus_handle,
             filter_editor,
             rename_editor,
@@ -7792,7 +7805,11 @@ impl WorkspaceSidebar for Sidebar {
     }
 
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) {
-        self.width = width.unwrap_or(DEFAULT_WIDTH).clamp(MIN_WIDTH, MAX_WIDTH);
+        // `None` is the reset gesture, which hands the width back to the setting.
+        self.width_set_by_user = width.is_some();
+        self.width = width
+            .unwrap_or_else(|| AgentSettings::get_global(cx).threads_default_width)
+            .clamp(THREADS_LIST_MIN_WIDTH, THREADS_LIST_MAX_WIDTH);
         cx.notify();
     }
 
@@ -7832,7 +7849,8 @@ impl WorkspaceSidebar for Sidebar {
 
     fn serialized_state(&self, _cx: &App) -> Option<String> {
         let serialized = SerializedSidebar {
-            width: Some(f32::from(self.width)),
+            width: self.width_set_by_user.then(|| f32::from(self.width)),
+            width_set_by_user: self.width_set_by_user,
             active_view: match self.view {
                 SidebarView::ThreadList => SerializedSidebarView::ThreadList,
                 SidebarView::Archive(_) => SerializedSidebarView::History,
@@ -7848,8 +7866,11 @@ impl WorkspaceSidebar for Sidebar {
         cx: &mut Context<Self>,
     ) {
         if let Some(serialized) = serde_json::from_str::<SerializedSidebar>(state).log_err() {
-            if let Some(width) = serialized.width {
-                self.width = px(width).clamp(MIN_WIDTH, MAX_WIDTH);
+            // A width the user never chose is ignored, leaving the one
+            // `Sidebar::new` took from `agent.threads.default_width` in place.
+            if let Some(width) = serialized.width.filter(|_| serialized.width_set_by_user) {
+                self.width = px(width).clamp(THREADS_LIST_MIN_WIDTH, THREADS_LIST_MAX_WIDTH);
+                self.width_set_by_user = true;
             }
             if serialized.active_view == SerializedSidebarView::History {
                 cx.defer_in(window, |this, window, cx| {

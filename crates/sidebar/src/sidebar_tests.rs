@@ -14,7 +14,7 @@ use agent_ui::{
 };
 use chrono::DateTime;
 use fs::{FakeFs, Fs};
-use gpui::TestAppContext;
+use gpui::{TestAppContext, UpdateGlobal};
 use pretty_assertions::assert_eq;
 use project::AgentId;
 use settings::SettingsStore;
@@ -296,6 +296,17 @@ fn setup_sidebar_closed(
     });
     cx.run_until_parked();
     sidebar
+}
+
+fn set_threads_default_width(width: f32, cx: &mut App) {
+    SettingsStore::update_global(cx, |store, cx| {
+        store
+            .set_user_settings(
+                &format!(r#"{{"agent": {{"threads": {{"default_width": {width}}}}}}}"#),
+                cx,
+            )
+            .unwrap();
+    });
 }
 
 async fn save_n_test_threads(
@@ -872,6 +883,142 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_width_reset_returns_configured_default(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    cx.update(|cx| set_threads_default_width(360.0, cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    assert_eq!(
+        sidebar.read_with(cx, |sidebar, _| sidebar.width),
+        px(360.0),
+        "a fresh sidebar should open at the configured width"
+    );
+
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.set_width(Some(px(420.0)), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.width), px(420.0));
+
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.set_width(None, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        sidebar.read_with(cx, |sidebar, _| sidebar.width),
+        px(360.0),
+        "resetting the width should return to the configured width, not a fixed default"
+    );
+}
+
+#[gpui::test]
+async fn test_configured_width_is_clamped_into_range(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    cx.update(|cx| set_threads_default_width(5000.0, cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+    let wide_sidebar =
+        cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
+    cx.run_until_parked();
+    assert_eq!(
+        wide_sidebar.read_with(cx, |sidebar, _| sidebar.width),
+        THREADS_LIST_MAX_WIDTH,
+        "a configured width above the maximum should be clamped at construction"
+    );
+
+    wide_sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.set_width(None, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        wide_sidebar.read_with(cx, |sidebar, _| sidebar.width),
+        THREADS_LIST_MAX_WIDTH,
+        "resetting the width should not restore the unclamped configured width"
+    );
+
+    cx.update(|_window, cx| set_threads_default_width(5.0, cx));
+    let narrow_sidebar =
+        cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
+    cx.run_until_parked();
+    assert_eq!(
+        narrow_sidebar.read_with(cx, |sidebar, _| sidebar.width),
+        THREADS_LIST_MIN_WIDTH,
+        "a configured width below the minimum should be clamped at construction"
+    );
+}
+
+#[gpui::test]
+async fn test_only_a_user_chosen_width_is_persisted(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    cx.update(|cx| set_threads_default_width(360.0, cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // Serialization runs on many triggers besides resizing, so a sidebar the
+    // user has never resized must not record a width at all.
+    let untouched = sidebar
+        .read_with(cx, |sidebar, cx| sidebar.serialized_state(cx))
+        .expect("serialized_state should return Some");
+    assert!(
+        !untouched.contains("360"),
+        "an unresized sidebar should not persist its width, got {untouched}"
+    );
+
+    // State written before `width_set_by_user` existed cannot say whether the
+    // user chose the width, so it is discarded in favor of the setting. That
+    // costs a previously resized sidebar one re-drag.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.restore_serialized_state(r#"{"width":300.0}"#, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        sidebar.read_with(cx, |sidebar, _| sidebar.width),
+        px(360.0),
+        "a legacy persisted width should be discarded in favor of the setting"
+    );
+
+    // A width the user picked survives, and keeps surviving across restores.
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.set_width(Some(px(420.0)), cx);
+    });
+    cx.run_until_parked();
+    let resized = sidebar
+        .read_with(cx, |sidebar, cx| sidebar.serialized_state(cx))
+        .expect("serialized_state should return Some");
+
+    let restored =
+        cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
+    cx.run_until_parked();
+    restored.update_in(cx, |sidebar, window, cx| {
+        sidebar.restore_serialized_state(&resized, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        restored.read_with(cx, |sidebar, _| sidebar.width),
+        px(420.0),
+        "a user-chosen width should survive a restore"
+    );
+
+    // Resetting gives the width back to the setting, and stops persisting it.
+    restored.update_in(cx, |sidebar, _window, cx| {
+        sidebar.set_width(None, cx);
+    });
+    cx.run_until_parked();
+    let after_reset = restored
+        .read_with(cx, |sidebar, cx| sidebar.serialized_state(cx))
+        .expect("serialized_state should return Some");
+    assert!(
+        !after_reset.contains("420"),
+        "resetting should stop persisting the width, got {after_reset}"
+    );
+}
+
+#[gpui::test]
 async fn test_restore_serialized_archive_view_does_not_panic(cx: &mut TestAppContext) {
     // A regression test to ensure that restoring a serialized archive view does not panic.
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
@@ -884,6 +1031,7 @@ async fn test_restore_serialized_archive_view_does_not_panic(cx: &mut TestAppCon
 
     let serialized = serde_json::to_string(&SerializedSidebar {
         width: Some(400.0),
+        width_set_by_user: true,
         active_view: SerializedSidebarView::History,
     })
     .expect("serialization should succeed");
