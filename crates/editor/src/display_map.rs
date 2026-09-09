@@ -1513,6 +1513,30 @@ impl DisplaySnapshot {
         self.companion_display_snapshot.as_deref()
     }
 
+    fn diagnostic_severity_is_visible(&self, severity: lsp::DiagnosticSeverity) -> bool {
+        self.diagnostics_max_severity
+            .into_lsp()
+            .is_some_and(|max_severity| severity <= max_severity)
+    }
+
+    pub(crate) fn diagnostic_underline_style(
+        &self,
+        severity: lsp::DiagnosticSeverity,
+        underline: bool,
+        is_unnecessary: bool,
+        editor_style: &EditorStyle,
+    ) -> Option<UnderlineStyle> {
+        (underline
+            && editor_style.show_underlines
+            && self.diagnostic_severity_is_visible(severity)
+            && !(is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
+            .then(|| UnderlineStyle {
+                color: Some(diagnostic_style(severity, &editor_style.status)),
+                thickness: 1.0.into(),
+                wavy: true,
+            })
+    }
+
     pub fn wrap_snapshot(&self) -> &WrapSnapshot {
         &self.block_snapshot.wrap_snapshot
     }
@@ -1892,28 +1916,17 @@ impl DisplaySnapshot {
                 } else {
                     let highlight = chunk
                         .diagnostic_severity
-                        .filter(|severity| {
-                            self.diagnostics_max_severity
-                                .into_lsp()
-                                .is_some_and(|max_severity| severity <= &max_severity)
-                        })
+                        .filter(|severity| self.diagnostic_severity_is_visible(*severity))
                         .map(|severity| HighlightStyle {
                             fade_out: chunk
                                 .is_unnecessary
                                 .then_some(editor_style.unnecessary_code_fade),
-                            underline: (chunk.underline
-                                && editor_style.show_underlines
-                                && !(chunk.is_unnecessary
-                                    && severity > lsp::DiagnosticSeverity::WARNING))
-                                .then(|| {
-                                    let diagnostic_color =
-                                        diagnostic_style(severity, &editor_style.status);
-                                    UnderlineStyle {
-                                        color: Some(diagnostic_color),
-                                        thickness: 1.0.into(),
-                                        wavy: true,
-                                    }
-                                }),
+                            underline: self.diagnostic_underline_style(
+                                severity,
+                                chunk.underline,
+                                chunk.is_unnecessary,
+                                editor_style,
+                            ),
                             ..Default::default()
                         });
 

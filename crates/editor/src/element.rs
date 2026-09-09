@@ -49,8 +49,8 @@ use gpui::{
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollHandle, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, StyledText, TaskExt, TextAlign, TextRun,
-    TextStyleRefinement, WeakEntity, Window, div, fill, outline, pattern_slash, point, px, quad,
-    relative, size, solid_background, transparent_black,
+    TextStyleRefinement, UnderlineStyle, WeakEntity, Window, div, fill, outline, pattern_slash,
+    point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{
@@ -156,6 +156,14 @@ struct InlineBlameLayout {
     bounds: Bounds<Pixels>,
     buffer_id: BufferId,
     entry: BlameEntry,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PointDiagnosticLayout {
+    origin: gpui::Point<Pixels>,
+    width: Pixels,
+    underline: UnderlineStyle,
+    severity: lsp::DiagnosticSeverity,
 }
 
 impl SelectionLayout {
@@ -5626,6 +5634,90 @@ impl EditorElement {
         })
     }
 
+    fn layout_point_diagnostics(
+        &self,
+        snapshot: &EditorSnapshot,
+        visible_rows: Range<DisplayRow>,
+        line_layouts: &[LineWithInvisibles],
+        text_hitbox: &Hitbox,
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+        underline_offset: Pixels,
+        em_advance: Pixels,
+        line_origin_y: impl Fn(DisplayRow) -> Pixels,
+    ) -> Vec<PointDiagnosticLayout> {
+        if visible_rows.is_empty() {
+            return Vec::new();
+        }
+
+        let display_snapshot = &snapshot.display_snapshot;
+        let buffer_snapshot = snapshot.buffer_snapshot();
+
+        let query_start = display_snapshot
+            .display_point_to_point(DisplayPoint::new(visible_rows.start, 0), Bias::Left);
+        let query_end_display =
+            display_snapshot.clip_point(DisplayPoint::new(visible_rows.end, 0), Bias::Right);
+        let query_end = display_snapshot.display_point_to_point(query_end_display, Bias::Right);
+
+        let mut point_diagnostics: Vec<PointDiagnosticLayout> = Vec::new();
+        let mut last_display_point = None;
+        for entry in buffer_snapshot.diagnostics_in_range(query_start..query_end) {
+            let diagnostic = entry.diagnostic;
+            if entry.range.start != entry.range.end {
+                continue;
+            }
+
+            let Some(underline) = display_snapshot.diagnostic_underline_style(
+                diagnostic.severity,
+                diagnostic.underline,
+                diagnostic.is_unnecessary,
+                &self.style,
+            ) else {
+                continue;
+            };
+
+            let display_point = entry.range.start.to_display_point(display_snapshot);
+            if !visible_rows.contains(&display_point.row()) {
+                continue;
+            }
+
+            let line_ix = display_point.row().minus(visible_rows.start) as usize;
+            let Some(line_layout) = line_layouts.get(line_ix) else {
+                continue;
+            };
+            let x = line_layout.x_for_index(display_point.column() as usize)
+                + line_layout.alignment_offset(self.style.text.text_align, text_hitbox.size.width)
+                - scroll_pixel_position.x.into();
+            let y = line_origin_y(display_point.row());
+
+            let point_diagnostic = PointDiagnosticLayout {
+                origin: point(content_origin.x + x, y + underline_offset),
+                width: em_advance,
+                underline,
+                severity: diagnostic.severity,
+            };
+
+            if last_display_point == Some(display_point) {
+                if let Some(existing) = point_diagnostics.last_mut()
+                    && point_diagnostic.severity < existing.severity
+                {
+                    *existing = point_diagnostic;
+                }
+            } else {
+                last_display_point = Some(display_point);
+                point_diagnostics.push(point_diagnostic);
+            }
+        }
+
+        point_diagnostics
+    }
+
+    fn paint_point_diagnostics(&self, layout: &EditorLayout, window: &mut Window) {
+        for diagnostic in &layout.point_diagnostics {
+            window.paint_underline(diagnostic.origin, diagnostic.width, &diagnostic.underline);
+        }
+    }
+
     fn paint_text(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         window.with_content_mask(
             Some(ContentMask {
@@ -5672,6 +5764,7 @@ impl EditorElement {
                 let invisible_display_ranges = self.paint_highlights(layout, window, cx);
                 self.paint_document_colors(layout, window);
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
+                self.paint_point_diagnostics(layout, window);
                 self.paint_redactions(layout, window);
                 self.paint_navigation_overlays(layout, window, cx);
                 self.paint_cursors(layout, window, cx);
@@ -8116,6 +8209,10 @@ impl Element for EditorElement {
                     let font_id = window.text_system().resolve_font(&style.text.font());
                     let font_size = style.text.font_size.to_pixels(rem_size);
                     let line_height = style.text.line_height_in_pixels(rem_size);
+                    let ascent = window.text_system().ascent(font_id, font_size);
+                    let descent = window.text_system().descent(font_id, font_size);
+                    let underline_offset =
+                        (line_height - ascent - descent) / 2. + ascent + descent * 0.618;
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
                     let em_layout_width = window.text_system().em_layout_width(font_id, font_size);
@@ -8931,6 +9028,8 @@ impl Element for EditorElement {
                             &text_hitbox,
                             relative,
                             current_selection_head,
+                            underline_offset,
+                            em_advance,
                             window,
                             cx,
                         )
@@ -9507,6 +9606,21 @@ impl Element for EditorElement {
                             )
                         };
 
+                    let point_diagnostics = self.layout_point_diagnostics(
+                        &snapshot,
+                        start_row..end_row,
+                        &line_layouts,
+                        &text_hitbox,
+                        content_origin,
+                        scroll_pixel_position,
+                        underline_offset,
+                        em_advance,
+                        |row| {
+                            content_origin.y
+                                + line_height * (row.as_f64() - scroll_position.y) as f32
+                        },
+                    );
+
                     let position_map = Rc::new(PositionMap {
                         size: bounds.size,
                         visible_row_range,
@@ -9562,6 +9676,7 @@ impl Element for EditorElement {
                         line_numbers,
                         blamed_display_rows,
                         inline_diagnostics,
+                        point_diagnostics,
                         inline_blame_layout,
                         inline_code_actions,
                         blocks,
@@ -9778,6 +9893,7 @@ pub struct EditorLayout {
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_diagnostics: HashMap<DisplayRow, AnyElement>,
+    point_diagnostics: Vec<PointDiagnosticLayout>,
     inline_blame_layout: Option<InlineBlameLayout>,
     inline_code_actions: Option<AnyElement>,
     blocks: Vec<BlockLayout>,
@@ -10898,8 +11014,11 @@ mod tests {
         display_map::{BlockPlacement, BlockProperties, DisplayMap},
         editor_tests::{init_test, update_test_language_settings},
     };
-    use gpui::{TestAppContext, VisualTestContext, font};
-    use language::{Buffer, SelectionGoal, language_settings, tree_sitter_python};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, font};
+    use language::{
+        Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, SelectionGoal, language_settings,
+        tree_sitter_python,
+    };
     use log::info;
     use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
@@ -11150,6 +11269,194 @@ mod tests {
                 state.position_map.scroll_max.x == 0.,
                 "Soft wrapped editor should have no horizontal scrolling!"
             );
+        }
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostic_without_glyph_has_render_layout(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        for (text, point) in [
+            ("\nx", text::PointUtf16::new(0, 0)),
+            ("x\n", text::PointUtf16::new(1, 0)),
+            ("", text::PointUtf16::new(0, 0)),
+        ] {
+            let buffer = cx.new(|cx| Buffer::local(text, cx));
+            buffer.update(cx, |buffer, cx| {
+                let snapshot = buffer.snapshot();
+                let diagnostics = DiagnosticSet::new(
+                    [
+                        DiagnosticEntry::new(
+                            point..point,
+                            Diagnostic {
+                                severity: lsp::DiagnosticSeverity::WARNING,
+                                underline: true,
+                                ..Default::default()
+                            },
+                        ),
+                        DiagnosticEntry::new(
+                            point..point,
+                            Diagnostic {
+                                severity: lsp::DiagnosticSeverity::ERROR,
+                                underline: true,
+                                ..Default::default()
+                            },
+                        ),
+                    ],
+                    &snapshot,
+                );
+                buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
+            });
+
+            let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let window = cx.add_window(|window, cx| {
+                Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+            let Ok(editor) = window.root(cx) else {
+                assert!(false, "editor window should have a root view");
+                return;
+            };
+            let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+
+            let (_, state) = cx.draw(Default::default(), size(px(500.), px(200.)), |_, _| {
+                EditorElement::new(&editor, style.clone())
+            });
+
+            assert_eq!(state.point_diagnostics.len(), 1, "buffer text: {text:?}");
+            for diagnostic in &state.point_diagnostics {
+                assert_eq!(diagnostic.width, state.position_map.em_advance);
+                assert_eq!(diagnostic.underline.color, Some(style.status.error));
+                let row_origin =
+                    state.content_origin.y + state.position_map.line_height * point.row as f32;
+                assert!(diagnostic.origin.y >= row_origin);
+                assert!(diagnostic.origin.y < row_origin + state.position_map.line_height);
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_point_diagnostic_has_sticky_header_render_layout(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.gutter.get_or_insert_default().folds = Some(false);
+                    settings.editor.sticky_scroll = Some(settings::StickyScrollContent {
+                        enabled: Some(true),
+                    });
+                });
+            });
+        });
+
+        let diagnostic_point = text::PointUtf16::new(0, 0);
+        let buffer = cx.new(|cx| Buffer::local("", cx).with_language(languages::rust_lang(), cx));
+        buffer.update(cx, |buffer, cx| {
+            let diagnostics = DiagnosticSet::new(
+                [DiagnosticEntry::new(
+                    diagnostic_point..diagnostic_point,
+                    Diagnostic {
+                        severity: lsp::DiagnosticSeverity::ERROR,
+                        underline: true,
+                        ..Default::default()
+                    },
+                )],
+                &buffer.snapshot(),
+            );
+            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
+            buffer.edit(
+                [(
+                    0..0,
+                    indoc::indoc! {"
+                        fn foo() {
+                            let one = 1;
+                            let two = 2;
+                            let three = 3;
+                        }
+                    "},
+                )],
+                None,
+                cx,
+            );
+
+            let snapshot = buffer.snapshot();
+            let mut diagnostics = snapshot.diagnostics_in_range::<_, text::PointUtf16>(
+                text::PointUtf16::new(0, 0)..snapshot.max_point_utf16(),
+                false,
+            );
+            let diagnostic = diagnostics.next();
+            assert!(
+                diagnostic.is_some(),
+                "the retained point diagnostic should remain in the buffer"
+            );
+            if let Some(diagnostic) = diagnostic {
+                assert_eq!(diagnostic.range, diagnostic_point..diagnostic_point);
+            }
+            assert!(diagnostics.next().is_none());
+        });
+
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let window = cx.add_window(|window, cx| {
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let Ok(editor) = window.root(cx) else {
+            assert!(false, "editor window should have a root view");
+            return;
+        };
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+        let viewport_size = size(px(500.), px(50.));
+
+        cx.cx.run_until_parked();
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                editor.refresh_sticky_headers(&snapshot.display_snapshot, cx);
+            });
+        });
+        cx.cx.run_until_parked();
+
+        cx.draw(Default::default(), viewport_size, |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.scroll(point(0., 1.), window, cx);
+            });
+        });
+        cx.cx.run_until_parked();
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                assert!(
+                    !EditorElement::sticky_headers(editor, &snapshot).is_empty(),
+                    "scroll position: {:?}",
+                    snapshot.scroll_position()
+                );
+            });
+        });
+        let (_, state) = cx.draw(Default::default(), viewport_size, |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+
+        assert!(
+            state.sticky_headers.is_some(),
+            "the function should produce a sticky header after scrolling"
+        );
+        if let Some(sticky_headers) = &state.sticky_headers {
+            assert_eq!(sticky_headers.lines.len(), 1);
+            for line in &sticky_headers.lines {
+                assert_eq!(line.point_diagnostics.len(), 1);
+                for diagnostic in &line.point_diagnostics {
+                    assert_eq!(diagnostic.width, state.position_map.em_advance);
+                    assert_eq!(diagnostic.underline.color, Some(style.status.error));
+                    assert!(diagnostic.origin.y >= state.content_origin.y);
+                    assert!(
+                        diagnostic.origin.y
+                            < state.content_origin.y + state.position_map.line_height
+                    );
+                }
+            }
         }
     }
 
