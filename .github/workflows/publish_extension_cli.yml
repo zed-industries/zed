@@ -28,7 +28,9 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_linux
-      run: ./script/linux
+      run: |
+        sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+        ./script/linux
     - name: publish_extension_cli::publish_job::build_extension_cli
       run: cargo build --release --package extension_cli
     - name: publish_extension_cli::publish_job::upload_binary

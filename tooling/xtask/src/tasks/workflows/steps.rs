@@ -319,7 +319,12 @@ pub fn cache_nix_store_macos() -> Step<Use> {
 }
 
 pub fn setup_linux() -> Step<Run> {
-    named::bash("./script/linux")
+    // The runners include Chrome, but CI does not use it. Do not let its external repository
+    // prevent installing Zed's Linux dependencies when the repository is unavailable.
+    named::bash(indoc::indoc! {r#"
+        sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+        ./script/linux
+    "#})
 }
 
 pub(crate) fn download_wasi_sdk() -> Step<Run> {

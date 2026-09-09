@@ -38,7 +38,9 @@ jobs:
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
-      run: ./script/linux
+      run: |
+        sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+        ./script/linux
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
@@ -82,7 +84,9 @@ jobs:
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
-      run: ./script/linux
+      run: |
+        sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+        ./script/linux
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux

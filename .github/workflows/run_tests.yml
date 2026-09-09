@@ -243,7 +243,9 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_linux
-      run: ./script/linux
+      run: |
+        sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+        ./script/linux
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::setup_sccache
@@ -393,7 +395,9 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_linux
-      run: ./script/linux
+      run: |
+        sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+        ./script/linux
     - name: steps::setup_node
       uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
@@ -536,7 +540,9 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_linux
-      run: ./script/linux
+      run: |
+        sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+        ./script/linux
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::setup_cargo_config
@@ -588,7 +594,9 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_linux
-      run: ./script/linux
+      run: |
+        sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+        ./script/linux
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::setup_sccache
@@ -745,7 +753,9 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_linux
-      run: ./script/linux
+      run: |
+        sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+        ./script/linux
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: ./script/generate-action-metadata

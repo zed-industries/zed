@@ -33,7 +33,9 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_linux
-      run: ./script/linux
+      run: |
+        sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+        ./script/linux
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::cargo_fmt
@@ -64,7 +66,9 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_linux
-      run: ./script/linux
+      run: |
+        sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+        ./script/linux
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::cargo_install_nextest
