@@ -1296,15 +1296,9 @@ impl WindowsWindowInner {
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
         let Some(_guard) = self.state.draw_coordinator.try_begin_draw() else {
             log::debug!("deferring re-entrant draw of window {handle:?}");
-            if force_render {
-                self.state.force_render_pending.set(true);
-            }
-            // Validate the region so a nested message pump doesn't keep
-            // re-dispatching WM_PAINT for the still-invalid region in a busy
-            // loop until the in-progress draw unwinds. The vsync thread
-            // re-invalidates every window on each vsync (see
-            // `begin_vsync_thread`), so the deferred frame still gets drawn,
-            // at most one vsync late.
+            // Validation consumes exposure damage. Force presentation on the next tick so a
+            // re-entrant paint cannot lose repairs to unchanged software pixels.
+            self.state.force_render_pending.set(true);
             unsafe { ValidateRect(Some(handle), None).ok().log_err() };
             return Some(0);
         };
@@ -1328,8 +1322,9 @@ impl WindowsWindowInner {
             // will rebuild the scene with fresh atlas textures.
             self.state.renderer.borrow_mut().mark_drawable();
         }
+        let require_presentation = self.state.renderer.borrow().requires_presentation();
         request_frame(RequestFrameOptions {
-            require_presentation: false,
+            require_presentation,
             force_render,
         });
 

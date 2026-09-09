@@ -28,6 +28,7 @@ dunce.workspace = true
 etagere.workspace = true
 futures.workspace = true
 gpui_util.workspace = true
+gpui_software.workspace = true
 image.workspace = true
 itertools.workspace = true
 log.workspace = true

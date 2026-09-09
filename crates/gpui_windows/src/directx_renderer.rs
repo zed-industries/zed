@@ -1,7 +1,4 @@
-use std::{
-    slice,
-    sync::{Arc, OnceLock},
-};
+use std::{slice, sync::Arc};
 
 use anyhow::{Context, Result};
 use gpui_util::ResultExt;
@@ -12,7 +9,6 @@ use windows::{
             Direct3D::*,
             Direct3D11::*,
             DirectComposition::*,
-            DirectWrite::*,
             Dxgi::{Common::*, *},
         },
     },
@@ -29,13 +25,6 @@ const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 const PATH_MULTISAMPLE_COUNT: u32 = 4;
 const MAX_INSTANCE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
 
-pub(crate) struct FontInfo {
-    pub gamma_ratios: [f32; 4],
-    pub grayscale_enhanced_contrast: f32,
-    pub subpixel_enhanced_contrast: f32,
-    pub is_bgr: bool,
-}
-
 pub(crate) struct DirectXRenderer {
     hwnd: HWND,
     atlas: Arc<DirectXAtlas>,
@@ -44,7 +33,7 @@ pub(crate) struct DirectXRenderer {
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
     direct_composition: Option<DirectComposition>,
-    font_info: &'static FontInfo,
+    font_correction: gpui_software::FontCorrection,
 
     width: u32,
     height: u32,
@@ -155,6 +144,7 @@ impl DirectXRenderer {
         hwnd: HWND,
         directx_devices: &DirectXDevices,
         disable_direct_composition: bool,
+        font_correction: gpui_software::FontCorrection,
     ) -> Result<Self> {
         if disable_direct_composition {
             log::info!("Direct Composition is disabled.");
@@ -190,7 +180,7 @@ impl DirectXRenderer {
             globals,
             pipelines,
             direct_composition,
-            font_info: Self::get_font_info(),
+            font_correction,
             width: 1,
             height: 1,
             skip_draws: false,
@@ -212,11 +202,11 @@ impl DirectXRenderer {
             device_context,
             self.globals.global_params_buffer.as_ref().unwrap(),
             &[GlobalParams {
-                gamma_ratios: self.font_info.gamma_ratios,
+                gamma_ratios: self.font_correction.gamma_ratios,
                 viewport_size: [resources.viewport.Width, resources.viewport.Height],
-                grayscale_enhanced_contrast: self.font_info.grayscale_enhanced_contrast,
-                subpixel_enhanced_contrast: self.font_info.subpixel_enhanced_contrast,
-                is_bgr: self.font_info.is_bgr as u32,
+                grayscale_enhanced_contrast: self.font_correction.grayscale_enhanced_contrast,
+                subpixel_enhanced_contrast: self.font_correction.subpixel_enhanced_contrast,
+                is_bgr: self.font_correction.is_bgr as u32,
                 _pad: [0; 3],
             }],
         )?;
@@ -841,21 +831,6 @@ impl DirectXRenderer {
             device_name,
             driver_name,
             driver_info: driver_version,
-        })
-    }
-
-    pub(crate) fn get_font_info() -> &'static FontInfo {
-        static CACHED_FONT_INFO: OnceLock<FontInfo> = OnceLock::new();
-        CACHED_FONT_INFO.get_or_init(|| unsafe {
-            let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap();
-            let render_params: IDWriteRenderingParams1 =
-                factory.CreateRenderingParams().unwrap().cast().unwrap();
-            FontInfo {
-                gamma_ratios: gpui::get_gamma_correction_ratios(render_params.GetGamma()),
-                grayscale_enhanced_contrast: render_params.GetGrayscaleEnhancedContrast(),
-                subpixel_enhanced_contrast: render_params.GetEnhancedContrast(),
-                is_bgr: render_params.GetPixelGeometry() == DWRITE_PIXEL_GEOMETRY_BGR,
-            }
         })
     }
 

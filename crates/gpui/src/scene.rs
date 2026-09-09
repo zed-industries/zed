@@ -36,6 +36,13 @@ impl From<bool> for PaddedBool32 {
     }
 }
 
+impl PaddedBool32 {
+    /// Returns the represented boolean value.
+    pub fn as_bool(self) -> bool {
+        self.0 != 0
+    }
+}
+
 #[derive(Default)]
 #[expect(missing_docs)]
 pub struct Scene {

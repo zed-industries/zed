@@ -1,0 +1,1621 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "320bbe3180edae32c0f2c27f6fd8896d8cd185eb",
+  "implementation_commit": "462c145",
+  "core_host": "M5 Max, macOS ARM64, 18 Rayon threads",
+  "criterion_units": "microseconds",
+  "criterion_interval": "reported lower / central estimate / upper, 95% confidence",
+  "core_experiments": {
+    "adaptive-control-measured": {
+      "single-line-1080p/18": [
+        352.26,
+        354.76,
+        357.12
+      ],
+      "single-line-4k/18": [
+        550.49,
+        556.19,
+        564.8
+      ],
+      "large-path/18": [
+        487.69,
+        490.96,
+        494.33
+      ]
+    },
+    "adaptive-measured": {
+      "single-line-1080p/18": [
+        217.58,
+        217.86,
+        218.13
+      ],
+      "single-line-4k/18": [
+        420.57,
+        421.23,
+        422.08
+      ],
+      "large-path/18": [
+        478.44,
+        482.52,
+        486.24
+      ]
+    },
+    "baseline-measured": {
+      "full-1080p/18": [
+        532.98,
+        544.02,
+        558.55
+      ],
+      "single-line-1080p/18": [
+        343.71,
+        347.74,
+        351.61
+      ],
+      "scroll-1080p/18": [
+        491.25,
+        494.34,
+        497.32
+      ],
+      "smooth-scroll-1080p/18": [
+        489.9,
+        496.38,
+        507.82
+      ],
+      "unchanged-1080p/18": [
+        169.47,
+        169.76,
+        170.04
+      ],
+      "full-4k/18": [
+        901.85,
+        906.71,
+        911.45
+      ],
+      "single-line-4k/18": [
+        545.22,
+        547.11,
+        548.98
+      ],
+      "scroll-4k/18": [
+        805.97,
+        813.05,
+        821.35
+      ],
+      "smooth-scroll-4k/18": [
+        809.86,
+        814.6,
+        818.17
+      ],
+      "unchanged-4k/18": [
+        362.23,
+        364.76,
+        368.04
+      ],
+      "large-path/18": [
+        509.62,
+        514.53,
+        519.98
+      ]
+    },
+    "cache-control-measured": {
+      "gradients/18": [
+        436.61,
+        454.67,
+        475.69
+      ]
+    },
+    "cache-measured": {
+      "unchanged-1080p/18": [
+        174.87,
+        176.98,
+        179.37
+      ],
+      "unchanged-4k/18": [
+        370.03,
+        370.75,
+        371.57
+      ],
+      "gradients/18": [
+        264.68,
+        268.22,
+        272.37
+      ]
+    },
+    "damage-measured": {
+      "full-1080p/18": [
+        412.87,
+        417.36,
+        421.32
+      ],
+      "single-line-1080p/18": [
+        150.91,
+        151.51,
+        152.3
+      ],
+      "full-4k/18": [
+        694.3,
+        699.69,
+        705.79
+      ],
+      "single-line-4k/18": [
+        282.36,
+        283.26,
+        284.47
+      ]
+    },
+    "final-baseline-measured": {
+      "full-1080p/18": [
+        517.78,
+        525.02,
+        532.99
+      ],
+      "single-line-1080p/18": [
+        333.67,
+        335.73,
+        338.1
+      ],
+      "scroll-1080p/18": [
+        487.97,
+        489.2,
+        490.61
+      ],
+      "smooth-scroll-1080p/18": [
+        485.66,
+        487.93,
+        490.77
+      ],
+      "unchanged-1080p/18": [
+        167.53,
+        167.76,
+        168.06
+      ],
+      "full-4k/18": [
+        882.7,
+        885.7,
+        888.22
+      ],
+      "single-line-4k/18": [
+        533.84,
+        536.56,
+        539.52
+      ],
+      "scroll-4k/18": [
+        794.59,
+        813.45,
+        844.96
+      ],
+      "smooth-scroll-4k/18": [
+        798.53,
+        803.04,
+        807.33
+      ],
+      "unchanged-4k/18": [
+        357.93,
+        358.5,
+        359.17
+      ],
+      "large-path/18": [
+        521.9,
+        525.27,
+        529.46
+      ]
+    },
+    "final-measured": {
+      "full-1080p/18": [
+        414.76,
+        421.45,
+        429.19
+      ],
+      "single-line-1080p/18": [
+        148.48,
+        148.74,
+        149.03
+      ],
+      "scroll-1080p/18": [
+        388.43,
+        391.55,
+        394.77
+      ],
+      "smooth-scroll-1080p/18": [
+        383.97,
+        385.89,
+        388.59
+      ],
+      "unchanged-1080p/18": [
+        119.25,
+        119.41,
+        119.61
+      ],
+      "full-4k/18": [
+        688.9,
+        693.65,
+        700.08
+      ],
+      "single-line-4k/18": [
+        279.37,
+        280.0,
+        280.63
+      ],
+      "scroll-4k/18": [
+        605.56,
+        607.78,
+        610.09
+      ],
+      "smooth-scroll-4k/18": [
+        607.56,
+        609.7,
+        611.84
+      ],
+      "unchanged-4k/18": [
+        241.59,
+        241.85,
+        242.19
+      ],
+      "large-path/18": [
+        290.87,
+        292.79,
+        294.64
+      ],
+      "gradients/18": [
+        229.1,
+        230.43,
+        231.7
+      ],
+      "occluded/18": [
+        42.553,
+        42.627,
+        42.706
+      ]
+    },
+    "integer-control-measured": {
+      "full-1080p/18": [
+        527.53,
+        529.76,
+        532.18
+      ],
+      "scroll-1080p/18": [
+        502.7,
+        506.55,
+        511.63
+      ],
+      "smooth-scroll-1080p/18": [
+        503.17,
+        505.71,
+        508.13
+      ],
+      "full-4k/18": [
+        899.46,
+        902.01,
+        905.09
+      ],
+      "scroll-4k/18": [
+        830.59,
+        836.07,
+        841.31
+      ],
+      "smooth-scroll-4k/18": [
+        833.74,
+        838.65,
+        843.88
+      ]
+    },
+    "integer-measured": {
+      "full-1080p/18": [
+        481.82,
+        485.24,
+        488.91
+      ],
+      "scroll-1080p/18": [
+        451.48,
+        454.39,
+        457.56
+      ],
+      "smooth-scroll-1080p/18": [
+        451.39,
+        454.67,
+        458.35
+      ],
+      "full-4k/18": [
+        847.51,
+        853.85,
+        859.77
+      ],
+      "scroll-4k/18": [
+        758.1,
+        759.86,
+        761.59
+      ],
+      "smooth-scroll-4k/18": [
+        758.48,
+        760.52,
+        762.31
+      ]
+    },
+    "occlusion-control-measured": {
+      "occluded/18": [
+        199.76,
+        205.0,
+        214.07
+      ]
+    },
+    "occlusion-measured": {
+      "occluded/18": [
+        45.863,
+        46.062,
+        46.249
+      ]
+    },
+    "premul-measured": {
+      "large-path/18": [
+        309.32,
+        313.06,
+        316.34
+      ]
+    },
+    "prepared-measured": {
+      "full-1080p/18": [
+        526.27,
+        528.35,
+        530.87
+      ],
+      "full-4k/18": [
+        934.09,
+        941.78,
+        952.68
+      ],
+      "large-path/18": [
+        341.83,
+        345.46,
+        349.23
+      ]
+    },
+    "reuse-measured": {
+      "single-line-1080p/18": [
+        150.2,
+        150.74,
+        151.24
+      ],
+      "unchanged-1080p/18": [
+        121.03,
+        121.25,
+        121.57
+      ],
+      "single-line-4k/18": [
+        283.92,
+        284.23,
+        284.52
+      ],
+      "unchanged-4k/18": [
+        243.57,
+        243.73,
+        243.92
+      ]
+    },
+    "simd-control-measured": {
+      "full-1080p/18": [
+        410.56,
+        414.72,
+        420.0
+      ],
+      "scroll-1080p/18": [
+        390.52,
+        397.26,
+        406.59
+      ],
+      "smooth-scroll-1080p/18": [
+        389.87,
+        390.95,
+        392.2
+      ],
+      "full-4k/18": [
+        688.35,
+        691.93,
+        696.37
+      ],
+      "scroll-4k/18": [
+        611.06,
+        614.93,
+        619.7
+      ],
+      "smooth-scroll-4k/18": [
+        608.56,
+        610.69,
+        613.11
+      ]
+    },
+    "simd-measured": {
+      "full-1080p/18": [
+        408.95,
+        411.69,
+        414.71
+      ],
+      "scroll-1080p/18": [
+        394.09,
+        399.82,
+        407.25
+      ],
+      "smooth-scroll-1080p/18": [
+        389.23,
+        391.16,
+        393.4
+      ],
+      "full-4k/18": [
+        698.17,
+        701.78,
+        705.92
+      ],
+      "scroll-4k/18": [
+        616.96,
+        619.46,
+        621.82
+      ],
+      "smooth-scroll-4k/18": [
+        616.17,
+        623.3,
+        630.76
+      ]
+    }
+  },
+  "platform_experiments": {
+    "core-verified-measured": {
+      "operating_system": "windows",
+      "architecture": "x86_64",
+      "logical_cpu_count": 24,
+      "display_server": null,
+      "gpu": {
+        "is_software_emulated": false,
+        "device_name": "GPUI software renderer",
+        "driver_name": "gpui_software",
+        "driver_info": "AVX2, 24 threads"
+      },
+      "window": {
+        "requested_width": 1600.0,
+        "requested_height": 900.0,
+        "viewport_width": 1600.0,
+        "viewport_height": 900.0,
+        "active": true
+      },
+      "warmup_frames": 30,
+      "measure_frames": 180,
+      "samples": {
+        "caret": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2176400.0,
+            "p95": 2615900
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 939450.0,
+            "p95": 1541600
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3223900.0,
+            "p95": 3881200
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16680250.0,
+            "p95": 17939900
+          }
+        },
+        "single_line": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2276600.0,
+            "p95": 2723700
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1042100.0,
+            "p95": 2550700
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3423900.0,
+            "p95": 5069100
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16662300.0,
+            "p95": 18137900
+          }
+        },
+        "scroll": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2322850.0,
+            "p95": 2667000
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 2905800.0,
+            "p95": 6066300
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 5377400.0,
+            "p95": 8382400
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16696600.0,
+            "p95": 19119900
+          }
+        },
+        "full_frame": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2230300.0,
+            "p95": 2618400
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 2112600.0,
+            "p95": 5924600
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4454850.0,
+            "p95": 8073900
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16617900.0,
+            "p95": 19953000
+          }
+        }
+      }
+    },
+    "presentation-verified-measured": {
+      "operating_system": "windows",
+      "architecture": "x86_64",
+      "logical_cpu_count": 24,
+      "display_server": null,
+      "gpu": {
+        "is_software_emulated": false,
+        "device_name": "GPUI software renderer",
+        "driver_name": "gpui_software",
+        "driver_info": "AVX2, 24 threads"
+      },
+      "window": {
+        "requested_width": 1600.0,
+        "requested_height": 900.0,
+        "viewport_width": 1600.0,
+        "viewport_height": 900.0,
+        "active": true
+      },
+      "warmup_frames": 30,
+      "measure_frames": 180,
+      "samples": {
+        "caret": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2140600.0,
+            "p95": 2530300
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 323400.0,
+            "p95": 438600
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 2500850.0,
+            "p95": 2917500
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16693900.0,
+            "p95": 17216400
+          }
+        },
+        "single_line": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2205450.0,
+            "p95": 2664800
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 408600.0,
+            "p95": 486700
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 2633100.0,
+            "p95": 3125100
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16696750.0,
+            "p95": 17303900
+          }
+        },
+        "scroll": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2323200.0,
+            "p95": 2712900
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1326550.0,
+            "p95": 1770300
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3697150.0,
+            "p95": 4250800
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16690350.0,
+            "p95": 17476400
+          }
+        },
+        "full_frame": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2208750.0,
+            "p95": 2596900
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1532550.0,
+            "p95": 3057400
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3780450.0,
+            "p95": 5290200
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16678100.0,
+            "p95": 18389800
+          }
+        }
+      }
+    },
+    "linux-core-measured": {
+      "operating_system": "linux",
+      "architecture": "aarch64",
+      "logical_cpu_count": 12,
+      "display_server": "wayland",
+      "gpu": {
+        "is_software_emulated": false,
+        "device_name": "GPUI software renderer",
+        "driver_name": "gpui_software",
+        "driver_info": "scalar, 12 threads"
+      },
+      "window": {
+        "requested_width": 1600.0,
+        "requested_height": 900.0,
+        "viewport_width": 1600.0,
+        "viewport_height": 900.0,
+        "active": true
+      },
+      "warmup_frames": 30,
+      "measure_frames": 180,
+      "samples": {
+        "caret": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2301470.0,
+            "p95": 4538441
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 160876.0,
+            "p95": 218209
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 2472513.5,
+            "p95": 4883901
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16674212.5,
+            "p95": 19518520
+          }
+        },
+        "single_line": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2835119.0,
+            "p95": 4653525
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 245168.0,
+            "p95": 373210
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3106641.5,
+            "p95": 4901651
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16617316.5,
+            "p95": 20117564
+          }
+        },
+        "scroll": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2343096.0,
+            "p95": 2788056
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1050381.0,
+            "p95": 1372424
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3446518.0,
+            "p95": 3970688
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16658400.5,
+            "p95": 18600722
+          }
+        },
+        "full_frame": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2158053.0,
+            "p95": 2755473
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1100214.0,
+            "p95": 1481800
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3342601.0,
+            "p95": 4049230
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16658796.0,
+            "p95": 18586431
+          }
+        }
+      }
+    },
+    "linux-buffers-measured": {
+      "operating_system": "linux",
+      "architecture": "aarch64",
+      "logical_cpu_count": 12,
+      "display_server": "wayland",
+      "gpu": {
+        "is_software_emulated": false,
+        "device_name": "GPUI software renderer",
+        "driver_name": "gpui_software",
+        "driver_info": "scalar, 12 threads"
+      },
+      "window": {
+        "requested_width": 1600.0,
+        "requested_height": 900.0,
+        "viewport_width": 1600.0,
+        "viewport_height": 900.0,
+        "active": true
+      },
+      "warmup_frames": 30,
+      "measure_frames": 180,
+      "samples": {
+        "caret": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2262074.5,
+            "p95": 4444232
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 154480.0,
+            "p95": 207918
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 2434763.0,
+            "p95": 4623608
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16701671.0,
+            "p95": 19529520
+          }
+        },
+        "single_line": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2367950.0,
+            "p95": 4295773
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 243688.5,
+            "p95": 288751
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 2618076.0,
+            "p95": 4568691
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16633608.0,
+            "p95": 19683354
+          }
+        },
+        "scroll": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2268949.5,
+            "p95": 2821057
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1041838.5,
+            "p95": 1371174
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3340809.0,
+            "p95": 4104355
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16642733.0,
+            "p95": 18645056
+          }
+        },
+        "full_frame": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2147636.5,
+            "p95": 2755390
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1103464.0,
+            "p95": 1425133
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3321830.0,
+            "p95": 3973313
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16636504.0,
+            "p95": 18398763
+          }
+        }
+      }
+    },
+    "linux-memfd-measured": {
+      "operating_system": "linux",
+      "architecture": "aarch64",
+      "logical_cpu_count": 12,
+      "display_server": "wayland",
+      "gpu": {
+        "is_software_emulated": false,
+        "device_name": "GPUI software renderer",
+        "driver_name": "gpui_software",
+        "driver_info": "scalar, 12 threads"
+      },
+      "window": {
+        "requested_width": 1600.0,
+        "requested_height": 900.0,
+        "viewport_width": 1600.0,
+        "viewport_height": 900.0,
+        "active": true
+      },
+      "warmup_frames": 30,
+      "measure_frames": 180,
+      "samples": {
+        "caret": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2260011.5,
+            "p95": 4699107
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 157792.0,
+            "p95": 262251
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 2448846.0,
+            "p95": 4851566
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16613459.0,
+            "p95": 19963726
+          }
+        },
+        "single_line": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3033078.0,
+            "p95": 4753690
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 255772.0,
+            "p95": 390793
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3373600.5,
+            "p95": 5078901
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16697938.5,
+            "p95": 19871433
+          }
+        },
+        "scroll": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2445262.5,
+            "p95": 2974890
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1056526.5,
+            "p95": 1389674
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3571393.0,
+            "p95": 4219355
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16713564.0,
+            "p95": 18673678
+          }
+        },
+        "full_frame": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2575117.0,
+            "p95": 2947723
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1127610.0,
+            "p95": 1372132
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3746622.5,
+            "p95": 4217646
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16706688.5,
+            "p95": 18344176
+          }
+        }
+      }
+    },
+    "linux-buffers-repeat": {
+      "operating_system": "linux",
+      "architecture": "aarch64",
+      "logical_cpu_count": 12,
+      "display_server": "wayland",
+      "gpu": {
+        "is_software_emulated": false,
+        "device_name": "GPUI software renderer",
+        "driver_name": "gpui_software",
+        "driver_info": "scalar, 12 threads"
+      },
+      "window": {
+        "requested_width": 1600.0,
+        "requested_height": 900.0,
+        "viewport_width": 1600.0,
+        "viewport_height": 900.0,
+        "active": true
+      },
+      "warmup_frames": 30,
+      "measure_frames": 180,
+      "samples": {
+        "caret": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3334975.5,
+            "p95": 4546107
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 239376.0,
+            "p95": 311210
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3580768.0,
+            "p95": 4815691
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16650855.0,
+            "p95": 19324347
+          }
+        },
+        "single_line": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3550663.5,
+            "p95": 4526564
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 385877.0,
+            "p95": 481210
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3945582.0,
+            "p95": 4976942
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16644042.5,
+            "p95": 18748469
+          }
+        },
+        "scroll": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2595471.0,
+            "p95": 3394767
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1068422.0,
+            "p95": 1576550
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3741789.5,
+            "p95": 4637398
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16690543.0,
+            "p95": 18735803
+          }
+        },
+        "full_frame": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2967077.5,
+            "p95": 3221099
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1236318.5,
+            "p95": 1535549
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4245458.5,
+            "p95": 4663940
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16582188.0,
+            "p95": 18266384
+          }
+        }
+      }
+    },
+    "linux-memfd-repeat": {
+      "operating_system": "linux",
+      "architecture": "aarch64",
+      "logical_cpu_count": 12,
+      "display_server": "wayland",
+      "gpu": {
+        "is_software_emulated": false,
+        "device_name": "GPUI software renderer",
+        "driver_name": "gpui_software",
+        "driver_info": "scalar, 12 threads"
+      },
+      "window": {
+        "requested_width": 1600.0,
+        "requested_height": 900.0,
+        "viewport_width": 1600.0,
+        "viewport_height": 900.0,
+        "active": true
+      },
+      "warmup_frames": 30,
+      "measure_frames": 180,
+      "samples": {
+        "caret": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3758019.0,
+            "p95": 4591315
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 243959.5,
+            "p95": 308919
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4034082.5,
+            "p95": 4867316
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16683500.5,
+            "p95": 18578677
+          }
+        },
+        "single_line": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3611955.5,
+            "p95": 4476731
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 387127.0,
+            "p95": 472752
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4015436.5,
+            "p95": 4919859
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16694125.5,
+            "p95": 18757469
+          }
+        },
+        "scroll": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3112328.5,
+            "p95": 3469976
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1210319.0,
+            "p95": 1470882
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4329313.5,
+            "p95": 4806565
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16702772.0,
+            "p95": 18556510
+          }
+        },
+        "full_frame": {
+          "draw_ns": {
+            "count": 180,
+            "median": 2942994.0,
+            "p95": 3224558
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1219840.0,
+            "p95": 1518550
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4192584.0,
+            "p95": 4654190
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16671938.0,
+            "p95": 18379593
+          }
+        }
+      }
+    },
+    "x11-measured": {
+      "operating_system": "linux",
+      "architecture": "aarch64",
+      "logical_cpu_count": 12,
+      "display_server": "x11",
+      "gpu": {
+        "is_software_emulated": false,
+        "device_name": "GPUI software renderer",
+        "driver_name": "gpui_software",
+        "driver_info": "scalar, 12 threads"
+      },
+      "window": {
+        "requested_width": 1600.0,
+        "requested_height": 900.0,
+        "viewport_width": 1598.0,
+        "viewport_height": 873.0,
+        "active": true
+      },
+      "warmup_frames": 30,
+      "measure_frames": 180,
+      "samples": {
+        "caret": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3376871.0,
+            "p95": 3883936
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 510336.0,
+            "p95": 728212
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 3943332.0,
+            "p95": 4542273
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 15885559.0,
+            "p95": 20128850
+          }
+        },
+        "single_line": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3426475.5,
+            "p95": 3983270
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 609919.5,
+            "p95": 817505
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4050707.5,
+            "p95": 4714732
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 15815641.5,
+            "p95": 20276393
+          }
+        },
+        "scroll": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3158474.0,
+            "p95": 3518393
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1177756.0,
+            "p95": 1469382
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4365042.5,
+            "p95": 4833691
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 15976330.0,
+            "p95": 20077018
+          }
+        },
+        "full_frame": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3131495.0,
+            "p95": 3362017
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1181464.0,
+            "p95": 1469757
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4331376.0,
+            "p95": 4722649
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 15892058.5,
+            "p95": 19435055
+          }
+        }
+      }
+    },
+    "effects-control-measured": {
+      "operating_system": "linux",
+      "architecture": "aarch64",
+      "logical_cpu_count": 12,
+      "display_server": "wayland",
+      "gpu": {
+        "is_software_emulated": false,
+        "device_name": "GPUI software renderer",
+        "driver_name": "gpui_software",
+        "driver_info": "scalar, 12 threads"
+      },
+      "window": {
+        "requested_width": 1600.0,
+        "requested_height": 900.0,
+        "viewport_width": 1600.0,
+        "viewport_height": 900.0,
+        "active": true
+      },
+      "warmup_frames": 30,
+      "measure_frames": 180,
+      "samples": {
+        "caret": {
+          "draw_ns": {
+            "count": 180,
+            "median": 4024541.0,
+            "p95": 5462944
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 275814.0,
+            "p95": 336335
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4321063.5,
+            "p95": 5785446
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16911939.0,
+            "p95": 20466061
+          }
+        },
+        "single_line": {
+          "draw_ns": {
+            "count": 180,
+            "median": 4045770.5,
+            "p95": 5372902
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 405231.0,
+            "p95": 519545
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4465522.5,
+            "p95": 5767570
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16946397.0,
+            "p95": 21821651
+          }
+        },
+        "scroll": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3148640.5,
+            "p95": 3618435
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1251506.5,
+            "p95": 1524799
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4411751.5,
+            "p95": 5057192
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16599562.5,
+            "p95": 20101850
+          }
+        },
+        "full_frame": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3215537.0,
+            "p95": 3388433
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1307777.0,
+            "p95": 1579008
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4507210.0,
+            "p95": 4869899
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16615770.5,
+            "p95": 20638854
+          }
+        }
+      }
+    },
+    "effects-measured": {
+      "operating_system": "linux",
+      "architecture": "aarch64",
+      "logical_cpu_count": 12,
+      "display_server": "wayland",
+      "gpu": {
+        "is_software_emulated": false,
+        "device_name": "GPUI software renderer",
+        "driver_name": "gpui_software",
+        "driver_info": "scalar, 12 threads"
+      },
+      "window": {
+        "requested_width": 1600.0,
+        "requested_height": 900.0,
+        "viewport_width": 1600.0,
+        "viewport_height": 900.0,
+        "active": true
+      },
+      "warmup_frames": 30,
+      "measure_frames": 180,
+      "samples": {
+        "caret": {
+          "draw_ns": {
+            "count": 180,
+            "median": 4170479.0,
+            "p95": 5455235
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 287376.5,
+            "p95": 327043
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4466356.0,
+            "p95": 5767321
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 17033335.0,
+            "p95": 21069356
+          }
+        },
+        "single_line": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3955436.0,
+            "p95": 5162235
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 412898.0,
+            "p95": 498419
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4333459.5,
+            "p95": 5583028
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16926939.5,
+            "p95": 20887396
+          }
+        },
+        "scroll": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3060369.5,
+            "p95": 3484726
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1227339.0,
+            "p95": 1562133
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4312125.5,
+            "p95": 4965150
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16576624.5,
+            "p95": 20259393
+          }
+        },
+        "full_frame": {
+          "draw_ns": {
+            "count": 180,
+            "median": 3105223.5,
+            "p95": 3383434
+          },
+          "renderer_present_ns": {
+            "count": 180,
+            "median": 1264860.5,
+            "p95": 1516007
+          },
+          "dirty_to_present_ns": {
+            "count": 180,
+            "median": 4345376.0,
+            "p95": 4745357
+          },
+          "animation_interval_ns": {
+            "count": 180,
+            "median": 16586770.0,
+            "p95": 19932683
+          }
+        }
+      }
+    }
+  },
+  "presentation_probes": {
+    "windows-exposure": {
+      "passed": true,
+      "pixels": [
+        {
+          "x": 8,
+          "y": 8,
+          "expected": 3154458,
+          "corrupted": 13622757,
+          "actual": 3154458
+        },
+        {
+          "x": 800,
+          "y": 450,
+          "expected": 1971472,
+          "corrupted": 14805743,
+          "actual": 1971472
+        },
+        {
+          "x": 1592,
+          "y": 892,
+          "expected": 3154458,
+          "corrupted": 13622757,
+          "actual": 3154458
+        }
+      ]
+    },
+    "x11-probe": {
+      "passed": true,
+      "exposure": [
+        {
+          "x": 8,
+          "y": 8,
+          "restored": true
+        },
+        {
+          "x": 400,
+          "y": 300,
+          "restored": true
+        },
+        {
+          "x": 790,
+          "y": 590,
+          "restored": true
+        }
+      ],
+      "resize_round_trip_exact": true,
+      "image_bytes": 1920000
+    }
+  }
+}

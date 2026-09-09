@@ -742,10 +742,15 @@ impl<'de> Deserialize<'de> for Hsla {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
-pub(crate) enum BackgroundTag {
+/// The storage variant used by a [`Background`].
+pub enum BackgroundTag {
+    /// A single solid color.
     Solid = 0,
+    /// A two-stop linear gradient.
     LinearGradient = 1,
+    /// A diagonal slash pattern.
     PatternSlash = 2,
+    /// A checkerboard pattern.
     Checkerboard = 3,
 }
 
@@ -908,6 +913,31 @@ impl LinearColorStop {
 }
 
 impl Background {
+    /// Returns the kind of background fill.
+    pub fn tag(&self) -> BackgroundTag {
+        self.tag
+    }
+
+    /// Returns the color space used to interpolate gradient stops.
+    pub fn color_space_value(&self) -> ColorSpace {
+        self.color_space
+    }
+
+    /// Returns the solid color used by solid and pattern backgrounds.
+    pub fn solid(&self) -> Hsla {
+        self.solid
+    }
+
+    /// Returns the gradient angle or encoded pattern height.
+    pub fn gradient_angle_or_pattern_height(&self) -> f32 {
+        self.gradient_angle_or_pattern_height
+    }
+
+    /// Returns the two color stops used by linear gradients.
+    pub fn colors(&self) -> &[LinearColorStop; 2] {
+        &self.colors
+    }
+
     /// Returns the solid color if this is a solid background, None otherwise.
     pub fn as_solid(&self) -> Option<Hsla> {
         if self.tag == BackgroundTag::Solid {

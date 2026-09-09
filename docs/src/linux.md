@@ -21,7 +21,8 @@ curl -f https://zed.dev/install.sh | ZED_CHANNEL=preview sh
 
 The Zed installed by the script works best on systems that:
 
-- have a Vulkan compatible GPU available (for example Linux on an M-series MacBook)
+- have a Vulkan compatible GPU available (for example Linux on an M-series MacBook); Wayland can
+  fall back to the built-in CPU renderer when no hardware GPU is available
 - have a system-wide glibc
   - x86_64 (Intel/AMD): glibc version >= 2.31 (Ubuntu 20 and newer)
   - aarch64 (ARM): glibc version >= 2.35 (Ubuntu 22 and newer)
@@ -137,9 +138,26 @@ If you see an error like "/lib64/libc.so.6: version 'GLIBC_2.29' not found" it m
 
 ### Graphics issues
 
+#### Wayland software rendering
+
+On Wayland, Zed automatically uses its built-in CPU renderer when WGPU cannot initialize or only
+finds a software-emulated GPU adapter such as Mesa lavapipe. Hardware-backed WGPU remains the
+default when a compatible GPU is available. The software renderer presents through Wayland shared
+memory and does not initialize Vulkan, OpenGL, or another emulated GPU API.
+
+The renderer can be selected explicitly for troubleshooting or comparison:
+
+```sh
+GPUI_RENDERER=software zed --foreground # Force the built-in CPU renderer
+GPUI_RENDERER=wgpu zed --foreground     # Force WGPU, including CPU Vulkan adapters
+```
+
+Unset `GPUI_RENDERER` to restore automatic selection. This fallback currently applies to native
+Wayland windows; X11 still requires the WGPU path.
+
 #### Zed fails to open windows
 
-Zed requires a GPU to run effectively. Under the hood, we use [Vulkan](https://www.vulkan.org/) to communicate with your GPU. If you are seeing problems with performance, or Zed fails to load, it is possible that Vulkan is the culprit.
+Zed normally uses [Vulkan](https://www.vulkan.org/) to communicate with your GPU. If you are seeing problems with performance, or Zed fails to load, it is possible that Vulkan is the culprit. Native Wayland sessions can also use the software renderer described above.
 
 If you see a notification saying `Zed failed to open a window: NoSupportedDeviceFound` this means that Vulkan cannot find a compatible GPU. You can try running [vkcube](https://github.com/krh/vkcube) (usually available as part of the `vulkaninfo` or `vulkan-tools` package on various distributions) to try to troubleshoot where the issue is coming from like so:
 

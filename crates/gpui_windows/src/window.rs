@@ -62,7 +62,7 @@ pub struct WindowsWindowState {
     pub hovered: Cell<bool>,
     pub direct_manipulation: DirectManipulationHandler,
 
-    pub renderer: RefCell<DirectXRenderer>,
+    pub renderer: RefCell<WindowsRenderer>,
     /// Set when the next `draw_window` call must be treated as a forced
     /// render. Used after a GPU device-lost recovery, where the next frame
     /// must both re-enable drawing (via `mark_drawable`) and bypass the GPUI
@@ -110,7 +110,9 @@ pub(crate) struct WindowsWindowInner {
 impl WindowsWindowState {
     fn new(
         hwnd: HWND,
-        directx_devices: &DirectXDevices,
+        renderer_kind: RendererKind,
+        directx_devices: Option<&DirectXDevices>,
+        font_correction: gpui_software::FontCorrection,
         window_params: &CREATESTRUCTW,
         current_cursor: Option<HCURSOR>,
         cursor_visible: Arc<AtomicBool>,
@@ -126,21 +128,33 @@ impl WindowsWindowState {
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
         };
         let origin = logical_point(window_params.x as f32, window_params.y as f32, scale_factor);
-        let logical_size = {
-            let physical_size = size(
-                DevicePixels(window_params.cx),
-                DevicePixels(window_params.cy),
-            );
-            physical_size.to_pixels(scale_factor)
-        };
+        let physical_size = size(
+            DevicePixels(window_params.cx),
+            DevicePixels(window_params.cy),
+        );
+        let logical_size = physical_size.to_pixels(scale_factor);
         let fullscreen_restore_bounds = Bounds {
             origin,
             size: logical_size,
         };
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
-        let renderer = DirectXRenderer::new(hwnd, directx_devices, disable_direct_composition)
-            .context("Creating DirectX renderer")?;
+        let renderer = match renderer_kind {
+            RendererKind::DirectX => WindowsRenderer::DirectX(
+                DirectXRenderer::new(
+                    hwnd,
+                    directx_devices.context("DirectX renderer selected without DirectX devices")?,
+                    disable_direct_composition,
+                    font_correction,
+                )
+                .context("Creating DirectX renderer")?,
+            ),
+            RendererKind::Software => WindowsRenderer::Software(SoftwareWindowRenderer::new(
+                hwnd,
+                physical_size,
+                font_correction,
+            )),
+        };
         let callbacks = Callbacks::default();
         let input_handler = None;
         let pending_surrogate = None;
@@ -252,7 +266,9 @@ impl WindowsWindowInner {
     fn new(context: &mut WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
         let state = WindowsWindowState::new(
             hwnd,
-            &context.directx_devices,
+            context.renderer_kind,
+            context.directx_devices.as_ref(),
+            context.font_correction,
             cs,
             context.current_cursor,
             context.cursor_visible.clone(),
@@ -407,7 +423,9 @@ struct WindowCreateContext {
     platform_window_handle: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
-    directx_devices: DirectXDevices,
+    renderer_kind: RendererKind,
+    font_correction: gpui_software::FontCorrection,
+    directx_devices: Option<DirectXDevices>,
     invalidate_devices: Arc<AtomicBool>,
     draw_coordinator: Rc<DrawCoordinator>,
     parent_hwnd: Option<HWND>,
@@ -435,10 +453,14 @@ impl WindowsWindow {
             main_receiver,
             platform_window_handle,
             disable_direct_composition,
+            renderer_kind,
+            font_correction,
             directx_devices,
             invalidate_devices,
             draw_coordinator,
         } = creation_info;
+        let disable_direct_composition =
+            disable_direct_composition || renderer_kind == RendererKind::Software;
         register_window_class(icon);
         let parent_hwnd = if params.kind == WindowKind::Dialog {
             let parent_window = unsafe { GetActiveWindow() };
@@ -520,6 +542,8 @@ impl WindowsWindow {
             platform_window_handle,
             appearance,
             disable_direct_composition,
+            renderer_kind,
+            font_correction,
             directx_devices,
             invalidate_devices,
             draw_coordinator,
@@ -859,7 +883,11 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {
-        self.state.background_appearance.get()
+        if self.state.renderer.borrow().is_software() {
+            WindowBackgroundAppearance::Opaque
+        } else {
+            self.state.background_appearance.get()
+        }
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {
@@ -873,6 +901,12 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
+        if self.state.renderer.borrow().is_software() {
+            self.state
+                .background_appearance
+                .set(WindowBackgroundAppearance::Opaque);
+            return;
+        }
         self.state.background_appearance.set(background_appearance);
         let hwnd = self.0.hwnd;
 

@@ -91,10 +91,12 @@ members = [
     "crates/google_ai",
     "crates/gpui",
     "crates/gpui_apple",
+    "crates/gpui_software",
     "crates/gpui_linux",
     "crates/gpui_macos",
     "crates/gpui_macros",
     "crates/gpui_platform",
+    "crates/gpui_renderer_bench",
     "crates/gpui_shared_string",
     "crates/gpui_tokio",
     "crates/gpui_util",
@@ -358,6 +360,7 @@ go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui", default-features = false }
 gpui_apple = { path = "crates/gpui_apple" }
+gpui_software = { path = "crates/gpui_software" }
 gpui_linux = { path = "crates/gpui_linux", default-features = false }
 gpui_macos = { path = "crates/gpui_macos", default-features = false }
 gpui_macros = { path = "crates/gpui_macros" }
@@ -674,6 +677,7 @@ libwebrtc = "0.3.26"
 linkify = "0.10.0"
 livekit = { version = "0.7.32", features = ["tokio", "rustls-tls-native-roots"] }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
+memmap2 = "0.9"
 lru = "0.16"
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "f1783e63a7f4eb4397bf51d4148b4895a1f7ab16" }
 mach2 = "0.5"

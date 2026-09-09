@@ -1,9 +1,13 @@
 use std::{
-    cell::{RefCell, RefMut},
+    cell::{Cell, RefCell, RefMut},
     hash::Hash,
     os::fd::{AsRawFd, BorrowedFd},
     path::PathBuf,
     rc::{Rc, Weak},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -77,6 +81,7 @@ use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 use super::{
     display::WaylandDisplay,
+    software_renderer::WaylandRendererKind,
     window::{ImeInput, WaylandWindowStatePtr},
 };
 
@@ -314,6 +319,7 @@ pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
     pub gpu_context: GpuContext,
+    renderer_kind: Rc<Cell<WaylandRendererKind>>,
     pub compositor_gpu: Option<CompositorGpuHint>,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
@@ -820,6 +826,7 @@ impl WaylandClient {
 
         let compositor_gpu = detect_compositor_gpu();
         let gpu_context = Rc::new(RefCell::new(None));
+        let renderer_kind = Rc::new(Cell::new(WaylandRendererKind::from_environment()));
 
         let (frame_ping, frame_ping_source) =
             calloop::ping::make_ping().expect("Failed to create the frame ping");
@@ -897,6 +904,7 @@ impl WaylandClient {
             serial_tracker: SerialTracker::new(),
             globals,
             gpu_context,
+            renderer_kind,
             compositor_gpu,
             wl_seat: seat,
             wl_pointer: None,
@@ -1083,6 +1091,7 @@ impl LinuxClient for WaylandClient {
             handle,
             state.globals.clone(),
             state.gpu_context.clone(),
+            state.renderer_kind.clone(),
             compositor_gpu,
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
@@ -1435,6 +1444,21 @@ delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextI
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
+
+impl Dispatch<wl_buffer::WlBuffer, Arc<AtomicBool>> for WaylandClientStatePtr {
+    fn event(
+        _: &mut Self,
+        _: &wl_buffer::WlBuffer,
+        event: wl_buffer::Event,
+        released: &Arc<AtomicBool>,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_buffer::Event::Release = event {
+            released.store(true, Ordering::Release);
+        }
+    }
+}
 
 impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
     fn event(

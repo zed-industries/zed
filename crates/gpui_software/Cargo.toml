@@ -1,0 +1,30 @@
+[package]
+name = "gpui_software"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_software.rs"
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+etagere = "0.2"
+gpui.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+rayon.workspace = true
+vello_cpu = { version = "0.2", default-features = false, features = ["std", "u8_pipeline"] }
+
+[dev-dependencies]
+criterion.workspace = true
+rand.workspace = true
+
+[[bench]]
+name = "frame"
+harness = false

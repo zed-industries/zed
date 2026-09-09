@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+feature_tree="$(cargo tree -p gpui_renderer_bench -e normal,build,dev,features)"
+if grep -F 'feature "test-support"' <<<"${feature_tree}"; then
+    echo "gpui_renderer_bench must not enable test-support" >&2
+    exit 1
+fi

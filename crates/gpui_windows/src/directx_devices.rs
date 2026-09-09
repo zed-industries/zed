@@ -112,6 +112,26 @@ fn get_adapter(
     ID3D11DeviceContext,
     D3D_FEATURE_LEVEL,
 )> {
+    const GPUI_D3D_ADAPTER: &str = "GPUI_D3D_ADAPTER";
+    if std::env::var(GPUI_D3D_ADAPTER).as_deref() == Ok("warp") {
+        let adapter = unsafe { dxgi_factory.EnumWarpAdapter::<IDXGIAdapter1>() }
+            .context("Getting WARP adapter forced by GPUI_D3D_ADAPTER=warp")?;
+        let mut context = None;
+        let mut feature_level = D3D_FEATURE_LEVEL::default();
+        let device = get_device(
+            &adapter,
+            Some(&mut context),
+            Some(&mut feature_level),
+            debug_layer_available,
+        )
+        .context("Creating WARP device forced by GPUI_D3D_ADAPTER=warp")?;
+        let context = context.ok_or_else(|| {
+            anyhow::anyhow!("D3D11CreateDevice returned no context for the WARP adapter")
+        })?;
+        log::info!("Using the WARP adapter because GPUI_D3D_ADAPTER=warp");
+        return Ok((adapter, device, context, feature_level));
+    }
+
     for adapter_index in 0.. {
         let adapter: IDXGIAdapter1 = unsafe { dxgi_factory.EnumAdapters(adapter_index)?.cast()? };
         if let Ok(desc) = unsafe { adapter.GetDesc1() } {

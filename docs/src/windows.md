@@ -53,7 +53,19 @@ When prompted for credentials, use the graphical askpass dialog. If it doesn’t
 
 #### Zed fails to open / degraded performance
 
-Zed requires a DirectX 11 compatible GPU to run. If Zed fails to open, your GPU may not meet the minimum requirements.
+Zed uses DirectX 11 when a hardware adapter is available. If DirectX initialization fails or Windows only exposes a software adapter (for example, in some RDP, Azure Virtual Desktop, VM, and CI sessions), Zed automatically uses its CPU renderer instead. The CPU renderer does not use WARP or another emulated GPU API.
+
+The CPU renderer preserves layout, text metrics, glyph rasterization, colors, rectangles, borders, images, and vector paths. To keep remote and GPU-less sessions responsive, it simplifies decorative effects: shadows are omitted, rounded corners become square, and dashed borders and wavy underlines become solid.
+
+You can force a renderer when diagnosing graphics problems:
+
+```powershell
+$env:GPUI_RENDERER = "software" # Force the CPU renderer
+$env:GPUI_RENDERER = "directx"  # Force DirectX, including software adapters
+zed
+```
+
+Unset `GPUI_RENDERER` to restore automatic selection.
 
 To check if your GPU supports DirectX 11, run the following command:
 
@@ -63,4 +75,4 @@ dxdiag
 
 This will open the DirectX Diagnostic Tool, which shows the DirectX version your GPU supports under `System` → `System Information` → `DirectX Version`.
 
-If you're running Zed inside a virtual machine, it will use the emulated adapter provided by your VM. While Zed will work in this environment, performance may be degraded.
+If you're running Zed inside a virtual machine, the CPU renderer is generally preferable to an emulated DirectX adapter. Zed's system specifications show `GPUI software renderer` when that backend is active.

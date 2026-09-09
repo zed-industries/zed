@@ -20,7 +20,7 @@ use windows::{
     UI::ViewManagement::UISettings,
     Win32::{
         Foundation::*,
-        Graphics::{Direct3D11::ID3D11Device, Gdi::*},
+        Graphics::{Direct3D11::ID3D11Device, Dxgi::DXGI_ADAPTER_FLAG_SOFTWARE, Gdi::*},
         Security::Credentials::*,
         System::{Com::*, LibraryLoader::*, Ole::*, Power::*, SystemInformation::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
@@ -51,6 +51,65 @@ pub struct WindowsPlatform {
     has_package_identity: bool,
     app_identity: RefCell<Option<(String, String)>>,
     system_notifications: RefCell<SystemNotificationState>,
+    renderer_kind: RendererKind,
+    font_correction: gpui_software::FontCorrection,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RendererKind {
+    DirectX,
+    Software,
+}
+
+fn select_renderer_kind() -> Result<(RendererKind, Option<DirectXDevices>)> {
+    const GPUI_RENDERER: &str = "GPUI_RENDERER";
+    match std::env::var(GPUI_RENDERER).as_deref() {
+        Ok("software") => {
+            log::info!("Using GPUI software renderer because GPUI_RENDERER=software");
+            return Ok((RendererKind::Software, None));
+        }
+        Ok("directx") => {
+            let devices = DirectXDevices::new()
+                .context("Creating DirectX devices forced by GPUI_RENDERER=directx")?;
+            log::info!("Using DirectX renderer because GPUI_RENDERER=directx");
+            return Ok((RendererKind::DirectX, Some(devices)));
+        }
+        Ok(value) => {
+            log::warn!(
+                "Ignoring unsupported {GPUI_RENDERER} value {value:?}; expected software or directx"
+            );
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            log::warn!("Ignoring non-Unicode {GPUI_RENDERER} value");
+        }
+        Err(std::env::VarError::NotPresent) => {}
+    }
+
+    let devices = match DirectXDevices::new() {
+        Ok(devices) => devices,
+        Err(error) => {
+            log::info!(
+                "Using GPUI software renderer because DirectX initialization failed: {error:#}"
+            );
+            return Ok((RendererKind::Software, None));
+        }
+    };
+    match unsafe { devices.adapter.GetDesc1() } {
+        Ok(description) if description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 => {
+            log::info!(
+                "Using GPUI software renderer because the selected DXGI adapter is software"
+            );
+            Ok((RendererKind::Software, None))
+        }
+        Ok(_) => {
+            log::info!("Using DirectX renderer with a hardware DXGI adapter");
+            Ok((RendererKind::DirectX, Some(devices)))
+        }
+        Err(error) => {
+            log::warn!("Could not inspect the selected DXGI adapter ({error}); using DirectX");
+            Ok((RendererKind::DirectX, Some(devices)))
+        }
+    }
 }
 
 struct WindowsPlatformInner {
@@ -111,22 +170,34 @@ impl WindowsPlatform {
         unsafe {
             OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
-        let (directx_devices, text_system, direct_write_text_system) = if !headless {
-            let devices = DirectXDevices::new().context("Creating DirectX devices")?;
+        let (
+            renderer_kind,
+            directx_devices,
+            text_system,
+            direct_write_text_system,
+            font_correction,
+        ) = if !headless {
+            let (renderer_kind, devices) = select_renderer_kind()?;
+            let font_correction =
+                get_font_correction().context("Reading DirectWrite rendering parameters")?;
             let dw_text_system = Arc::new(
-                DirectWriteTextSystem::new(&devices)
+                DirectWriteTextSystem::new(devices.as_ref(), font_correction)
                     .context("Error creating DirectWriteTextSystem")?,
             );
             (
-                Some(devices),
+                renderer_kind,
+                devices,
                 dw_text_system.clone() as Arc<dyn PlatformTextSystem>,
                 Some(dw_text_system),
+                font_correction,
             )
         } else {
             (
+                RendererKind::Software,
                 None,
                 Arc::new(gpui::NoopTextSystem::new()) as Arc<dyn PlatformTextSystem>,
                 None,
+                gpui_software::FontCorrection::default(),
             )
         };
 
@@ -206,6 +277,8 @@ impl WindowsPlatform {
             suspend_resume_notification: RefCell::new(None),
             disable_direct_composition,
             has_package_identity: has_package_identity(),
+            renderer_kind,
+            font_correction,
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
             app_identity: RefCell::new(None),
@@ -242,7 +315,9 @@ impl WindowsPlatform {
             main_receiver: self.inner.main_receiver.clone(),
             platform_window_handle: self.handle,
             disable_direct_composition: self.disable_direct_composition,
-            directx_devices: self.inner.state.directx_devices.borrow().clone().unwrap(),
+            renderer_kind: self.renderer_kind,
+            font_correction: self.font_correction,
+            directx_devices: self.inner.state.directx_devices.borrow().clone(),
             invalidate_devices: self.invalidate_devices.clone(),
             draw_coordinator: self.inner.state.draw_coordinator.clone(),
         }
@@ -310,18 +385,20 @@ impl WindowsPlatform {
     }
 
     fn begin_vsync_thread(&self) {
-        let Some(directx_devices) = self.inner.state.directx_devices.borrow().clone() else {
-            return;
-        };
         let Some(direct_write_text_system) = &self.direct_write_text_system else {
             return;
         };
-        let mut directx_device = directx_devices;
+        let mut directx_device = self.inner.state.directx_devices.borrow().clone();
         let platform_window: SafeHwnd = self.handle.into();
         let validation_number = self.inner.validation_number;
         let all_windows = Arc::downgrade(&self.raw_window_handles);
         let text_system = Arc::downgrade(direct_write_text_system);
         let invalidate_devices = self.invalidate_devices.clone();
+        let redraw_flags = if self.renderer_kind == RendererKind::Software {
+            RDW_INTERNALPAINT
+        } else {
+            RDW_INVALIDATE
+        };
 
         std::thread::Builder::new()
             .name("VSyncProvider".to_owned())
@@ -329,17 +406,19 @@ impl WindowsPlatform {
                 let vsync_provider = VSyncProvider::new();
                 loop {
                     vsync_provider.wait_for_vsync();
-                    if check_device_lost(&directx_device.device)
-                        || invalidate_devices.fetch_and(false, Ordering::Acquire)
-                    {
-                        if let Err(err) = handle_gpu_device_lost(
-                            &mut directx_device,
-                            platform_window.as_raw(),
-                            validation_number,
-                            &all_windows,
-                            &text_system,
-                        ) {
-                            panic!("Device lost: {err}");
+                    if let Some(directx_device) = directx_device.as_mut() {
+                        if check_device_lost(&directx_device.device)
+                            || invalidate_devices.fetch_and(false, Ordering::Acquire)
+                        {
+                            if let Err(err) = handle_gpu_device_lost(
+                                directx_device,
+                                platform_window.as_raw(),
+                                validation_number,
+                                &all_windows,
+                                &text_system,
+                            ) {
+                                panic!("Device lost: {err}");
+                            }
                         }
                     }
                     let Some(all_windows) = all_windows.upgrade() else {
@@ -347,7 +426,9 @@ impl WindowsPlatform {
                     };
                     for hwnd in all_windows.read().iter() {
                         unsafe {
-                            let _ = RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE);
+                            RedrawWindow(Some(hwnd.as_raw()), None, None, redraw_flags)
+                                .ok()
+                                .log_err();
                         }
                     }
                 }
@@ -1205,7 +1286,9 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) disable_direct_composition: bool,
-    pub(crate) directx_devices: DirectXDevices,
+    pub(crate) renderer_kind: RendererKind,
+    pub(crate) font_correction: gpui_software::FontCorrection,
+    pub(crate) directx_devices: Option<DirectXDevices>,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
     pub(crate) invalidate_devices: Arc<AtomicBool>,

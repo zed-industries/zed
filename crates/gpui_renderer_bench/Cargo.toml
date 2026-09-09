@@ -1,0 +1,38 @@
+[package]
+name = "gpui_renderer_bench"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "gpui-renderer-bench"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+gpui = { workspace = true, features = ["profiler"] }
+gpui_platform.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+smol.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui_platform = { workspace = true, features = ["wayland", "x11"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
+
+[package.metadata.cargo-shear]
+ignored = ["libc", "windows"]
