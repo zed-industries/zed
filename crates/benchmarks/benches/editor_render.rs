@@ -819,14 +819,16 @@ fn complexity(point: &ComplexityPoint, cx: &mut BenchAppContext) {
                         } else {
                             0x996633
                         }));
+                    // Labels are fixed per element: a changing string would be reshaped
+                    // every frame and the sweep would measure text shaping, not primitives.
                     match primitives {
                         1 => element.into_any_element(),
                         4 => element
-                            .child(format!("{}{}", view_index % 10, (index + revision) % 100))
+                            .child(format!("{}{:02}", view_index % 10, index % 100))
                             .into_any_element(),
                         _ => element
                             .shadow_sm()
-                            .child(format!("{:03}{:03}{:04}", view_index % 1000, index % 1000, revision % 10000))
+                            .child(format!("{:03}{:03}{:04}", view_index % 1000, index % 1000, 0))
                             .into_any_element(),
                     }
                 }))
