@@ -1193,6 +1193,9 @@ impl KeymapEditor {
                         )
                     })
                     .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
+                        if click.click_count() > 1 {
+                            return;
+                        }
                         if click.modifiers().alt {
                             this.set_filter_state(FilterState::Conflicts, cx);
                         } else {
@@ -1211,7 +1214,10 @@ impl KeymapEditor {
                             cx,
                         )
                     })
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
+                        if click.click_count() > 1 {
+                            return;
+                        }
                         this.select_index(index, None, window, cx);
                         this.open_edit_keybinding_modal(false, window, cx);
                         cx.stop_propagation();
@@ -1227,6 +1233,9 @@ impl KeymapEditor {
                         )
                     })
                     .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
+                        if click.click_count() > 1 {
+                            return;
+                        }
                         if click.modifiers().alt {
                             this.select_index(index, None, window, cx);
                             this.open_edit_keybinding_modal(false, window, cx);
@@ -1249,7 +1258,10 @@ impl KeymapEditor {
                     self.show_hover_menus && !self.context_menu_deployed(),
                     |this| this.tooltip(Tooltip::for_action_title("Edit Keybinding", &EditBinding)),
                 )
-                .on_click(cx.listener(move |this, _, window, cx| {
+                .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                    if event.click_count() > 1 {
+                        return;
+                    }
                     this.select_index(index, None, window, cx);
                     this.open_edit_keybinding_modal(false, window, cx);
                     cx.stop_propagation();
@@ -1334,6 +1346,9 @@ impl KeymapEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.is_restoring_binding {
+            return;
+        }
         self.show_hover_menus = false;
         let Some((keybind, keybind_index)) = self.selected_keybind_and_index() else {
             return;
@@ -1494,13 +1509,21 @@ impl KeymapEditor {
         else {
             return;
         };
-        self.previous_edit = Some(PreviousEdit::ScrollBarOffset(
-            self.table_interaction_state.read(cx).scroll_offset(),
-        ));
+        let scroll_offset = self.table_interaction_state.read(cx).scroll_offset();
+        self.previous_edit = Some(
+            to_restore
+                .get_action_mapping()
+                .map(|action_mapping| PreviousEdit::Keybinding {
+                    action_mapping,
+                    action_name: to_restore.action().name,
+                    fallback: scroll_offset,
+                })
+                .unwrap_or(PreviousEdit::ScrollBarOffset(scroll_offset)),
+        );
         let keyboard_mapper = cx.keyboard_mapper().clone();
         let deprecated_aliases = cx.deprecated_actions_to_preferred_actions().clone();
         self.is_restoring_binding = true;
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |editor, cx| {
             let result = restore_keybinding(
                 to_restore,
                 &fs,
@@ -1508,9 +1531,11 @@ impl KeymapEditor {
                 &deprecated_aliases,
             )
             .await;
-            let _ = this.update(cx, |this, _cx| {
-                this.is_restoring_binding = false;
-            });
+            editor
+                .update(cx, |this, _cx| {
+                    this.is_restoring_binding = false;
+                })
+                .ok();
             result
         })
         .detach_and_notify_err(self.workspace.clone(), window, cx);

@@ -870,7 +870,7 @@ impl KeymapFile {
         generator.root_schema_for::<KeymapFile>().to_value()
     }
 
-    pub fn sections(&self) -> impl DoubleEndedIterator<Item = &KeymapSection> {
+    pub fn sections(&self) -> impl DoubleEndedIterator<Item = &KeymapSection> + ExactSizeIterator {
         self.0.iter()
     }
 
@@ -977,12 +977,21 @@ impl KeymapFile {
             let mut removed_any = false;
             loop {
                 let keymap = Self::parse(&keymap_contents).context("Failed to parse keymap")?;
+                let start_index = find_target_binding_section_index(
+                    &keymap,
+                    target,
+                    &target_action_value,
+                    keyboard_mapper,
+                    deprecated_aliases,
+                )
+                .map_or(0, |index| index + 1);
                 let Some(binding_location) = find_unbind_entry(
                     &keymap,
                     target,
                     &target_action_value,
                     keyboard_mapper,
                     deprecated_aliases,
+                    start_index,
                 ) else {
                     break;
                 };
@@ -1220,20 +1229,59 @@ impl KeymapFile {
             None
         }
 
+        /// Finds the section index of the target binding if it is defined in the
+        /// keymap file. Returns the latest matching section in file order.
+        fn find_target_binding_section_index<'a>(
+            keymap: &KeymapFile,
+            target: &KeybindUpdateTarget<'a>,
+            target_action_value: &Value,
+            keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
+            deprecated_aliases: &HashMap<&'static str, &'static str>,
+        ) -> Option<usize> {
+            let target_context_parsed =
+                parse_context_predicate(target.context.unwrap_or("")).ok()?;
+            for (index, section) in keymap.0.iter().enumerate().rev() {
+                let Ok(section_context_parsed) = parse_context_predicate(&section.context) else {
+                    continue;
+                };
+                if section_context_parsed != target_context_parsed {
+                    continue;
+                }
+
+                if let Some(binding_location) = find_binding_in_entries(
+                    section.bindings.as_ref(),
+                    BindingKind::Binding,
+                    index,
+                    target,
+                    target_action_value,
+                    keyboard_mapper,
+                    deprecated_aliases,
+                    |action| &action.0,
+                    false,
+                    false,
+                    false,
+                ) {
+                    return Some(binding_location.index);
+                }
+            }
+            None
+        }
+
         /// Finds the unbind entry matching the target binding, searching
-        /// only unbind sections. Used when restoring a binding suppressed by
-        /// an unbind entry.
+        /// only unbind sections at or after `start_index`. Used when restoring
+        /// a binding suppressed by an unbind entry.
         fn find_unbind_entry<'a, 'b>(
             keymap: &'b KeymapFile,
             target: &KeybindUpdateTarget<'a>,
             target_action_value: &Value,
             keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
             deprecated_aliases: &HashMap<&'static str, &'static str>,
+            start_index: usize,
         ) -> Option<BindingLocation<'b>> {
             let Ok(target_context) = parse_context_predicate(target.context.unwrap_or("")) else {
                 return None;
             };
-            for (index, section) in keymap.sections().enumerate() {
+            for (index, section) in keymap.sections().enumerate().skip(start_index) {
                 let section_context = match parse_context_predicate(&section.context) {
                     Ok(context) => context,
                     Err(()) => continue,
@@ -1377,7 +1425,7 @@ impl KeymapFile {
         fn parse_context_predicate(
             context: &str,
         ) -> Result<Option<KeyBindingContextPredicate>, ()> {
-            if context.trim().is_empty() {
+            if context.is_empty() {
                 return Ok(None);
             }
             KeyBindingContextPredicate::parse(context)
@@ -3280,6 +3328,181 @@ mod tests {
               },
               {
                 "context": "Editor &&",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // Restoring a binding defined in keymap.json must only remove unbind
+        // entries positioned after that binding in file order, mirroring runtime
+        // precedence so that earlier suppressors for other bindings are not
+        // deleted wrongly.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("vim"),
+                    keystrokes: &parse_keystrokes("shift-a"),
+                    action_name: "test::Action",
+                    action_arguments: None,
+                },
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // Restoring the broad binding in the same file must remove its own unbind
+        // without affecting the later narrow unbind.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("shift-a"),
+                    action_name: "test::Action",
+                    action_arguments: None,
+                },
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "context": "vim",
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // A section with whitespace-only context fails predicate parsing and is
+        // inert, so it must not be treated as a global context or deleted.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": " ",
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              },
+              {
+                "unbind": {
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "a": "foo::bar"
+                }
+              },
+              {
+                "context": " ",
                 "unbind": {
                   "cmd-k cmd-l": "editor::ConvertToLowerCase"
                 }
