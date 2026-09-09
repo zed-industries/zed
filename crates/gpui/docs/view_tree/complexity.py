@@ -170,12 +170,24 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <tr><td>… i.e. total elements</td><td class=m id=em></td><td class=n id=eb></td></tr>
 <tr><td>share changing up to which the frame fits 8.3 ms</td><td class=m id=fm></td><td class=n id=fb></td></tr></table>
 <canvas id=c width=900 height=320></canvas>
+<h3>The model</h3>
+<p>Element kinds <i>k</i> ∈ {div, button, card} with counts <i>n<sub>k</sub></i>, <i>N</i> = Σ <i>n<sub>k</sub></i>; a share <i>f</i> of the elements and <i>D</i> of the <i>K</i> editors change per frame.</p>
+<pre id=formula></pre>
 <h3>Measured: the Zed-shaped <code>Workbench</code> fixtures</h3>
 <table><tr><th>fixture</th><th>main</th><th>branch</th><th>change</th></tr>%(measured)s</table>
 <p><small>Model fitted to <code>complexity.csv</code> (%(npoints)d element points, mean error %(errm).0f%% / %(errb).0f%%; %(neditors)d editor points); see <code>view_tree.md</code>, "Scene complexity". Coefficients (µs): main — %(cm)s; branch — %(cb)s; editors — %(editors_text)s.</small></p>
 <script>
 const M=%(coef_main)s, B=%(coef_branch)s, NODE=%(node)s, ED=%(editors)s;
 let K=0,D=0,R=false;
+const us=v=>v.toFixed(2);
+document.getElementById('formula').textContent=
+`main    t = ${us(M[0])} + ${us(M[1])}·n_div + ${us(M[2])}·n_button + ${us(M[3])}·n_card + ${us(M[4])}·(N/100)²`+
+(ED?`\n          + ${ED.main_each.toFixed(0)}·K + ${ED.main_reshape.toFixed(0)}·D·[reshaped]`:'')+
+`\n\nbranch  t = ${us(B[0])} + (${us(B[1])}·n_div + ${us(B[2])}·n_button + ${us(B[3])}·n_card)·f        dirty: rendered`+
+`\n          + (${us(B[4])}·n_div + ${us(B[5])}·n_button + ${us(B[6])}·n_card)·(1 − f)   clean: replayed`+
+`\n          + ${us(B[7])}·(N/100)² + ${NODE}·⌈f·views⌉`+
+(ED?`\n          + ${ED.branch_clean.toFixed(0)}·(K − D) + ${(R?ED.branch_dirty:ED.branch_clean).toFixed(0)}·D`:'')+
+`\n\n(µs; least squares on relative error over the sweep; main redraws every element every frame)`;
 function editorsMain(){return ED?K*ED.main_each+(R?D*ED.main_reshape:0):0;}
 function editorsBranch(){return ED?(K-D)*ED.branch_clean+D*(R?ED.branch_dirty:ED.branch_clean):0;}
 function tmain(n){const N=n[0]+n[1]+n[2];return M[0]+M[1]*n[0]+M[2]*n[1]+M[3]*n[2]+M[4]*(N/100)**2+editorsMain();}
@@ -185,12 +197,12 @@ function scale(f,budget){let lo=0,hi=1024;for(let i=0;i<40;i++){const mid=(lo+hi
 const $=id=>document.getElementById(id);
 function fmt(us){return us>=1000?(us/1000).toFixed(2)+' ms':us.toFixed(0)+' µs';}
 const PRESETS={
- 'Zed: 3 panes, typing in one (chrome 200 divs + 300 buttons + 20 cards, 3%% changing)':[200,300,20,20,3,3,1,false],
- 'Zed: scrolling one of 3 panes':[200,300,20,20,3,3,1,true],
- 'Zed: everything dirty (resize / focus change)':[200,300,20,20,100,3,3,true],
- 'dashboard: 3000 div tiles, one animating (1%%)':[3000,0,0,40,1,0,0,false],
- 'list: 300 card rows scrolling (all changing)':[0,0,300,1,100,0,0,false],
- 'sweep-sized: 1500 buttons, 25%%':[0,1500,0,16,25,0,0,false],
+ 'Zed, typing':[200,300,20,20,3,3,1,false],
+ 'Zed, scrolling':[200,300,20,20,3,3,1,true],
+ 'Zed, resize':[200,300,20,20,100,3,3,true],
+ 'Dashboard':[3000,0,0,40,1,0,0,false],
+ 'Long list':[0,0,300,1,100,0,0,false],
+ 'Element sweep':[0,1500,0,16,25,0,0,false],
 };
 const BUDGET=8.3;const BUDGETS=[[8.3,'8.3 ms (120 Hz)'],[16.7,'16.7 ms (60 Hz)']];
 function label(g,text,x,y,color){g.font='12px system-ui';g.lineWidth=3;g.strokeStyle='rgba(255,255,255,.9)';g.strokeText(text,x,y);g.fillStyle=color;g.fillText(text,x,y);}
@@ -221,7 +233,7 @@ label(g,'main '+fmt(tm),X(2),Y(tm)-6,'#555');label(g,branchText,bx,by,'#1b6f65')
 for(const [ms] of BUDGETS){const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);if(cross!==null&&cross>0&&cross<1&&ms*1000<ymax){g.fillStyle='#e76f51';g.beginPath();g.arc(X(cross*100),Y(ms*1000),4,0,7);g.fill();}}
 if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tm),4,0,7);g.fill();const t='break-even '+Math.round(fEven*100)+'%%';const tw=g.measureText(t).width;label(g,t,Math.min(X(fEven*100)-tw/2,X(100)-tw),Y(tm)-22,'#555');}else if(fEven!==null&&fEven>=1){const t='never slower than main below 100%%';label(g,t,X(100)-g.measureText(t).width-4,Y(tm)-6,'#555');}}
 for(const id of ['L','M','H','K','D','R','V','F'])$(id).addEventListener('input',draw);
-for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value,$('D').value]=v;$('R').checked=v[7];draw();};$('presets').appendChild(b);}
+for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value]=v;$('D').max=v[5];$('D').value=v[6];$('R').checked=v[7];draw();};$('presets').appendChild(b);}
 draw();
 </script>
 """ % dict(npoints=len(points), errm=100 * abs(err_main).mean(), errb=100 * abs(err_branch).mean(), maxm=100 * abs(err_main).max(), maxb=100 * abs(err_branch).max(),
