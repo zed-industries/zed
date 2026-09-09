@@ -1574,9 +1574,10 @@ impl Editor {
                         // so counting them would make a commented block that contains one
                         // look uncommented, and it could then never be uncommented. VS Code
                         // and IntelliJ exclude them here for the same reason.
-                        // Without this, commenting a block with an empty line in between, and then changing the action parameter of
-                        // ToggleComments with `comment_empty_lines: false` would leave the block
-                        // commented, even though it should be uncommented.
+                        // Without this, commenting a block with an empty line in between,
+                        // and then changing the action parameter of
+                        // ToggleComments with `comment_empty_lines: true` would add comment to the block,
+                        // even though it should be uncommented
                         if !is_blank {
                             if prefix_range.is_empty() {
                                 uncommented_lines += 1;
@@ -1588,8 +1589,8 @@ impl Editor {
                         selection_edit_ranges.push(prefix_range);
                     }
 
-                    // Remove markers only when every counted row has one, and at least one
-                    // row was counted - otherwise there is nothing to remove.
+                    // Remove markers only when at least one row was counted as commented
+                    // and none were counted as uncommented.
                     let should_uncomment = uncommented_lines == 0 && commented_lines > 0;
 
                     if should_uncomment {
