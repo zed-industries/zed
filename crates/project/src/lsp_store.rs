@@ -16545,11 +16545,11 @@ pub fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
         offset_map[idx] = new_idx;
 
         match c {
-            '\n' if last_char_was_space => {
+            '\r' | '\n' if last_char_was_space => {
                 newlines_removed = true;
             }
             '\t' | ' ' if last_char_was_space => {}
-            '\n' if !last_char_was_space => {
+            '\r' | '\n' if !last_char_was_space => {
                 new_text.push(' ');
                 new_idx += 1;
                 last_char_was_space = true;
