@@ -3004,6 +3004,15 @@ impl Buffer {
                     } = &mode
                     {
                         original_indent_column = Some(if new_text.starts_with('\n') {
+                            // Keep the last blank line so the range stays within the edit.
+                            while let Some((line, rest)) =
+                                new_text[range_of_insertion_to_indent.clone()].split_once('\n')
+                                && !rest.is_empty()
+                                && line.chars().all(char::is_whitespace)
+                            {
+                                range_of_insertion_to_indent.start += line.len() + 1;
+                            }
+
                             indent_size_for_text(
                                 new_text[range_of_insertion_to_indent.clone()].chars(),
                             )
