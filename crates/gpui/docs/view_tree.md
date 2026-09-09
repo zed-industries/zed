@@ -1,7 +1,7 @@
-# Node engine
+# View tree
 
 GPUI is immediate-mode: `render` describes the whole frame every time it runs. The
-node engine memoises views. Each mounted view occurrence is a **node** that keeps the
+view tree memoises views. Each mounted view occurrence is a **node** that keeps the
 entities its render read, its Taffy subtree, and a recording of the frame effects it
 produced (scene operations, hitboxes, listeners, dispatch nodes, text layouts). When a
 frame is requested, a node whose inputs have not changed replays its recording instead
@@ -107,10 +107,10 @@ on entity reads would promote everything, since every render reads the theme.
 
 ### The oracle
 
-The reference implementation is the node engine under full refresh. A frame produced
+The reference implementation is the view tree under full refresh. A frame produced
 incrementally must equal the frame produced by `window.refresh()` from the same
 state. `VisualTestContext::assert_incremental_matches_full_refresh` asserts it;
-`node_engine::oracle_tests` drives it over a seeded gpui-only fixture, and
+`view_tree::oracle_tests` drives it over a seeded gpui-only fixture, and
 `test_workspace_rendering_stress` in `editor` over a 3-pane workspace.
 
 ## Measuring
@@ -120,7 +120,7 @@ state. `VisualTestContext::assert_incremental_matches_full_refresh` asserts it;
 `cargo bench -p benchmarks --bench editor_render` (and `--bench markdown_renderer`).
 Compare against `main` with Criterion baselines: check out `main` in a second worktree
 with this branch's `benches/editor_render.rs` copied over (the `Workbench`, `Siblings` and
-`Elements` fixtures are new here), build both, then run `docs/node_engine/matrix.sh`,
+`Elements` fixtures are new here), build both, then run `docs/view_tree/matrix.sh`,
 which runs every fixture paired — `main` then branch, back to back, so both see the same
 machine state — and writes `matrix.csv`; `charts.py` draws the figures below from it.
 Check the load average first: another build on the machine widens the intervals past
@@ -133,7 +133,7 @@ nothing is reused. `Siblings/all dirty/N` is N trivially cheap *views* all notif
 frame, which isolates the fixed cost of a node; `Elements/{all dirty,incremental}/N` is
 one view rendering N plain id'd `div`s, which isolates the cost per element.
 
-![overview](node_engine/overview.png)
+![overview](view_tree/overview.png)
 
 | Fixture | `main` | branch | change (95% CI) |
 | --- | ---: | ---: | ---: |
@@ -155,7 +155,7 @@ one view rendering N plain id'd `div`s, which isolates the cost per element.
 **The cost model.** Two synthetic sweeps pin the engine's tax on a frame in which nothing
 is reused:
 
-![per node](node_engine/per_node.png)
+![per node](view_tree/per_node.png)
 
 A node costs about **0.5–0.7 µs per dirty node per frame**, flat in the node's size
 (occurrence lookup, cache key, three phases of begin/end, dependency recording, the
@@ -163,7 +163,7 @@ dispatch snapshot, layout retention). The 1024 point is steeper than the others;
 fixture's hitbox bounds tree, which is `main`'s and 30% of the frame, is the likely
 cause, but it is not separated.
 
-![per element](node_engine/per_element.png)
+![per element](view_tree/per_element.png)
 
 An element costs about **0.1–0.13 µs per rendered element per frame** (a 24-byte
 dispatch op, a hitbox item, its primitives written into the node's scene as well as the
@@ -172,7 +172,7 @@ costs `main` about 2.9 µs, and 2–4% of Markdown's heavier elements. The incre
 variant, where the retained layout tree is kept and the view's previous tree retired
 subtree by subtree, is within noise of the cleared one.
 
-![by shape](node_engine/tax_by_shape.png)
+![by shape](view_tree/tax_by_shape.png)
 
 So an all-dirty frame pays roughly `0.55 µs × dirty nodes + 0.12 µs × dirty elements`,
 less what retention saves it (kept text layouts, kept Taffy trees for clean subtrees).
@@ -188,14 +188,14 @@ of reads into the parent, empty dispatch nodes dropped, node flags instead of ha
 dispatch record in its own lane, generation-stamped element states) took `Siblings/512`
 from +22% to about +19%. Getting materially lower needs the per-node steps themselves
 to go — a node-owned dispatch tree, then fused per-phase choreography — which is
-follow-up work. `crates/gpui/docs/node_engine_render_path.md` walks the render path step
+follow-up work. `crates/gpui/docs/view_tree_render_path.md` walks the render path step
 by step.
 
 ### Memory
 
-`NodeStats::retained_bytes` estimates what the engine holds between frames from its
+`ViewTreeStats::retained_bytes` estimates what the engine holds between frames from its
 containers' capacities (recordings, dependency sets, bookkeeping; not the shaped text
-bodies, boxed listeners or the Taffy tree). `node_engine_retained_memory_is_flat_across_reuse`
+bodies, boxed listeners or the Taffy tree). `view_tree_retained_memory_is_flat_across_reuse`
 checks it stays flat over a thousand frames that redraw one row at a time, and
 `test_workspace_rendering_stress` prints it: a 3-pane workspace at 1600×1000 with three
 editors holds 20 nodes and about 500 KB. Against `main`, sampling the bench process's
@@ -240,7 +240,7 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 ### Engine shape
 
 - [x] **Critical path.** Store nodes in a `SlotMap<ViewNodeId, ViewNode>` inside
-  `NodeEngine`; ancestor dirtiness through the node's `parent`. Deleted
+  `ViewTree`; ancestor dirtiness through the node's `parent`. Deleted
   `NodeRenderDecision` (now `reuse` / `reuse_layout` returning `Option`), the
   access-scope pool (`App::track_reads` fills a caller-owned set), the `Window`
   forwarding layer, and node ids in dependency sets. Measured 715 → 699 µs on
@@ -250,7 +250,7 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 - [x] Recordings own their listeners and input handlers (`OutputItem::MouseListener`,
   `OutputItem::InputHandler`, leased out of their slot for a call). `PlatformInputHandler`
   resolves the rendered frame's input handler through its context on every call. A
-  nested mouse-event dispatch runs no listeners, as before the node engine.
+  nested mouse-event dispatch runs no listeners, as before the view tree.
 - [x] **Critical path.** Notify is the contract: removed entity revisions,
   `dependency_revisions`, `EntityMap::end_query`, `ElementInputHandler::query`.
   The oracle (gpui, editor at 200 stress steps, workspace, project/outline panel,
@@ -283,7 +283,7 @@ Ordered by dependency. Items marked **critical path** unblock several others.
   dispatch tree, the deferred-draw work queue, and the scene linearization. Gone: `RecordedMetadata`, `capture_metadata`, `PaintIndex`,
   `PrepaintStateIndex`, `ViewNodeRecording`, `LineLayoutRecording`, `record/replay_subtree`,
   `assert_metadata_unique`, `Frame::finish`'s state carry-over, `NodeLocalState`.
-  - `DispatchTree` is unchanged from before the node engine: a flat per-frame tree with
+  - `DispatchTree` is unchanged from before the view tree: a flat per-frame tree with
     unstable ids. A node records its pushes and pops; once it has painted, the recorded
     nodes are refreshed from the live tree, and reuse walks the items pushing them back
     under the active node. Making the dispatch tree itself node-owned is a possible
@@ -294,7 +294,7 @@ Ordered by dependency. Items marked **critical path** unblock several others.
     elements looked up (`TextUse`), including text shaped inside Taffy measure closures
     (attributed to the node that requested the measured layout, since measuring runs
     outside the traversal). A redraw seeds the node's text into the frame cache first.
-    The cache is back to one previous frame, as before the node engine.
+    The cache is back to one previous frame, as before the view tree.
   - One flat list vs. lanes: measured on `Workbench/update/full` (223 elements, 814
     items, `OutputItem` 88 bytes after moving dispatch node snapshots to their own lane),
     a hit test walks the frame in ~0.85µs and collecting mouse listeners ~1.2µs, about
@@ -306,10 +306,10 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 - [ ] Any per-frame-"use" cache in GPUI (atlas tiles; text is now node-owned) is a
   proxy for "still on screen" that reused views do not refresh. Audit for the same
   eviction pattern.
-- [x] **Critical path.** Cut the legacy engine. `Option<NodeEngine>` becomes
-  `NodeEngine`; delete the non-node branches of `ViewElement`, the duplicate
+- [x] **Critical path.** Cut the legacy engine. `Option<ViewTree>` becomes
+  `ViewTree`; delete the non-node branches of `ViewElement`, the duplicate
   `use_keyed_state`, and the `Window` forwarding layer. Tests wanting a reference
-  frame force a refresh (`NodeEngine::new_eager` remains as the test reference).
+  frame force a refresh (`ViewTree::new_eager` remains as the test reference).
 - [x] `.cached(style)` becomes the ordinary node path with `style` refining the root
   layout; deprecate afterwards.
 - [x] Deferred draws mark the current scope frame-bound instead of forcing a
@@ -377,7 +377,7 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 - [ ] Track remaining ambient inputs as dependencies instead of `refresh()`: focus,
   window active state, viewport size, mouse position, input modality, hover. Focus is
   the largest source of full rebuilds. Globals are already tracked. Cut from the first
-  PR: a full refresh costs what every frame cost before the node engine, so these are
+  PR: a full refresh costs what every frame cost before the view tree, so these are
   a missed win rather than a regression. Sketch: an `AmbientInput` read set per node
   (`Focus`, `WindowActive`, `ViewportSize`, `MousePosition`, `Hover(HitboxId)`),
   recorded through a `Cell` since the readers take `&Window`; the same
@@ -394,7 +394,7 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 - [x] Separate mount identity from state identity. `View::element_id()` says where a
   node mounts and `View::entity()` which entity backs it; a cached component mounts by
   `(type, nth)` and owns its instance entity, so it never impersonates its inputs. An
-  `Entity<T: Render>` uses its own id for both, as before the node engine; a repeated
+  `Entity<T: Render>` uses its own id for both, as before the view tree; a repeated
   mount of one entity gets the next occurrence, and element state is per node, so
   sibling mounts of one entity keep separate recordings and local state.
 - [ ] Inspector: identity and per-element overrides on node state; overrides read as
@@ -426,7 +426,7 @@ Ordered by dependency. Items marked **critical path** unblock several others.
 - [x] Oracle helper `VisualTestContext::assert_incremental_matches_full_refresh`;
   `test_workspace_rendering_stress` in `editor` is its consumer (48 steps by default,
   `GPUI_STRESS_STEPS` to raise it).
-- [x] A gpui-only oracle fixture: `node_engine::oracle_tests` (nested views mounted and
+- [x] A gpui-only oracle fixture: `view_tree::oracle_tests` (nested views mounted and
   unmounted, `uniform_list`, wrapped text, focus, hover, scroll, a deferred popover on a
   nested owner so it gets replayed, resize) driven by a seeded step sequence; 5 seeds
   in CI, `ITERATIONS=100` sweeps clean. It fails within two steps if roots are not

@@ -141,10 +141,10 @@ unsafe fn ns_string(string: &str) -> id {
 }
 
 #[cfg(all(test, feature = "test-support", feature = "font-kit"))]
-mod node_engine_pixel_tests {
+mod view_tree_pixel_tests {
     #[test]
     #[ignore = "requires a Metal device"]
-    fn node_engine_scene_matches_full_refresh_pixels() {
+    fn view_tree_scene_matches_full_refresh_pixels() {
         use gpui::{
             AppContext as _, Context, Entity, HeadlessAppContext, IntoElement, ParentElement,
             Render, Styled, Window, div, px, rgb, size,
@@ -229,7 +229,7 @@ mod node_engine_pixel_tests {
             cx.run_until_parked();
             cx.update_window(window.into(), |_, window, cx| {
                 window.draw(cx).clear(cx);
-                reused += window.node_stats().reused_subtrees;
+                reused += window.view_tree_stats().reused_subtrees;
             })
             .expect("draw incremental scene");
             let incremental = cx

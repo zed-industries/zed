@@ -59,7 +59,7 @@ pub(crate) struct ViewNodeScene {
 enum ViewNodeSceneSegment {
     /// A run of this scope's own primitives: their kinds, and the lane cursors at the first.
     Run(Range<usize>, LaneCursors),
-    Child(crate::node_engine::ViewNodeId),
+    Child(crate::view_tree::ViewNodeId),
     StartLayer(Bounds<ScaledPixels>),
     EndLayer,
 }
@@ -101,7 +101,7 @@ impl ViewNodeScene {
         }
     }
 
-    pub(crate) fn push_child(&mut self, child: crate::node_engine::ViewNodeId) {
+    pub(crate) fn push_child(&mut self, child: crate::view_tree::ViewNodeId) {
         self.close_run();
         self.segments.push(ViewNodeSceneSegment::Child(child));
     }
@@ -123,7 +123,7 @@ impl ViewNodeScene {
         &self,
         rendered: &Scene,
         scene: &mut Scene,
-        engine: &mut crate::node_engine::NodeEngine,
+        engine: &mut crate::view_tree::ViewTree,
     ) {
         for segment in &self.segments {
             match segment {
@@ -192,7 +192,7 @@ impl ViewNodeScene {
 /// One thing a scope produced while drawing. Kinds that are only read by walking the
 /// frame live here; a `Child` marks where a child node's output of one phase belongs.
 pub(crate) enum OutputItem {
-    Child(crate::node_engine::ViewNodeId, MetadataPhase),
+    Child(crate::view_tree::ViewNodeId, MetadataPhase),
     Hitbox(Hitbox),
     /// Boxed: at 80 bytes the request would otherwise set the size of every item.
     Tooltip(Box<TooltipRequest>),
@@ -236,12 +236,12 @@ pub(crate) struct RecordedDispatchNode {
 /// only where children and roots hang needs remembering.
 #[derive(Clone, Copy)]
 pub(crate) enum DispatchOp {
-    Child(crate::node_engine::ViewNodeId, DispatchParent),
+    Child(crate::view_tree::ViewNodeId, DispatchParent),
     /// A root this scope attached to the frame with `defer_draw`, drawn after the tree at
     /// the given priority. Rendering the scope emits it; replaying the scope re-attaches
     /// the same root, so a deferred draw survives exactly as long as some drawn output
     /// says it is there. Not descended into: roots are walked from the frame's root list.
-    Root(crate::node_engine::ViewNodeId, usize, DispatchParent),
+    Root(crate::view_tree::ViewNodeId, usize, DispatchParent),
 }
 
 /// What one scope produced in one phase.
@@ -345,7 +345,7 @@ impl NodeOutput {
 /// must stay in place, such as a callback that is leased out for a call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OutputSlot {
-    pub(crate) owner: crate::node_engine::ViewNodeId,
+    pub(crate) owner: crate::view_tree::ViewNodeId,
     pub(crate) phase: MetadataPhase,
     pub(crate) index: usize,
     pub(crate) generation: u64,
@@ -354,10 +354,10 @@ pub(crate) struct OutputSlot {
 pub(crate) struct ViewNode {
     pub(crate) output: NodeOutput,
     pub(crate) layout: Option<LayoutId>,
-    pub(crate) occurrence: crate::node_engine::ViewOccurrence,
-    pub(crate) parent: Option<super::node_engine::ViewNodeId>,
-    pub(crate) children: Vec<super::node_engine::ViewNodeId>,
-    pub(crate) next_children: Vec<super::node_engine::ViewNodeId>,
+    pub(crate) occurrence: crate::view_tree::ViewOccurrence,
+    pub(crate) parent: Option<super::view_tree::ViewNodeId>,
+    pub(crate) children: Vec<super::view_tree::ViewNodeId>,
+    pub(crate) next_children: Vec<super::view_tree::ViewNodeId>,
     /// The entity whose notification re-renders this node, once the view has mounted.
     pub(crate) view_id: Option<EntityId>,
     /// An entity the view asked the node to keep for it, such as a component's instance;
@@ -365,7 +365,7 @@ pub(crate) struct ViewNode {
     pub(crate) owned_entity: Option<crate::AnyEntity>,
     pub(crate) cache_key: ViewNodeCacheKey,
     pub(crate) previous_bounds: Bounds<Pixels>,
-    pub(crate) accessed_entities: crate::node_engine::DependencySet,
+    pub(crate) accessed_entities: crate::view_tree::DependencySet,
     /// The engine frame the node's scene record was last stored in, by a paint or a
     /// replay; zero until it first paints. The record addresses that frame's scene, so the
     /// node can only be reused in the frame right after it; a node prepainted but not
@@ -427,7 +427,7 @@ mod tests {
         let vertices = painted_path.vertices.as_ptr();
         rendered.insert_primitive(painted_path);
         rendered.insert_primitive(quad(10., 40.));
-        let record = rendered.finish_node_scene(crate::node_engine::ViewNodeId::default());
+        let record = rendered.finish_node_scene(crate::view_tree::ViewNodeId::default());
         rendered.finish();
 
         assert_eq!(rendered.painted_path(0).vertices.as_ptr(), vertices);
@@ -438,7 +438,7 @@ mod tests {
         );
 
         let mut replayed = Scene::default();
-        let mut engine = crate::node_engine::NodeEngine::new();
+        let mut engine = crate::view_tree::ViewTree::new();
         record.replay(&rendered, &mut replayed, &mut engine);
         replayed.finish();
         assert_eq!(replayed.snapshot_for_test(), rendered.snapshot_for_test());

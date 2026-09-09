@@ -1,7 +1,7 @@
 use crate::{
     App, AppContext, GpuiBorrow, VisualContext, Window,
-    node_engine::{DependencySet, record_dependency},
     seal::Sealed,
+    view_tree::{DependencySet, record_dependency},
 };
 use anyhow::{Context as _, Result};
 use collections::FxHashSet;

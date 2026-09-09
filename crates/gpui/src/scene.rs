@@ -323,7 +323,7 @@ impl Scene {
 
     pub(crate) fn finish_node_scene(
         &mut self,
-        node_id: crate::node_engine::ViewNodeId,
+        node_id: crate::view_tree::ViewNodeId,
     ) -> crate::view_node::ViewNodeScene {
         let mut recording = self.node_scene.take().expect("balanced node painting");
         recording.finish();

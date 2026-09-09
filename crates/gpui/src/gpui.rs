@@ -31,7 +31,6 @@ mod inspector;
 mod interactive;
 mod key_dispatch;
 mod keymap;
-mod node_engine;
 mod path_builder;
 mod platform;
 pub mod prelude;
@@ -62,6 +61,7 @@ mod text_system;
 mod util;
 mod view;
 mod view_node;
+mod view_tree;
 mod window;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -143,8 +143,6 @@ pub use inspector::*;
 pub use interactive::*;
 use key_dispatch::*;
 pub use keymap::*;
-pub use node_engine::NodeStats;
-pub(crate) use node_engine::*;
 pub use path_builder::*;
 pub use platform::*;
 pub use profiler::*;
@@ -167,6 +165,8 @@ pub use text_system::*;
 pub use util::{FutureExt, Timeout};
 pub use view::*;
 pub(crate) use view_node::*;
+pub use view_tree::ViewTreeStats;
+pub(crate) use view_tree::*;
 pub use window::*;
 
 #[cfg(not(target_family = "wasm"))]

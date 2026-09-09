@@ -1501,12 +1501,12 @@ impl PlatformInputHandler {
         // Leased out of its node for the call; absent while already leased further up the
         // stack.
         let slot = window.focused_input_handler()?;
-        let mut handler = window.node_engine.lease(slot, |item| match item {
+        let mut handler = window.view_tree.lease(slot, |item| match item {
             OutputItem::InputHandler(handler) => handler.take(),
             _ => None,
         })?;
         let result = f(handler.as_mut(), window, cx);
-        window.node_engine.restore(slot, handler, |item, handler| {
+        window.view_tree.restore(slot, handler, |item, handler| {
             if let OutputItem::InputHandler(slot) = item {
                 *slot = Some(handler);
             }

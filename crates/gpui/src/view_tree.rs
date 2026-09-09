@@ -10,7 +10,7 @@ use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{any::TypeId, ops::ControlFlow, ops::Range};
 
-/// A point in a scope's output that `NodeEngine::rollback` returns to. `None` when taken
+/// A point in a scope's output that `ViewTree::rollback` returns to. `None` when taken
 /// outside every node, where nothing is recorded.
 #[derive(Clone, Copy)]
 pub(crate) struct OutputCheckpoint(Option<(ViewNodeId, MetadataPhase, usize, usize)>);
@@ -61,9 +61,9 @@ impl std::hash::Hash for ViewOccurrence {
     }
 }
 
-/// Work performed by the node engine in its last completed frame.
+/// Work performed by the view tree in its last completed frame.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct NodeStats {
+pub struct ViewTreeStats {
     /// Input that forced every scope to rebuild, when present.
     pub full_refresh_reason: Option<&'static str>,
     /// Scopes with measurement captures that cannot survive the frame arena.
@@ -94,9 +94,9 @@ pub(crate) fn record_dependency(set: &mut DependencySet, entity_id: EntityId) {
     }
 }
 
-pub(crate) struct NodeEngine {
-    frame_stats: NodeStats,
-    pub(crate) last_frame_stats: NodeStats,
+pub(crate) struct ViewTree {
+    frame_stats: ViewTreeStats,
+    pub(crate) last_frame_stats: ViewTreeStats,
     nodes: SlotMap<ViewNodeId, ViewNode>,
     /// Reverse of each node's `accessed_entities`: the nodes whose recorded output was
     /// computed from a read of the keyed entity. Ancestors are reached through `parent`.
@@ -134,7 +134,7 @@ pub(crate) struct NodeEngine {
     changed_bounds: Option<Bounds<Pixels>>,
 }
 
-impl NodeEngine {
+impl ViewTree {
     #[cfg(test)]
     pub(crate) fn new_eager() -> Self {
         Self {
@@ -145,8 +145,8 @@ impl NodeEngine {
 
     pub(crate) fn new() -> Self {
         Self {
-            frame_stats: NodeStats::default(),
-            last_frame_stats: NodeStats::default(),
+            frame_stats: ViewTreeStats::default(),
+            last_frame_stats: ViewTreeStats::default(),
             nodes: SlotMap::with_key(),
             consumers: FxHashMap::default(),
             spare_dependency_sets: Vec::new(),
@@ -172,7 +172,7 @@ impl NodeEngine {
         &self.nodes[node_id]
     }
 
-    /// See [`NodeStats::retained_bytes`]. Walks every node, so it is computed on demand.
+    /// See [`ViewTreeStats::retained_bytes`]. Walks every node, so it is computed on demand.
     pub(crate) fn retained_bytes(&self) -> usize {
         let nodes: usize = self
             .nodes
@@ -739,9 +739,9 @@ impl NodeEngine {
         };
         self.full_refresh = full_refresh_reason.is_some();
         self.frame += 1;
-        self.frame_stats = NodeStats {
+        self.frame_stats = ViewTreeStats {
             full_refresh_reason,
-            ..NodeStats::default()
+            ..ViewTreeStats::default()
         };
         self.changed_bounds = None;
         // `next_roots` is not cleared: a root drawn between frames (a test's `draw`) is
@@ -1432,7 +1432,7 @@ mod oracle_tests {
     }
 
     #[gpui::test(iterations = 5)]
-    fn node_engine_oracle(cx: &mut TestAppContext, mut rng: StdRng) {
+    fn view_tree_oracle(cx: &mut TestAppContext, mut rng: StdRng) {
         let mut next_row = 0;
         let mut new_row = |cx: &mut crate::App, rng: &mut StdRng| {
             let row = cx.new(|_| Row {
@@ -1564,7 +1564,7 @@ mod oracle_tests {
     /// What the engine holds between frames must not grow while the same tree is redrawn:
     /// a node redrawn in place reuses its buffers, and reused nodes allocate nothing.
     #[gpui::test]
-    fn node_engine_retained_memory_is_flat_across_reuse(cx: &mut TestAppContext) {
+    fn view_tree_retained_memory_is_flat_across_reuse(cx: &mut TestAppContext) {
         let mut rng = StdRng::seed_from_u64(0);
         let window = cx.open_window(size(px(300.), px(300.)), |_, cx| {
             let rows: Vec<_> = (0..40)
@@ -1600,7 +1600,7 @@ mod oracle_tests {
             });
             cx.run_until_parked();
             window
-                .update(cx, |_, window, _| window.node_stats())
+                .update(cx, |_, window, _| window.view_tree_stats())
                 .expect("window open")
         };
         for step in 0..100 {
@@ -1679,7 +1679,7 @@ mod oracle_tests {
                 .expect("window open");
             cx.run_until_parked();
             window
-                .update(cx, |_, window, _| window.node_stats())
+                .update(cx, |_, window, _| window.view_tree_stats())
                 .expect("window open")
         };
         let settled = redraw(cx);

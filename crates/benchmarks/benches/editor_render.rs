@@ -554,7 +554,7 @@ fn workbench_render(mode: &&str, cx: &mut BenchAppContext) {
     cx.bench_renderer(host, update);
 }
 
-/// The node engine's worst case: many small views, every one of them dirty on every
+/// The view tree's worst case: many small views, every one of them dirty on every
 /// update, so nothing is reused and each node pays its fixed bookkeeping in full.
 #[gpui::bench(
     inputs = [64usize, 256, 1024],
@@ -624,7 +624,7 @@ fn siblings_all_dirty(count: &usize, cx: &mut BenchAppContext) {
     cx.bench_renderer(host, update);
 }
 
-/// The node engine's proportional cost: one view (one node) rendering `count` plain
+/// The view tree's proportional cost: one view (one node) rendering `count` plain
 /// elements, re-rendered in full on every update. Nothing here is a node but the host, so
 /// the difference from `main` is what each element pays to be recorded: its dispatch op,
 /// its hitbox item, its primitives written into the node's scene as well as the frame's,

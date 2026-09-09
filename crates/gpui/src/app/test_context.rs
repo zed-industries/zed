@@ -3,10 +3,10 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
     Element, ElementId, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, GlobalElementId,
     InputEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, NodeStats, Pixels, Platform, Point, Render, Result, SharedString,
-    Size, SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
+    MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Render, Result, SharedString, Size,
+    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
+    TestScreenCaptureSource, TestWindow, TextSystem, ViewTreeStats, VisualContext, Window,
+    WindowBounds, WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -777,7 +777,7 @@ impl VisualTestContext {
         self.cx.background_executor.run_until_parked();
     }
 
-    /// The node engine's oracle: the frame the window drew incrementally, reusing nodes,
+    /// The view tree's oracle: the frame the window drew incrementally, reusing nodes,
     /// must equal the frame a full refresh draws from the same state. Asserts that for the
     /// window's rendered frame and returns the incremental frame's node statistics, which
     /// callers use to check the workload exercised reuse at all.
@@ -787,12 +787,12 @@ impl VisualTestContext {
     pub fn assert_incremental_matches_full_refresh(
         &mut self,
         step: impl std::fmt::Display,
-    ) -> NodeStats {
+    ) -> ViewTreeStats {
         let (incremental, incremental_dispatch, stats) = self.update(|window, _| {
             (
                 window.scene_snapshot_for_test(),
                 window.dispatch_snapshot_for_test(),
-                window.node_stats(),
+                window.view_tree_stats(),
             )
         });
         assert!(
@@ -958,7 +958,7 @@ impl VisualTestContext {
             // The element is drawn as a root of the frame that follows, ahead of the
             // window's root view, and is gone from the frame after that.
             let cache_key = window.view_node_key(Bounds::default());
-            let root = window.node_engine.mount_root(
+            let root = window.view_tree.mount_root(
                 GlobalElementId(std::sync::Arc::from([ElementId::Name(
                     "VisualTestContext::draw".into(),
                 )])),
@@ -983,7 +983,7 @@ impl VisualTestContext {
             let (request_layout_state, prepaint_state) = element.paint(window, cx);
             window.finish_view_node_paint(root);
             window.finish_node_phase(root, true);
-            let accessed_entities = window.node_engine.take_dependency_set();
+            let accessed_entities = window.view_tree.take_dependency_set();
             window.store_node_render(root, cache_key, accessed_entities);
 
             window.set_draw_phase(DrawPhase::None);

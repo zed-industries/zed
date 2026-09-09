@@ -1121,11 +1121,11 @@ impl App {
     }
 
     /// Runs `callback`, adding every entity it reads to `reads`. Nested calls also count
-    /// their reads towards the enclosing call. This is how the node engine learns which
+    /// their reads towards the enclosing call. This is how the view tree learns which
     /// entities a view's render depends on.
     pub(crate) fn track_reads<R>(
         &mut self,
-        reads: &mut crate::node_engine::DependencySet,
+        reads: &mut crate::view_tree::DependencySet,
         callback: impl FnOnce(&mut App) -> R,
     ) -> R {
         self.entities.begin_access_scope();

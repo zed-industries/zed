@@ -3,7 +3,7 @@ use crate::{
     EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, Render,
     RenderOnce, Style, StyleRefinement, ViewNodeCacheKey, ViewNodeId, WeakEntity,
 };
-use crate::{AppContext as _, Empty, Window, node_engine::DependencySet};
+use crate::{AppContext as _, Empty, Window, view_tree::DependencySet};
 use anyhow::Result;
 use refineable::Refineable;
 use std::{any::TypeId, fmt};
@@ -341,7 +341,7 @@ impl<V: View> ViewElement<V> {
     ) -> (LayoutId, Option<AnyElement>) {
         let view = self.view.take().expect("view is rendered once per frame");
         self.inline_occurrence = window
-            .node_engine
+            .view_tree
             .next_inline_occurrence(std::any::type_name::<V>());
         self.with_inline_scope(window, |window| {
             let mut element = view.render(window, cx).into_any_element();
@@ -414,20 +414,20 @@ impl<V: View> Element for ViewElement<V> {
         {
             let cache_key = window.view_node_key(Bounds::default());
             let node_id = window.begin_node_occurrence(id.clone(), &cache_key);
-            let mut owned = window.node_engine.take_owned_entity(node_id);
+            let mut owned = window.view_tree.take_owned_entity(node_id);
             let entity_id = view.entity(&mut owned, window, cx);
-            window.node_engine.store_owned_entity(node_id, owned);
+            window.view_tree.store_owned_entity(node_id, owned);
             let Some(entity_id) = entity_id else {
                 // A view with an id but no entity cannot be reused, since nothing could
                 // notify it; it renders inline like a stateless one.
                 window.finish_node_phase(node_id, false);
-                window.node_engine.abandon_occurrence(node_id);
+                window.view_tree.abandon_occurrence(node_id);
                 return self.render_inline(window, cx);
             };
             self.entity_id = Some(entity_id);
-            window.node_engine.set_view_id(node_id, entity_id);
+            window.view_tree.set_view_id(node_id, entity_id);
             let (layout, element) =
-                if let Some(layout) = window.node_engine.reuse_layout(node_id, &cache_key) {
+                if let Some(layout) = window.view_tree.reuse_layout(node_id, &cache_key) {
                     // A node painted in the previous frame has its root in the layout engine's
                     // retained roots, which nothing drops out from under it.
                     debug_assert!(window.layout_is_retained(layout));
@@ -436,12 +436,12 @@ impl<V: View> Element for ViewElement<V> {
                         layout,
                         node_id,
                         grafted: true,
-                        accessed_entities: window.node_engine.take_dependency_set(),
+                        accessed_entities: window.view_tree.take_dependency_set(),
                     });
                     (layout, None)
                 } else {
                     window.restart_node_render(node_id);
-                    let mut accessed_entities = window.node_engine.take_dependency_set();
+                    let mut accessed_entities = window.view_tree.take_dependency_set();
                     let view = self.view.take().expect("view is rendered once per frame");
                     let (layout, element) = cx.track_reads(&mut accessed_entities, |cx| {
                         window.with_rendered_view(entity_id, |window| {
@@ -450,7 +450,7 @@ impl<V: View> Element for ViewElement<V> {
                             (layout, element)
                         })
                     });
-                    let previous = window.node_engine.store_layout(node_id, layout);
+                    let previous = window.view_tree.store_layout(node_id, layout);
                     window.retire_layout(previous);
                     window.finish_node_phase(node_id, true);
                     self.node_layout = Some(NodeViewLayout {
@@ -502,14 +502,14 @@ impl<V: View> Element for ViewElement<V> {
                 let mut accessed_entities = accessed_entities;
                 if grafted {
                     if window
-                        .node_engine
+                        .view_tree
                         .node(node_id)
                         .cache_key
                         .matches(&cache_key, false)
                         && window.retained_layout_unchanged(layout)
                     {
                         window.graft_view_node_prepaint(node_id);
-                        window.node_engine.recycle_dependency_set(accessed_entities);
+                        window.view_tree.recycle_dependency_set(accessed_entities);
                         window.finish_node_phase(node_id, false);
                         return ViewElementPrepaintState {
                             element: None,
@@ -531,7 +531,7 @@ impl<V: View> Element for ViewElement<V> {
                         let mut element = view.render(window, cx).into_any_element();
                         let new_layout = element.request_layout(window, cx);
                         window.replace_retained_layout(layout, new_layout, cx);
-                        let previous = window.node_engine.store_layout(node_id, new_layout);
+                        let previous = window.view_tree.store_layout(node_id, new_layout);
                         window.retire_layout(previous);
                         element.prepaint(window, cx);
                         element
@@ -580,7 +580,7 @@ impl<V: View> Element for ViewElement<V> {
                 window.with_rendered_view(entity_id, |window| match node {
                     ViewNodePrepaintState::Graft { node_id } => {
                         window.graft_view_node_paint(node_id);
-                        window.node_engine.store_graft();
+                        window.view_tree.store_graft();
                     }
                     ViewNodePrepaintState::Render {
                         node_id,
@@ -943,7 +943,7 @@ mod tests {
     use std::{cell::Cell, rc::Rc};
 
     #[gpui::test]
-    fn node_engine_replays_debug_bounds_in_paint_order(cx: &mut TestAppContext) {
+    fn view_tree_replays_debug_bounds_in_paint_order(cx: &mut TestAppContext) {
         struct Leaf(&'static str);
         impl Render for Leaf {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -979,10 +979,10 @@ mod tests {
         for memoized in [false, true] {
             for cached in [false, true] {
                 let window = cx.open_window(size(px(300.), px(100.)), |window, cx| {
-                    window.node_engine = if memoized {
-                        crate::NodeEngine::new()
+                    window.view_tree = if memoized {
+                        crate::ViewTree::new()
                     } else {
-                        crate::NodeEngine::new_eager()
+                        crate::ViewTree::new_eager()
                     };
                     Root {
                         children: ["a", "b", "c"]
@@ -1015,7 +1015,7 @@ mod tests {
                     let actual = window
                         .update(cx, |_, window, _| {
                             if memoized && step == 0 {
-                                assert!(window.node_stats().reused_subtrees > 0);
+                                assert!(window.view_tree_stats().reused_subtrees > 0);
                             }
                             window.all_debug_bounds()
                         })
@@ -1064,13 +1064,13 @@ mod tests {
         }
     }
 
-    struct NodeEngineRoot {
+    struct ViewTreeRoot {
         left: Entity<CountingLeaf>,
         middle: Entity<CountingLeaf>,
         right: Entity<CountingLeaf>,
     }
 
-    impl Render for NodeEngineRoot {
+    impl Render for ViewTreeRoot {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             let leaf_style = || StyleRefinement::default().w(px(100.)).h(px(100.));
             div()
@@ -1084,12 +1084,12 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_grafts_clean_siblings_and_cold_rebuilds_the_same_scene(cx: &mut TestAppContext) {
+    fn view_tree_grafts_clean_siblings_and_cold_rebuilds_the_same_scene(cx: &mut TestAppContext) {
         let left_render_count = Rc::new(Cell::new(0));
         let middle_render_count = Rc::new(Cell::new(0));
         let right_render_count = Rc::new(Cell::new(0));
         let dependency = cx.new(|_| Dependency);
-        let window = cx.open_window(size(px(300.), px(100.)), |_, cx| NodeEngineRoot {
+        let window = cx.open_window(size(px(300.), px(100.)), |_, cx| ViewTreeRoot {
             left: cx.new({
                 let left_render_count = left_render_count.clone();
                 |_| CountingLeaf {
@@ -1183,11 +1183,11 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_does_not_reinvalidate_previously_notified_views(cx: &mut TestAppContext) {
+    fn view_tree_does_not_reinvalidate_previously_notified_views(cx: &mut TestAppContext) {
         let left_render_count = Rc::new(Cell::new(0));
         let middle_render_count = Rc::new(Cell::new(0));
         let right_render_count = Rc::new(Cell::new(0));
-        let window = cx.open_window(size(px(300.), px(100.)), |_, cx| NodeEngineRoot {
+        let window = cx.open_window(size(px(300.), px(100.)), |_, cx| ViewTreeRoot {
             left: cx.new({
                 let left_render_count = left_render_count.clone();
                 |_| CountingLeaf {
@@ -1296,12 +1296,12 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_automatic_views_match_eager_across_layout_and_mount_changes(
+    fn view_tree_automatic_views_match_eager_across_layout_and_mount_changes(
         cx: &mut TestAppContext,
     ) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<IntrinsicRoot>| {
-                window.node_engine = engine;
+                window.view_tree = engine;
                 IntrinsicRoot {
                     leaves: (0..3)
                         .map(|_| {
@@ -1320,9 +1320,9 @@ mod tests {
         };
         let eager = cx.open_window(
             size(px(400.), px(100.)),
-            build(crate::NodeEngine::new_eager()),
+            build(crate::ViewTree::new_eager()),
         );
-        let memoized = cx.open_window(size(px(400.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(400.), px(100.)), build(crate::ViewTree::new()));
         cx.run_until_parked();
         for step in 0..10 {
             for window in [eager, memoized] {
@@ -1454,12 +1454,12 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_preserves_percentage_layout_after_parent_resize(cx: &mut TestAppContext) {
+    fn view_tree_preserves_percentage_layout_after_parent_resize(cx: &mut TestAppContext) {
         for relative_width in [false, true] {
             for layout_mode in 0..3 {
                 let build = |engine| {
                     move |window: &mut Window, cx: &mut Context<PercentageHost>| {
-                        window.node_engine = engine;
+                        window.view_tree = engine;
                         PercentageHost {
                             width: 200.,
                             layout_mode,
@@ -1469,10 +1469,10 @@ mod tests {
                 };
                 let eager = cx.open_window(
                     size(px(400.), px(200.)),
-                    build(crate::NodeEngine::new_eager()),
+                    build(crate::ViewTree::new_eager()),
                 );
                 let memoized =
-                    cx.open_window(size(px(400.), px(200.)), build(crate::NodeEngine::new()));
+                    cx.open_window(size(px(400.), px(200.)), build(crate::ViewTree::new()));
                 for width in [200., 300., 160., 320., 320.] {
                     for window in [eager, memoized] {
                         window
@@ -1545,10 +1545,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_preserves_focus_hover_and_moved_hit_targets(cx: &mut TestAppContext) {
+    fn view_tree_preserves_focus_hover_and_moved_hit_targets(cx: &mut TestAppContext) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<InteractiveHost>| {
-                window.node_engine = engine;
+                window.view_tree = engine;
                 let leaf = cx.new(|cx| InteractiveLeaf {
                     focus: cx.focus_handle(),
                     clicks: 0,
@@ -1560,9 +1560,9 @@ mod tests {
         };
         let eager = cx.open_window(
             size(px(300.), px(100.)),
-            build(crate::NodeEngine::new_eager()),
+            build(crate::ViewTree::new_eager()),
         );
-        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::ViewTree::new()));
         cx.run_until_parked();
         for step in 0..8 {
             for window in [eager, memoized] {
@@ -1661,7 +1661,7 @@ mod tests {
         }
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<Repeated>| {
-                window.node_engine = engine;
+                window.view_tree = engine;
                 Repeated {
                     leaf: cx.new(|cx| MetadataLeaf {
                         focus: cx.focus_handle(),
@@ -1673,9 +1673,9 @@ mod tests {
         };
         let eager = cx.open_window(
             size(px(400.), px(100.)),
-            build(crate::NodeEngine::new_eager()),
+            build(crate::ViewTree::new_eager()),
         );
-        let memoized = cx.open_window(size(px(400.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(400.), px(100.)), build(crate::ViewTree::new()));
         cx.run_until_parked();
         let mut reused = 0;
         for count in [2, 2, 1, 2, 3, 1, 0, 2] {
@@ -1691,11 +1691,11 @@ mod tests {
             let mut snapshot = |handle: crate::WindowHandle<Repeated>, cx: &mut TestAppContext| {
                 handle
                     .update(cx, |_, window, _| {
-                        reused += window.node_stats().reused_subtrees;
+                        reused += window.view_tree_stats().reused_subtrees;
                         (
                             window.rendered_frame.scene.snapshot_for_test(),
                             window
-                                .tab_stops(crate::node_engine::FrameOutput::Rendered)
+                                .tab_stops(crate::view_tree::FrameOutput::Rendered)
                                 .operation_count(),
                         )
                     })
@@ -1743,10 +1743,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_replays_nested_metadata_from_different_frames(cx: &mut TestAppContext) {
+    fn view_tree_replays_nested_metadata_from_different_frames(cx: &mut TestAppContext) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<MetadataRoot>| {
-                window.node_engine = engine;
+                window.view_tree = engine;
                 let events = Rc::new(std::cell::RefCell::new(Vec::new()));
                 let leaf = cx.new(|cx| MetadataLeaf {
                     focus: cx.focus_handle(),
@@ -1767,9 +1767,9 @@ mod tests {
         };
         let eager = cx.open_window(
             size(px(300.), px(100.)),
-            build(crate::NodeEngine::new_eager()),
+            build(crate::ViewTree::new_eager()),
         );
-        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::ViewTree::new()));
         cx.run_until_parked();
         for step in 0..12 {
             for handle in [eager, memoized] {
@@ -1882,10 +1882,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_captures_children_that_prepaint_without_paint(cx: &mut TestAppContext) {
+    fn view_tree_captures_children_that_prepaint_without_paint(cx: &mut TestAppContext) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<OptionalPaintRoot>| {
-                window.node_engine = engine;
+                window.view_tree = engine;
                 OptionalPaintRoot {
                     leaf: cx.new(|cx| InteractiveLeaf {
                         focus: cx.focus_handle(),
@@ -1898,9 +1898,9 @@ mod tests {
         };
         let eager = cx.open_window(
             size(px(300.), px(100.)),
-            build(crate::NodeEngine::new_eager()),
+            build(crate::ViewTree::new_eager()),
         );
-        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::ViewTree::new()));
         cx.run_until_parked();
         for step in 0..8 {
             for handle in [eager, memoized] {
@@ -1965,7 +1965,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_invalidates_ambient_inputs_and_evicted_images(cx: &mut TestAppContext) {
+    fn view_tree_invalidates_ambient_inputs_and_evicted_images(cx: &mut TestAppContext) {
         let image = std::sync::Arc::new(crate::RenderImage::new(smallvec::smallvec![
             image::Frame::new(image::ImageBuffer::from_pixel(
                 2,
@@ -1976,7 +1976,7 @@ mod tests {
         let build = |engine| {
             let image = image.clone();
             move |window: &mut Window, cx: &mut Context<AmbientHost>| {
-                window.node_engine = engine;
+                window.view_tree = engine;
                 AmbientHost {
                     leaf: cx.new(|_| AmbientLeaf { image }),
                     deferred: false,
@@ -1985,9 +1985,9 @@ mod tests {
         };
         let eager = cx.open_window(
             size(px(300.), px(100.)),
-            build(crate::NodeEngine::new_eager()),
+            build(crate::ViewTree::new_eager()),
         );
-        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::ViewTree::new()));
         cx.run_until_parked();
         for step in 0..9 {
             if step == 1 {
@@ -2063,10 +2063,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_preserves_clipping_overlap_and_focused_removal(cx: &mut TestAppContext) {
+    fn view_tree_preserves_clipping_overlap_and_focused_removal(cx: &mut TestAppContext) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<OverlapHost>| {
-                window.node_engine = engine;
+                window.view_tree = engine;
                 let front = cx.new(|cx| InteractiveLeaf {
                     focus: cx.focus_handle(),
                     clicks: 0,
@@ -2086,9 +2086,9 @@ mod tests {
         };
         let eager = cx.open_window(
             size(px(300.), px(100.)),
-            build(crate::NodeEngine::new_eager()),
+            build(crate::ViewTree::new_eager()),
         );
-        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(300.), px(100.)), build(crate::ViewTree::new()));
         cx.run_until_parked();
         for step in 0..6 {
             for handle in [eager, memoized] {
@@ -2144,7 +2144,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_caches_components_over_an_entity(cx: &mut TestAppContext) {
+    fn view_tree_caches_components_over_an_entity(cx: &mut TestAppContext) {
         struct Custom {
             source: Entity<usize>,
             renders: Rc<Cell<usize>>,
@@ -2177,7 +2177,7 @@ mod tests {
         }
         let renders = Rc::new(Cell::new(0));
         let handle = cx.open_window(size(px(300.), px(100.)), |window, cx| {
-            window.node_engine = crate::NodeEngine::new();
+            window.view_tree = crate::ViewTree::new();
             Host {
                 source: cx.new(|_| 0),
                 renders: renders.clone(),
@@ -2300,11 +2300,11 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_releases_frame_bound_measurement_callbacks(cx: &mut TestAppContext) {
+    fn view_tree_releases_frame_bound_measurement_callbacks(cx: &mut TestAppContext) {
         let lifetime = Rc::new(());
         let renders = Rc::new(Cell::new(0));
         let window = cx.open_window(size(px(200.), px(100.)), |window, cx| {
-            window.node_engine = crate::NodeEngine::new();
+            window.view_tree = crate::ViewTree::new();
             ArenaMeasuredHost(cx.new(|_| ArenaMeasuredView {
                 lifetime: lifetime.clone(),
                 renders: renders.clone(),
@@ -2363,10 +2363,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_reuses_after_fully_dirty_frames(cx: &mut TestAppContext) {
+    fn view_tree_reuses_after_fully_dirty_frames(cx: &mut TestAppContext) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<SiblingHost>| {
-                window.node_engine = engine;
+                window.view_tree = engine;
                 SiblingHost {
                     leaves: (0..3)
                         .map(|_| cx.new(|_| SiblingLeaf { revision: 0 }))
@@ -2376,9 +2376,9 @@ mod tests {
         };
         let eager = cx.open_window(
             size(px(500.), px(300.)),
-            build(crate::NodeEngine::new_eager()),
+            build(crate::ViewTree::new_eager()),
         );
-        let memoized = cx.open_window(size(px(500.), px(300.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(500.), px(300.)), build(crate::ViewTree::new()));
         cx.run_until_parked();
         let snapshot = |window: crate::WindowHandle<SiblingHost>, cx: &mut TestAppContext| {
             window
@@ -2408,7 +2408,7 @@ mod tests {
             assert_eq!(snapshot(eager, cx), snapshot(memoized, cx));
             memoized
                 .update(cx, |_, window, _| {
-                    let stats = window.node_stats();
+                    let stats = window.view_tree_stats();
                     assert_eq!(stats.rebuilt_scopes, if dirty_all { 4 } else { 2 });
                     assert_eq!(stats.reused_subtrees, if dirty_all { 0 } else { 2 });
                 })
@@ -2485,7 +2485,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_component_state_callbacks_and_unmount(cx: &mut TestAppContext) {
+    fn view_tree_component_state_callbacks_and_unmount(cx: &mut TestAppContext) {
         for cached in [false, true] {
             component_state_callbacks_and_unmount(cached, cx);
         }
@@ -2496,7 +2496,7 @@ mod tests {
         let seen = Rc::new(Cell::new(0));
         let component_renders = Rc::new(Cell::new(0));
         let window = cx.open_window(size(px(200.), px(100.)), |window, _| {
-            window.node_engine = crate::NodeEngine::new();
+            window.view_tree = crate::ViewTree::new();
             ComponentHost {
                 state: state.clone(),
                 seen_revision: seen.clone(),
@@ -2614,11 +2614,11 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_defers_render_notifications_until_next_requested_frame(cx: &mut TestAppContext) {
-        for engine in [crate::NodeEngine::new_eager(), crate::NodeEngine::new()] {
+    fn view_tree_defers_render_notifications_until_next_requested_frame(cx: &mut TestAppContext) {
+        for engine in [crate::ViewTree::new_eager(), crate::ViewTree::new()] {
             let renders = Rc::new(Cell::new(0));
             let window = cx.open_window(size(px(100.), px(100.)), |window, _| {
-                window.node_engine = engine;
+                window.view_tree = engine;
                 NotifyDuringRender {
                     renders: renders.clone(),
                 }
@@ -2651,7 +2651,7 @@ mod tests {
     /// not its owner's; when the owner is clean and reused, the notification must still
     /// reach the window.
     #[gpui::test]
-    fn node_engine_tracks_entities_read_only_by_a_reused_deferred_root(cx: &mut TestAppContext) {
+    fn view_tree_tracks_entities_read_only_by_a_reused_deferred_root(cx: &mut TestAppContext) {
         struct Value(u32);
 
         struct Owner {
@@ -2733,10 +2733,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_nested_reuse_keeps_layout_storage_bounded(cx: &mut TestAppContext) {
+    fn view_tree_nested_reuse_keeps_layout_storage_bounded(cx: &mut TestAppContext) {
         let build = |engine| {
             move |window: &mut Window, cx: &mut Context<NestedRoot>| {
-                window.node_engine = engine;
+                window.view_tree = engine;
                 NestedRoot {
                     prefix: cx.new(|_| IntrinsicLeaf {
                         renders: Rc::new(Cell::new(0)),
@@ -2762,12 +2762,12 @@ mod tests {
         };
         let eager = cx.open_window(
             size(px(400.), px(200.)),
-            build(crate::NodeEngine::new_eager()),
+            build(crate::ViewTree::new_eager()),
         );
-        let memoized = cx.open_window(size(px(400.), px(200.)), build(crate::NodeEngine::new()));
+        let memoized = cx.open_window(size(px(400.), px(200.)), build(crate::ViewTree::new()));
         cx.run_until_parked();
         let baseline = memoized
-            .update(cx, |_, window, _| window.node_stats().layout_nodes)
+            .update(cx, |_, window, _| window.view_tree_stats().layout_nodes)
             .expect("window open");
         for step in 0..30 {
             for window in [eager, memoized] {
@@ -2809,7 +2809,7 @@ mod tests {
             );
             memoized
                 .update(cx, |_, window, _| {
-                    let stats = window.node_stats();
+                    let stats = window.view_tree_stats();
                     assert_eq!(
                         stats.layout_nodes, baseline,
                         "obsolete layout trees must be collected"
@@ -2822,7 +2822,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_reuses_siblings_while_a_deferred_draw_is_open(cx: &mut TestAppContext) {
+    fn view_tree_reuses_siblings_while_a_deferred_draw_is_open(cx: &mut TestAppContext) {
         struct PopoverOwner {
             open: bool,
             renders: Rc<Cell<usize>>,
@@ -2889,7 +2889,7 @@ mod tests {
         );
 
         let live_nodes_with_popover = window
-            .update(cx, |_, window, _| window.node_stats().live_nodes)
+            .update(cx, |_, window, _| window.view_tree_stats().live_nodes)
             .expect("window open");
 
         // A frame caused by a sibling: the popover owner is reused, and with it the root its
@@ -2946,11 +2946,11 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_dependency_changes_dirty_views_without_notifying_them(cx: &mut TestAppContext) {
+    fn view_tree_dependency_changes_dirty_views_without_notifying_them(cx: &mut TestAppContext) {
         let dependency = cx.new(|_| Dependency);
         let renders = Rc::new(Cell::new(0));
         let window = cx.open_window(size(px(100.), px(100.)), |window, _| {
-            window.node_engine = crate::NodeEngine::new();
+            window.view_tree = crate::ViewTree::new();
             CountingLeaf {
                 render_count: renders.clone(),
                 dependency: Some(dependency.clone()),
@@ -2995,11 +2995,11 @@ mod tests {
     }
 
     #[gpui::test]
-    fn node_engine_replaces_dependencies_after_a_render(cx: &mut TestAppContext) {
+    fn view_tree_replaces_dependencies_after_a_render(cx: &mut TestAppContext) {
         let dependency = cx.new(|_| Dependency);
         let renders = Rc::new(Cell::new(0));
         let window = cx.open_window(size(px(100.), px(100.)), |window, _| {
-            window.node_engine = crate::NodeEngine::new();
+            window.view_tree = crate::ViewTree::new();
             CountingLeaf {
                 render_count: renders.clone(),
                 dependency: Some(dependency.clone()),

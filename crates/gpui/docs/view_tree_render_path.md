@@ -1,10 +1,10 @@
-# The node engine's render path, step by step
+# The view tree's render path, step by step
 
-A reading guide to what happens when a window draws a frame under the node engine, for
+A reading guide to what happens when a window draws a frame under the view tree, for
 anyone who wants to reason about its cost. It follows one frame top-down, then one view
 node through its three phases, and ends with where the per-node time goes and what is
 left to take out. Paths are relative to `crates/gpui/src/`; names are the functions to
-read. The companion `node_engine.md` records the decisions and the plan; this document
+read. The companion `view_tree.md` records the decisions and the plan; this document
 is about the mechanics.
 
 ## 1. The shape of a frame
@@ -13,7 +13,7 @@ is about the mechanics.
 Window::draw                                   (window.rs)
   invalidate_entities                          notified entities -> dirty nodes
   draw_frame
-    begin_node_engine_frame                    full refresh? all dirty? drop layouts
+    begin_view_tree_frame                    full refresh? all dirty? drop layouts
     draw_roots
       root_element.request_layout              phase 1: LAYOUT   (mount nodes, reuse or render)
       root_element.prepaint_as_root            phase 2: PREPAINT (compute layout, hitboxes, dispatch nodes)
@@ -21,11 +21,11 @@ Window::draw                                   (window.rs)
       prompt / drag / tooltip prepaint         more roots
       root_element.paint                       phase 3: PAINT    (scene, listeners, cursor styles)
       paint_deferred_draws, prompt/drag/tooltip paint
-    finish_node_engine_frame                   reconcile roots, retire layout trees
+    finish_view_tree_frame                   reconcile roots, retire layout trees
     swap rendered_frame <-> next_frame         events now dispatch against this frame
 ```
 
-The engine (`node_engine.rs`, `NodeEngine`) is owned by the window. It holds:
+The engine (`view_tree.rs`, `ViewTree`) is owned by the window. It holds:
 
 - `nodes: SlotMap<ViewNodeId, ViewNode>` — one node per mounted view occurrence. A node
   keeps its `output: NodeOutput` (the recording), `layout: Option<LayoutId>` (root of its
@@ -59,12 +59,12 @@ Nothing happens to nodes at notify time. When the window next draws:
 // window.rs
 fn invalidate_entities(&mut self) {
     let mut views = self.invalidator.take_views();        // the notified entity ids
-    self.node_engine.invalidate_entities(&views);          // -> dirty nodes
+    self.view_tree.invalidate_entities(&views);          // -> dirty nodes
     views.clear();
     self.invalidator.replace_views(views);
 }
 
-// node_engine.rs
+// view_tree.rs
 pub(crate) fn invalidate_consumers(&mut self, source: EntityId) {
     let Some(consumers) = self.consumers.get(&source) else { return };
     for consumer in consumers {
@@ -89,10 +89,10 @@ the path to the root (stopping early), plus the pre-existing `mark_view_dirty` w
 
 ```rust
 // window.rs
-fn begin_node_engine_frame(&mut self) {
+fn begin_view_tree_frame(&mut self) {
     let full_refresh_reason = /* window.refresh(), image eviction, prompt, a11y, inspector */;
-    self.node_engine.begin_frame(full_refresh_reason);     // full refresh => all nodes dirty
-    if self.node_engine.discard_dirty_layouts() {          // every node dirty?
+    self.view_tree.begin_frame(full_refresh_reason);     // full refresh => all nodes dirty
+    if self.view_tree.discard_dirty_layouts() {          // every node dirty?
         self.layout_engine.clear();                         // then nothing can reuse a layout: drop the tree
     }
 }
@@ -115,26 +115,26 @@ pushes a dispatch node before calling `request_layout`.
 // view.rs, ViewElement::request_layout, node path (abridged)
 let cache_key = window.view_node_key(Bounds::default());        // (a) ambient inputs, no bounds yet
 let node_id = window.begin_node_occurrence(id.clone(), &cache_key);   // (b) find or create the node
-let mut owned = window.node_engine.take_owned_entity(node_id);       // (c) component instance, if any
+let mut owned = window.view_tree.take_owned_entity(node_id);       // (c) component instance, if any
 let entity_id = view.entity(&mut owned, window, cx);
-window.node_engine.store_owned_entity(node_id, owned);
-window.node_engine.set_view_id(node_id, entity_id);
+window.view_tree.store_owned_entity(node_id, owned);
+window.view_tree.set_view_id(node_id, entity_id);
 
-if let Some(layout) = window.node_engine.reuse_layout(node_id, &cache_key)   // (d) clean, painted, key matches?
+if let Some(layout) = window.view_tree.reuse_layout(node_id, &cache_key)   // (d) clean, painted, key matches?
         .filter(|layout| window.layout_is_retained(*layout)) {
     window.finish_node_phase(node_id, false);               // grafted: nothing rendered
     return (layout, None);
 }
 
 window.restart_node_render(node_id);                        // (e) reseed text (unless cached last frame), reset output
-let mut reads = window.node_engine.take_dependency_set();
+let mut reads = window.view_tree.take_dependency_set();
 let (layout, element) = cx.track_reads(&mut reads, |cx| {  // (f) record entity reads
     window.with_rendered_view(entity_id, |window| {
         let mut element = view.render(window, cx).into_any_element();   // the user's render
         (element.request_layout(window, cx), element)                   // children mount here, recursively
     })
 });
-let previous = window.node_engine.store_layout(node_id, layout);    // (g) new Taffy root
+let previous = window.view_tree.store_layout(node_id, layout);    // (g) new Taffy root
 window.retire_layout(previous);                                     //     drop the old subtree
 window.finish_node_phase(node_id, true);
 ```
@@ -250,7 +250,7 @@ window.finish_node_phase(node_id, rendered);
   the public lanes the renderers upload (`sort_lane`: 12-byte keys, one gather; paths and
   surfaces are permuted in place) and keeps a painted→sorted position per primitive, so a
   record still addresses its primitives after the sort. Replaying a grafted node
-  (`NodeEngine::replay_scene`) walks its kinds, copies each primitive out of the *rendered*
+  (`ViewTree::replay_scene`) walks its kinds, copies each primitive out of the *rendered*
   frame at the cursor, and paints it into the next frame — which records the node anew at
   its new positions. A node is therefore reusable only when its record is from the frame
   just drawn (`painted_frame + 1 == frame`); one that prepainted without painting renders
@@ -268,7 +268,7 @@ window.finish_node_phase(node_id, rendered);
 ## 7. Ending a frame
 
 ```rust
-// node_engine.rs
+// view_tree.rs
 pub(crate) fn finish_frame(&mut self) -> Option<Bounds<Pixels>> {
     swap(&mut self.roots, &mut self.next_roots);      // next_roots was filled in drawing order
     for stale in old roots not in roots { self.remove_subtree(stale) }   // unmount
@@ -288,7 +288,7 @@ which also removes their dependencies from `consumers` and collects their layout
 Every query is a walk over `roots` in drawing order, descending into `Child` splices:
 
 ```rust
-// node_engine.rs
+// view_tree.rs
 pub(crate) fn walk(&self, frame: FrameOutput, mut visit: impl FnMut(OutputSlot, &OutputItem) -> ControlFlow<()>) {
     for phase in [Layout, Prepaint, Paint] {
         for root in self.frame_roots(frame) { self.walk_output(*root, phase, &mut visit)?; }
@@ -306,7 +306,7 @@ real window (10–30k items) perhaps 10–30 µs per query, two or three per mou
 Measured on `Siblings/all dirty` (N trivial views, all dirty every frame): 0.5–0.7 µs
 per node per frame over `main` (64: +15.7%, 256: +17.0%, 1024: +21.7%), and on
 `Elements/all dirty` (one view, N id'd `div`s): 0.10–0.13 µs per element (+3.6% to
-+4.6%). Full table and charts in `node_engine.md` under "Measuring". By ablation of the
++4.6%). Full table and charts in `view_tree.md` under "Measuring". By ablation of the
 per-node overhead on the 512 fixture, before the passes listed below:
 
 | mechanism | share | notes |
@@ -361,5 +361,5 @@ reached it and it leaked one tree per item per frame between full refreshes.
    sets**, with counters for the stats.
 
 Each is a bounded change under the same contract; the oracle tests
-(`node_engine::oracle_tests`, `test_workspace_rendering_stress`) are the check. The
-fixture and the paired-benchmark protocol are in `node_engine.md` under "Measuring".
+(`view_tree::oracle_tests`, `test_workspace_rendering_stress`) are the check. The
+fixture and the paired-benchmark protocol are in `view_tree.md` under "Measuring".

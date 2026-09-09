@@ -664,7 +664,7 @@ fn test_ime_platform_handler_across_memoized_frames(cx: &mut TestAppContext) {
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update(|window, _| {
-            let stats = window.node_stats();
+            let stats = window.view_tree_stats();
             assert!(
                 stats.reused_subtrees > 0,
                 "IME test must replay a cached handler: {stats:?}"
