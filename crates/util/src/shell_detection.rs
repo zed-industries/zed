@@ -16,7 +16,9 @@ use std::sync::LazyLock;
 use collections::HashSet;
 
 use crate::get_system_shell;
-use crate::shell::{get_windows_bash, get_windows_system_shell};
+#[cfg(target_os = "windows")]
+use crate::shell::get_windows_bash;
+use crate::shell::get_windows_system_shell;
 
 /// Where a [`DetectedShell`] came from. The menu uses this to group entries
 /// (e.g. configured vs `/etc/shells` vs PATH-resolved).
@@ -323,6 +325,7 @@ fn detect_windows_inner(
     }
 
     // Git Bash (Scoop shim, or alongside a git-for-windows install).
+    #[cfg(target_os = "windows")]
     if let Some(bash) = get_windows_bash() {
         let bash_path = PathBuf::from(bash);
         if path_exists(&bash_path) && seen.insert(bash_path.clone()) {
@@ -339,7 +342,7 @@ fn detect_windows_inner(
 }
 
 /// Enumerate WSL distros via `wsl.exe -l -q`, returning one entry per
-/// non-`docker-desktop*` distro on Windows builds >= 19041.
+/// non-`docker-desktop*` distro.
 ///
 /// **Currently a stub.** Deferred because:
 /// 1. WSL probing requires spawning `wsl.exe`, which can't be exercised

@@ -678,32 +678,17 @@ impl TerminalPanel {
         };
         terminal_panel
             .update(cx, |panel, cx| {
-                if action.local {
-                    // Bypass `add_terminal_shell_with` (which hard-codes
-                    // `force_local=false`) so the override survives the
-                    // remote-drop in `create_terminal_shell_internal`.
-                    // `profile_name` is None: detected shells don't
-                    // round-trip through persistence (the detected set
-                    // varies per host).
-                    panel.add_terminal_shell_internal(
-                        true,
-                        None,
-                        Some(shell),
-                        None,
-                        RevealStrategy::Always,
-                        window,
-                        cx,
-                    )
-                } else {
-                    panel.add_terminal_shell_with(
-                        None,
-                        Some(shell),
-                        None,
-                        RevealStrategy::Always,
-                        window,
-                        cx,
-                    )
-                }
+                // `profile_name` is None: detected shells don't round-trip
+                // through persistence (the detected set varies per host).
+                panel.add_terminal_shell_with(
+                    action.local,
+                    None,
+                    Some(shell),
+                    None,
+                    RevealStrategy::Always,
+                    window,
+                    cx,
+                )
             })
             .detach_and_log_err(cx);
     }
@@ -1109,6 +1094,7 @@ impl TerminalPanel {
             }
         })
     }
+
     fn spawn_pending_terminal(
         &mut self,
         window: &mut Window,
@@ -3746,7 +3732,7 @@ mod tests {
         let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
 
         // When local=true, spawn_detected_shell must route
-        // through the force_local branch (add_terminal_shell_internal with
+        // through the force_local branch (add_terminal_shell_with with
         // force_local=true) so the override survives any remote-drop. In a
         // local project the spawn should still succeed and produce a
         // terminal with the requested program.
