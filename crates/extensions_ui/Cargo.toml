@@ -50,6 +50,7 @@ db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 paths.workspace = true
 project = { workspace = true, features = ["test-support"] }
