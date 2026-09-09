@@ -10455,6 +10455,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "menu",
  "picker",
  "picker_preview",
  "project",

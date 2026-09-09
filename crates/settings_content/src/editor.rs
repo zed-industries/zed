@@ -911,6 +911,8 @@ pub enum OpenResultsIn {
     MultiBuffer,
     /// Open the results in a filterable picker.
     Picker,
+    /// Open the results in a docked panel with a navigable list.
+    Panel,
 }
 
 /// How to scroll the target into view when navigating to a definition or reference.

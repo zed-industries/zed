@@ -41920,6 +41920,12 @@ fn test_open_results_in_action_argument_parsing() {
             .open_results_in,
         Some(OpenResultsIn::MultiBuffer),
     );
+    assert_eq!(
+        serde_json::from_value::<FindAllReferences>(json!({ "open_results_in": "panel" }))
+            .unwrap()
+            .open_results_in,
+        Some(OpenResultsIn::Panel),
+    );
 
     // The argument coexists with `FindAllReferences`'s existing field, which
     // keeps its own default when only `open_results_in` is provided.

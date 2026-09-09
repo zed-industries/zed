@@ -463,6 +463,7 @@
   //
   // 1. Open the results in a multibuffer: `multi_buffer` (default)
   // 2. Open the results in a filterable picker: `picker`
+  // 3. Open the results in a docked panel with a navigable list: `panel`
   "lsp_results_location": "multi_buffer",
   // Which level to use to filter out diagnostics displayed in the editor.
   //
