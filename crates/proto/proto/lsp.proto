@@ -673,6 +673,11 @@ message RefreshDocumentLinks {
   optional uint64 server_id = 2;
 }
 
+message RefreshDocumentHighlights {
+  uint64 project_id = 1;
+  optional uint64 server_id = 2;
+}
+
 message RefreshFoldingRanges {
   uint64 project_id = 1;
   optional uint64 server_id = 2;
