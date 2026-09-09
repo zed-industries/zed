@@ -252,6 +252,46 @@ thousand frames that redraw one row at a time (a 3-pane workspace at 1600×1000 
 three editors holds 20 nodes). For real use, sample RSS during the session below
 (`ps -o rss= -p <pid>` once a second) alongside the frame log.
 
+### Scene complexity: what fits in a frame
+
+The fixtures above are slices; `Complexity/scene/v{V}-e{E}-p{P}-f{F}` is the space they
+cut through. `V` views (nodes) each render `E` id'd `div`s of one of three weights —
+**light** (a quad), **medium** (quad + 3-glyph label, `P=4`), **heavy** (quad + shadow +
+10-glyph label, `P=12`) — and `F`% of the views are notified every frame. Twenty points
+(`docs/view_tree/complexity.sh`, paired like `matrix.sh`) fit a frame cost model
+(`complexity.py`, weighted least squares on relative error):
+
+- `main`: `t = c + Σ n_k·m_k + q·(N/100)²` — every element is redrawn whatever changed.
+  Per element: light **0.85 µs**, medium **3.6 µs**, heavy **11.9 µs**; `q` = 2.3 µs per
+  (100 elements)² is the frame-wide work that grows faster than the scene (the bounds
+  tree, the cache footprint) — at 8k elements it is a third of the frame.
+- branch: the same per *dirty* element (1.2 / 4.0 / 11.6 µs), a *clean* element replayed
+  at **0.18 / 1.2 / 8.3 µs**, `q` = 0.77, plus 0.55 µs per dirty node from `Siblings`.
+
+Mean error 2% (`main`) and 4% (branch), worst 8% / 14% at the 8k-element points. The
+distribution of weights does not matter beyond the counts — cost is linear in each kind
+— and cost follows dirty *elements*, not dirty views, so a big node refreshing is many
+dirty elements and a micro node one.
+
+![surface](view_tree/complexity_surface.png)
+
+Read the left panel as a Zed-sized scene (2048 medium elements, ~8k primitives): `main`
+spends 8.3 ms on it however little changed; the branch spends 2.6 ms when nothing did,
+3.0 ms at 6% (one pane typing), 3.9 ms at 25%, and meets `main` only when everything is
+dirty. The right panel is 8192 elements, past what either engine fits in a 120 Hz frame
+when it all changes, but 15 ms replayed. `complexity_fit_budget.png` inverts this: how
+many medium elements a 4 ms or 8.3 ms frame affords against the share changing.
+`complexity.html` (open it locally) puts sliders on the model — light/medium/heavy
+counts, views, share changing, budget — with presets and the measured `Workbench` rows
+beside it.
+
+What the replay floor is made of matters for what comes next: a clean medium element
+still costs 1.2 µs and a clean heavy one 8.3 µs, against 0.18 for a bare quad, because
+replaying a primitive re-inserts it into the frame's bounds tree to find its draw order,
+and glyphs and shadows overlap their neighbours. Replay copies are cheap; the bounds
+tree is the floor. Keeping draw orders across frames for unchanged layers is the
+follow-up that would move it.
+
 ### Real use
 
 Zed already logs every drawn frame when `ZED_MEASUREMENTS=1` is set (`frame duration:

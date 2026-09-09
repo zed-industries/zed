@@ -1,0 +1,55 @@
+<!doctype html><meta charset="utf-8"><title>GPUI view tree: frame cost model</title>
+<style>body{font:14px system-ui;margin:2em;max-width:940px;color:#222}label{display:block;margin:.35em 0}input[type=range]{width:300px;vertical-align:middle}
+table{border-collapse:collapse;margin:1em 0}td,th{padding:.3em .8em;border-bottom:1px solid #ddd;text-align:right}th:first-child,td:first-child{text-align:left}
+canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small{color:#666}button{margin:.2em .3em .2em 0}</style>
+<h2>GPUI view tree — frame cost model</h2>
+<p>Fitted to the <code>Complexity</code> sweep (<code>complexity.csv</code>, 20 points, <code>main</code> at 5a9b9558db). An element is <b>light</b> (a quad), <b>medium</b> (quad + 3-glyph label) or <b>heavy</b> (quad + shadow + 10-glyph label). <code>main</code>: <code>t = c + Σ n<sub>k</sub>·m<sub>k</sub> + q·(N/100)²</code>; branch: the same per <em>dirty</em> element plus a cheaper <em>clean</em> (replayed) cost per element, plus 0.55 µs per dirty view from the Siblings sweep. Mean |error| 2% / 4% (main / branch), worst 8% / 14%, at the 8k-element points where the frame grows faster than the scene.</p>
+<p>Presets: <span id=presets></span></p>
+<label>light elements (a quad) <input id=L type=range min=0 max=20000 step=50 value=0> <span id=Lv></span></label>
+<label>medium elements (quad + 3 glyphs) <input id=M type=range min=0 max=20000 step=50 value=2048> <span id=Mv></span></label>
+<label>heavy elements (quad + shadow + 10 glyphs) <input id=H type=range min=0 max=5000 step=10 value=0> <span id=Hv></span></label>
+<label>views <input id=V type=range min=1 max=512 value=16> <span id=Vv></span> <small>(0.55 µs per dirty view; not fitted)</small></label>
+<label>elements changing per frame <input id=F type=range min=0 max=100 value=25> <span id=Fv></span>%</label>
+<label>frame budget <input id=B type=range min=1 max=17 step=0.1 value=4> <span id=Bv></span> ms</label>
+<table><tr><th></th><th>main</th><th>branch</th></tr>
+<tr><td>frame time</td><td class=m id=tm></td><td class=n id=tb></td></tr>
+<tr><td>scale of this scene that fits the budget (× the element counts above)</td><td class=m id=sm></td><td class=n id=sb></td></tr>
+<tr><td>… i.e. total elements</td><td class=m id=em></td><td class=n id=eb></td></tr></table>
+<canvas id=c width=900 height=320></canvas>
+<p><small>Curve: frame time against the share of elements changing, for the scene above. Grey: <code>main</code>; green: branch; dashed: budget; vertical: your setting.</small></p>
+<h3>Measured, not modelled: the Zed-shaped fixtures</h3>
+<p>From <code>matrix.sh</code>: a 48-row list, four panels and an editor at 1600×1000 (<code>Workbench</code>), Criterion medians.</p>
+<table><tr><th>fixture</th><th>main</th><th>branch</th><th>change</th></tr><tr><td>Workbench/update/row</td><td class=m>765.01 µs</td><td class=n>285.32 µs</td><td>-63.800%</td></tr><tr><td>Workbench/update/editor</td><td class=m>1.5589 ms</td><td class=n>899.02 µs</td><td>-42.194%</td></tr><tr><td>Workbench/update/mixed</td><td class=m>1.1903 ms</td><td class=n>685.10 µs</td><td>-42.565%</td></tr><tr><td>Workbench/update/full</td><td class=m>1.6224 ms</td><td class=n>1.2431 ms</td><td>-23.057%</td></tr></table>
+<p><small>Coefficients (µs): main — c -139.84, light 0.85, medium 3.57, heavy 11.89, q 2.27; branch — c -218.22, dirty light 1.18, dirty medium 3.98, dirty heavy 11.59, clean light 0.18, clean medium 1.19, clean heavy 8.29, q 0.77.</small></p>
+<script>
+const M=[-139.84289721337763, 0.8524987970794011, 3.5736393700495634, 11.892341469820762, 2.269392046448264], B=[-218.22095395766462, 1.1827006745323234, 3.976729839383562, 11.592066683636467, 0.17816167768149171, 1.1949721959947799, 8.288148836614711, 0.7692595055901922], NODE=0.55;
+function tmain(n){const N=n[0]+n[1]+n[2];return M[0]+M[1]*n[0]+M[2]*n[1]+M[3]*n[2]+M[4]*(N/100)**2;}
+function tbranch(n,f,V){const N=n[0]+n[1]+n[2];let t=B[0]+B[7]*(N/100)**2+NODE*(f==0?0:Math.max(1,Math.ceil(f*V)));
+for(let k=0;k<3;k++){const d=n[k]*f;t+=B[1+k]*d+B[4+k]*(n[k]-d);}return t;}
+function scale(f,budget){let lo=0,hi=1024;for(let i=0;i<40;i++){const mid=(lo+hi)/2;if(f(mid)<=budget*1000)lo=mid;else hi=mid;}return lo;}
+const $=id=>document.getElementById(id);
+function fmt(us){return us>=1000?(us/1000).toFixed(2)+' ms':us.toFixed(0)+' µs';}
+const PRESETS={
+ 'sweep baseline: 2048 medium, 25% changing':[0,2048,0,16,25],
+ 'typing in one of 16 panes: 8192 medium, 6%':[0,8192,0,16,6],
+ 'dashboard: 10k light, one widget animating (1%)':[10000,0,0,50,1],
+ 'scrolling list: 1000 heavy rows, all changing':[0,0,1000,1,100],
+ 'everything dirty (resize): 2048 medium':[0,2048,0,16,100],
+};
+function draw(){const n=[+$('L').value,+$('M').value,+$('H').value],V=+$('V').value,F=+$('F').value,budget=+$('B').value,f=F/100;
+$('Lv').textContent=n[0];$('Mv').textContent=n[1];$('Hv').textContent=n[2];$('Vv').textContent=V;$('Fv').textContent=F;$('Bv').textContent=budget;
+const tm=tmain(n),tb=tbranch(n,f,V);$('tm').textContent=fmt(tm);$('tb').textContent=fmt(tb);
+const N=n[0]+n[1]+n[2];const sm=scale(s=>tmain(n.map(x=>x*s)),budget),sb=scale(s=>tbranch(n.map(x=>x*s),f,V),budget);
+$('sm').textContent=sm.toFixed(2)+'×';$('sb').textContent=sb.toFixed(2)+'×';$('em').textContent=Math.round(N*sm);$('eb').textContent=Math.round(N*sb);
+const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=44,W=cv.width-2*pad,H=cv.height-2*pad;
+const ymax=Math.max(tm,budget*1000,tb)*1.15;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
+g.fillStyle='rgba(150,150,150,.5)';g.fillRect(X(0),Y(tm),W,Y(0)-Y(tm));
+g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(tbranch(n,p/100,V)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(42,157,143,.7)';g.fill();
+g.strokeStyle='#e76f51';g.setLineDash([4,4]);g.beginPath();g.moveTo(X(0),Y(budget*1000));g.lineTo(X(100),Y(budget*1000));g.stroke();g.setLineDash([]);
+g.beginPath();g.moveTo(X(F),Y(0));g.lineTo(X(F),Y(ymax/1.15));g.stroke();
+g.fillStyle='#333';g.font='12px system-ui';g.fillText('0%',X(0)-8,Y(0)+16);g.fillText('100% of elements changing',X(100)-140,Y(0)+16);g.fillText(fmt(ymax/1.15),2,Y(ymax/1.15)+4);g.fillText('0',24,Y(0)+4);
+g.fillStyle='#777';g.fillText('main '+fmt(tm),X(2),Y(tm)-4);g.fillStyle='#2a9d8f';g.fillText('branch '+fmt(tb)+' at '+F+'%',Math.min(X(F)+4,X(100)-150),Y(tb)-4);}
+for(const id of ['L','M','H','V','F','B'])$(id).addEventListener('input',draw);
+for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value]=v;draw();};$('presets').appendChild(b);}
+draw();
+</script>
