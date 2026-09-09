@@ -1928,6 +1928,9 @@ impl AgentPanel {
                 auto_submit: false,
             }
         });
+        // This draft is parked off-screen, so creating it must not repoint
+        // `selected_agent` away from the thread `load` already restored.
+        let selected_agent_before_draft = self.selected_agent.clone();
         let thread = self.create_agent_thread_with_server(
             agent,
             None,
@@ -1940,6 +1943,9 @@ impl AgentPanel {
             window,
             cx,
         );
+        if self.selected_agent != selected_agent_before_draft {
+            self.set_selected_agent_and_persist(selected_agent_before_draft, cx);
+        }
         self.observe_draft_editor(&thread.conversation_view, cx);
         self.draft_thread = Some(thread.conversation_view);
     }
@@ -9142,6 +9148,102 @@ mod tests {
                 &Agent::Stub,
                 "restored draft should still be bound to its original Agent::Stub, \
                  not the panel's current `selected_agent`"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_restore_new_draft_does_not_overwrite_displayed_thread_agent(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| workspace.set_random_database_id());
+
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        let agent_a = Agent::Custom {
+            id: "my-custom-agent".into(),
+        };
+        let connection_a = StubAgentConnection::new()
+            .with_agent_id("my-custom-agent".into())
+            .with_telemetry_id("my-custom-agent".into());
+        connection_a.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("response a".into()),
+        )]);
+        open_thread_with_custom_connection(&panel, connection_a, &mut cx);
+        let thread_id_a = active_thread_id(&panel, &cx);
+        send_message(&panel, &mut cx);
+        cx.run_until_parked();
+
+        // The draft must stay empty so it stays parked in `draft_thread`
+        // rather than moving to `retained_threads`.
+        let other_agent = Agent::Stub;
+        let _stub_connection =
+            crate::test_support::set_stub_agent_connection(StubAgentConnection::new());
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_agent = other_agent.clone();
+            panel.activate_draft(true, AgentThreadSource::AgentPanel, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.load_agent_thread(
+                agent_a.clone(),
+                thread_id_a,
+                None,
+                None,
+                true,
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert_eq!(panel.selected_agent, agent_a);
+            assert_eq!(panel.active_thread_id(cx), Some(thread_id_a));
+            assert!(panel.draft_thread.is_some());
+        });
+
+        panel.update(&mut cx, |panel, cx| panel.serialize(cx));
+        cx.run_until_parked();
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let reloaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        reloaded_panel.read_with(&cx, |panel, cx| {
+            assert_eq!(
+                panel.active_thread_id(cx),
+                Some(thread_id_a),
+                "reload should restore thread A as the displayed thread"
+            );
+            assert_eq!(
+                panel.selected_agent, agent_a,
+                "header's selected_agent must describe the displayed thread A, \
+                 not the parked draft's `other-agent` binding"
             );
         });
     }
