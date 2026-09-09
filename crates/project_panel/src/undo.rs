@@ -150,13 +150,20 @@ use workspace::{
         NotificationId, markdown_style, simple_message_notification::MessageNotification,
     },
 };
-use worktree::CreatedEntry;
+use worktree::{CreatedEntry, Worktree};
 
 enum Operation {
     Trash(ProjectPath),
     Rename(ProjectPath, ProjectPath),
     Restore(WorktreeId, TrashId),
     Batch(Vec<Operation>),
+    /// Creates an empty directory, idempotently.
+    /// Meant to only be used when decomposing a [`Self::Rename`] that has to
+    /// create parent directories.
+    CreateDir(ProjectPath),
+    /// Removes a directory, but only if it is empty.
+    /// Meant to only be used when decomposing a [`Self::Rename`].
+    RemoveDir(ProjectPath),
 }
 
 impl Operation {
@@ -236,6 +243,14 @@ impl Operation {
 
                 Change::Batched(changes)
             }
+            Operation::CreateDir(path) => {
+                undo_manager.create_dir(&path, cx).await?;
+                Change::DirCreated(path)
+            }
+            Operation::RemoveDir(path) => {
+                undo_manager.remove_dir(&path, cx).await?;
+                Change::DirRemoved(path)
+            }
         };
 
         Ok(change)
@@ -243,13 +258,13 @@ impl Operation {
 
     fn trash_paths<'a>(&'a self, paths: &mut Vec<&'a ProjectPath>) {
         match self {
-            Operation::Trash(path) => paths.push(path),
-            Operation::Batch(operations) => {
+            Self::Trash(path) => paths.push(path),
+            Self::Batch(operations) => {
                 for operation in operations {
                     operation.trash_paths(paths);
                 }
             }
-            Operation::Rename(..) | Operation::Restore(..) => {}
+            Self::Rename(..) | Self::Restore(..) | Self::CreateDir(..) | Self::RemoveDir(..) => {}
         }
     }
 }
@@ -261,6 +276,8 @@ pub(crate) enum Change {
     Renamed(ProjectPath, ProjectPath),
     Restored(ProjectPath),
     Batched(Vec<Change>),
+    DirCreated(ProjectPath),
+    DirRemoved(ProjectPath),
 }
 
 impl Change {
@@ -270,6 +287,8 @@ impl Change {
             Change::Trashed(worktree_id, trash_id) => Operation::Restore(worktree_id, trash_id),
             Change::Renamed(from, to) => Operation::Rename(to, from),
             Change::Restored(project_path) => Operation::Trash(project_path),
+            Change::DirCreated(path) => Operation::RemoveDir(path),
+            Change::DirRemoved(path) => Operation::CreateDir(path),
             // When inverting a batch of operations, we reverse the order of
             // operations to handle dependencies between them. For example, if a
             // batch contains the following order of operations:
@@ -284,6 +303,31 @@ impl Change {
             }
         }
     }
+}
+
+/// Returns the parent directories of `path` that do not yet exist in the given
+/// worktree and would therefore be created when an entry is placed at `path`,
+/// ordered from the deepest to the shallowest.
+pub(crate) fn missing_parent_dirs(
+    worktree: &Worktree,
+    worktree_id: WorktreeId,
+    path: &RelPath,
+) -> Vec<ProjectPath> {
+    let mut dirs = Vec::new();
+    let mut current = path.parent();
+    while let Some(parent) = current {
+        if parent.is_empty() {
+            break;
+        }
+        if worktree.entry_for_path(parent).is_none() {
+            dirs.push(ProjectPath {
+                worktree_id,
+                path: parent.into_arc(),
+            });
+        }
+        current = parent.parent();
+    }
+    dirs
 }
 
 // Imagine pressing undo 10000+ times?!
@@ -641,6 +685,62 @@ impl Inner {
                 err
             }
         })
+    }
+
+    /// Creates an empty directory at `path`, doing nothing if it already
+    /// exists.
+    async fn create_dir(&self, path: &ProjectPath, cx: &mut AsyncApp) -> Result<()> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Err(anyhow!("Failed to obtain workspace."));
+        };
+
+        let task = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                if project.entry_for_path(path, cx).is_some() {
+                    return None;
+                }
+                Some(project.create_entry(path.clone(), true, cx))
+            })
+        });
+
+        if let Some(task) = task {
+            task.await?;
+        }
+
+        Ok(())
+    }
+
+    /// Removes the directory at `path`, but only if it still exists and is
+    /// empty; otherwise it is left in place.
+    async fn remove_dir(&self, path: &ProjectPath, cx: &mut AsyncApp) -> Result<()> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Err(anyhow!("Failed to obtain workspace."));
+        };
+
+        let task = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                let worktree = project.worktree_for_id(path.worktree_id, cx)?;
+
+                let entry_id = {
+                    let worktree = worktree.read(cx);
+                    let entry = worktree.entry_for_path(path.path.as_ref())?;
+                    if !entry.is_dir()
+                        || worktree.child_entries(path.path.as_ref()).next().is_some()
+                    {
+                        return None;
+                    }
+                    entry.id
+                };
+
+                project.delete_entry(entry_id, cx)
+            })
+        });
+
+        if let Some(task) = task {
+            task.await?;
+        }
+
+        Ok(())
     }
 
     /// Trashes the specified `project_path` after prompting the user for

@@ -150,9 +150,14 @@ pub struct LanguageConfig {
 impl LanguageConfig {
     pub const FILE_NAME: &str = "config.toml";
 
+    #[inline(never)]
+    pub fn from_toml(config: &str) -> Result<Self, toml::de::Error> {
+        toml::from_str::<Self>(config)
+    }
+
     pub fn load(config_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let config = std::fs::read_to_string(config_path.as_ref())?;
-        toml::from_str(&config).map_err(Into::into)
+        Self::from_toml(&config).map_err(anyhow::Error::from)
     }
 }
 

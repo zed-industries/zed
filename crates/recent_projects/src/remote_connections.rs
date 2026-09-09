@@ -6,7 +6,6 @@ use std::{
 use anyhow::{Context as _, Result};
 use askpass::EncryptedPassword;
 use editor::Editor;
-use extension_host::ExtensionStore;
 use futures::{FutureExt as _, channel::oneshot, select};
 use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
 
@@ -246,7 +245,6 @@ pub async fn open_remote_project(
         (window, workspace)
     };
 
-    let mut remote_workspace = None;
     loop {
         let (cancel_tx, mut cancel_rx) = oneshot::channel();
         let delegate = window.update(cx, {
@@ -413,8 +411,7 @@ pub async fn open_remote_project(
                 });
             }
 
-            Ok((workspace, items)) => {
-                remote_workspace = workspace;
+            Ok((_, items)) => {
                 navigate_to_positions(&window, items, &paths_with_positions, cx);
             }
         }
@@ -422,15 +419,6 @@ pub async fn open_remote_project(
         break;
     }
 
-    if let Some(remote_workspace) = remote_workspace {
-        remote_workspace.update(cx, |workspace, cx| {
-            if let Some(client) = workspace.project().read(cx).remote_client()
-                && let Some(extension_store) = ExtensionStore::try_global(cx)
-            {
-                extension_store.update(cx, |store, cx| store.register_remote_client(client, cx));
-            }
-        });
-    }
     Ok(window)
 }
 

@@ -11,6 +11,9 @@ workspace = true
 [lib]
 path = "src/language_models.rs"
 
+[features]
+test-support = []
+
 [dependencies]
 ai_onboarding.workspace = true
 async-lock.workspace = true
@@ -77,5 +80,7 @@ gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
-pretty_assertions.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-shear]
+ignored = ["component"]
