@@ -292,7 +292,7 @@ impl Project {
     /// Same as [`create_terminal_shell`](Self::create_terminal_shell) but lets
     /// the caller supply a profile-derived shell override. The override is
     /// dropped (with a `log::warn!`) when the project is remote and
-    /// `force_local` is false — see D9.
+    /// `force_local` is false.
     pub fn create_terminal_shell_with(
         &mut self,
         cwd: Option<PathBuf>,
@@ -314,7 +314,7 @@ impl Project {
 
     /// Same as [`create_local_terminal`](Self::create_local_terminal) but
     /// accepts a profile-derived shell override. Local terminals always
-    /// honor the override (D9: only remote, non-`force_local` terminals
+    /// honor the override (only remote, non-`force_local` terminals
     /// drop it).
     pub fn create_local_terminal_with(
         &mut self,
@@ -335,7 +335,7 @@ impl Project {
     ///
     /// `shell_override`, when set, replaces `terminal.shell` at both consumption
     /// sites (the program/ShellKind selection and the `TerminalBuilder::new`
-    /// call). D9: the override is dropped for remote, non-`force_local`
+    /// call). The override is dropped for remote, non-`force_local`
     /// terminals and a warning is logged.
     fn create_terminal_shell_internal(
         &mut self,
@@ -360,7 +360,7 @@ impl Project {
         let detect_venv = settings.detect_venv.as_option().is_some();
         let local_path = if is_via_remote { None } else { path.clone() };
 
-        // D9: profile overrides only apply to local (or force_local) terminals.
+        // Profile overrides only apply to local (or force_local) terminals.
         // Dropping the override here keeps the rest of the spawn path unchanged.
         let shell_override = if is_via_remote && shell_override.is_some() {
             log::warn!(
@@ -395,7 +395,7 @@ impl Project {
         } else {
             self.remote_client.clone()
         };
-        // D5: apply the override at BOTH consumption sites — program/ShellKind
+        // Apply the override at BOTH consumption sites — program/ShellKind
         // selection below and the TerminalBuilder::new call inside the spawn.
         // Use `effective_shell` consistently.
         let shell = match &remote_client {
@@ -405,7 +405,7 @@ impl Project {
                 .unwrap_or_else(get_default_system_shell),
             None => effective_shell.program(),
         };
-        // D8: environment resolution stays on the login shell locally
+        // Environment resolution stays on the login shell locally
         // (`get_system_shell()`), independent of the profile. Routing env
         // through a fish/tmux/etc. profile would break venv detection for
         // users whose `$SHELL` differs.

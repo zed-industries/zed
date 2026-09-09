@@ -589,8 +589,9 @@ mod tests {
     // table, so we insert a workspace row via `WorkspaceDb::next_id` before
     // exercising the terminals table writes.
     //
-    // Both rounds share a single #[gpui::test] because the global test DB is
-    // a shared LazyLock and parallel writes against it lock.
+    // Serialize and deserialize share a single #[gpui::test] because the
+    // global test DB is a shared LazyLock and parallel writes against it
+    // lock.
 
     #[gpui::test]
     async fn test_profile_name_round_trip(cx: &mut gpui::TestAppContext) {

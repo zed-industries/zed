@@ -89,10 +89,10 @@ fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
 }
 
 /// Convert a `TerminalProfile` (settings twin) into the runtime `task::Shell`
-/// used by the spawn path. Implements D6 title promotion: when the profile
-/// does not specify a `title_override`, the profile name is used so the tab
-/// is titled after the profile (matching VSCode's `overrideName` default for
-/// generated profiles). The result is always `Shell::WithArguments`, since
+/// used by the spawn path. If the profile does not specify a
+/// `title_override`, the profile name is used so the tab is titled after
+/// the profile (matching VSCode's `overrideName` default for generated
+/// profiles). The result is always `Shell::WithArguments`, since
 /// `title_override` is only expressible on that variant.
 pub fn profile_to_task_shell(name: &str, profile: &TerminalProfile) -> Shell {
     Shell::WithArguments {
@@ -102,10 +102,10 @@ pub fn profile_to_task_shell(name: &str, profile: &TerminalProfile) -> Shell {
     }
 }
 
-/// A view over the configured-vs-detected shell entries used by the P3 "+"
+/// A view over the configured-vs-detected shell entries used by the "+"
 /// menu. Configured profiles shadow detected shells with the same resolved
-/// program path (D2/D8 in the plan); order is configured-first (preserving
-/// IndexMap insertion order), then detected.
+/// program path; order is configured-first (preserving IndexMap insertion
+/// order), then detected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MergedShellEntry {
     /// User-configured profile from `terminal.profiles`.
@@ -119,7 +119,7 @@ pub enum MergedShellEntry {
 
 /// Combine configured profiles with detected shells, dropping any detected
 /// entry whose program path collides with a configured profile's program
-/// (configured wins the slot, per the plan's dedup rule).
+/// (configured wins the slot).
 ///
 /// Comparison is by the profile's program string resolved against the
 /// detected entry's `program` both ways:
@@ -136,10 +136,8 @@ pub fn merge_with_configured_profiles(
     detected: Vec<DetectedShell>,
     profiles: &IndexMap<String, TerminalProfile>,
 ) -> Vec<MergedShellEntry> {
-    let configured_paths: std::collections::HashSet<String> = profiles
-        .values()
-        .map(|p| p.program.clone())
-        .collect();
+    let configured_paths: std::collections::HashSet<String> =
+        profiles.values().map(|p| p.program.clone()).collect();
     let configured_stems: std::collections::HashSet<String> = profiles
         .values()
         .filter_map(|p| {
@@ -182,7 +180,7 @@ pub fn merge_with_configured_profiles(
     entries
 }
 
-/// Single menu entry for the "+" PopoverMenu (P3). Produced by
+/// Single menu entry for the "+" PopoverMenu. Produced by
 /// [`build_menu_entries`], which filters invalid profiles and applies the
 /// escalation threshold. The view layer converts each `MenuEntry` into a
 /// `ContextMenuItem` (`action` for configured, `entry` callback for
@@ -203,7 +201,7 @@ pub enum MenuEntry {
 }
 
 /// Above this many entries, the menu collapses into a single "Select Shell…"
-/// submenu entry per the P3 escalation rule (plan item 11).
+/// submenu entry (keeps the menu manageable when long).
 pub const MENU_ESCALATION_THRESHOLD: usize = 8;
 
 /// Outcome of [`build_menu_entries`]: either render entries inline, or
@@ -228,16 +226,14 @@ pub enum MenuEntryPlan {
 /// * `detected` — output of `util::shell_detection::detect_available_shells`.
 /// * `warnings` — output of `validate_configured_profiles`. Any profile
 ///   named here is **hidden** from the menu (the user can still spawn it
-///   via keymap with a warning, per P3 spec).
+///   via keymap with a warning).
 pub fn build_menu_entries(
     profiles: &IndexMap<String, TerminalProfile>,
     detected: Vec<DetectedShell>,
     warnings: &[ProfileWarning],
 ) -> MenuEntryPlan {
-    let hidden: std::collections::HashSet<&str> = warnings
-        .iter()
-        .map(|w| w.profile_name.as_str())
-        .collect();
+    let hidden: std::collections::HashSet<&str> =
+        warnings.iter().map(|w| w.profile_name.as_str()).collect();
 
     // Hide invalid configured profiles by filtering the IndexMap before
     // merging with detected shells. This also prevents an invalid profile
@@ -320,17 +316,15 @@ fn validate_configured_profiles_with(
 /// absolute path nor resolvable on `PATH`.
 ///
 /// Never blocks terminal spawn — the existing `TerminalError` notification
-/// path handles actual spawn failures. This is purely advisory, matching
-/// the P2-QA-1 contract: invalid programs surface a warning, selection
-/// still routes through the regular spawn-error path.
+/// path handles actual spawn failures. This is purely advisory: invalid
+/// programs surface a warning, selection still routes through the regular
+/// spawn-error path.
 pub fn validate_configured_profiles(
     profiles: &IndexMap<String, TerminalProfile>,
 ) -> Vec<ProfileWarning> {
-    validate_configured_profiles_with(
-        profiles,
-        &|p| p.is_file(),
-        &|program| which::which(program).ok(),
-    )
+    validate_configured_profiles_with(profiles, &|p| p.is_file(), &|program| {
+        which::which(program).ok()
+    })
 }
 
 impl settings::Settings for TerminalSettings {
@@ -341,7 +335,7 @@ impl settings::Settings for TerminalSettings {
         project_content.merge_from_option(content.project.terminal.as_ref());
         let profiles = project_content.profiles.clone().unwrap_or_default();
         let default_profile = project_content.default_profile.clone();
-        // P2 validation: surface a warning per profile whose `program` is
+        // Surface a warning per profile whose `program` is
         // neither an existing absolute path nor resolvable on `PATH`. This
         // is advisory only — spawn still goes through the normal
         // `TerminalError` path if the program is genuinely missing. The
@@ -356,7 +350,7 @@ impl settings::Settings for TerminalSettings {
                 warning.reason
             );
         }
-        // D3 precedence: default_profile (if it resolves) > terminal.shell > System.
+        // Precedence: default_profile (if it resolves) > terminal.shell > System.
         // Unknown default_profile name falls through to terminal.shell with a warning,
         // never silently to System.
         let shell = if let Some(name) = default_profile.as_deref() {
@@ -524,9 +518,7 @@ mod tests {
         }
     }
 
-    fn profile_map(
-        entries: &[(&str, &str)],
-    ) -> collections::IndexMap<String, TerminalProfile> {
+    fn profile_map(entries: &[(&str, &str)]) -> collections::IndexMap<String, TerminalProfile> {
         entries
             .iter()
             .map(|(name, program)| {
@@ -564,10 +556,7 @@ mod tests {
     #[test]
     fn merge_shadows_detected_when_program_path_matches_exactly() {
         let profiles = profile_map(&[("Zsh", "/bin/zsh")]);
-        let detected = vec![
-            detected("zsh", "/bin/zsh"),
-            detected("bash", "/bin/bash"),
-        ];
+        let detected = vec![detected("zsh", "/bin/zsh"), detected("bash", "/bin/bash")];
         let merged = merge_with_configured_profiles(detected, &profiles);
         let labels: Vec<String> = merged
             .iter()
@@ -660,11 +649,7 @@ mod tests {
     #[test]
     fn validate_warns_when_absolute_program_does_not_exist() {
         let profiles = profile_map(&[("Broken", "/definitely/not/a/real/shell")]);
-        let warnings = validate_configured_profiles_with(
-            &profiles,
-            &|_| false,
-            &|_| None,
-        );
+        let warnings = validate_configured_profiles_with(&profiles, &|_| false, &|_| None);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].profile_name, "Broken");
         assert!(warnings[0].reason.contains("not an existing file"));
@@ -673,8 +658,7 @@ mod tests {
     #[test]
     fn validate_warns_when_relative_program_not_on_path() {
         let profiles = profile_map(&[("Nope", "definitely-not-a-real-shell-xyz")]);
-        let warnings =
-            validate_configured_profiles_with(&profiles, &|_| false, &|_| None);
+        let warnings = validate_configured_profiles_with(&profiles, &|_| false, &|_| None);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].profile_name, "Nope");
         assert!(warnings[0].reason.contains("not found on PATH"));
@@ -683,8 +667,7 @@ mod tests {
     #[test]
     fn validate_warns_on_empty_program() {
         let profiles = profile_map(&[("Empty", "")]);
-        let warnings =
-            validate_configured_profiles_with(&profiles, &|_| false, &|_| None);
+        let warnings = validate_configured_profiles_with(&profiles, &|_| false, &|_| None);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].profile_name, "Empty");
         assert!(warnings[0].reason.contains("empty"));
@@ -777,8 +760,8 @@ mod tests {
         // Distinct programs so dedup doesn't collapse them.
         let profiles: Vec<(&str, &str)> = (1..=MENU_ESCALATION_THRESHOLD)
             .map(|i| {
-                let n: &'static str = Box::leak(format!("P{i}").into_boxed_str());
-                let p: &'static str = Box::leak(format!("/bin/p{i}").into_boxed_str());
+                let n: &'static str = Box::leak(format!("n{i}").into_boxed_str());
+                let p: &'static str = Box::leak(format!("/bin/n{i}").into_boxed_str());
                 (n, p)
             })
             .collect();
@@ -793,8 +776,8 @@ mod tests {
     fn menu_collapses_above_threshold() {
         let profiles: Vec<(&str, &str)> = (1..=9)
             .map(|i| {
-                let n: &'static str = Box::leak(format!("P{i}").into_boxed_str());
-                let p: &'static str = Box::leak(format!("/bin/p{i}").into_boxed_str());
+                let n: &'static str = Box::leak(format!("n{i}").into_boxed_str());
+                let p: &'static str = Box::leak(format!("/bin/n{i}").into_boxed_str());
                 (n, p)
             })
             .collect();
@@ -886,12 +869,12 @@ mod tests {
         // 10 profiles, but 3 are invalid -> 7 visible -> stays inline.
         let profiles: Vec<(&str, &str)> = (1..=10)
             .map(|i| {
-                let n: &'static str = Box::leak(format!("P{i}").into_boxed_str());
-                let p: &'static str = Box::leak(format!("/bin/p{i}").into_boxed_str());
+                let n: &'static str = Box::leak(format!("n{i}").into_boxed_str());
+                let p: &'static str = Box::leak(format!("/bin/n{i}").into_boxed_str());
                 (n, p)
             })
             .collect();
-        let plan = build_plan(&profiles, Vec::new(), &["P1", "P2", "P3"]);
+        let plan = build_plan(&profiles, Vec::new(), &["n1", "n2", "n3"]);
         match plan {
             MenuEntryPlan::Inline { entries } => {
                 assert_eq!(entries.len(), 7, "filtered count should drive threshold");
@@ -900,7 +883,7 @@ mod tests {
         }
     }
 
-    /// Fix #4 lock: `TerminalSettings.profile_warnings` is the cached
+    /// `TerminalSettings.profile_warnings` is the cached
     /// validator output. The cache is populated in `from_settings`, but
     /// because constructing a full `SettingsContent` here is heavy, this
     /// test verifies the equivalent contract — that the field exists,

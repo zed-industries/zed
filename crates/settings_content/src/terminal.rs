@@ -262,7 +262,7 @@ pub enum Shell {
 /// optional title override. When selected (via `terminal.default_profile`
 /// or the `workspace::NewTerminal` action's `profile` field), the profile
 /// is converted into a `task::Shell` for spawning. If `title_override` is
-/// unset, the profile's name is used as the tab title (D6 title promotion).
+/// unset, the profile's name is used as the tab title.
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct TerminalProfile {
@@ -271,7 +271,7 @@ pub struct TerminalProfile {
     /// Arguments passed to `program`. Omit to launch with no arguments.
     pub args: Option<Vec<String>>,
     /// Tab title to use for this profile. If unset, the profile name is
-    /// used (see D6 title promotion).
+    /// used.
     pub title_override: Option<String>,
 }
 

@@ -22,9 +22,7 @@ use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{
     Terminal,
-    terminal_settings::{
-        MenuEntry, MenuEntryPlan, TerminalSettings, build_menu_entries,
-    },
+    terminal_settings::{MenuEntry, MenuEntryPlan, TerminalSettings, build_menu_entries},
 };
 use ui::{
     ButtonLike, Clickable, CommonAnimationExt, ContextMenu, FluentBuilder, PopoverMenu,
@@ -166,7 +164,7 @@ impl TerminalPanel {
                                     let settings = TerminalSettings::get_global(cx).clone();
                                     let detected =
                                         util::shell_detection::detect_available_shells().to_vec();
-                                    // Fix #4: read cached warnings off
+                                    // Read cached warnings off
                                     // TerminalSettings instead of re-running
                                     // validate_configured_profiles (which
                                     // already ran in from_settings).
@@ -176,20 +174,14 @@ impl TerminalPanel {
                                         &settings.profile_warnings,
                                     )
                                 };
-                                // Fix #2/#3: in remote projects, configured
+                                // In remote projects, configured
                                 // profiles and detected shells reference
                                 // local executables — spawn them with
                                 // force_local=true so the override is
-                                // honored (D9 drop never triggers).
-                                let is_remote = workspace
-                                    .upgrade()
-                                    .is_some_and(|workspace| {
-                                        workspace
-                                            .read(cx)
-                                            .project()
-                                            .read(cx)
-                                            .is_via_remote_server()
-                                    });
+                                // honored.
+                                let is_remote = workspace.upgrade().is_some_and(|workspace| {
+                                    workspace.read(cx).project().read(cx).is_via_remote_server()
+                                });
                                 let menu = ContextMenu::build(window, cx, move |menu, _, _| {
                                     menu.context(focus_handle.clone())
                                         .action(
@@ -1426,12 +1418,12 @@ fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
 /// - When `requested_profile` is `None`, returns `(None, None)` — caller
 ///   uses the default shell resolution.
 /// - When the name resolves against `TerminalSettings.profiles`, returns
-///   the converted `task::Shell` (with D6 title promotion) and the name
+///   the converted `task::Shell` (with title promotion) and the name
 ///   (the latter so the spawned `TerminalView` can be tagged for
 ///   persistence).
 /// - When the name does not resolve, emits a user-visible toast and
 ///   returns `(None, None)` so the caller falls back to the default shell
-///   (D3: never silently to the system shell).
+///   (never silently to the system shell).
 fn resolve_profile_override(
     requested_profile: Option<&str>,
     workspace: &mut Workspace,
@@ -1447,9 +1439,8 @@ fn resolve_profile_override(
             (Some(shell), Some(name.to_string()))
         }
         None => {
-            let message = format!(
-                "Unknown terminal profile '{name}'; falling back to the default shell."
-            );
+            let message =
+                format!("Unknown terminal profile '{name}'; falling back to the default shell.");
             log::warn!("{message}");
             workspace.show_toast(
                 workspace::Toast::new(
@@ -2031,7 +2022,7 @@ impl RenderOnce for InlineAssistTabBarButton {
             .tooltip(move |_window, cx| {
                 Tooltip::for_action_in("Inline Assist", &InlineAssist::default(), &focus_handle, cx)
             })
-     }
+    }
 }
 
 /// Extend `ContextMenu` with the "+" menu's terminal-shell section.
@@ -2055,12 +2046,11 @@ impl TerminalPanelMenuExt for ContextMenu {
             // and matches the existing menu interaction model. The Picker
             // pattern stays available for future surfacing (e.g. command
             // palette) without being preemptively wired up.
-            MenuEntryPlan::Collapsed { entries } => self.submenu(
-                "Select Shell…",
-                move |submenu, _window, _cx| {
+            MenuEntryPlan::Collapsed { entries } => {
+                self.submenu("Select Shell…", move |submenu, _window, _cx| {
                     inline_shell_entries(submenu, entries.clone(), is_remote)
-                },
-            ),
+                })
+            }
         }
     }
 }
@@ -2079,7 +2069,11 @@ fn inline_shell_entries(
                 };
                 menu = menu.action(name.as_str(), action.boxed_clone());
             }
-            MenuEntry::Detected { label, program, args } => {
+            MenuEntry::Detected {
+                label,
+                program,
+                args,
+            } => {
                 let action = crate::SpawnDetectedShell {
                     program,
                     args,
@@ -3587,16 +3581,14 @@ mod tests {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
                     let terminal = settings.terminal.get_or_insert_default();
-                    terminal.project.profiles = Some(collections::IndexMap::from_iter([
-                        (
-                            "Zsh".to_string(),
-                            settings::TerminalProfile {
-                                program: "/bin/zsh".to_string(),
-                                args: Some(vec!["-l".to_string()]),
-                                title_override: None,
-                            },
-                        ),
-                    ]));
+                    terminal.project.profiles = Some(collections::IndexMap::from_iter([(
+                        "Zsh".to_string(),
+                        settings::TerminalProfile {
+                            program: "/bin/zsh".to_string(),
+                            args: Some(vec!["-l".to_string()]),
+                            title_override: None,
+                        },
+                    )]));
                 });
             });
         });
@@ -3628,9 +3620,7 @@ mod tests {
         cx.run_until_parked();
 
         let active_item =
-            terminal_panel.read_with(cx, |panel, cx| {
-                panel.active_pane.read(cx).active_item()
-            });
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).active_item());
         let terminal_view = active_item
             .and_then(|item| item.downcast::<TerminalView>())
             .expect("active panel item should be a TerminalView");
@@ -3643,7 +3633,7 @@ mod tests {
             let title = view.terminal().read(cx).title(false);
             assert_eq!(
                 title, "Zsh",
-                "tab title should be promoted to the profile name (D6)"
+                "tab title should be promoted to the profile name"
             );
         });
     }
@@ -3680,13 +3670,11 @@ mod tests {
         assert_eq!(
             panel_items_after,
             panel_items_before + 1,
-            "Unknown profile should still spawn a terminal (default-shell fallback, D3)"
+            "Unknown profile should still spawn a terminal (default-shell fallback)"
         );
 
         let active_item =
-            terminal_panel.read_with(cx, |panel, cx| {
-                panel.active_pane.read(cx).active_item()
-            });
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).active_item());
         let terminal_view = active_item
             .and_then(|item| item.downcast::<TerminalView>())
             .expect("active panel item should be a TerminalView");
@@ -3733,7 +3721,7 @@ mod tests {
             .and_then(|item| item.downcast::<TerminalView>())
             .expect("active panel item should be a TerminalView after detected-shell spawn");
         terminal_view.update(cx, |view, cx| {
-            // Fix #1 lock: detected shells don't tag the view with a
+            // Detected shells don't tag the view with a
             // profile_name (they don't round-trip through persistence).
             assert!(
                 view.profile_name.is_none(),
@@ -3743,7 +3731,7 @@ mod tests {
             let title = view.terminal().read(cx).title(false);
             assert_eq!(
                 title, "Detected Shell",
-                "tab title should come from the detected label (D6-equivalent for detected entries)"
+                "tab title should come from the detected label"
             );
         });
     }
@@ -3757,7 +3745,7 @@ mod tests {
 
         let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
 
-        // Fix #2 lock: when local=true, spawn_detected_shell must route
+        // When local=true, spawn_detected_shell must route
         // through the force_local branch (add_terminal_shell_internal with
         // force_local=true) so the override survives any remote-drop. In a
         // local project the spawn should still succeed and produce a
@@ -3781,7 +3769,8 @@ mod tests {
             .expect("Failed to dispatch SpawnDetectedShell with local=true");
         cx.run_until_parked();
 
-        let count = terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        let count =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
         assert_eq!(count, 1, "force_local branch should still spawn a terminal");
 
         let active_item =
@@ -3800,10 +3789,13 @@ mod tests {
 
     #[test]
     fn spawn_detected_shell_default_local_is_false() {
-        // Fix #2 lock: backcompat — keymap dispatch without `local` must
+        // Backcompat: keymap dispatch without `local` must
         // default to false (non-force_local path).
         let action = crate::SpawnDetectedShell::default();
-        assert!(!action.local, "default SpawnDetectedShell.local must be false");
+        assert!(
+            !action.local,
+            "default SpawnDetectedShell.local must be false"
+        );
     }
 
     pub fn init_test(cx: &mut TestAppContext) {

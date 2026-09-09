@@ -111,7 +111,7 @@ pub struct RenameTerminal;
 
 /// Spawn a terminal running a detected (non-profile) shell program.
 ///
-/// Used by the "+" PopoverMenu's "detected shells" section (P3). Detected
+/// Used by the "+" PopoverMenu's "detected shells" section. Detected
 /// shells bypass the `terminal.profiles` lookup — they carry their own
 /// program/args. The `label` is used as the tab title (via the
 /// `title_override` field on the constructed `task::Shell::WithArguments`),
@@ -181,7 +181,7 @@ pub struct TerminalView {
     /// When non-`None`, this view was spawned from the named
     /// `terminal.profiles` entry. Used by `SerializableItem::serialize`
     /// to persist the profile choice so that workspace reload respawns
-    /// the same profile (D7).
+    /// the same profile.
     pub profile_name: Option<String>,
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
@@ -1996,15 +1996,11 @@ impl SerializableItem for TerminalView {
             // Re-resolve the persisted profile name against the current
             // TerminalSettings. A profile may disappear after a settings
             // change; in that case fall back to the default shell with a
-            // log line (D7).
+            // log line.
             let (shell_override, restored_profile_name) = match profile_name
                 .as_deref()
-                .and_then(|name| {
-                    settings
-                        .profiles
-                        .get(name)
-                        .map(|profile| (name, profile))
-                }) {
+                .and_then(|name| settings.profiles.get(name).map(|profile| (name, profile)))
+            {
                 Some((name, profile)) => (
                     Some(terminal::terminal_settings::profile_to_task_shell(
                         name, profile,
@@ -2024,11 +2020,11 @@ impl SerializableItem for TerminalView {
 
             let terminal = project
                 .update(cx, |project, cx| {
-                    // Round-1 fixup made the menu spawn profile-tagged
-                    // terminals with `local: is_remote` so the override
-                    // survives D9's remote-drop. Persisted terminals must
-                    // restore the same way: when the project is remote AND
-                    // we have an override to restore, route through
+                    // The menu spawns profile-tagged terminals with
+                    // `local: is_remote` so the override survives the
+                    // remote-drop. Persisted terminals restore the same
+                    // way: when the project is remote AND we have an
+                    // override to restore, route through
                     // `create_local_terminal_with` (force_local=true) so the
                     // override is honored. Otherwise (local project, or no
                     // override) the normal spawn path applies.

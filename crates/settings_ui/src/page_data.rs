@@ -7899,8 +7899,7 @@ fn terminal_page() -> SettingsPage {
     /// title_override? } }`. The Zed settings UI doesn't have a reusable
     /// dynamic-map editor primitive yet (see `UserSettingsContent.profiles`
     /// for the same gap), so v1 surfaces both fields as JSON-editor links:
-    /// clicking opens `settings.json` at the given path. P3 plan item 12
-    /// explicitly permits this fallback.
+    /// clicking opens `settings.json` at the given path.
     fn profiles_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Profiles"),
