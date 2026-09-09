@@ -30,6 +30,7 @@ async-task.workspace = true
 block.workspace = true
 block2.workspace = true
 cocoa.workspace = true
+cocoa-foundation.workspace = true
 collections.workspace = true
 core-foundation.workspace = true
 core-foundation-sys.workspace = true
