@@ -41293,424 +41293,67 @@ async fn test_next_prev_reference(cx: &mut TestAppContext) {
     cx.assert_editor_state(CYCLE_POSITIONS[1]);
 }
 
-/// A cursor can sit on a collapsed buffer's row without any click: folding the buffer that
-/// holds the only selection parks it there, and so does restoring or programmatically setting
-/// selections. Editing through such a cursor must behave exactly as it would with the buffer
-/// expanded, and must expand it so the change is visible.
-///
-/// This covers the whole family of editing actions at once rather than one guard per action:
-/// each one is run twice on identical multibuffers, once with the buffer expanded and once with
-/// it collapsed, and the two must agree. Every action is run against three selection shapes, so
-/// that the case families - indentation, sorting, case conversion, word motion, multi-selection
-/// - each have something to actually do rather than passing as a no-op.
-///
-/// Not covered here: `AutoIndent`, `Rewrap`, `UnwrapSyntaxNode` and `WrapSelectionsInTag` all
-/// need a real grammar to do anything, and the plain buffers this fixture builds leave them as
-/// no-ops in both runs, which would make them look tested without testing anything.
-#[gpui::test]
-async fn test_edit_actions_in_folded_buffer_match_the_expanded_buffer(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
+// A cursor can sit on a folded buffer's row without any click: folding the buffer that holds the
+// only selection parks it there, and so does restoring or programmatically setting selections.
+// Editing through such a cursor must behave exactly as it would with the buffer expanded, and
+// must expand it so the change is visible.
+//
+// The tests below run each editing action twice on identical multibuffers - once with the first
+// buffer expanded, once with it folded - and require the two runs to agree.
+//
+// Not covered here: `AutoIndent`, `Rewrap`, `UnwrapSyntaxNode` and `WrapSelectionsInTag` all need
+// a real grammar to do anything, and the plain buffers this fixture builds leave them as no-ops in
+// both runs, which would make them look tested without testing anything.
 
-    type ActionFn = Box<dyn Fn(&mut Editor, &mut Window, &mut Context<Editor>)>;
+/// Indented, mixed case, more than one word per line, one repeated line and lines of differing
+/// length, so that the indent, case, sort, unique, reverse and word-motion families all have
+/// something to do rather than quietly passing as no-ops.
+const FOLDED_FIXTURE_TEXT: &str = "    Beta alpha\n    Alpha beta gamma\n    Beta alpha\n  Delta\n";
+const OTHER_FIXTURE_TEXT: &str = "gamma delta\nepsilon zeta\n";
 
-    fn texts_match(expanded: &str, folded: &str) -> bool {
-        expanded == folded
-    }
+/// Row and column of the [`FoldedEditPlacement::CursorMidLine`] cursor.
+const MID_LINE_CURSOR: (u32, u32) = (1, 8);
 
-    /// `ShuffleLines` reorders at random, so only the set of lines it produced can be compared.
-    /// The texts being compared are debug-escaped, so the line breaks are a literal `\n`.
-    fn texts_match_ignoring_line_order(expanded: &str, folded: &str) -> bool {
-        let lines = |text: &str| {
-            let mut lines = text
-                .replace(['"', '|'], "")
-                .split("\\n")
-                .map(str::to_owned)
-                .collect::<Vec<_>>();
-            lines.sort();
-            lines
-        };
-        lines(expanded) == lines(folded)
-    }
+/// Where the selections sit when the action runs. Folding parks the cursor at the folded buffer's
+/// first row, but restoring a session, jumping to a search hit or moving a cursor before the fold
+/// can leave any of these.
+#[derive(Clone, Copy, Debug)]
+enum FoldedEditPlacement {
+    /// A cursor at the folded buffer's first row, where folding parks it.
+    CursorAtStart,
+    /// A cursor part way into the folded buffer's second line.
+    CursorMidLine,
+    /// A selection covering the folded buffer, plus a cursor in the other buffer, so that
+    /// whole-range and multi-selection actions have something to work with.
+    RangeAndCursorElsewhere,
+}
 
-    /// The uuid actions generate a fresh identifier on every run, so their results can only be
-    /// compared by length and by the text surrounding the identifier.
-    fn texts_match_ignoring_generated_id(expanded: &str, folded: &str) -> bool {
-        fn without_hex(text: &str) -> String {
-            text.chars()
-                .filter(|c| !c.is_ascii_hexdigit() && *c != '-')
-                .collect()
-        }
-        expanded.len() == folded.len() && without_hex(expanded) == without_hex(folded)
-    }
+/// An editing action, run on an editor whose selections are already placed.
+type FoldedEdit = fn(&mut Editor, &mut Window, &mut Context<Editor>);
 
-    let cases: Vec<(&str, ActionFn, fn(&str, &str) -> bool)> = vec![
-        (
-            "newline",
-            Box::new(|editor, window, cx| editor.newline(&Newline, window, cx)),
-            texts_match,
-        ),
-        (
-            "newline_above",
-            Box::new(|editor, window, cx| editor.newline_above(&NewlineAbove, window, cx)),
-            texts_match,
-        ),
-        (
-            "newline_below",
-            Box::new(|editor, window, cx| editor.newline_below(&NewlineBelow, window, cx)),
-            texts_match,
-        ),
-        (
-            "paste",
-            Box::new(|editor, window, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string("PASTED".into()));
-                editor.paste(&Paste, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "backspace",
-            Box::new(|editor, window, cx| editor.backspace(&Backspace, window, cx)),
-            texts_match,
-        ),
-        (
-            "delete",
-            Box::new(|editor, window, cx| editor.delete(&Delete, window, cx)),
-            texts_match,
-        ),
-        (
-            "delete_line",
-            Box::new(|editor, window, cx| editor.delete_line(&DeleteLine, window, cx)),
-            texts_match,
-        ),
-        (
-            "delete_to_end_of_line",
-            Box::new(|editor, window, cx| {
-                editor.delete_to_end_of_line(&DeleteToEndOfLine, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "delete_to_next_word_end",
-            Box::new(|editor, window, cx| {
-                editor.delete_to_next_word_end(&DeleteToNextWordEnd::default(), window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "cut",
-            Box::new(|editor, window, cx| editor.cut(&Cut, window, cx)),
-            texts_match,
-        ),
-        (
-            "tab",
-            Box::new(|editor, window, cx| editor.tab(&Tab, window, cx)),
-            texts_match,
-        ),
-        (
-            "indent",
-            Box::new(|editor, window, cx| editor.indent(&Indent, window, cx)),
-            texts_match,
-        ),
-        (
-            "outdent",
-            Box::new(|editor, window, cx| editor.outdent(&Outdent, window, cx)),
-            texts_match,
-        ),
-        (
-            "toggle_comments",
-            Box::new(|editor, window, cx| {
-                editor.toggle_comments(&ToggleComments::default(), window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "duplicate_line_down",
-            Box::new(|editor, window, cx| {
-                editor.duplicate_line_down(&DuplicateLineDown, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "sort_lines_case_sensitive",
-            Box::new(|editor, window, cx| {
-                editor.sort_lines_case_sensitive(&SortLinesCaseSensitive, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "reverse_lines",
-            Box::new(|editor, window, cx| editor.reverse_lines(&ReverseLines, window, cx)),
-            texts_match,
-        ),
-        (
-            "convert_to_upper_case",
-            Box::new(|editor, window, cx| {
-                editor.convert_to_upper_case(&ConvertToUpperCase, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "move_line_down",
-            Box::new(|editor, window, cx| editor.move_line_down(&MoveLineDown, window, cx)),
-            texts_match,
-        ),
-        (
-            "transpose",
-            Box::new(|editor, window, cx| editor.transpose(&Transpose, window, cx)),
-            texts_match,
-        ),
-        (
-            "join_lines",
-            Box::new(|editor, window, cx| editor.join_lines(&JoinLines, window, cx)),
-            texts_match,
-        ),
-        (
-            "cut_to_end_of_line",
-            Box::new(|editor, window, cx| {
-                editor.cut_to_end_of_line(&CutToEndOfLine::default(), window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "kill_ring_cut",
-            Box::new(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx)),
-            texts_match,
-        ),
-        (
-            "paste_item",
-            Box::new(|editor, window, cx| {
-                editor.paste_item(&ClipboardItem::new_string("PASTED".into()), window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "delete_to_beginning_of_line",
-            Box::new(|editor, window, cx| {
-                editor.delete_to_beginning_of_line(&DeleteToBeginningOfLine::default(), window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "delete_to_previous_word_start",
-            Box::new(|editor, window, cx| {
-                editor.delete_to_previous_word_start(
-                    &DeleteToPreviousWordStart::default(),
-                    window,
-                    cx,
-                )
-            }),
-            texts_match,
-        ),
-        (
-            "toggle_block_comments",
-            Box::new(|editor, window, cx| {
-                editor.toggle_block_comments(&ToggleBlockComments, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "unique_lines_case_sensitive",
-            Box::new(|editor, window, cx| {
-                editor.unique_lines_case_sensitive(&UniqueLinesCaseSensitive, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "align_selections",
-            Box::new(|editor, window, cx| editor.align_selections(&AlignSelections, window, cx)),
-            texts_match,
-        ),
-        (
-            "rotate_selections_forward",
-            Box::new(|editor, window, cx| {
-                editor.rotate_selections_forward(&RotateSelectionsForward, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "duplicate_selection",
-            Box::new(|editor, window, cx| {
-                editor.duplicate_selection(&DuplicateSelection, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "delete_to_next_subword_end",
-            Box::new(|editor, window, cx| {
-                editor.delete_to_next_subword_end(&DeleteToNextSubwordEnd::default(), window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "delete_to_previous_subword_start",
-            Box::new(|editor, window, cx| {
-                editor.delete_to_previous_subword_start(
-                    &DeleteToPreviousSubwordStart::default(),
-                    window,
-                    cx,
-                )
-            }),
-            texts_match,
-        ),
-        (
-            "sort_lines_case_insensitive",
-            Box::new(|editor, window, cx| {
-                editor.sort_lines_case_insensitive(&SortLinesCaseInsensitive, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "sort_lines_by_length",
-            Box::new(|editor, window, cx| {
-                editor.sort_lines_by_length(&SortLinesByLength, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "unique_lines_case_insensitive",
-            Box::new(|editor, window, cx| {
-                editor.unique_lines_case_insensitive(&UniqueLinesCaseInsensitive, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "shuffle_lines",
-            Box::new(|editor, window, cx| editor.shuffle_lines(&ShuffleLines, window, cx)),
-            texts_match_ignoring_line_order,
-        ),
-        (
-            "convert_to_lower_case",
-            Box::new(|editor, window, cx| {
-                editor.convert_to_lower_case(&ConvertToLowerCase, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "convert_to_title_case",
-            Box::new(|editor, window, cx| {
-                editor.convert_to_title_case(&ConvertToTitleCase, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "convert_to_snake_case",
-            Box::new(|editor, window, cx| {
-                editor.convert_to_snake_case(&ConvertToSnakeCase, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "convert_to_kebab_case",
-            Box::new(|editor, window, cx| {
-                editor.convert_to_kebab_case(&ConvertToKebabCase, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "convert_to_upper_camel_case",
-            Box::new(|editor, window, cx| {
-                editor.convert_to_upper_camel_case(&ConvertToUpperCamelCase, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "convert_to_lower_camel_case",
-            Box::new(|editor, window, cx| {
-                editor.convert_to_lower_camel_case(&ConvertToLowerCamelCase, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "convert_to_opposite_case",
-            Box::new(|editor, window, cx| {
-                editor.convert_to_opposite_case(&ConvertToOppositeCase, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "convert_to_sentence_case",
-            Box::new(|editor, window, cx| {
-                editor.convert_to_sentence_case(&ConvertToSentenceCase, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "convert_to_rot13",
-            Box::new(|editor, window, cx| editor.convert_to_rot13(&ConvertToRot13, window, cx)),
-            texts_match,
-        ),
-        (
-            "convert_to_rot47",
-            Box::new(|editor, window, cx| editor.convert_to_rot47(&ConvertToRot47, window, cx)),
-            texts_match,
-        ),
-        (
-            "convert_to_base64",
-            Box::new(|editor, window, cx| editor.convert_to_base64(&ConvertToBase64, window, cx)),
-            texts_match,
-        ),
-        (
-            "rotate_selections_backward",
-            Box::new(|editor, window, cx| {
-                editor.rotate_selections_backward(&RotateSelectionsBackward, window, cx)
-            }),
-            texts_match,
-        ),
-        (
-            "duplicate_line_up",
-            Box::new(|editor, window, cx| editor.duplicate_line_up(&DuplicateLineUp, window, cx)),
-            texts_match,
-        ),
-        (
-            "move_line_up",
-            Box::new(|editor, window, cx| editor.move_line_up(&MoveLineUp, window, cx)),
-            texts_match,
-        ),
-        (
-            "insert_snippet",
-            Box::new(|editor, window, cx| {
-                editor.insert_snippet_at_selections(
-                    &InsertSnippet {
-                        language: None,
-                        name: None,
-                        snippet: Some("wrapped($1)".into()),
-                    },
-                    window,
-                    cx,
-                )
-            }),
-            texts_match,
-        ),
-        (
-            "insert_uuid_v7",
-            Box::new(|editor, window, cx| editor.insert_uuid_v7(&InsertUuidV7, window, cx)),
-            texts_match_ignoring_generated_id,
-        ),
-        (
-            "insert_uuid_v4",
-            Box::new(|editor, window, cx| editor.insert_uuid_v4(&InsertUuidV4, window, cx)),
-            texts_match_ignoring_generated_id,
-        ),
-        (
-            "input",
-            Box::new(|editor, window, cx| editor.handle_input("X", window, cx)),
-            texts_match,
-        ),
-        (
-            "ime_composition",
-            Box::new(|editor, window, cx| {
-                editor.replace_and_mark_text_in_range(None, "n", None, window, cx)
-            }),
-            texts_match,
-        ),
-    ];
+struct FoldedEditOutcome {
+    folded_buffer_text: String,
+    other_buffer_text: String,
+    still_folded: bool,
+}
 
-    // Indented, mixed case, more than one word per line, one repeated line and lines of
-    // differing length, so that the indent, case, sort, unique, reverse and word-motion
-    // families all have something to do rather than quietly passing as no-ops.
-    const FOLDED_TEXT: &str = "    Beta alpha\n    Alpha beta gamma\n    Beta alpha\n  Delta\n";
-    const OTHER_TEXT: &str = "gamma delta\nepsilon zeta\n";
+/// Splits [`FOLDED_FIXTURE_TEXT`] where a [`FoldedEditPlacement::CursorMidLine`] insertion lands.
+fn fixture_text_around_mid_line_cursor() -> (&'static str, &'static str) {
+    let (row, column) = MID_LINE_CURSOR;
+    let line_start = FOLDED_FIXTURE_TEXT
+        .split_inclusive('\n')
+        .take(row as usize)
+        .map(str::len)
+        .sum::<usize>();
+    FOLDED_FIXTURE_TEXT.split_at(line_start + column as usize)
+}
 
+async fn run_edit_around_folded_buffer(
+    cx: &mut TestAppContext,
+    placement: FoldedEditPlacement,
+    fold: bool,
+    edit: FoldedEdit,
+) -> FoldedEditOutcome {
     // A comment syntax is enough to give the comment actions something to toggle.
     let language = Arc::new(Language::new(
         LanguageConfig {
@@ -41726,189 +41369,509 @@ async fn test_edit_actions_in_folded_buffer_match_the_expanded_buffer(cx: &mut T
         None,
     ));
 
-    /// Where the selections sit when the action runs. Folding parks the cursor at the collapsed
-    /// buffer's first row, but restoring a session, jumping to a search hit or moving a cursor
-    /// before the fold can leave any of these.
-    #[derive(Clone, Copy, Debug)]
-    enum Placement {
-        /// A cursor at the collapsed buffer's first row, where folding parks it.
-        CursorAtStart,
-        /// A cursor part way into the collapsed buffer's second line.
-        CursorMidLine,
-        /// A selection covering the collapsed buffer, plus a cursor in the other buffer, so
-        /// that whole-range and multi-selection actions have something to work with.
-        RangeAndCursorElsewhere,
-    }
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                (FOLDED_FIXTURE_TEXT, vec![Point::row_range(0..4)]),
+                (OTHER_FIXTURE_TEXT, vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        for buffer in multi_buffer.read(cx).all_buffers() {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_language(Some(language.clone()), cx)
+            });
+        }
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut editor_cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+    let buffer_ids = editor_cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
 
-    /// Cursor-local edits: a column part way into a line is the discriminating spot, and the
-    /// excerpt boundary adds nothing for an action that only reaches forward from the cursor.
-    const AT_CURSOR: &[Placement] = &[Placement::CursorMidLine];
+    editor_cx.update_editor(|editor, window, cx| {
+        // Fold first, then place the selections: no click is involved, and folding would
+        // otherwise move any selection it finds out of the way.
+        if fold {
+            editor.fold_buffer(buffer_ids[0], cx);
+        }
+        let ranges = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let anchor = |buffer_id, point| {
+                snapshot
+                    .anchor_in_excerpt(
+                        snapshot
+                            .buffer_for_id(buffer_id)
+                            .expect("the fixture's buffers are in the multibuffer")
+                            .anchor_before(point),
+                    )
+                    .expect("the anchored point is inside the buffer's excerpt")
+            };
+            let folded_start = anchor(buffer_ids[0], Point::new(0, 0));
+            match placement {
+                FoldedEditPlacement::CursorAtStart => vec![folded_start..folded_start],
+                FoldedEditPlacement::CursorMidLine => {
+                    let (row, column) = MID_LINE_CURSOR;
+                    let mid = anchor(buffer_ids[0], Point::new(row, column));
+                    vec![mid..mid]
+                }
+                FoldedEditPlacement::RangeAndCursorElsewhere => {
+                    // The whole buffer, not part of it: a range reaching into a folded buffer
+                    // resolves to everything that buffer holds, which is what
+                    // `resolve_selections_wrapping_blocks` is for. A partial range would
+                    // legitimately differ between the two runs.
+                    let folded_end = anchor(buffer_ids[0], Point::new(4, 0));
+                    let elsewhere = anchor(buffer_ids[1], Point::new(0, 6));
+                    vec![folded_start..folded_end, elsewhere..elsewhere]
+                }
+            }
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges(ranges)
+        });
+        assert_eq!(
+            editor.is_buffer_folded(buffer_ids[0], cx),
+            fold,
+            "the fixture's first buffer should start out {}",
+            if fold { "folded" } else { "expanded" }
+        );
 
-    /// Edits that reach backwards or upwards out of the line they start on, where the collapsed
-    /// buffer's first row is a real boundary case.
-    const AT_CURSOR_AND_BUFFER_START: &[Placement] =
-        &[Placement::CursorAtStart, Placement::CursorMidLine];
+        edit(editor, window, cx);
 
-    /// Insertions and deletions that a range spanning the whole collapsed buffer would make
-    /// replace everything it hides - the case the fix exists for - as well as acting at a bare
-    /// cursor.
-    const AT_CURSOR_AND_OVER_RANGE: &[Placement] =
-        &[Placement::CursorMidLine, Placement::RangeAndCursorElsewhere];
+        // Both buffers, so that an action moving text across the excerpt boundary cannot hide in
+        // the buffer a test does not look at.
+        let text_of = |buffer_id, cx: &mut Context<Editor>| {
+            editor
+                .buffer()
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .find(|buffer| buffer.read(cx).remote_id() == buffer_id)
+                .expect("the edited buffer is still in the multibuffer")
+                .read(cx)
+                .text()
+        };
+        FoldedEditOutcome {
+            folded_buffer_text: text_of(buffer_ids[0], cx),
+            other_buffer_text: text_of(buffer_ids[1], cx),
+            still_folded: editor.is_buffer_folded(buffer_ids[0], cx),
+        }
+    })
+}
 
-    /// Line-wise and whole-selection transforms: a range covering the collapsed buffer gives
-    /// them several lines to reorder, case-fold or comment, which a bare cursor does not.
-    const OVER_SELECTION: &[Placement] = &[Placement::RangeAndCursorElsewhere];
+/// Runs one action against the folded and the expanded fixture and requires the two to agree, and
+/// the folded run to have expanded the buffer if it changed anything.
+async fn assert_edit_around_folded_buffer_matches_expanded(
+    cx: &mut TestAppContext,
+    name: &str,
+    placement: FoldedEditPlacement,
+    edit: FoldedEdit,
+) {
+    let expanded = run_edit_around_folded_buffer(cx, placement, false, edit).await;
+    let folded = run_edit_around_folded_buffer(cx, placement, true, edit).await;
 
-    /// Which placements are meaningful for a given action. Most actions only need one or two of
-    /// the three placements to exercise their behavior against a collapsed buffer; running the
-    /// full Cartesian product for all of them just re-runs identical code paths.
-    fn placements_for(name: &str) -> &'static [Placement] {
-        match name {
-            "input" | "ime_composition" | "paste" | "paste_item" | "newline" | "backspace"
-            | "delete" | "cut" | "insert_snippet" => AT_CURSOR_AND_OVER_RANGE,
-            "transpose"
-            | "newline_above"
-            | "move_line_up"
-            | "duplicate_line_up"
-            | "delete_to_beginning_of_line"
-            | "delete_to_previous_word_start"
-            | "delete_to_previous_subword_start" => AT_CURSOR_AND_BUFFER_START,
-            "newline_below"
-            | "tab"
-            | "delete_to_end_of_line"
-            | "cut_to_end_of_line"
-            | "kill_ring_cut"
-            | "delete_to_next_word_end"
-            | "delete_to_next_subword_end"
-            | "insert_uuid_v7"
-            | "insert_uuid_v4" => AT_CURSOR,
-            _ => OVER_SELECTION,
+    assert_eq!(
+        folded.folded_buffer_text, expanded.folded_buffer_text,
+        "{name} with {placement:?} edited the folded buffer differently than the expanded one"
+    );
+    assert_eq!(
+        folded.other_buffer_text, expanded.other_buffer_text,
+        "{name} with {placement:?} edited the other buffer differently than it did with the first \
+         buffer expanded"
+    );
+
+    let changed_anything = folded.folded_buffer_text != FOLDED_FIXTURE_TEXT
+        || folded.other_buffer_text != OTHER_FIXTURE_TEXT;
+    assert!(
+        !(changed_anything && folded.still_folded),
+        "{name} with {placement:?} edited a folded buffer without expanding it, leaving the \
+         change invisible"
+    );
+}
+
+/// Insertions and deletions that a range spanning the whole folded buffer would make replace
+/// everything it hides - the case the fix exists for - as well as acting at a bare cursor.
+#[gpui::test]
+async fn test_cursor_and_range_edits_in_folded_buffer_match_the_expanded_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    const PLACEMENTS: &[FoldedEditPlacement] = &[
+        FoldedEditPlacement::CursorMidLine,
+        FoldedEditPlacement::RangeAndCursorElsewhere,
+    ];
+    const ACTIONS: &[(&str, FoldedEdit)] = &[
+        ("newline", |editor, window, cx| {
+            editor.newline(&Newline, window, cx)
+        }),
+        ("paste", |editor, window, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string("PASTED".into()));
+            editor.paste(&Paste, window, cx)
+        }),
+        ("backspace", |editor, window, cx| {
+            editor.backspace(&Backspace, window, cx)
+        }),
+        ("delete", |editor, window, cx| {
+            editor.delete(&Delete, window, cx)
+        }),
+        ("cut", |editor, window, cx| editor.cut(&Cut, window, cx)),
+        ("paste_item", |editor, window, cx| {
+            editor.paste_item(&ClipboardItem::new_string("PASTED".into()), window, cx)
+        }),
+        ("insert_snippet", |editor, window, cx| {
+            editor.insert_snippet_at_selections(
+                &InsertSnippet {
+                    language: None,
+                    name: None,
+                    snippet: Some("wrapped($1)".into()),
+                },
+                window,
+                cx,
+            )
+        }),
+        ("input", |editor, window, cx| {
+            editor.handle_input("X", window, cx)
+        }),
+        ("ime_composition", |editor, window, cx| {
+            editor.replace_and_mark_text_in_range(None, "n", None, window, cx)
+        }),
+    ];
+
+    for (name, edit) in ACTIONS {
+        for placement in PLACEMENTS {
+            assert_edit_around_folded_buffer_matches_expanded(cx, name, *placement, *edit).await;
         }
     }
+}
 
-    let mut failures = Vec::new();
-    for (name, run, texts_agree) in cases {
-        for placement in placements_for(name) {
-            let placement = *placement;
-            let mut outcomes = Vec::new();
-            for collapse in [false, true] {
-                let (editor, window_cx) = cx.add_window_view(|window, cx| {
-                    let multi_buffer = MultiBuffer::build_multi(
-                        [
-                            (FOLDED_TEXT, vec![Point::row_range(0..4)]),
-                            (OTHER_TEXT, vec![Point::row_range(0..2)]),
-                        ],
-                        cx,
-                    );
-                    for buffer in multi_buffer.read(cx).all_buffers() {
-                        buffer.update(cx, |buffer, cx| {
-                            buffer.set_language(Some(language.clone()), cx)
-                        });
-                    }
-                    Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
-                });
-                let mut editor_cx =
-                    EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
-                let buffer_ids = editor_cx.multibuffer(|multi_buffer, cx| {
-                    multi_buffer
-                        .snapshot(cx)
-                        .excerpts()
-                        .map(|excerpt| excerpt.context.start.buffer_id)
-                        .collect::<Vec<_>>()
-                });
+/// Edits that reach backwards or upwards out of the line they start on, where the folded buffer's
+/// first row is a real boundary case.
+#[gpui::test]
+async fn test_backward_and_upward_edits_in_folded_buffer_match_the_expanded_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
 
-                outcomes.push(editor_cx.update_editor(|editor, window, cx| {
-                    // Collapse first, then place the selections: no click is involved, and
-                    // folding would otherwise move any selection it finds out of the way.
-                    if collapse {
-                        editor.fold_buffer(buffer_ids[0], cx);
-                    }
-                    let ranges = {
-                        let snapshot = editor.buffer().read(cx).snapshot(cx);
-                        let anchor = |buffer_id, point| {
-                            snapshot
-                                .anchor_in_excerpt(
-                                    snapshot
-                                        .buffer_for_id(buffer_id)
-                                        .unwrap()
-                                        .anchor_before(point),
-                                )
-                                .unwrap()
-                        };
-                        let folded_start = anchor(buffer_ids[0], Point::new(0, 0));
-                        match placement {
-                            Placement::CursorAtStart => vec![folded_start..folded_start],
-                            Placement::CursorMidLine => {
-                                let mid = anchor(buffer_ids[0], Point::new(1, 8));
-                                vec![mid..mid]
-                            }
-                            Placement::RangeAndCursorElsewhere => {
-                                // The whole buffer, not part of it: a range reaching into a
-                                // collapsed buffer resolves to everything that buffer holds,
-                                // which is what `resolve_selections_wrapping_blocks` is for. A
-                                // partial range would legitimately differ between the two runs.
-                                let folded_end = anchor(buffer_ids[0], Point::new(4, 0));
-                                let elsewhere = anchor(buffer_ids[1], Point::new(0, 6));
-                                vec![folded_start..folded_end, elsewhere..elsewhere]
-                            }
-                        }
-                    };
-                    editor.change_selections(
-                        SelectionEffects::no_scroll(),
-                        window,
-                        cx,
-                        |selections| selections.select_ranges(ranges),
-                    );
-                    assert_eq!(
-                        editor.is_buffer_folded(buffer_ids[0], cx),
-                        collapse,
-                        "{name}/{placement:?}: buffer should start out {}",
-                        if collapse { "collapsed" } else { "expanded" }
-                    );
+    const PLACEMENTS: &[FoldedEditPlacement] = &[
+        FoldedEditPlacement::CursorAtStart,
+        FoldedEditPlacement::CursorMidLine,
+    ];
+    const ACTIONS: &[(&str, FoldedEdit)] = &[
+        ("newline_above", |editor, window, cx| {
+            editor.newline_above(&NewlineAbove, window, cx)
+        }),
+        ("transpose", |editor, window, cx| {
+            editor.transpose(&Transpose, window, cx)
+        }),
+        ("delete_to_beginning_of_line", |editor, window, cx| {
+            editor.delete_to_beginning_of_line(&DeleteToBeginningOfLine::default(), window, cx)
+        }),
+        ("delete_to_previous_word_start", |editor, window, cx| {
+            editor.delete_to_previous_word_start(&DeleteToPreviousWordStart::default(), window, cx)
+        }),
+        ("delete_to_previous_subword_start", |editor, window, cx| {
+            editor.delete_to_previous_subword_start(
+                &DeleteToPreviousSubwordStart::default(),
+                window,
+                cx,
+            )
+        }),
+        ("duplicate_line_up", |editor, window, cx| {
+            editor.duplicate_line_up(&DuplicateLineUp, window, cx)
+        }),
+        ("move_line_up", |editor, window, cx| {
+            editor.move_line_up(&MoveLineUp, window, cx)
+        }),
+    ];
 
-                    run(editor, window, cx);
-
-                    // Both buffers, so that an action moving text across the excerpt boundary
-                    // cannot hide in the buffer this test does not look at.
-                    let text_of = |buffer_id, cx: &mut Context<Editor>| {
-                        editor
-                            .buffer()
-                            .read(cx)
-                            .all_buffers()
-                            .into_iter()
-                            .find(|buffer| buffer.read(cx).remote_id() == buffer_id)
-                            .expect("the edited buffer is still in the multibuffer")
-                            .read(cx)
-                            .text()
-                    };
-                    let text = format!(
-                        "{:?} | {:?}",
-                        text_of(buffer_ids[0], cx),
-                        text_of(buffer_ids[1], cx)
-                    );
-                    (text, editor.is_buffer_folded(buffer_ids[0], cx))
-                }));
-            }
-
-            let unedited = format!("{FOLDED_TEXT:?} | {OTHER_TEXT:?}");
-            let (expanded_text, _) = &outcomes[0];
-            let (collapsed_text, still_collapsed) = &outcomes[1];
-            if !texts_agree(expanded_text, collapsed_text) {
-                failures.push(format!(
-                    "{name} with {placement:?} edited a collapsed buffer differently than an \
-                     expanded one:\n\x20   expanded:  {expanded_text}\n     collapsed: \
-                     {collapsed_text}"
-                ));
-            } else if *collapsed_text != unedited && *still_collapsed {
-                failures.push(format!(
-                    "{name} with {placement:?} edited a collapsed buffer without expanding it, \
-                     leaving the change invisible"
-                ));
-            }
+    for (name, edit) in ACTIONS {
+        for placement in PLACEMENTS {
+            assert_edit_around_folded_buffer_matches_expanded(cx, name, *placement, *edit).await;
         }
     }
+}
 
-    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+/// Cursor-local edits: a column part way into a line is the discriminating spot, and the excerpt
+/// boundary adds nothing for an action that only reaches forward from the cursor.
+#[gpui::test]
+async fn test_cursor_local_edits_in_folded_buffer_match_the_expanded_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    const PLACEMENT: FoldedEditPlacement = FoldedEditPlacement::CursorMidLine;
+    const ACTIONS: &[(&str, FoldedEdit)] = &[
+        ("newline_below", |editor, window, cx| {
+            editor.newline_below(&NewlineBelow, window, cx)
+        }),
+        ("delete_to_end_of_line", |editor, window, cx| {
+            editor.delete_to_end_of_line(&DeleteToEndOfLine, window, cx)
+        }),
+        ("delete_to_next_word_end", |editor, window, cx| {
+            editor.delete_to_next_word_end(&DeleteToNextWordEnd::default(), window, cx)
+        }),
+        ("tab", |editor, window, cx| editor.tab(&Tab, window, cx)),
+        ("cut_to_end_of_line", |editor, window, cx| {
+            editor.cut_to_end_of_line(&CutToEndOfLine::default(), window, cx)
+        }),
+        ("kill_ring_cut", |editor, window, cx| {
+            editor.kill_ring_cut(&KillRingCut, window, cx)
+        }),
+        ("delete_to_next_subword_end", |editor, window, cx| {
+            editor.delete_to_next_subword_end(&DeleteToNextSubwordEnd::default(), window, cx)
+        }),
+    ];
+
+    for (name, edit) in ACTIONS {
+        assert_edit_around_folded_buffer_matches_expanded(cx, name, PLACEMENT, *edit).await;
+    }
+}
+
+/// Line-wise and whole-selection transforms: a range covering the folded buffer gives them
+/// several lines to reorder, deduplicate or comment, which a bare cursor does not.
+#[gpui::test]
+async fn test_line_transforms_in_folded_buffer_match_the_expanded_buffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    const PLACEMENT: FoldedEditPlacement = FoldedEditPlacement::RangeAndCursorElsewhere;
+    const ACTIONS: &[(&str, FoldedEdit)] = &[
+        ("delete_line", |editor, window, cx| {
+            editor.delete_line(&DeleteLine, window, cx)
+        }),
+        ("indent", |editor, window, cx| {
+            editor.indent(&Indent, window, cx)
+        }),
+        ("outdent", |editor, window, cx| {
+            editor.outdent(&Outdent, window, cx)
+        }),
+        ("toggle_comments", |editor, window, cx| {
+            editor.toggle_comments(&ToggleComments::default(), window, cx)
+        }),
+        ("toggle_block_comments", |editor, window, cx| {
+            editor.toggle_block_comments(&ToggleBlockComments, window, cx)
+        }),
+        ("duplicate_line_down", |editor, window, cx| {
+            editor.duplicate_line_down(&DuplicateLineDown, window, cx)
+        }),
+        ("duplicate_selection", |editor, window, cx| {
+            editor.duplicate_selection(&DuplicateSelection, window, cx)
+        }),
+        ("move_line_down", |editor, window, cx| {
+            editor.move_line_down(&MoveLineDown, window, cx)
+        }),
+        ("join_lines", |editor, window, cx| {
+            editor.join_lines(&JoinLines, window, cx)
+        }),
+        ("reverse_lines", |editor, window, cx| {
+            editor.reverse_lines(&ReverseLines, window, cx)
+        }),
+        ("sort_lines_case_sensitive", |editor, window, cx| {
+            editor.sort_lines_case_sensitive(&SortLinesCaseSensitive, window, cx)
+        }),
+        ("sort_lines_case_insensitive", |editor, window, cx| {
+            editor.sort_lines_case_insensitive(&SortLinesCaseInsensitive, window, cx)
+        }),
+        ("sort_lines_by_length", |editor, window, cx| {
+            editor.sort_lines_by_length(&SortLinesByLength, window, cx)
+        }),
+        ("unique_lines_case_sensitive", |editor, window, cx| {
+            editor.unique_lines_case_sensitive(&UniqueLinesCaseSensitive, window, cx)
+        }),
+        ("unique_lines_case_insensitive", |editor, window, cx| {
+            editor.unique_lines_case_insensitive(&UniqueLinesCaseInsensitive, window, cx)
+        }),
+        ("align_selections", |editor, window, cx| {
+            editor.align_selections(&AlignSelections, window, cx)
+        }),
+        ("rotate_selections_forward", |editor, window, cx| {
+            editor.rotate_selections_forward(&RotateSelectionsForward, window, cx)
+        }),
+        ("rotate_selections_backward", |editor, window, cx| {
+            editor.rotate_selections_backward(&RotateSelectionsBackward, window, cx)
+        }),
+    ];
+
+    for (name, edit) in ACTIONS {
+        assert_edit_around_folded_buffer_matches_expanded(cx, name, PLACEMENT, *edit).await;
+    }
+}
+
+/// The case and encoding conversions all rewrite the selected text in place, so they need a range
+/// covering the folded buffer to have anything to convert.
+#[gpui::test]
+async fn test_case_conversions_in_folded_buffer_match_the_expanded_buffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    const PLACEMENT: FoldedEditPlacement = FoldedEditPlacement::RangeAndCursorElsewhere;
+    const ACTIONS: &[(&str, FoldedEdit)] = &[
+        ("convert_to_upper_case", |editor, window, cx| {
+            editor.convert_to_upper_case(&ConvertToUpperCase, window, cx)
+        }),
+        ("convert_to_lower_case", |editor, window, cx| {
+            editor.convert_to_lower_case(&ConvertToLowerCase, window, cx)
+        }),
+        ("convert_to_title_case", |editor, window, cx| {
+            editor.convert_to_title_case(&ConvertToTitleCase, window, cx)
+        }),
+        ("convert_to_snake_case", |editor, window, cx| {
+            editor.convert_to_snake_case(&ConvertToSnakeCase, window, cx)
+        }),
+        ("convert_to_kebab_case", |editor, window, cx| {
+            editor.convert_to_kebab_case(&ConvertToKebabCase, window, cx)
+        }),
+        ("convert_to_upper_camel_case", |editor, window, cx| {
+            editor.convert_to_upper_camel_case(&ConvertToUpperCamelCase, window, cx)
+        }),
+        ("convert_to_lower_camel_case", |editor, window, cx| {
+            editor.convert_to_lower_camel_case(&ConvertToLowerCamelCase, window, cx)
+        }),
+        ("convert_to_opposite_case", |editor, window, cx| {
+            editor.convert_to_opposite_case(&ConvertToOppositeCase, window, cx)
+        }),
+        ("convert_to_sentence_case", |editor, window, cx| {
+            editor.convert_to_sentence_case(&ConvertToSentenceCase, window, cx)
+        }),
+        ("convert_to_rot13", |editor, window, cx| {
+            editor.convert_to_rot13(&ConvertToRot13, window, cx)
+        }),
+        ("convert_to_rot47", |editor, window, cx| {
+            editor.convert_to_rot47(&ConvertToRot47, window, cx)
+        }),
+        ("convert_to_base64", |editor, window, cx| {
+            editor.convert_to_base64(&ConvertToBase64, window, cx)
+        }),
+    ];
+
+    for (name, edit) in ACTIONS {
+        assert_edit_around_folded_buffer_matches_expanded(cx, name, PLACEMENT, *edit).await;
+    }
+}
+
+/// `ShuffleLines` reorders at random, so the two runs can only be required to hold the same lines
+/// - duplicates included - as each other and as the fixture.
+#[gpui::test]
+async fn test_shuffle_lines_in_folded_buffer_matches_the_expanded_buffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    fn sorted_lines(text: &str) -> Vec<&str> {
+        let mut lines = text.lines().collect::<Vec<_>>();
+        lines.sort();
+        lines
+    }
+
+    const PLACEMENT: FoldedEditPlacement = FoldedEditPlacement::RangeAndCursorElsewhere;
+    let shuffle: FoldedEdit = |editor, window, cx| editor.shuffle_lines(&ShuffleLines, window, cx);
+    let expanded = run_edit_around_folded_buffer(cx, PLACEMENT, false, shuffle).await;
+    let folded = run_edit_around_folded_buffer(cx, PLACEMENT, true, shuffle).await;
+
+    for (label, fixture, expanded_text, folded_text) in [
+        (
+            "the folded buffer",
+            FOLDED_FIXTURE_TEXT,
+            &expanded.folded_buffer_text,
+            &folded.folded_buffer_text,
+        ),
+        (
+            "the other buffer",
+            OTHER_FIXTURE_TEXT,
+            &expanded.other_buffer_text,
+            &folded.other_buffer_text,
+        ),
+    ] {
+        assert_eq!(
+            sorted_lines(folded_text),
+            sorted_lines(fixture),
+            "shuffle_lines lost, duplicated or invented lines in {label} while it was folded"
+        );
+        assert_eq!(
+            sorted_lines(folded_text),
+            sorted_lines(expanded_text),
+            "shuffle_lines shuffled different lines in {label} than it did with the first buffer \
+             expanded"
+        );
+        assert_eq!(
+            folded_text.ends_with('\n'),
+            fixture.ends_with('\n'),
+            "shuffle_lines changed the trailing newline of {label} while it was folded"
+        );
+    }
+
+    // A shuffle may land back on the original ordering, which leaves nothing to reveal.
+    if folded.folded_buffer_text != FOLDED_FIXTURE_TEXT {
+        assert!(
+            !folded.still_folded,
+            "shuffle_lines reordered a folded buffer without expanding it, leaving the change \
+             invisible"
+        );
+    }
+}
+
+/// The uuid actions generate a fresh identifier on every run, so the two runs cannot be compared
+/// against each other: the identifier is pulled out of the known insertion point and parsed
+/// instead.
+async fn assert_uuid_insertion_in_folded_buffer(
+    cx: &mut TestAppContext,
+    name: &str,
+    expected_version: usize,
+    insert_uuid: FoldedEdit,
+) {
+    let outcome =
+        run_edit_around_folded_buffer(cx, FoldedEditPlacement::CursorMidLine, true, insert_uuid)
+            .await;
+
+    let (before_cursor, after_cursor) = fixture_text_around_mid_line_cursor();
+    let inserted = outcome
+        .folded_buffer_text
+        .strip_prefix(before_cursor)
+        .and_then(|rest| rest.strip_suffix(after_cursor))
+        .unwrap_or_else(|| {
+            panic!(
+                "{name} should have inserted an identifier at the cursor and left the rest of the \
+                 folded buffer alone, but it produced {:?}",
+                outcome.folded_buffer_text
+            )
+        });
+    let uuid = uuid::Uuid::parse_str(inserted)
+        .unwrap_or_else(|error| panic!("{name} inserted {inserted:?}, not a uuid: {error}"));
+    assert_eq!(
+        uuid.get_version_num(),
+        expected_version,
+        "{name} inserted a uuid of the wrong version"
+    );
+
+    assert_eq!(
+        outcome.other_buffer_text, OTHER_FIXTURE_TEXT,
+        "{name} edited the buffer the cursor was not in"
+    );
+    assert!(
+        !outcome.still_folded,
+        "{name} edited a folded buffer without expanding it, leaving the change invisible"
+    );
+}
+
+#[gpui::test]
+async fn test_insert_uuid_v4_in_folded_buffer_expands_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    assert_uuid_insertion_in_folded_buffer(cx, "insert_uuid_v4", 4, |editor, window, cx| {
+        editor.insert_uuid_v4(&InsertUuidV4, window, cx)
+    })
+    .await;
+}
+
+#[gpui::test]
+async fn test_insert_uuid_v7_in_folded_buffer_expands_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    assert_uuid_insertion_in_folded_buffer(cx, "insert_uuid_v7", 7, |editor, window, cx| {
+        editor.insert_uuid_v7(&InsertUuidV7, window, cx)
+    })
+    .await;
 }
 
 #[derive(Clone, Copy)]
