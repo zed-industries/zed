@@ -13,7 +13,7 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
 use itertools::Itertools;
-use settings::{DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens};
+use settings::{DelayMs, DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens};
 
 pub use settings::{
     AutoIndentMode, CompletionSettingsContent, ConfiguredLanguageServer,
@@ -24,7 +24,7 @@ pub use settings::{
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
-use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
+use std::{num::NonZeroU32, path::Path, sync::Arc, time::Duration};
 use text::ToOffset;
 
 /// Returns the settings for all languages from the provided file.
@@ -44,8 +44,8 @@ pub fn all_language_settings<'a>(
 pub struct AllLanguageSettings {
     /// The edit prediction settings.
     pub edit_predictions: EditPredictionSettings,
-    pub defaults: LanguageSettings,
-    languages: HashMap<LanguageName, LanguageSettings>,
+    pub defaults: Arc<LanguageSettings>,
+    languages: HashMap<LanguageName, Arc<LanguageSettings>>,
     pub file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)>,
 }
 
@@ -277,34 +277,40 @@ pub struct PrettierSettings {
 }
 
 impl LanguageSettings {
-    pub fn for_buffer<'a>(buffer: &'a Buffer, cx: &'a App) -> Cow<'a, LanguageSettings> {
+    pub fn for_buffer(buffer: &Buffer, cx: &App) -> Arc<LanguageSettings> {
         Self::resolve(Some(buffer), None, cx)
     }
 
-    pub fn for_buffer_at<'a, D: ToOffset>(
-        buffer: &'a Buffer,
+    pub fn for_buffer_at<D: ToOffset>(
+        buffer: &Buffer,
         position: D,
-        cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
+        cx: &App,
+    ) -> Arc<LanguageSettings> {
         let language = buffer.language_at(position);
         Self::resolve(Some(buffer), language.map(|l| l.name()).as_ref(), cx)
     }
 
-    pub fn for_buffer_snapshot<'a>(
-        buffer: &'a BufferSnapshot,
+    pub fn for_buffer_snapshot(
+        buffer: &BufferSnapshot,
         offset: Option<usize>,
-        cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
-        let location = buffer.file().map(|f| SettingsLocation {
-            worktree_id: f.worktree_id(cx),
-            path: f.path().as_ref(),
-        });
-
+        cx: &App,
+    ) -> Arc<LanguageSettings> {
         let language = if let Some(offset) = offset {
             buffer.language_at(offset)
         } else {
             buffer.language()
         };
+
+        if let Some(resolved) = buffer.resolved_settings()
+            && language == buffer.language()
+        {
+            return Arc::clone(resolved);
+        }
+
+        let location = buffer.file().map(|f| SettingsLocation {
+            worktree_id: f.worktree_id(cx),
+            path: f.path().as_ref(),
+        });
 
         let mut settings = AllLanguageSettings::get(location, cx).language(
             location,
@@ -313,33 +319,48 @@ impl LanguageSettings {
         );
 
         if let Some(modeline) = buffer.modeline() {
-            merge_with_modeline(settings.to_mut(), modeline);
+            merge_with_modeline(Arc::make_mut(&mut settings), modeline);
         }
 
         settings
     }
 
-    pub fn resolve<'a>(
-        buffer: Option<&'a Buffer>,
+    pub fn resolve(
+        buffer: Option<&Buffer>,
         override_language: Option<&LanguageName>,
-        cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
+        cx: &App,
+    ) -> Arc<LanguageSettings> {
         let Some(buffer) = buffer else {
             return AllLanguageSettings::get(None, cx).language(None, override_language, cx);
         };
+
+        if let Some(resolved) = buffer.resolved_settings()
+            && override_language.is_none_or(|language| {
+                Some(language) == buffer.language().map(|l| l.name()).as_ref()
+            })
+        {
+            return resolved.clone();
+        }
+
+        Self::resolve_uncached(buffer, override_language, cx)
+    }
+
+    pub(crate) fn resolve_uncached(
+        buffer: &Buffer,
+        override_language: Option<&LanguageName>,
+        cx: &App,
+    ) -> Arc<LanguageSettings> {
         let location = buffer.file().map(|f| SettingsLocation {
             worktree_id: f.worktree_id(cx),
             path: f.path().as_ref(),
         });
-        let all = AllLanguageSettings::get(location, cx);
-        let mut settings = if override_language.is_none() {
-            all.language(location, buffer.language().map(|l| l.name()).as_ref(), cx)
-        } else {
-            all.language(location, override_language, cx)
-        };
+        let buffer_language = buffer.language().map(|l| l.name());
+        let language_name = override_language.or(buffer_language.as_ref());
+        let mut settings =
+            AllLanguageSettings::get(location, cx).language(location, language_name, cx);
 
         if let Some(modeline) = buffer.modeline() {
-            merge_with_modeline(settings.to_mut(), modeline);
+            merge_with_modeline(Arc::make_mut(&mut settings), modeline);
         }
 
         settings
@@ -478,7 +499,12 @@ pub struct EditPredictionSettings {
     pub codestral: CodestralSettings,
     /// Settings specific to Ollama.
     pub ollama: Option<OpenAiCompatibleEditPredictionSettings>,
+    /// Settings specific to using custom OpenAI-compatible servers for edit prediction.
     pub open_ai_compatible_api: Option<OpenAiCompatibleEditPredictionSettings>,
+    /// Settings specific to Zed's Edit Predictions provider.
+    pub zed: ZedEditPredictionSettings,
+    /// Settings specific to the Mercury Edit Predictions provider.
+    pub mercury: MercuryEditPredictionSettings,
     /// Controls whether training data collection is enabled.
     ///
     /// `Default` means the value stored in the legacy KV store is used as a fallback,
@@ -498,6 +524,40 @@ impl EditPredictionSettings {
             }
         })
     }
+
+    /// Returns the configured debounce delay for the given provider.
+    pub fn debounce_for(&self, provider: settings::EditPredictionProvider) -> Duration {
+        let delay = match provider {
+            settings::EditPredictionProvider::Copilot => self.copilot.prediction_debounce,
+            settings::EditPredictionProvider::Codestral => self.codestral.prediction_debounce,
+            settings::EditPredictionProvider::Ollama => self
+                .ollama
+                .as_ref()
+                .map_or_else(DelayMs::default, |settings| settings.prediction_debounce),
+            settings::EditPredictionProvider::OpenAiCompatibleApi => self
+                .open_ai_compatible_api
+                .as_ref()
+                .map_or_else(DelayMs::default, |settings| settings.prediction_debounce),
+            settings::EditPredictionProvider::Zed => self.zed.prediction_debounce,
+            settings::EditPredictionProvider::Mercury => self.mercury.prediction_debounce,
+            settings::EditPredictionProvider::None => DelayMs::default(),
+        };
+        Duration::from_millis(delay.0)
+    }
+
+    /// Returns the configured debounce delay for the active prediction delegate.
+    ///
+    /// The Zed edit-prediction delegate handles multiple settings providers
+    /// (Zed, Mercury, Ollama, OpenAI-compatible), so it is identified by name
+    /// and then uses the currently configured provider to resolve the delay.
+    pub fn debounce_for_delegate(&self, delegate_name: &str) -> Duration {
+        match delegate_name {
+            "copilot" => Duration::from_millis(self.copilot.prediction_debounce.0),
+            "codestral" => Duration::from_millis(self.codestral.prediction_debounce.0),
+            "zed-predict" => self.debounce_for(self.provider),
+            _ => Duration::ZERO,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -516,6 +576,8 @@ pub struct CopilotSettings {
     pub enterprise_uri: Option<String>,
     /// Whether the Copilot Next Edit Suggestions feature is enabled.
     pub enable_next_edit_suggestions: Option<bool>,
+    /// Automatic prediction debounce delay.
+    pub prediction_debounce: DelayMs,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -526,6 +588,21 @@ pub struct CodestralSettings {
     pub max_tokens: Option<u32>,
     /// Custom API URL to use for Codestral.
     pub api_url: Option<String>,
+    /// Automatic prediction debounce delay.
+    pub prediction_debounce: DelayMs,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ZedEditPredictionSettings {
+    /// Automatic prediction debounce delay.
+    pub prediction_debounce: DelayMs,
+}
+
+/// Settings specific to the Mercury Edit Predictions provider.
+#[derive(Clone, Debug, Default)]
+pub struct MercuryEditPredictionSettings {
+    /// Automatic prediction debounce delay.
+    pub prediction_debounce: DelayMs,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -539,6 +616,8 @@ pub struct OpenAiCompatibleEditPredictionSettings {
     /// The prompt format to use for completions. When `None`, the format
     /// will be derived from the model name at request time.
     pub prompt_format: EditPredictionPromptFormat,
+    /// Automatic prediction debounce delay.
+    pub prediction_debounce: DelayMs,
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -585,12 +664,12 @@ impl From<EditPredictionPromptFormatContent> for EditPredictionPromptFormat {
 
 impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
-    pub fn language<'a>(
-        &'a self,
-        location: Option<SettingsLocation<'a>>,
+    pub fn language(
+        &self,
+        location: Option<SettingsLocation<'_>>,
         language_name: Option<&LanguageName>,
-        cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
+        cx: &App,
+    ) -> Arc<LanguageSettings> {
         let settings = language_name
             .and_then(|name| self.languages.get(name))
             .unwrap_or(&self.defaults);
@@ -602,11 +681,11 @@ impl AllLanguageSettings {
                 .properties(location.worktree_id, location.path)
         });
         if let Some(editorconfig_properties) = editorconfig_properties {
-            let mut settings = settings.clone();
+            let mut settings = (**settings).clone();
             merge_with_editorconfig(&mut settings, &editorconfig_properties);
-            Cow::Owned(settings)
+            Arc::new(settings)
         } else {
-            Cow::Borrowed(settings)
+            Arc::clone(settings)
         }
     }
 
@@ -815,7 +894,7 @@ impl settings::Settings for AllLanguageSettings {
             }
         }
 
-        let default_language_settings = load_from_content(all_languages.defaults.clone());
+        let default_language_settings = Arc::new(load_from_content(all_languages.defaults.clone()));
 
         let mut languages = HashMap::default();
         for (language_name, settings) in &all_languages.languages.0 {
@@ -823,7 +902,7 @@ impl settings::Settings for AllLanguageSettings {
             settings::merge_from::MergeFrom::merge_from(&mut language_settings, settings);
             languages.insert(
                 LanguageName(language_name.clone().into()),
-                load_from_content(language_settings),
+                Arc::new(load_from_content(language_settings)),
             );
         }
 
@@ -848,6 +927,7 @@ impl settings::Settings for AllLanguageSettings {
             proxy_no_verify: copilot.proxy_no_verify,
             enterprise_uri: copilot.enterprise_uri,
             enable_next_edit_suggestions: copilot.enable_next_edit_suggestions,
+            prediction_debounce: copilot.prediction_debounce.unwrap(),
         };
 
         let codestral = edit_predictions.codestral.unwrap();
@@ -855,6 +935,7 @@ impl settings::Settings for AllLanguageSettings {
             model: codestral.model,
             max_tokens: codestral.max_tokens,
             api_url: codestral.api_url,
+            prediction_debounce: codestral.prediction_debounce.unwrap(),
         };
 
         let ollama = edit_predictions.ollama.unwrap();
@@ -866,6 +947,7 @@ impl settings::Settings for AllLanguageSettings {
                 max_output_tokens: ollama.max_output_tokens.unwrap(),
                 api_url: ollama.api_url.unwrap().into(),
                 prompt_format: ollama.prompt_format.unwrap().into(),
+                prediction_debounce: ollama.prediction_debounce.unwrap(),
             });
         let openai_compatible_settings = edit_predictions.open_ai_compatible_api.unwrap();
         let openai_compatible_settings = openai_compatible_settings
@@ -881,7 +963,10 @@ impl settings::Settings for AllLanguageSettings {
                 max_output_tokens: openai_compatible_settings.max_output_tokens.unwrap(),
                 api_url: api_url.into(),
                 prompt_format: openai_compatible_settings.prompt_format.unwrap().into(),
+                prediction_debounce: openai_compatible_settings.prediction_debounce.unwrap(),
             });
+        let zed_settings = edit_predictions.zed.unwrap();
+        let mercury_settings = edit_predictions.mercury.unwrap();
 
         let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
 
@@ -923,6 +1008,12 @@ impl settings::Settings for AllLanguageSettings {
                 codestral: codestral_settings,
                 ollama: ollama_settings,
                 open_ai_compatible_api: openai_compatible_settings,
+                zed: ZedEditPredictionSettings {
+                    prediction_debounce: zed_settings.prediction_debounce.unwrap(),
+                },
+                mercury: MercuryEditPredictionSettings {
+                    prediction_debounce: mercury_settings.prediction_debounce.unwrap(),
+                },
                 allow_data_collection: edit_predictions.allow_data_collection.unwrap_or_default(),
             },
             defaults: default_language_settings,

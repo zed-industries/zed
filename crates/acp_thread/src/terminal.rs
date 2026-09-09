@@ -484,6 +484,9 @@ impl Terminal {
                             original_content_len,
                             content_line_count,
                         });
+                        this.terminal.update(cx, |terminal, _cx| {
+                            terminal.release_pty_resources();
+                        });
                         // Free the sandbox (and its network proxy) as soon as
                         // the command finishes, rather than holding it until
                         // this entity is released. The proxy's teardown joins a

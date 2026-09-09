@@ -180,6 +180,7 @@ pub struct AutoUpdater {
     pending_poll: Option<Task<Option<()>>>,
     quit_subscription: Option<gpui::Subscription>,
     update_check_type: UpdateCheckType,
+    _wake_subscription: gpui::Subscription,
     dismissed_status: Option<AutoUpdateStatus>,
 }
 
@@ -441,6 +442,16 @@ impl AutoUpdater {
         })
         .detach();
 
+        // A download or check that was in flight when the machine went to sleep
+        // is almost certainly riding a TCP connection that silently died during
+        // suspend, so it would otherwise appear to stall indefinitely.
+        let wake_subscription = cx.on_system_wake({
+            let this = cx.entity().downgrade();
+            move |cx| {
+                this.update(cx, |this, cx| this.restart_after_wake(cx)).ok();
+            }
+        });
+
         Self {
             status: AutoUpdateStatus::Idle,
             current_version,
@@ -448,8 +459,25 @@ impl AutoUpdater {
             pending_poll: None,
             quit_subscription,
             update_check_type: UpdateCheckType::Automatic,
+            _wake_subscription: wake_subscription,
             dismissed_status: None,
         }
+    }
+
+    fn restart_after_wake(&mut self, cx: &mut Context<Self>) {
+        // Only network phases can be safely restarted. `Installing` is a local
+        // operation (mounting a dmg, rsync, etc.) that must not be interrupted.
+        if !matches!(
+            self.status,
+            AutoUpdateStatus::Checking | AutoUpdateStatus::Downloading { .. }
+        ) {
+            return;
+        }
+
+        let check_type = self.update_check_type;
+        self.pending_poll.take();
+        self.status = AutoUpdateStatus::Idle;
+        self.poll(check_type, cx);
     }
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -1464,7 +1492,9 @@ mod tests {
         );
         let will_restart = cx.expect_restart();
         cx.update(|cx| cx.restart());
-        let path = will_restart.await.unwrap().unwrap();
+        let (path, arguments) = will_restart.await.unwrap();
+        assert!(arguments.is_empty());
+        let path = path.unwrap();
         assert_eq!(path, tmp_dir.path().join("zed"));
         assert_eq!(std::fs::read_to_string(path).unwrap(), "<fake-zed-update>");
     }

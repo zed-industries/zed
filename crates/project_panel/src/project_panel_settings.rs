@@ -3,23 +3,22 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, ProjectPanelSortOrder,
-    RegisterSetting, Settings, ShowDiagnostics, ShowIndentGuides,
+    DockSide, FolderIndicator, IntoGpui, ProjectPanelEntrySpacing, ProjectPanelSortMode,
+    ProjectPanelSortOrder, ProjectPanelTitleTooltipDelay, RegisterSetting, Settings,
+    ShowDiagnostics, ShowIndentGuides,
 };
-use ui::{
-    px,
-    scrollbars::{ScrollbarVisibility, ShowScrollbar},
-};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, RegisterSetting)]
 pub struct ProjectPanelSettings {
     pub button: bool,
     pub hide_gitignore: bool,
     pub default_width: Pixels,
+    pub title_tooltip_delay: ProjectPanelTitleTooltipDelay,
     pub dock: DockSide,
     pub entry_spacing: ProjectPanelEntrySpacing,
     pub file_icons: bool,
-    pub folder_icons: bool,
+    pub folder_indicator: FolderIndicator,
     pub git_status: bool,
     pub indent_size: f32,
     pub indent_guides: IndentGuidesSettings,
@@ -100,11 +99,12 @@ impl Settings for ProjectPanelSettings {
         Self {
             button: project_panel.button.unwrap(),
             hide_gitignore: project_panel.hide_gitignore.unwrap(),
-            default_width: px(project_panel.default_width.unwrap()),
+            default_width: project_panel.default_width.unwrap().into_gpui(),
             dock: project_panel.dock.unwrap(),
+            title_tooltip_delay: project_panel.title_tooltip_delay.unwrap(),
             entry_spacing: project_panel.entry_spacing.unwrap(),
             file_icons: project_panel.file_icons.unwrap(),
-            folder_icons: project_panel.folder_icons.unwrap(),
+            folder_indicator: project_panel.folder_indicator.unwrap(),
             git_status: project_panel.git_status.unwrap()
                 && content
                     .git
@@ -113,7 +113,7 @@ impl Settings for ProjectPanelSettings {
                     .enabled
                     .unwrap()
                     .is_git_status_enabled(),
-            indent_size: project_panel.indent_size.unwrap(),
+            indent_size: *project_panel.indent_size.unwrap(),
             indent_guides: IndentGuidesSettings {
                 show: project_panel.indent_guides.unwrap().show.unwrap(),
             },

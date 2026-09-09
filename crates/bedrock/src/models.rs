@@ -956,11 +956,8 @@ impl MantleModel {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::Gpt5_6Sol
-            | Self::Gpt5_6Terra
-            | Self::Gpt5_6Luna
-            | Self::Gpt5_5
-            | Self::Gpt5_4 => 272_000,
+            Self::Gpt5_6Sol | Self::Gpt5_6Terra | Self::Gpt5_6Luna => 1_000_000,
+            Self::Gpt5_5 | Self::Gpt5_4 => 272_000,
             Self::Grok4_3 => 1_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -1069,7 +1066,7 @@ mod tests {
             assert_eq!(model.id(), id);
             assert_eq!(model.request_id(), request_id);
             assert_eq!(model.display_name(), display_name);
-            assert_eq!(model.max_token_count(), 272_000);
+            assert_eq!(model.max_token_count(), 1_000_000);
             assert!(model.supports_tools());
             assert!(model.supports_images());
             assert!(model.supports_thinking());

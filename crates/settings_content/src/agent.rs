@@ -217,13 +217,11 @@ pub struct AgentSettingsContent {
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
+    pub default_width: Option<crate::PixelSetting>,
     /// Default height in pixels when the agent panel is docked to the bottom.
     ///
     /// Default: 320
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_height: Option<f32>,
+    pub default_height: Option<crate::PixelSetting>,
     /// Whether to limit the content width in the agent panel. When enabled,
     /// content will be constrained to `max_content_width` and centered when
     /// the panel is wider than that value, for optimal readability.
@@ -234,8 +232,7 @@ pub struct AgentSettingsContent {
     /// centered when the panel is wider than this value.
     ///
     /// Default: 850
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub max_content_width: Option<f32>,
+    pub max_content_width: Option<crate::PixelSetting>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
     /// The model to use for subagents spawned via the `spawn_agent` tool. Defaults to the parent agent's model when not specified.
@@ -638,6 +635,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "mistral",
                         "ollama",
                         "openai",
+                        "openai-subscribed",
                         "opencode",
                         "openrouter",
                         "vercel_ai_gateway",

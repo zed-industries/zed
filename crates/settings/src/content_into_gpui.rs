@@ -4,7 +4,7 @@ use gpui::{
 };
 use settings_content::{
     FontFamilyName, FontFeaturesContent, FontSize, FontStyleContent, FontWeightContent,
-    ModifiersContent, WindowBackgroundContent,
+    ModifiersContent, PixelSetting, WindowBackgroundContent,
 };
 use std::sync::Arc;
 
@@ -69,6 +69,14 @@ impl IntoGpui for ModifiersContent {
 }
 
 impl IntoGpui for FontSize {
+    type Output = Pixels;
+
+    fn into_gpui(self) -> Self::Output {
+        px(self.0)
+    }
+}
+
+impl IntoGpui for PixelSetting {
     type Output = Pixels;
 
     fn into_gpui(self) -> Self::Output {

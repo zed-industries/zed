@@ -42,8 +42,14 @@ pub enum AskPassResult {
     Timedout,
 }
 
+type PasswordPrompt = (
+    String,
+    oneshot::Sender<EncryptedPassword>,
+    oneshot::Receiver<()>,
+);
+
 pub struct AskPassDelegate {
-    tx: mpsc::UnboundedSender<(String, oneshot::Sender<EncryptedPassword>)>,
+    tx: mpsc::UnboundedSender<PasswordPrompt>,
     executor: BackgroundExecutor,
     _task: Task<()>,
 }
@@ -56,10 +62,26 @@ impl AskPassDelegate {
         + Sync
         + 'static,
     ) -> Self {
-        let (tx, mut rx) = mpsc::unbounded::<(String, oneshot::Sender<_>)>();
+        Self::new_with_cancellation(cx, move |prompt, response_sender, _cancellation, cx| {
+            password_prompt(prompt, response_sender, cx)
+        })
+    }
+
+    pub fn new_with_cancellation(
+        cx: &mut AsyncApp,
+        password_prompt: impl Fn(
+            String,
+            oneshot::Sender<EncryptedPassword>,
+            oneshot::Receiver<()>,
+            &mut AsyncApp,
+        ) + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        let (tx, mut rx) = mpsc::unbounded::<PasswordPrompt>();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
-            while let Some((prompt, channel)) = rx.next().await {
-                password_prompt(prompt, channel, cx);
+            while let Some((prompt, response_sender, cancellation)) = rx.next().await {
+                password_prompt(prompt, response_sender, cancellation, cx);
             }
         });
         Self {
@@ -69,12 +91,17 @@ impl AskPassDelegate {
         }
     }
 
-    pub fn ask_password(&mut self, prompt: String) -> Task<Option<EncryptedPassword>> {
+    pub fn ask_password(&self, prompt: String) -> Task<Option<EncryptedPassword>> {
         let mut this_tx = self.tx.clone();
         self.executor.spawn(async move {
-            let (tx, rx) = oneshot::channel();
-            this_tx.send((prompt, tx)).await.ok()?;
-            rx.await.ok()
+            let (response_sender, response_receiver) = oneshot::channel();
+            let (cancellation_sender, cancellation_receiver) = oneshot::channel();
+            this_tx
+                .send((prompt, response_sender, cancellation_receiver))
+                .await
+                .ok()?;
+            let _cancellation_sender = cancellation_sender;
+            response_receiver.await.ok()
         })
     }
 }
@@ -98,7 +125,7 @@ impl AskPassSession {
     /// This will create a new AskPassSession.
     /// You must retain this session until the master process exits.
     #[must_use]
-    pub async fn new(executor: BackgroundExecutor, mut delegate: AskPassDelegate) -> Result<Self> {
+    pub async fn new(executor: BackgroundExecutor, delegate: AskPassDelegate) -> Result<Self> {
         #[cfg(target_os = "windows")]
         let secret = std::sync::Arc::new(std::sync::Mutex::new(None));
 
@@ -586,4 +613,34 @@ fn find_gpg_program() -> Option<std::path::PathBuf> {
     ["gpg", "gpg2"]
         .into_iter()
         .find_map(|candidate| which::which(candidate).ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn dropping_password_request_cancels_prompt(cx: &mut TestAppContext) {
+        let (prompt_sender, mut prompt_receiver) = mpsc::unbounded();
+        let delegate = AskPassDelegate::new_with_cancellation(
+            &mut cx.to_async(),
+            move |_, response_sender, cancellation, _| {
+                prompt_sender
+                    .unbounded_send((response_sender, cancellation))
+                    .expect("prompt receiver should remain open");
+            },
+        );
+
+        let password_request = delegate.ask_password("Password:".to_string());
+        let (response_sender, cancellation) = prompt_receiver
+            .next()
+            .await
+            .expect("password prompt should be received");
+
+        drop(password_request);
+
+        assert!(cancellation.await.is_err());
+        drop(response_sender);
+    }
 }
