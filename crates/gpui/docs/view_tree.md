@@ -286,6 +286,19 @@ changing.
 counts, views, share changing, budget — with presets and the measured `Workbench` rows
 beside it.
 
+**Editors** are measured as what they are — one view each, painting ~40 lines of code
+directly — in `Complexity/editors/k{K}-d{D}-{cursor,scroll}`: K editors in a grid, D of
+them changed per frame by a cursor move (visible lines still shaped) or by scrolling a
+page (lines reshaped). An editor costs `main` **≈190 µs** a frame whether or not anything
+in it changed, +90 µs when it scrolls; on the branch a clean editor replays for **≈190
+µs** and a scrolled one renders for ≈230. So for editors the tree is a wash, within
+noise either way: an editor's frame cost is its glyph primitives, which a replay has to
+re-insert into the frame just as a render does. The branch's gains in an editor window
+are the chrome around the editors, which is what `Workbench/update/editor` measures.
+Cursor moves are not in the fit: moving the cursor in one editor cost 480 µs against 390
+for a page scroll, and moving it in four cost 4.4 ms — on both engines — which is
+editor behaviour to look at separately, not rendering.
+
 What the replay floor is made of matters for what comes next: a clean medium element
 still costs 1.2 µs and a clean heavy one 8.3 µs, against 0.18 for a bare quad, because
 replaying a primitive re-inserts it into the frame's bounds tree to find its draw order,

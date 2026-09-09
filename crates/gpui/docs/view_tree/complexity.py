@@ -27,12 +27,17 @@ KIND = {1: 0, 4: 1, 12: 2}; KIND_NAMES = ["light", "medium", "heavy"]
 PER_DIRTY_NODE = 0.55  # µs, Siblings sweep
 
 points = []  # (V, E, P, F, main_us, branch_us)
+editor_points = []  # (editors, dirty, reshape, main_us, branch_us)
 with open(csv_path, encoding="utf-8") as rows:
     for row in csv.reader(rows):
-        m = re.search(r"v(\d+)-e(\d+)-p(\d+)-f(\d+)", row[0]) if row else None
-        if m and len(row) >= 3:
+        if not row or len(row) < 3:
+            continue
+        if m := re.search(r"v(\d+)-e(\d+)-p(\d+)-f(\d+)", row[0]):
             V, E, P, F = map(int, m.groups())
             points.append((V, E, P, F, micros(row[1]), micros(row[2])))
+        elif m := re.search(r"editors/k(\d+)-d(\d+)-(cursor|scroll)", row[0]):
+            K, D, how = int(m.group(1)), int(m.group(2)), m.group(3)
+            editor_points.append((K, D, how == "scroll", micros(row[1]), micros(row[2])))
 
 def counts(V, E, P, F):
     dirty_views = 0 if F == 0 else max(1, -(-F * V // 100))
@@ -58,6 +63,26 @@ def describe(names, coef):
     return ", ".join(f"{n} {v:.2f}" for n, v in zip(names, coef))
 print("main  :", describe(names_main, coef_main), "µs; |err| mean %.1f%% max %.1f%%" % (100 * abs(err_main).mean(), 100 * abs(err_main).max()))
 print("branch:", describe(names_branch, coef_branch), "µs; |err| mean %.1f%% max %.1f%%" % (100 * abs(err_branch).mean(), 100 * abs(err_branch).max()))
+
+# Editors: one view each, painting ~40 lines of code directly. Fitted on the points where a
+# dirty editor scrolled (its visible lines reshaped) or nothing was dirty; a cursor move
+# turned out to cost far more than a scroll and to grow faster than the number of editors
+# moving, which is editor behaviour rather than rendering, so those points are reported but
+# not fitted.
+#   main:   t = c + K·e + D·x        (every editor re-renders; x is the reshaping extra)
+#   branch: t = c + (K − D)·e_clean + D·e_dirty
+editor_fit = None
+fit_points = [p for p in editor_points if p[1] == 0 or p[2]]
+if len(fit_points) >= 4:
+    Xm = np.array([[1, K, D] for K, D, *_ in fit_points]); Xb = np.array([[1, K - D, D] for K, D, *_ in fit_points])
+    ym = np.array([p[3] for p in fit_points]); yb = np.array([p[4] for p in fit_points])
+    em, _, erm = weighted_fit(Xm, ym); eb, _, erb = weighted_fit(Xb, yb)
+    editor_fit = dict(main_each=em[1], main_reshape=em[2], branch_clean=eb[1], branch_dirty=eb[2])
+    print("editors: main %.0f µs each, +%.0f when scrolled; branch clean %.0f, dirty (scrolled) %.0f; |err| mean %.1f%% / %.1f%%"
+          % (em[1], em[2], eb[1], eb[2], 100 * abs(erm).mean(), 100 * abs(erb).mean()))
+    for K, D, reshape, m, b in editor_points:
+        if not reshape and D > 0:
+            print(f"  cursor moves (not fitted): k{K}-d{D}: main {m:.0f} µs, branch {b:.0f} µs")
 
 def predict_main(n):  # n = [light, medium, heavy]
     N = sum(n)
@@ -135,6 +160,8 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <label>divs (a quad) <input id=L type=range min=0 max=4000 step=10 value=200> <span id=Lv></span></label>
 <label>buttons (quad + 3-glyph label) <input id=M type=range min=0 max=1500 step=10 value=300> <span id=Mv></span></label>
 <label>cards (quad + shadow + 10-glyph label) <input id=H type=range min=0 max=400 step=5 value=20> <span id=Hv></span></label>
+<label>editors (~40 lines of code each) <input id=K type=range min=0 max=8 value=3> <span id=Kv></span></label>
+<label>… of which changing <input id=D type=range min=0 max=8 value=1> <span id=Dv></span> <label style="display:inline;margin-left:1em"><input id=R type=checkbox> showing new text (lines reshaped, e.g. scrolling)</label></label>
 <label>views <input id=V type=range min=1 max=128 value=20> <span id=Vv></span></label>
 <label>elements changing per frame <input id=F type=range min=0 max=100 value=10> <span id=Fv></span>%%</label>
 <table><tr><th></th><th>main</th><th>branch</th></tr>
@@ -145,27 +172,31 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <canvas id=c width=900 height=320></canvas>
 <h3>Measured: the Zed-shaped <code>Workbench</code> fixtures</h3>
 <table><tr><th>fixture</th><th>main</th><th>branch</th><th>change</th></tr>%(measured)s</table>
-<p><small>Model fitted to <code>complexity.csv</code> (%(npoints)d points; mean error %(errm).0f%% / %(errb).0f%%); see <code>view_tree.md</code>, "Scene complexity". Coefficients (µs): main — %(cm)s; branch — %(cb)s.</small></p>
+<p><small>Model fitted to <code>complexity.csv</code> (%(npoints)d element points, mean error %(errm).0f%% / %(errb).0f%%; %(neditors)d editor points); see <code>view_tree.md</code>, "Scene complexity". Coefficients (µs): main — %(cm)s; branch — %(cb)s; editors — %(editors_text)s.</small></p>
 <script>
-const M=%(coef_main)s, B=%(coef_branch)s, NODE=%(node)s;
-function tmain(n){const N=n[0]+n[1]+n[2];return M[0]+M[1]*n[0]+M[2]*n[1]+M[3]*n[2]+M[4]*(N/100)**2;}
-function tbranch(n,f,V){const N=n[0]+n[1]+n[2];let t=B[0]+B[7]*(N/100)**2+NODE*(f==0?0:Math.max(1,Math.ceil(f*V)));
+const M=%(coef_main)s, B=%(coef_branch)s, NODE=%(node)s, ED=%(editors)s;
+let K=0,D=0,R=false;
+function editorsMain(){return ED?K*ED.main_each+(R?D*ED.main_reshape:0):0;}
+function editorsBranch(){return ED?(K-D)*ED.branch_clean+D*(R?ED.branch_dirty:ED.branch_clean):0;}
+function tmain(n){const N=n[0]+n[1]+n[2];return M[0]+M[1]*n[0]+M[2]*n[1]+M[3]*n[2]+M[4]*(N/100)**2+editorsMain();}
+function tbranch(n,f,V){const N=n[0]+n[1]+n[2];let t=B[0]+B[7]*(N/100)**2+NODE*(f==0?0:Math.max(1,Math.ceil(f*V)))+editorsBranch();
 for(let k=0;k<3;k++){const d=n[k]*f;t+=B[1+k]*d+B[4+k]*(n[k]-d);}return t;}
 function scale(f,budget){let lo=0,hi=1024;for(let i=0;i<40;i++){const mid=(lo+hi)/2;if(f(mid)<=budget*1000)lo=mid;else hi=mid;}return lo;}
 const $=id=>document.getElementById(id);
 function fmt(us){return us>=1000?(us/1000).toFixed(2)+' ms':us.toFixed(0)+' µs';}
 const PRESETS={
- 'Zed-shaped chrome: 200 divs + 300 buttons + 20 cards, 20 views, 10%% changing':[200,300,20,20,10],
- 'typing in one of 3 panes: same scene, 3%%':[200,300,20,20,3],
- 'dashboard: 3000 div tiles, one animating (1%%)':[3000,0,0,40,1],
- 'list: 300 card rows scrolling (all changing)':[0,0,300,1,100],
- 'everything dirty (resize / focus change)':[200,300,20,20,100],
- 'sweep-sized: 1500 buttons, 25%%':[0,1500,0,16,25],
+ 'Zed: 3 panes, typing in one (chrome 200 divs + 300 buttons + 20 cards, 3%% changing)':[200,300,20,20,3,3,1,false],
+ 'Zed: scrolling one of 3 panes':[200,300,20,20,3,3,1,true],
+ 'Zed: everything dirty (resize / focus change)':[200,300,20,20,100,3,3,true],
+ 'dashboard: 3000 div tiles, one animating (1%%)':[3000,0,0,40,1,0,0,false],
+ 'list: 300 card rows scrolling (all changing)':[0,0,300,1,100,0,0,false],
+ 'sweep-sized: 1500 buttons, 25%%':[0,1500,0,16,25,0,0,false],
 };
 const BUDGET=8.3;const BUDGETS=[[8.3,'8.3 ms (120 Hz)'],[16.7,'16.7 ms (60 Hz)']];
 function label(g,text,x,y,color){g.font='12px system-ui';g.lineWidth=3;g.strokeStyle='rgba(255,255,255,.9)';g.strokeText(text,x,y);g.fillStyle=color;g.fillText(text,x,y);}
 function draw(){const n=[+$('L').value,+$('M').value,+$('H').value],V=+$('V').value,F=+$('F').value,budget=BUDGET,f=F/100;
-$('Lv').textContent=n[0];$('Mv').textContent=n[1];$('Hv').textContent=n[2];$('Vv').textContent=V;$('Fv').textContent=F;
+K=+$('K').value;$('D').max=K;D=Math.min(+$('D').value,K);$('D').value=D;R=$('R').checked;
+$('Lv').textContent=n[0];$('Mv').textContent=n[1];$('Hv').textContent=n[2];$('Vv').textContent=V;$('Fv').textContent=F;$('Kv').textContent=K;$('Dv').textContent=D;
 const tm=tmain(n),tb=tbranch(n,f,V);$('tm').textContent=fmt(tm);$('tb').textContent=fmt(tb);
 const t0=tbranch(n,0,V),t1=tbranch(n,1,V);
 const N=n[0]+n[1]+n[2];const sm=scale(s=>tmain(n.map(x=>x*s)),budget),sb=scale(s=>tbranch(n.map(x=>x*s),f,V),budget);
@@ -189,13 +220,16 @@ const bx=F>55?X(F)-bw:X(F)+6;const by=(Y(tb)-Y(tm))<22?Y(tb)+18:Y(tb)-6;
 label(g,'main '+fmt(tm),X(2),Y(tm)-6,'#555');label(g,branchText,bx,by,'#1b6f65');
 for(const [ms] of BUDGETS){const cross=t1===t0?null:(ms*1000-t0)/(t1-t0);if(cross!==null&&cross>0&&cross<1&&ms*1000<ymax){g.fillStyle='#e76f51';g.beginPath();g.arc(X(cross*100),Y(ms*1000),4,0,7);g.fill();}}
 if(fEven!==null&&fEven>0&&fEven<1){g.fillStyle='#555';g.beginPath();g.arc(X(fEven*100),Y(tm),4,0,7);g.fill();const t='break-even '+Math.round(fEven*100)+'%%';const tw=g.measureText(t).width;label(g,t,Math.min(X(fEven*100)-tw/2,X(100)-tw),Y(tm)-22,'#555');}else if(fEven!==null&&fEven>=1){const t='never slower than main below 100%%';label(g,t,X(100)-g.measureText(t).width-4,Y(tm)-6,'#555');}}
-for(const id of ['L','M','H','V','F'])$(id).addEventListener('input',draw);
-for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value]=v;draw();};$('presets').appendChild(b);}
+for(const id of ['L','M','H','K','D','R','V','F'])$(id).addEventListener('input',draw);
+for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value,$('K').value,$('D').value]=v;$('R').checked=v[7];draw();};$('presets').appendChild(b);}
 draw();
 </script>
 """ % dict(npoints=len(points), errm=100 * abs(err_main).mean(), errb=100 * abs(err_branch).mean(), maxm=100 * abs(err_main).max(), maxb=100 * abs(err_branch).max(),
            cm=describe(names_main, coef_main), cb=describe(names_branch, coef_branch),
            coef_main=json.dumps([float(v) for v in coef_main]), coef_branch=json.dumps([float(v) for v in coef_branch]), node=PER_DIRTY_NODE,
+           editors=json.dumps({k: float(v) for k, v in editor_fit.items()}) if editor_fit else "null",
+           neditors=len(editor_points),
+           editors_text=("main %(main_each).0f each +%(main_reshape).0f reshaped; branch clean %(branch_clean).0f, dirty %(branch_dirty).0f" % editor_fit) if editor_fit else "not measured",
            measured="".join(f"<tr><td>{f}</td><td class=m>{m}</td><td class=n>{b}</td><td>{ch}%</td></tr>" for f, m, b, ch in measured) or "<tr><td colspan=4>matrix.csv not found</td></tr>")
 open(f"{out}/complexity.html", "w", encoding="utf-8").write(html)
 print("ok")

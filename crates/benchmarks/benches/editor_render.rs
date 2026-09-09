@@ -3,6 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use editor::{
     Editor, EditorMode, MultiBuffer,
     actions::{DeleteToPreviousWordStart, SelectAll, SplitSelectionIntoLines},
+    scroll::ScrollAmount,
 };
 use gpui::{App, AppContext as _, BenchAppContext, BorrowAppContext as _, Focusable as _};
 use indoc::{formatdoc, indoc};
@@ -899,6 +900,136 @@ fn complexity(point: &ComplexityPoint, cx: &mut BenchAppContext) {
     cx.bench_renderer(host, update);
 }
 
+/// One point of the editors sweep: `editors` full editors of code in a grid, `dirty` of
+/// them changed every update — by moving the cursor, which re-renders the editor with
+/// its shaped lines still cached, or by scrolling a page, which brings in lines that
+/// have to be shaped (`reshape`).
+#[derive(Clone, Copy)]
+struct EditorsPoint {
+    editors: usize,
+    dirty: usize,
+    reshape: bool,
+}
+
+impl std::fmt::Display for EditorsPoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "k{}-d{}-{}",
+            self.editors,
+            self.dirty,
+            if self.reshape { "scroll" } else { "cursor" }
+        )
+    }
+}
+
+fn editors_points() -> Vec<EditorsPoint> {
+    [
+        (1, 0, false),
+        (1, 1, false),
+        (1, 1, true),
+        (4, 0, false),
+        (4, 1, false),
+        (4, 1, true),
+        (4, 4, false),
+        (4, 4, true),
+    ]
+    .into_iter()
+    .map(|(editors, dirty, reshape)| EditorsPoint {
+        editors,
+        dirty,
+        reshape,
+    })
+    .collect()
+}
+
+/// The editor's weight for the cost model: each editor is one view painting ~40 lines of
+/// code directly, not element by element. A clean editor is replayed; a dirty one renders
+/// again, cheaply when its visible lines are still shaped (cursor moves, typing within
+/// a line) and dearly when they are not (scrolling, new text). Editors are 780×470 px so
+/// four fill the 1600×1000 window.
+#[gpui::bench(
+    inputs = editors_points(),
+    group = "Complexity",
+    input_name = "editors",
+    sample_size = 20
+)]
+fn complexity_editors(point: &EditorsPoint, cx: &mut BenchAppContext) {
+    use gpui::{
+        Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, px, rgb,
+    };
+
+    struct Host {
+        editors: Vec<Entity<Editor>>,
+        dirty: usize,
+        reshape: bool,
+        move_down: bool,
+    }
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_wrap()
+                .bg(rgb(0x18202a))
+                .children(self.editors.iter().map(|editor| {
+                    div()
+                        .w(px(780.))
+                        .h(px(470.))
+                        .m(px(5.))
+                        .child(editor.clone())
+                }))
+        }
+    }
+
+    init_context(cx);
+    let point = *point;
+    let mut window = cx.add_empty_window();
+    let host = window.update(|window, cx| {
+        window.resize(gpui::size(px(1600.), px(1000.)));
+        window.bounds_changed(cx);
+        let editors = (0..point.editors)
+            .map(|_| {
+                let buffer = MultiBuffer::build_simple(&indented_code_text(400), cx);
+                cx.new(|cx| {
+                    let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+                    editor.set_style(editor::EditorStyle::default(), window, cx);
+                    editor
+                })
+            })
+            .collect();
+        window.replace_root(cx, |_, _| Host {
+            editors,
+            dirty: point.dirty,
+            reshape: point.reshape,
+            move_down: true,
+        })
+    });
+    let update = move |host: &mut Host, window: &mut Window, cx: &mut Context<Host>| {
+        let move_down = host.move_down;
+        let reshape = host.reshape;
+        for editor in host.editors.iter().take(host.dirty) {
+            editor.update(cx, |editor, cx| {
+                if reshape {
+                    let amount = ScrollAmount::Page(if move_down { 1. } else { -1. });
+                    editor.scroll_screen(&amount, window, cx);
+                } else if move_down {
+                    editor.move_down(&MoveDown, window, cx);
+                } else {
+                    editor.move_up(&MoveUp, window, cx);
+                }
+            });
+        }
+        host.move_down = !move_down;
+        cx.notify();
+    };
+    for _ in 0..4 {
+        cx.run_until_idle();
+        window.update(|window, cx| host.update(cx, |host, cx| update(host, window, cx)));
+    }
+    cx.bench_renderer(host, update);
+}
+
 fn init_context(cx: &mut BenchAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
@@ -927,6 +1058,7 @@ gpui::bench_group!(
     siblings_all_dirty,
     elements_all_dirty,
     elements_incremental,
-    complexity
+    complexity,
+    complexity_editors
 );
 gpui::bench_main!(benches);
