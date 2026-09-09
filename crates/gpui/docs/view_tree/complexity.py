@@ -139,13 +139,12 @@ canvas{border:1px solid #ddd;margin-top:1em}.n{color:#2a9d8f}.m{color:#777}small
 <label>heavy elements (quad + shadow + 10 glyphs) <input id=H type=range min=0 max=400 step=5 value=20> <span id=Hv></span></label>
 <label>views <input id=V type=range min=1 max=128 value=20> <span id=Vv></span> <small>(0.55 µs per dirty view; not fitted)</small></label>
 <label>elements changing per frame <input id=F type=range min=0 max=100 value=10> <span id=Fv></span>%%</label>
-<label>frame budget <input id=B type=range min=1 max=17 step=0.1 value=4> <span id=Bv></span> ms</label>
 <table><tr><th></th><th>main</th><th>branch</th></tr>
 <tr><td>frame time</td><td class=m id=tm></td><td class=n id=tb></td></tr>
-<tr><td>scale of this scene that fits the budget (× the element counts above)</td><td class=m id=sm></td><td class=n id=sb></td></tr>
+<tr><td>scale of this scene that fits 4 ms (× the element counts above)</td><td class=m id=sm></td><td class=n id=sb></td></tr>
 <tr><td>… i.e. total elements</td><td class=m id=em></td><td class=n id=eb></td></tr></table>
 <canvas id=c width=900 height=320></canvas>
-<p><small>Curve: frame time against the share of elements changing, for the scene above. Grey: <code>main</code>; green: branch; dashed: budget; vertical: your setting.</small></p>
+<p><small>Curve: frame time against the share of elements changing, for the scene above. Grey: <code>main</code>; green: branch; dashed: the 4 ms and 8.3 ms (120 Hz) budgets; vertical: your setting.</small></p>
 <h3>Measured, not modelled: the Zed-shaped fixtures</h3>
 <p>From <code>matrix.sh</code>: a 48-row list, four panels and an editor at 1600×1000 (<code>Workbench</code>), Criterion medians.</p>
 <table><tr><th>fixture</th><th>main</th><th>branch</th><th>change</th></tr>%(measured)s</table>
@@ -166,20 +165,22 @@ const PRESETS={
  'everything dirty (resize / focus change)':[200,300,20,20,100],
  'sweep-sized: 1500 medium, 25%%':[0,1500,0,16,25],
 };
-function draw(){const n=[+$('L').value,+$('M').value,+$('H').value],V=+$('V').value,F=+$('F').value,budget=+$('B').value,f=F/100;
-$('Lv').textContent=n[0];$('Mv').textContent=n[1];$('Hv').textContent=n[2];$('Vv').textContent=V;$('Fv').textContent=F;$('Bv').textContent=budget;
+const BUDGETS=[[4,'4 ms'],[8.3,'120 Hz']];
+function label(g,text,x,y,color){g.font='12px system-ui';g.lineWidth=3;g.strokeStyle='rgba(255,255,255,.9)';g.strokeText(text,x,y);g.fillStyle=color;g.fillText(text,x,y);}
+function draw(){const n=[+$('L').value,+$('M').value,+$('H').value],V=+$('V').value,F=+$('F').value,budget=4,f=F/100;
+$('Lv').textContent=n[0];$('Mv').textContent=n[1];$('Hv').textContent=n[2];$('Vv').textContent=V;$('Fv').textContent=F;
 const tm=tmain(n),tb=tbranch(n,f,V);$('tm').textContent=fmt(tm);$('tb').textContent=fmt(tb);
 const N=n[0]+n[1]+n[2];const sm=scale(s=>tmain(n.map(x=>x*s)),budget),sb=scale(s=>tbranch(n.map(x=>x*s),f,V),budget);
 $('sm').textContent=sm.toFixed(2)+'×';$('sb').textContent=sb.toFixed(2)+'×';$('em').textContent=Math.round(N*sm);$('eb').textContent=Math.round(N*sb);
 const cv=$('c'),g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);const pad=44,W=cv.width-2*pad,H=cv.height-2*pad;
-const ymax=Math.max(tm,budget*1000,tb)*1.15;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
+const ymax=Math.max(tm,tb,4000)*1.15;const X=p=>pad+W*p/100,Y=us=>pad+H*(1-us/ymax);
 g.fillStyle='rgba(150,150,150,.5)';g.fillRect(X(0),Y(tm),W,Y(0)-Y(tm));
 g.beginPath();g.moveTo(X(0),Y(0));for(let p=0;p<=100;p++)g.lineTo(X(p),Y(tbranch(n,p/100,V)));g.lineTo(X(100),Y(0));g.closePath();g.fillStyle='rgba(42,157,143,.7)';g.fill();
-g.strokeStyle='#e76f51';g.setLineDash([4,4]);g.beginPath();g.moveTo(X(0),Y(budget*1000));g.lineTo(X(100),Y(budget*1000));g.stroke();g.setLineDash([]);
+g.lineWidth=1;g.strokeStyle='#e76f51';g.setLineDash([4,4]);for(const [ms,name] of BUDGETS){if(ms*1000<ymax){g.beginPath();g.moveTo(X(0),Y(ms*1000));g.lineTo(X(100),Y(ms*1000));g.stroke();label(g,name,X(100)-46,Y(ms*1000)-4,'#e76f51');}}g.setLineDash([]);
 g.beginPath();g.moveTo(X(F),Y(0));g.lineTo(X(F),Y(ymax/1.15));g.stroke();
-g.fillStyle='#333';g.font='12px system-ui';g.fillText('0%%',X(0)-8,Y(0)+16);g.fillText('100%% of elements changing',X(100)-140,Y(0)+16);g.fillText(fmt(ymax/1.15),2,Y(ymax/1.15)+4);g.fillText('0',24,Y(0)+4);
-g.fillStyle='#777';g.fillText('main '+fmt(tm),X(2),Y(tm)-4);g.fillStyle='#2a9d8f';g.fillText('branch '+fmt(tb)+' at '+F+'%%',Math.min(X(F)+4,X(100)-150),Y(tb)-4);}
-for(const id of ['L','M','H','V','F','B'])$(id).addEventListener('input',draw);
+label(g,'0%%',X(0)-8,Y(0)+16,'#333');label(g,'100%% of elements changing',X(100)-140,Y(0)+16,'#333');label(g,fmt(ymax/1.15),2,Y(ymax/1.15)+4,'#333');label(g,'0',24,Y(0)+4,'#333');
+label(g,'main '+fmt(tm),X(2),Y(tm)-4,'#555');label(g,'branch '+fmt(tb)+' at '+F+'%%',Math.min(X(F)+4,X(100)-150),Y(tb)-6,'#1b6f65');}
+for(const id of ['L','M','H','V','F'])$(id).addEventListener('input',draw);
 for(const [name,v] of Object.entries(PRESETS)){const b=document.createElement('button');b.textContent=name;b.onclick=()=>{[$('L').value,$('M').value,$('H').value,$('V').value,$('F').value]=v;draw();};$('presets').appendChild(b);}
 draw();
 </script>
