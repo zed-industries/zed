@@ -200,14 +200,13 @@ ring has been freed, so they reflect the app and not the harness, and `matrix.sh
 records them next to the timings (`main_rss`, `branch_rss` columns, MB after the first
 measurement; `*_rss_max`). Results: _pending the paired run._
 
-From the inside, `ViewTreeStats::retained_bytes` estimates what the view tree holds
-between frames from its containers' capacities (records, dependency sets, bookkeeping;
-not the shaped text bodies, boxed listeners, the Taffy tree, or the primitives, which
-live in the frame). `view_tree_retained_memory_is_flat_across_reuse` checks it stays
-flat over a thousand frames that redraw one row at a time, and
-`test_workspace_rendering_stress` prints it: a 3-pane workspace at 1600×1000 with three
-editors holds 20 nodes and about 500 KB. For real use, sample RSS during the session
-below (`ps -o rss= -p <pid>` once a second) alongside the frame log.
+There is no in-engine byte count: an estimate from container capacities was a second
+bookkeeping to keep in step with every structure, and the process number is what
+matters. What is counted is structural — `ViewTreeStats::live_nodes` and
+`layout_nodes` — and `view_tree_is_flat_across_reuse` checks both stay constant over a
+thousand frames that redraw one row at a time (a 3-pane workspace at 1600×1000 with
+three editors holds 20 nodes). For real use, sample RSS during the session below
+(`ps -o rss= -p <pid>` once a second) alongside the frame log.
 
 ### Real use
 

@@ -76,10 +76,6 @@ pub struct ViewTreeStats {
     pub live_nodes: usize,
     /// Taffy nodes retained after the frame.
     pub layout_nodes: usize,
-    /// An estimate of the heap the engine holds between frames for its nodes' recordings,
-    /// dependency sets and bookkeeping, from container capacities. Excludes what boxed
-    /// listeners, element states and shaped text point to, and the retained Taffy tree.
-    pub retained_bytes: usize,
 }
 
 /// The entities one node's render read. Nodes read a handful, so a small vector with a
@@ -170,35 +166,6 @@ impl ViewTree {
 
     pub(crate) fn node(&self, node_id: ViewNodeId) -> &ViewNode {
         &self.nodes[node_id]
-    }
-
-    /// See [`ViewTreeStats::retained_bytes`]. Walks every node, so it is computed on demand.
-    pub(crate) fn retained_bytes(&self) -> usize {
-        let nodes: usize = self
-            .nodes
-            .values()
-            .map(|node| {
-                size_of::<ViewNode>()
-                    + node.output.retained_bytes()
-                    + node.accessed_entities.capacity() * size_of::<EntityId>()
-                    + (node.children.capacity() + node.next_children.capacity())
-                        * size_of::<ViewNodeId>()
-            })
-            .sum();
-        let consumers: usize = self
-            .consumers
-            .values()
-            .map(|set| set.capacity() * size_of::<ViewNodeId>())
-            .sum::<usize>()
-            + self.consumers.capacity() * size_of::<(EntityId, FxHashSet<ViewNodeId>)>();
-        nodes
-            + consumers
-            + self
-                .spare_dependency_sets
-                .iter()
-                .map(|set| set.capacity() * size_of::<EntityId>())
-                .sum::<usize>()
-            + self.occurrences.capacity() * size_of::<(ViewOccurrence, ViewNodeId)>()
     }
 
     fn set_dirty(&mut self, node_id: ViewNodeId) -> bool {
@@ -1562,9 +1529,9 @@ mod oracle_tests {
     }
 
     /// What the engine holds between frames must not grow while the same tree is redrawn:
-    /// a node redrawn in place reuses its buffers, and reused nodes allocate nothing.
+    /// nodes and layout roots are reused, not re-created.
     #[gpui::test]
-    fn view_tree_retained_memory_is_flat_across_reuse(cx: &mut TestAppContext) {
+    fn view_tree_is_flat_across_reuse(cx: &mut TestAppContext) {
         let mut rng = StdRng::seed_from_u64(0);
         let window = cx.open_window(size(px(300.), px(300.)), |_, cx| {
             let rows: Vec<_> = (0..40)
@@ -1608,18 +1575,10 @@ mod oracle_tests {
         }
         let settled = redraw_one_row(100, cx);
         assert!(settled.reused_subtrees > 0);
-        // Which row is dirty moves one small container between two capacities.
-        let tolerance = 256;
         for step in 101..1000 {
             let stats = redraw_one_row(step, cx);
             assert_eq!(stats.live_nodes, settled.live_nodes, "step {step}");
             assert_eq!(stats.layout_nodes, settled.layout_nodes, "step {step}");
-            assert!(
-                stats.retained_bytes <= settled.retained_bytes + tolerance,
-                "step {step}: retained {} bytes, settled at {}",
-                stats.retained_bytes,
-                settled.retained_bytes
-            );
         }
     }
 

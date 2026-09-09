@@ -106,11 +106,6 @@ impl ViewNodeScene {
         self.segments.push(ViewNodeSceneSegment::Child(child));
     }
 
-    fn retained_bytes(&self) -> usize {
-        self.kinds.capacity() * size_of::<PrimitiveKind>()
-            + self.segments.capacity() * size_of::<ViewNodeSceneSegment>()
-    }
-
     pub(crate) fn finish(&mut self) {
         self.close_run();
         self.kinds.truncate(self.kind_count);
@@ -301,31 +296,6 @@ impl NodeOutput {
 
     pub(crate) fn phases_mut(&mut self) -> impl Iterator<Item = &mut PhaseOutput> {
         self.phases.iter_mut()
-    }
-
-    /// The heap this output holds on to between frames, from its containers' capacities.
-    /// Boxed listeners, element states and shaped text are counted by their handles, not
-    /// what they point to.
-    pub(crate) fn retained_bytes(&self) -> usize {
-        self.phases
-            .iter()
-            .map(|phase| {
-                phase.items.capacity() * size_of::<OutputItem>()
-                    + phase.dispatch.capacity() * size_of::<DispatchOp>()
-                    + phase.dispatch_nodes.capacity() * size_of::<RecordedDispatchNode>()
-                    + phase
-                        .dispatch_nodes
-                        .iter()
-                        .map(|recorded| recorded.node.retained_bytes())
-                        .sum::<usize>()
-                    + phase.text.retained_bytes()
-                    + phase.scene.retained_bytes()
-            })
-            .sum::<usize>()
-            + self.element_states.capacity()
-                * (size_of::<(GlobalElementId, TypeId)>()
-                    + size_of::<(u64, crate::window::ElementStateBox)>())
-            + self.inline_views.capacity() * size_of::<(&'static str, u64)>()
     }
 
     /// Clears the drawn items ahead of a redraw. Element states are kept so the redraw can

@@ -115,12 +115,6 @@ impl DispatchNode {
             && self.focus_id.is_none()
             && self.view_id.is_none()
     }
-
-    pub(crate) fn retained_bytes(&self) -> usize {
-        self.key_listeners.capacity() * size_of::<KeyListener>()
-            + self.action_listeners.capacity() * size_of::<DispatchActionListener>()
-            + self.modifiers_changed_listeners.capacity() * size_of::<ModifiersChangedListener>()
-    }
 }
 
 impl Clone for DispatchNode {

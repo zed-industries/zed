@@ -241,7 +241,6 @@ async fn test_workspace_rendering_stress(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let mut reused_subtrees = 0;
     let mut maximum_layout_nodes = 0;
-    let mut maximum_retained_bytes = 0;
     let mut maximum_live_nodes = 0;
     let steps = std::env::var("GPUI_STRESS_STEPS").map_or(48, |value| {
         value.parse::<usize>().expect("stress step count")
@@ -287,7 +286,6 @@ async fn test_workspace_rendering_stress(cx: &mut TestAppContext) {
         }
         reused_subtrees += stats.reused_subtrees;
         maximum_layout_nodes = maximum_layout_nodes.max(stats.layout_nodes);
-        maximum_retained_bytes = maximum_retained_bytes.max(stats.retained_bytes);
         maximum_live_nodes = maximum_live_nodes.max(stats.live_nodes);
     }
     assert!(
@@ -295,7 +293,7 @@ async fn test_workspace_rendering_stress(cx: &mut TestAppContext) {
         "stress workload must exercise node reuse"
     );
     eprintln!(
-        "workspace rendering stress: 6 Rust files, 3 panes, {steps} updates; reused subtrees={reused_subtrees}, maximum live nodes={maximum_live_nodes}, maximum layout nodes={maximum_layout_nodes}, maximum retained bytes={maximum_retained_bytes}"
+        "workspace rendering stress: 6 Rust files, 3 panes, {steps} updates; reused subtrees={reused_subtrees}, maximum live nodes={maximum_live_nodes}, maximum layout nodes={maximum_layout_nodes}"
     );
 }
 
