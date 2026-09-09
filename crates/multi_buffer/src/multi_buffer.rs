@@ -6404,6 +6404,41 @@ impl MultiBufferSnapshot {
         .map(|(range, diagnostic, _)| DiagnosticEntryRef { diagnostic, range })
     }
 
+    /// Returns diagnostics whose stored anchored ranges are points.
+    pub fn point_diagnostics_in_range<'a, MBD>(
+        &'a self,
+        range: Range<MBD>,
+    ) -> impl Iterator<Item = DiagnosticEntryRef<'a, MBD>> + 'a
+    where
+        MBD::TextDimension: 'a
+            + text::ToOffset
+            + text::FromAnchor
+            + Sub<Output = MBD::TextDimension>
+            + fmt::Debug
+            + ops::Add<Output = MBD::TextDimension>
+            + ops::AddAssign
+            + Ord,
+        MBD: MultiBufferDimension
+            + Ord
+            + Sub<Output = MBD::TextDimension>
+            + ops::Add<MBD::TextDimension, Output = MBD>
+            + ops::AddAssign<MBD::TextDimension>
+            + 'a,
+    {
+        self.lift_buffer_metadata::<MBD, _, _>(range, move |buffer, buffer_range| {
+            Some(
+                buffer
+                    .diagnostic_entries_in_range(buffer_range.start..buffer_range.end, false)
+                    .filter(|entry| entry.range.start == entry.range.end)
+                    .map(|entry| {
+                        let entry = entry.resolve::<MBD::TextDimension>(buffer);
+                        (entry.range, entry.diagnostic)
+                    }),
+            )
+        })
+        .map(|(range, diagnostic, _)| DiagnosticEntryRef { diagnostic, range })
+    }
+
     pub fn diagnostics_with_buffer_ids_in_range<'a, MBD>(
         &'a self,
         range: Range<MBD>,

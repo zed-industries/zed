@@ -27,8 +27,8 @@ use util::ResultExt;
 use workspace::{ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel};
 
 use super::{
-    BlockLayout, EditorElement, EditorLayout, LineWithInvisibles, PointDiagnosticLayout,
-    layout_line, render_breadcrumb_text,
+    BlockLayout, EditorElement, EditorLayout, LineWithInvisibles, layout_line,
+    render_breadcrumb_text,
 };
 use crate::{
     BUFFER_HEADER_PADDING, DisplayRow, Editor, EditorSettings, EditorSnapshot, FILE_HEADER_HEIGHT,
@@ -54,10 +54,9 @@ pub(super) struct StickyHeaders {
 pub(super) struct StickyHeaderLine {
     row: DisplayRow,
     pub(super) offset: Pixels,
-    line: Rc<LineWithInvisibles>,
+    pub(super) line: Rc<LineWithInvisibles>,
     line_number: Option<ShapedLine>,
     elements: SmallVec<[AnyElement; 1]>,
-    pub(super) point_diagnostics: Vec<PointDiagnosticLayout>,
     available_text_width: Pixels,
     hitbox: Hitbox,
 }
@@ -239,8 +238,6 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         relative_line_numbers: RelativeLineNumbers,
         relative_to: Option<DisplayRow>,
-        underline_offset: Pixels,
-        em_advance: Pixels,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<StickyHeaders> {
@@ -258,7 +255,7 @@ impl EditorElement {
             offset,
         } in rows.into_iter().rev()
         {
-            let line = layout_line(
+            let mut line = layout_line(
                 sticky_row,
                 snapshot,
                 &self.style,
@@ -287,16 +284,10 @@ impl EditorElement {
                 self.shape_line_number(SharedString::from(number.to_string()), color, window)
             });
 
-            let point_diagnostics = self.layout_point_diagnostics(
+            self.populate_point_diagnostics(
                 snapshot,
                 sticky_row..sticky_row.next_row(),
-                std::slice::from_ref(&line),
-                text_hitbox,
-                content_origin,
-                scroll_pixel_position,
-                underline_offset,
-                em_advance,
-                |_| content_origin.y + line_height * offset as f32,
+                std::slice::from_mut(&mut line),
             );
 
             lines.push(StickyHeaderLine::new(
@@ -304,7 +295,6 @@ impl EditorElement {
                 line_height * offset as f32,
                 line,
                 line_number,
-                point_diagnostics,
                 line_height,
                 scroll_pixel_position,
                 content_origin,
@@ -488,7 +478,6 @@ impl StickyHeaderLine {
         offset: Pixels,
         mut line: LineWithInvisibles,
         line_number: Option<ShapedLine>,
-        point_diagnostics: Vec<PointDiagnosticLayout>,
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
@@ -521,7 +510,6 @@ impl StickyHeaderLine {
             line: Rc::new(line),
             line_number,
             elements,
-            point_diagnostics,
             available_text_width,
             hitbox: window.insert_hitbox(hitbox_bounds, HitboxBehavior::BlockMouseExceptScroll),
         }
@@ -557,13 +545,6 @@ impl StickyHeaderLine {
                     window,
                     cx,
                 );
-                for diagnostic in &self.point_diagnostics {
-                    window.paint_underline(
-                        diagnostic.origin,
-                        diagnostic.width,
-                        &diagnostic.underline,
-                    );
-                }
                 for element in &mut self.elements {
                     element.paint(window, cx);
                 }

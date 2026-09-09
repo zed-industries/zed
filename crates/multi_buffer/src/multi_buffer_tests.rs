@@ -2,7 +2,9 @@ use super::*;
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use gpui::{App, Entity, TestAppContext};
 use indoc::indoc;
-use language::{Buffer, Rope};
+use language::{
+    Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, LanguageServerId, PointUtf16, Rope,
+};
 use parking_lot::RwLock;
 use rand::prelude::*;
 use settings::SettingsStore;
@@ -71,6 +73,75 @@ fn test_singleton(cx: &mut App) {
             .collect::<Vec<_>>()
     );
     assert_consistent_line_numbers(&snapshot);
+}
+
+#[gpui::test]
+fn test_point_diagnostics_in_range_excludes_collapsed_non_point_ranges(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local("bad ok", cx));
+    buffer.update(cx, |buffer, cx| {
+        let diagnostics = DiagnosticSet::new(
+            [DiagnosticEntry::new(
+                PointUtf16::new(0, 0)..PointUtf16::new(0, 3),
+                Diagnostic::default(),
+            )],
+            &buffer.snapshot(),
+        );
+        buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
+        buffer.edit([(0..4, "")], None, cx);
+    });
+
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    let query = Point::zero()..snapshot.max_point();
+    let resolved = snapshot
+        .diagnostics_in_range(query.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(resolved.len(), 1);
+    let Some(resolved) = resolved.first() else {
+        assert!(false, "resolved diagnostic should be present");
+        return;
+    };
+    assert_eq!(resolved.range.start, resolved.range.end);
+    assert_eq!(snapshot.point_diagnostics_in_range(query).count(), 0);
+}
+
+#[gpui::test]
+fn test_point_diagnostics_in_range_excludes_excerpt_clipped_ranges(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local("bad\ngood\n", cx));
+    buffer.update(cx, |buffer, cx| {
+        let diagnostics = DiagnosticSet::new(
+            [DiagnosticEntry::new(
+                PointUtf16::new(0, 0)..PointUtf16::new(1, 0),
+                Diagnostic::default(),
+            )],
+            &buffer.snapshot(),
+        );
+        buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
+    });
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpt_ranges_for_path(
+            PathKey::sorted(0),
+            buffer.clone(),
+            &buffer.read(cx).snapshot(),
+            vec![ExcerptRange::new(Point::new(1, 0)..Point::new(1, 4))],
+            cx,
+        );
+    });
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    let query = Point::zero()..snapshot.max_point();
+    let resolved = snapshot
+        .diagnostics_in_range(query.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(resolved.len(), 1);
+    let Some(resolved) = resolved.first() else {
+        assert!(false, "resolved diagnostic should be present");
+        return;
+    };
+    assert_eq!(resolved.range.start, resolved.range.end);
+    assert_eq!(snapshot.point_diagnostics_in_range(query).count(), 0);
 }
 
 #[gpui::test]
