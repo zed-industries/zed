@@ -4463,17 +4463,6 @@ enum ChunkFetch {
     Running(CacheInlayHintsTask),
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct DocumentHighlightRegistrationChange {
-    registrations: Vec<dynamic_registration::DynamicTextDocumentRegistration>,
-    all_buffers: bool,
-}
-
-#[derive(Default)]
-pub(crate) struct SyncedServerCapabilitiesChanges {
-    pub(crate) document_highlights: Option<DocumentHighlightRegistrationChange>,
-}
-
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SyncedServerCapabilities {
     #[serde(flatten)]
@@ -4653,6 +4642,9 @@ pub enum LspStoreEvent {
     RefreshDocumentLinks {
         server_id: Option<LanguageServerId>,
     },
+    RefreshDocumentHighlights {
+        server_id: Option<LanguageServerId>,
+    },
     RefreshFoldingRanges {
         server_id: Option<LanguageServerId>,
     },
@@ -4768,6 +4760,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_refresh_code_lens);
         client.add_entity_request_handler(Self::handle_refresh_document_colors);
         client.add_entity_request_handler(Self::handle_refresh_document_links);
+        client.add_entity_request_handler(Self::handle_refresh_document_highlights);
         client.add_entity_request_handler(Self::handle_refresh_folding_ranges);
         client.add_entity_request_handler(Self::handle_refresh_document_symbols);
         client.add_entity_request_handler(Self::handle_on_type_formatting);
@@ -5748,7 +5741,7 @@ impl LspStore {
         )
     }
 
-    fn relevant_server_ids_for_capability_check(
+    pub fn relevant_server_ids_for_capability_check(
         &self,
         buffer: &Entity<Buffer>,
         cx: &App,
@@ -5821,121 +5814,107 @@ impl LspStore {
     }
 
     fn notify_server_capabilities_updated(&self, server: &LanguageServer, cx: &mut Context<Self>) {
-        if let Some(capabilities) = self.serialize_synced_server_capabilities(server).log_err() {
-            cx.emit(LspStoreEvent::LanguageServerUpdate {
-                language_server_id: server.server_id(),
-                name: Some(server.name()),
-                message: proto::update_language_server::Variant::MetadataUpdated(
-                    proto::ServerMetadataUpdated {
-                        capabilities: Some(capabilities),
-                        binary: Some(proto::LanguageServerBinaryInfo {
-                            path: server.binary().path.to_string_lossy().into_owned(),
-                            arguments: server
-                                .binary()
-                                .arguments
-                                .iter()
-                                .map(|arg| arg.to_string_lossy().into_owned())
-                                .collect(),
-                        }),
-                        configuration: serde_json::to_string(server.configuration()).ok(),
-                        workspace_folders: server
-                            .workspace_folders()
-                            .iter()
-                            .map(|uri| uri.to_string())
-                            .collect(),
-                    },
-                ),
+        let Some(capabilities) = self.serialize_synced_server_capabilities(server).log_err() else {
+            return;
+        };
+        let message =
+            proto::update_language_server::Variant::MetadataUpdated(proto::ServerMetadataUpdated {
+                capabilities: Some(capabilities),
+                binary: Some(proto::LanguageServerBinaryInfo {
+                    path: server.binary().path.to_string_lossy().into_owned(),
+                    arguments: server
+                        .binary()
+                        .arguments
+                        .iter()
+                        .map(|arg| arg.to_string_lossy().into_owned())
+                        .collect(),
+                }),
+                configuration: serde_json::to_string(server.configuration()).ok(),
+                workspace_folders: server
+                    .workspace_folders()
+                    .iter()
+                    .map(|uri| uri.to_string())
+                    .collect(),
             });
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+            downstream_client
+                .send(proto::UpdateLanguageServer {
+                    project_id: *project_id,
+                    server_name: Some(server.name().to_string()),
+                    language_server_id: server.server_id().to_proto(),
+                    variant: Some(message.clone()),
+                })
+                .context("sending server metadata downstream")
+                .log_err();
         }
+        cx.emit(LspStoreEvent::LanguageServerUpdate {
+            language_server_id: server.server_id(),
+            name: Some(server.name()),
+            message,
+        });
     }
 
     pub(crate) fn insert_synced_server_capabilities(
         &mut self,
         server_id: LanguageServerId,
         capabilities_json: &str,
-    ) -> SyncedServerCapabilitiesChanges {
-        let Some(capabilities) =
+    ) {
+        if let Some(capabilities) =
             serde_json::from_str::<SyncedServerCapabilities>(capabilities_json).log_err()
-        else {
-            return SyncedServerCapabilitiesChanges::default();
-        };
-
-        let previous_document_highlight_provider = self
-            .lsp_server_capabilities
-            .get(&server_id)
-            .and_then(|capabilities| capabilities.document_highlight_provider.as_ref());
-        let current_document_highlight_provider = capabilities
-            .server_capabilities
-            .document_highlight_provider
-            .as_ref();
-
-        let previous_document_highlight_registrations = self
-            .lsp_server_text_document_registrations
-            .get(&server_id)
-            .and_then(|registrations| registrations.get("textDocument/documentHighlight"));
-        let current_document_highlight_registrations = capabilities
-            .text_document_registrations
-            .as_ref()
-            .and_then(|registrations| registrations.get("textDocument/documentHighlight"));
-        let document_highlight_provider_changed =
-            previous_document_highlight_provider != current_document_highlight_provider;
-        let changed_document_highlight_registrations = changed_dynamic_text_document_registrations(
-            previous_document_highlight_registrations,
-            current_document_highlight_registrations,
-        );
-        let document_highlights = (document_highlight_provider_changed
-            || !changed_document_highlight_registrations.is_empty())
-        .then(|| DocumentHighlightRegistrationChange {
-            all_buffers: document_highlight_provider_changed
-                && changed_document_highlight_registrations.is_empty(),
-            registrations: changed_document_highlight_registrations,
-        });
-        let changes = SyncedServerCapabilitiesChanges {
-            document_highlights,
-        };
-
-        self.lsp_server_capabilities
-            .insert(server_id, capabilities.server_capabilities);
-        match capabilities.initial_server_capabilities {
-            Some(capabilities) => {
-                self.lsp_server_initial_capabilities
-                    .insert(server_id, capabilities);
+        {
+            self.lsp_server_capabilities
+                .insert(server_id, capabilities.server_capabilities);
+            match capabilities.initial_server_capabilities {
+                Some(capabilities) => {
+                    self.lsp_server_initial_capabilities
+                        .insert(server_id, capabilities);
+                }
+                None => {
+                    self.lsp_server_initial_capabilities.remove(&server_id);
+                }
             }
-            None => {
-                self.lsp_server_initial_capabilities.remove(&server_id);
+            match capabilities.text_document_registrations {
+                Some(registrations) => {
+                    self.lsp_server_text_document_registrations
+                        .insert(server_id, registrations);
+                }
+                None => {
+                    self.lsp_server_text_document_registrations
+                        .remove(&server_id);
+                }
             }
         }
-        match capabilities.text_document_registrations {
-            Some(registrations) => {
-                self.lsp_server_text_document_registrations
-                    .insert(server_id, registrations);
-            }
-            None => {
-                self.lsp_server_text_document_registrations
-                    .remove(&server_id);
-            }
-        }
-
-        changes
     }
 
-    pub(crate) fn document_highlight_registration_change_applies_to_buffer(
-        &self,
-        change: &DocumentHighlightRegistrationChange,
-        buffer: &Entity<Buffer>,
-        server_id: LanguageServerId,
-        cx: &App,
-    ) -> bool {
-        let language = buffer.read(cx).language().map(|language| language.name());
-        let Some(context) = self.remote_document_selector_context(server_id, language.as_ref())
-        else {
-            return false;
-        };
+    fn refresh_document_highlights(
+        &mut self,
+        for_server: Option<LanguageServerId>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(LspStoreEvent::RefreshDocumentHighlights {
+            server_id: for_server,
+        });
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+            downstream_client
+                .send(proto::RefreshDocumentHighlights {
+                    project_id: *project_id,
+                    server_id: for_server.map(|server_id| server_id.to_proto()),
+                })
+                .context("sending refresh document highlights downstream")
+                .log_err();
+        }
+    }
 
-        change.all_buffers
-            || change.registrations.iter().any(|registration| {
-                document_selector_matches(registration.document_selector.as_ref(), &context)
-            })
+    async fn handle_refresh_document_highlights(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::RefreshDocumentHighlights>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            let server_id = envelope.payload.server_id.map(LanguageServerId::from_proto);
+            lsp_store.refresh_document_highlights(server_id, cx);
+        });
+        Ok(proto::Ack {})
     }
 
     fn remote_document_selector_context(
@@ -14854,37 +14833,6 @@ impl LspStore {
         }
         lsp_data
     }
-}
-
-fn changed_dynamic_text_document_registrations(
-    previous: Option<
-        &collections::IndexMap<String, dynamic_registration::DynamicTextDocumentRegistration>,
-    >,
-    current: Option<
-        &collections::IndexMap<String, dynamic_registration::DynamicTextDocumentRegistration>,
-    >,
-) -> Vec<dynamic_registration::DynamicTextDocumentRegistration> {
-    let mut changed_registrations = Vec::new();
-    if let Some(previous) = previous {
-        for (registration_id, previous_registration) in previous {
-            match current.and_then(|current| current.get(registration_id)) {
-                Some(current_registration) if current_registration == previous_registration => {}
-                Some(current_registration) => {
-                    changed_registrations.push(previous_registration.clone());
-                    changed_registrations.push(current_registration.clone());
-                }
-                None => changed_registrations.push(previous_registration.clone()),
-            }
-        }
-    }
-    if let Some(current) = current {
-        for (registration_id, current_registration) in current {
-            if previous.is_none_or(|previous| !previous.contains_key(registration_id)) {
-                changed_registrations.push(current_registration.clone());
-            }
-        }
-    }
-    changed_registrations
 }
 
 fn document_selector_context_for_buffer(

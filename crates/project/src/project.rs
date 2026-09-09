@@ -39,7 +39,7 @@ use itertools::{Either, Itertools};
 use crate::{
     bookmark_store::BookmarkStore,
     git_store::GitStore,
-    lsp_store::{DocumentHighlightRegistrationChange, SymbolLocation, log_store::LogKind},
+    lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
     worktree_store::WorktreeIdCounter,
@@ -418,8 +418,7 @@ pub enum Event {
         server_id: Option<LanguageServerId>,
     },
     RefreshDocumentHighlights {
-        server_id: LanguageServerId,
-        registration_change: DocumentHighlightRegistrationChange,
+        server_id: Option<LanguageServerId>,
     },
     RefreshFoldingRanges {
         server_id: Option<LanguageServerId>,
@@ -3714,6 +3713,20 @@ impl Project {
                 Event::SupplementaryLanguageServerAdded(*server_id, name.clone()),
             ),
             LspStoreEvent::LanguageServerRemoved(server_id) => {
+                if self.is_local()
+                    && let Some(project_id) = self.remote_id()
+                {
+                    self.collab_client
+                        .send(proto::UpdateLanguageServer {
+                            project_id,
+                            server_name: None,
+                            language_server_id: server_id.to_proto(),
+                            variant: Some(proto::update_language_server::Variant::Removed(
+                                proto::ServerRemoved {},
+                            )),
+                        })
+                        .log_err();
+                }
                 cx.emit(Event::LanguageServerRemoved(*server_id))
             }
             LspStoreEvent::SupplementaryLanguageServerRemoved(server_id) => {
@@ -3752,6 +3765,11 @@ impl Project {
                     server_id: *server_id,
                 })
             }
+            LspStoreEvent::RefreshDocumentHighlights { server_id } => {
+                cx.emit(Event::RefreshDocumentHighlights {
+                    server_id: *server_id,
+                })
+            }
             LspStoreEvent::RefreshFoldingRanges { server_id } => {
                 cx.emit(Event::RefreshFoldingRanges {
                     server_id: *server_id,
@@ -3783,7 +3801,12 @@ impl Project {
                 name,
                 message,
             } => {
-                if self.is_local() {
+                if self.is_local()
+                    && !matches!(
+                        message,
+                        proto::update_language_server::Variant::MetadataUpdated(_)
+                    )
+                {
                     self.enqueue_buffer_ordered_message(
                         BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id: *language_server_id,
@@ -3796,15 +3819,12 @@ impl Project {
 
                 match message {
                     proto::update_language_server::Variant::MetadataUpdated(update) => {
-                        let mut document_highlight_registration_change = None;
                         self.lsp_store.update(cx, |lsp_store, _| {
                             if let Some(capabilities) = update.capabilities.as_ref() {
-                                document_highlight_registration_change = lsp_store
-                                    .insert_synced_server_capabilities(
-                                        *language_server_id,
-                                        capabilities,
-                                    )
-                                    .document_highlights;
+                                lsp_store.insert_synced_server_capabilities(
+                                    *language_server_id,
+                                    capabilities,
+                                );
                             }
 
                             if let Some(language_server_status) = lsp_store
@@ -3835,12 +3855,6 @@ impl Project {
                                     .collect();
                             }
                         });
-                        if let Some(registration_change) = document_highlight_registration_change {
-                            cx.emit(Event::RefreshDocumentHighlights {
-                                server_id: *language_server_id,
-                                registration_change,
-                            });
-                        }
                     }
                     proto::update_language_server::Variant::RegisteredForBuffer(update) => {
                         if let Some(buffer_id) = BufferId::new(update.buffer_id).ok() {
@@ -4536,23 +4550,6 @@ impl Project {
             drop(guard);
             result
         })
-    }
-
-    pub fn document_highlight_registration_change_applies_to_buffer(
-        &self,
-        registration_change: &DocumentHighlightRegistrationChange,
-        buffer: &Entity<Buffer>,
-        server_id: LanguageServerId,
-        cx: &App,
-    ) -> bool {
-        self.lsp_store
-            .read(cx)
-            .document_highlight_registration_change_applies_to_buffer(
-                registration_change,
-                buffer,
-                server_id,
-                cx,
-            )
     }
 
     pub fn document_highlights<T: ToPointUtf16>(
