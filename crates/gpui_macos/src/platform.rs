@@ -755,7 +755,7 @@ impl Platform for MacPlatform {
         let done_tx = Cell::new(Some(done_tx));
         let handler = RcBlock::new(move |error: *mut NSError| {
             let result = if let Some(error) = unsafe { error.as_ref() } {
-                Err(anyhow::anyhow!(
+                Err(anyhow!(
                     "Failed to register: {}",
                     error.localizedDescription()
                 ))
