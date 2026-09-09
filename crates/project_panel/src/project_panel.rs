@@ -14,6 +14,7 @@ use editor::{
 };
 use file_icons::FileIcons;
 use fs::TrashId;
+use futures::StreamExt as _;
 use git;
 use git::repository::RepoPath;
 use git::status::{FileStatus, GitSummary, StatusCode};
@@ -92,7 +93,6 @@ use crate::{
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
-const MAX_CHECKOUT_PATHSPEC_BYTES: usize = 64 * 1024;
 
 struct VisibleEntriesForWorktree {
     worktree_id: WorktreeId,
@@ -1320,6 +1320,12 @@ impl ProjectPanel {
     }
 
     fn is_restorable_status(status: FileStatus) -> bool {
+        if let FileStatus::Tracked(tracked) = status
+            && tracked.index_status == StatusCode::Added
+        {
+            return false;
+        }
+
         if status.is_modified() || status.is_deleted() {
             return true;
         }
@@ -1332,43 +1338,55 @@ impl ProjectPanel {
             || tracked.worktree_status == StatusCode::TypeChanged
     }
 
-    fn obstructing_untracked_descendant(
-        snapshot: &project::git_store::RepositorySnapshot,
+    async fn checkout_filesystem_obstruction(
+        fs: Arc<dyn Fs>,
         repo_paths: &[RepoPath],
-    ) -> Option<RepoPath> {
-        snapshot
-            .status()
-            .find(|status_entry| {
-                status_entry.status.is_untracked()
-                    && repo_paths.iter().any(|repo_path| {
-                        status_entry.repo_path != repo_path.clone()
-                            && status_entry.repo_path.starts_with(repo_path)
-                    })
-            })
-            .map(|status_entry| status_entry.repo_path)
+        work_directory_abs_path: &Path,
+    ) -> Result<Option<PathBuf>> {
+        for repo_path in repo_paths {
+            if let Some(obstruction) = Self::checkout_path_filesystem_obstruction(
+                fs.as_ref(),
+                work_directory_abs_path,
+                repo_path,
+            )
+            .await?
+            {
+                return Ok(Some(obstruction));
+            }
+        }
+
+        Ok(None)
     }
 
-    fn checkout_path_batches(repo_paths: Vec<RepoPath>) -> Vec<Vec<RepoPath>> {
-        let mut batches = Vec::new();
-        let mut batch = Vec::new();
-        let mut batch_len = 0;
+    async fn checkout_path_filesystem_obstruction(
+        fs: &dyn Fs,
+        work_directory_abs_path: &Path,
+        repo_path: &RepoPath,
+    ) -> Result<Option<PathBuf>> {
+        let mut path = work_directory_abs_path.to_path_buf();
+        let components = repo_path.as_std_path().components().collect::<Vec<_>>();
 
-        for repo_path in repo_paths {
-            let path_len = repo_path.as_unix_str().len() + 1;
-            if !batch.is_empty() && batch_len + path_len > MAX_CHECKOUT_PATHSPEC_BYTES {
-                batches.push(batch);
-                batch = Vec::new();
-                batch_len = 0;
+        for (ix, component) in components.iter().enumerate() {
+            path.push(component.as_os_str());
+            let is_target = ix + 1 == components.len();
+
+            if is_target {
+                if let Some(metadata) = fs.metadata(&path).await?
+                    && metadata.is_dir
+                {
+                    let mut entries = fs.read_dir(&path).await?;
+                    if entries.next().await.transpose()?.is_some() {
+                        return Ok(Some(path));
+                    }
+                }
+            } else if let Some(metadata) = fs.metadata(&path).await?
+                && (metadata.is_symlink || !metadata.is_dir)
+            {
+                return Ok(Some(path));
             }
-            batch_len += path_len;
-            batch.push(repo_path);
         }
 
-        if !batch.is_empty() {
-            batches.push(batch);
-        }
-
-        batches
+        Ok(None)
     }
 
     fn show_restore_error(&self, message: String, cx: &mut Context<Self>) {
@@ -2512,6 +2530,7 @@ impl ProjectPanel {
         maybe!({
             let selection = self.selection?;
             let project = self.project.read(cx);
+            let fs = project.fs().clone();
             let path_style = project.path_style(cx);
 
             let (worktree, entry) = self.selected_sub_entry(cx)?;
@@ -2525,6 +2544,8 @@ impl ProjectPanel {
                 .repository_and_path_for_project_path(&project_path, cx)?;
 
             let snapshot = repository.read(cx).snapshot();
+            let work_directory_abs_path =
+                snapshot.repo_path_to_abs_path(&RepoPath::from_rel_path(RelPath::empty()));
             let repo_paths =
                 Self::restorable_repo_paths(&snapshot, &repo_path, is_dir).collect::<Vec<_>>();
             if repo_paths.is_empty() {
@@ -2537,27 +2558,12 @@ impl ProjectPanel {
                 .unwrap_or_else(|| worktree.read(cx).root_name_str())
                 .to_string();
 
-            if let Some(obstructing_path) =
-                Self::obstructing_untracked_descendant(&snapshot, &repo_paths)
-            {
-                let obstructing_path = obstructing_path.display(path_style).into_owned();
-                self.show_restore_error(
-                    format!(
-                        "Cannot restore {} because untracked files under {} would be removed",
-                        entry_name, obstructing_path
-                    ),
-                    cx,
-                );
-                return None;
-            }
-
             let restored_project_paths = repo_paths
                 .iter()
                 .filter_map(|repo_path| {
                     repository.read(cx).repo_path_to_project_path(repo_path, cx)
                 })
                 .collect::<Vec<_>>();
-            let checkout_path_batches = Self::checkout_path_batches(repo_paths.clone());
 
             let answer = if !action.skip_prompt {
                 let (prompt, detail) = if is_dir {
@@ -2617,19 +2623,30 @@ impl ProjectPanel {
                     return anyhow::Ok(());
                 }
 
-                let task = panel.update(cx, |_panel, cx| {
-                    repository.update(cx, |repo, cx| {
-                        let tasks = checkout_path_batches
-                            .into_iter()
-                            .map(|checkout_paths| repo.checkout_files("HEAD", checkout_paths, cx))
-                            .collect::<Vec<_>>();
-                        cx.spawn(async move |_, _| {
-                            for task in tasks {
-                                task.await?;
-                            }
-                            anyhow::Ok(())
+                let obstruction = Self::checkout_filesystem_obstruction(
+                    fs,
+                    &repo_paths,
+                    &work_directory_abs_path,
+                )
+                .await?;
+                if let Some(obstruction) = obstruction {
+                    panel
+                        .update(cx, |panel, cx| {
+                            panel.show_restore_error(
+                                format!(
+                                    "Cannot restore {} because local filesystem contents at {} would be removed",
+                                    entry_name,
+                                    obstruction.display()
+                                ),
+                                cx,
+                            );
                         })
-                    })
+                        .ok();
+                    return anyhow::Ok(());
+                }
+
+                let task = panel.update(cx, |_panel, cx| {
+                    repository.update(cx, |repo, cx| repo.checkout_files("HEAD", repo_paths, cx))
                 })?;
 
                 if let Err(e) = task.await {
