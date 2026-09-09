@@ -13,6 +13,7 @@ mod ime_mirror;
 mod keyboard;
 mod logging;
 mod platform;
+mod viewport;
 mod window;
 
 pub use dispatcher::WebDispatcher;

@@ -802,9 +802,9 @@ impl WindowInsets {
 /// A change in the state of the focused text input.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum TextInputStateChange {
-    /// An editable element gained focus.
+    /// The window changed from having no active text input to having one.
     FocusGained,
-    /// The focused editable element lost focus.
+    /// The window no longer has an active text input.
     FocusLost,
     /// The selection or caret moved
     SelectionChanged,
@@ -818,6 +818,16 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_maximized(&self) -> bool;
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
+    /// Returns the visible viewport in logical pixels relative to the content origin.
+    ///
+    /// This may be smaller or offset when a keyboard or zoom obscures content;
+    /// it must not change the full layout size returned by `content_size`.
+    /// Implementations should return cached metrics, not query platform layout here.
+    fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
+        Bounds::new(Point::default(), self.content_size())
+    }
+    /// Registers a callback after cached visual viewport metrics change.
+    fn on_visual_viewport_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn resize(&mut self, size: Size<Pixels>);
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
