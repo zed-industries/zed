@@ -616,6 +616,8 @@
     "show_sign_in": true,
     // Whether to show the menus in the titlebar.
     "show_menus": false,
+    // Whether to keep visible menus on the same row as other titlebar items.
+    "inline_menus": false,
     // The layout of window control buttons in the title bar (Linux only).
     "button_layout": "platform_default",
   },
