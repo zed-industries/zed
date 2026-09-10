@@ -2496,6 +2496,85 @@ mod tests {
     }
 
     #[test]
+    fn test_discover_and_token_exchange_with_preregistered_public_client() {
+        gpui::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains("oauth-protected-resource") {
+                        json_response(
+                            200,
+                            r#"{
+                                "resource": "https://mcp.example.com",
+                                "authorization_servers": ["https://auth.example.com"],
+                                "scopes_supported": ["mcp:read"]
+                            }"#,
+                        )
+                    } else if uri.contains("oauth-authorization-server") {
+                        json_response(
+                            200,
+                            r#"{
+                                "issuer": "https://auth.example.com",
+                                "authorization_endpoint": "https://auth.example.com/authorize",
+                                "token_endpoint": "https://auth.example.com/token",
+                                "code_challenge_methods_supported": ["plain", "S256"],
+                                "client_id_metadata_document_supported": false,
+                                "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"]
+                            }"#,
+                        )
+                    } else if uri.contains("/token") {
+                        json_response(
+                            200,
+                            r#"{
+                                "access_token": "public_client_access_token",
+                                "refresh_token": "public_client_refresh_token",
+                                "expires_in": 3600,
+                                "token_type": "Bearer"
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let server_url = Url::parse("https://mcp.example.com").unwrap();
+            let www_auth = WwwAuthenticate {
+                resource_metadata: None,
+                scope: None,
+                error: None,
+                error_description: None,
+            };
+
+            let discovery = discover(&client, &server_url, &www_auth).await.unwrap();
+            assert_eq!(
+                determine_registration_strategy(&discovery.auth_server_metadata),
+                ClientRegistrationStrategy::Unavailable
+            );
+
+            let preregistered_client_id = "my-preregistered-public-client";
+            let tokens = exchange_code(
+                &client,
+                &discovery.auth_server_metadata,
+                "auth_code_123",
+                preregistered_client_id,
+                "http://127.0.0.1:9999/callback",
+                "verifier_abc",
+                "https://mcp.example.com",
+                None,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(tokens.access_token, "public_client_access_token");
+            assert_eq!(
+                tokens.refresh_token.as_deref(),
+                Some("public_client_refresh_token")
+            );
+        });
+    }
+
+    #[test]
     fn test_refresh_tokens_success() {
         gpui::block_on(async {
             let client = make_fake_http_client(|req| {
