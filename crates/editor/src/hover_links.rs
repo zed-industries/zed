@@ -1,11 +1,10 @@
 use crate::{
-    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
-    GoToDefinitionSplit, GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind,
-    HighlightKey, Navigated, PointForPosition, SelectPhase,
-    editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
+    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinitionSplit,
+    GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind, HighlightKey, Navigated,
+    PointForPosition, SelectPhase, editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
 };
 use gpui::{
-    App, AsyncWindowContext, Context, Entity, HighlightStyle, Modifiers, Pixels, Task,
+    App, AsyncWindowContext, Context, Entity, Focusable, HighlightStyle, Modifiers, Pixels, Task,
     UnderlineStyle, Window, px,
 };
 use language::{Bias, ToOffset};
@@ -51,8 +50,16 @@ impl RangeInEditor {
     ) -> bool {
         match (self, trigger_point) {
             (Self::Text(range), TriggerPoint::Text(point)) => {
-                let point_after_start = range.start.cmp(point, &snapshot.buffer_snapshot()).is_le();
-                point_after_start && range.end.cmp(point, &snapshot.buffer_snapshot()).is_ge()
+                let buffer_snapshot = snapshot.buffer_snapshot();
+                if !range.start.is_valid(&buffer_snapshot)
+                    || !range.end.is_valid(&buffer_snapshot)
+                    || !point.is_valid(&buffer_snapshot)
+                {
+                    return false;
+                }
+                let point_after_start = range.start.cmp(point, &buffer_snapshot).is_le();
+                let point_after_end = range.end.cmp(point, &buffer_snapshot).is_ge();
+                point_after_start && point_after_end
             }
             (Self::Inlay(highlight), TriggerPoint::InlayHint(point, _, _)) => {
                 highlight.inlay == point.inlay
@@ -199,26 +206,22 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        let focus_handle = self.focus_handle(cx);
         let reveal_task = self.cmd_click_reveal_task(point, modifiers, window, cx);
-        cx.spawn_in(window, async move |editor, cx| {
+        cx.spawn_in(window, async move |_, cx| {
             let definition_revealed = reveal_task.await.log_err().unwrap_or(Navigated::No);
-            let find_references = editor
-                .update_in(cx, |editor, window, cx| {
-                    if definition_revealed == Navigated::Yes {
-                        return None;
-                    }
-                    match EditorSettings::get_global(cx).go_to_definition_fallback {
-                        GoToDefinitionFallback::None => None,
-                        GoToDefinitionFallback::FindAllReferences => {
-                            editor.find_all_references(&FindAllReferences::default(), window, cx)
-                        }
-                    }
-                })
-                .ok()
-                .flatten();
-            if let Some(find_references) = find_references {
-                find_references.await.log_err();
+            if definition_revealed == Navigated::Yes {
+                return;
             }
+            cx.update(|window, cx| {
+                match EditorSettings::get_global(cx).go_to_definition_fallback {
+                    GoToDefinitionFallback::None => {}
+                    GoToDefinitionFallback::FindAllReferences => {
+                        focus_handle.dispatch_action(&FindAllReferences::default(), window, cx);
+                    }
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -318,9 +321,13 @@ impl Editor {
                 (true, true) => {
                     self.go_to_type_definition_split(&GoToTypeDefinitionSplit, window, cx)
                 }
-                (true, false) => self.go_to_type_definition(&GoToTypeDefinition, window, cx),
+                (true, false) => {
+                    self.go_to_type_definition(&GoToTypeDefinition::default(), window, cx)
+                }
                 (false, true) => self.go_to_definition_split(&GoToDefinitionSplit, window, cx),
-                (false, false) => self.go_to_definition(&GoToDefinition::default(), window, cx),
+                (false, false) => {
+                    self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, window, cx)
+                }
             }
         } else {
             Task::ready(Ok(Navigated::No))
@@ -1064,10 +1071,13 @@ mod tests {
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use futures::StreamExt;
-    use gpui::{Modifiers, MousePressureEvent, PressureStage};
+    use gpui::{
+        Modifiers, MouseButton, MouseDownEvent, MousePressureEvent, MouseUpEvent, PressureStage,
+    };
     use indoc::indoc;
+    use language::Point;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
-    use multi_buffer::MultiBufferOffset;
+    use multi_buffer::{MultiBufferOffset, PathKey};
     use settings::InlayHintSettingsContent;
     use std::str::FromStr;
     use std::sync::Arc;
@@ -1193,6 +1203,71 @@ mod tests {
             struct «Aˇ»;
             let variable = A;
         "});
+    }
+
+    #[gpui::test]
+    async fn test_hover_link_after_multibuffer_path_changes(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
+        cx.set_state("https://zed.dev/ˇreleases");
+        let old_snapshot = cx.update_editor(|editor, window, cx| editor.snapshot(window, cx));
+        let link_start = MultiBufferOffset(17).to_display_point(&old_snapshot.display_snapshot);
+        let link_end = MultiBufferOffset(22).to_display_point(&old_snapshot.display_snapshot);
+        let point_for_position = |point| PointForPosition {
+            previous_valid: point,
+            next_valid: point,
+            nearest_valid: point,
+            exact_unclipped: point,
+            column_overshoot_after_line_end: 0,
+        };
+
+        let buffer = cx.editor(|editor, _, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("test editor should contain a singleton buffer")
+        });
+        cx.update_multibuffer(|multibuffer, cx| {
+            let max_point = buffer.read(cx).max_point();
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(1),
+                buffer,
+                [Point::zero()..max_point],
+                0,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let modifiers = if cfg!(target_os = "macos") {
+            Modifiers::command_shift()
+        } else {
+            Modifiers::control_shift()
+        };
+        cx.update_editor(|editor, window, cx| {
+            editor.update_hovered_link(
+                point_for_position(link_start),
+                None,
+                &old_snapshot,
+                modifiers,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            editor.update_hovered_link(
+                point_for_position(link_end),
+                None,
+                &old_snapshot,
+                modifiers,
+                window,
+                cx,
+            );
+        });
     }
 
     #[gpui::test]
@@ -1639,7 +1714,11 @@ mod tests {
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec!["upgrade".to_string()],
+                    ..lsp::ExecuteCommandOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
             },
             cx,
         )
@@ -1683,7 +1762,12 @@ mod tests {
                                 uri: params.text_document.uri,
                                 range: target_range,
                             }),
-                            ..Default::default()
+                            command: Some(lsp::Command {
+                                title: "Upgrade".to_string(),
+                                command: "upgrade".to_string(),
+                                arguments: Some(vec![serde_json::json!("3.5.16")]),
+                            }),
+                            ..lsp::InlayHintLabelPart::default()
                         }]),
                         kind: Some(lsp::InlayHintKind::TYPE),
                         text_edits: None,
@@ -1697,6 +1781,13 @@ mod tests {
             .next()
             .await;
         cx.background_executor.run_until_parked();
+        let mut command_requests = cx
+            .lsp
+            .set_request_handler::<lsp::request::ExecuteCommand, _, _>(|params, _| async move {
+                assert_eq!(params.command, "upgrade");
+                assert_eq!(params.arguments, vec![serde_json::json!("3.5.16")]);
+                Ok(Some(serde_json::Value::Null))
+            });
         cx.update_editor(|editor, _window, cx| {
             let expected_layers = vec![hint_label.to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor, cx));
@@ -1757,6 +1848,63 @@ mod tests {
 
                 assert!(actual_ranges.is_empty(), "When no cmd is pressed, should have no hint label selected, but got: {actual_ranges:?}");
             });
+
+        cx.update_editor(|editor, _window, cx| {
+            let hovered_inlay = editor
+                .display_map
+                .read(cx)
+                .current_inlays()
+                .find(|inlay| inlay.id == InlayId::Hint(0))
+                .cloned()
+                .expect("hovered inlay");
+            let hovered_inlay_id = hovered_inlay.id;
+            editor.splice_inlays(&[hovered_inlay_id], vec![hovered_inlay], cx);
+            assert!(
+                editor.hovered_inlay_hint_command().is_none(),
+                "replacing the hovered inlay should clear its command"
+            );
+        });
+        cx.simulate_click(hover_point, Modifiers::none());
+        cx.background_executor.run_until_parked();
+        assert!(
+            command_requests.try_recv().is_err(),
+            "clicking without moving after hint replacement should not run the stale command"
+        );
+
+        cx.simulate_mouse_move(hover_point, None, Modifiers::none());
+        cx.background_executor.run_until_parked();
+        cx.simulate_click(hover_point, Modifiers::none());
+        command_requests
+            .next()
+            .await
+            .expect("execute command request");
+        cx.background_executor.run_until_parked();
+        cx.assert_editor_state(indoc! {"
+                struct TestStruct;
+
+                fn main() {
+                    let variableˇ = TestStruct;
+                }
+            "});
+
+        cx.simulate_event(MouseDownEvent {
+            position: hover_point,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count: 2,
+            first_mouse: false,
+        });
+        cx.simulate_event(MouseUpEvent {
+            position: hover_point,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count: 2,
+        });
+        cx.background_executor.run_until_parked();
+        assert!(
+            command_requests.try_recv().is_err(),
+            "Second click of a double click should not re-run the inlay hint command"
+        );
 
         cx.simulate_modifiers_change(Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
@@ -2109,6 +2257,7 @@ mod tests {
                 "This is file2.rs".as_bytes().to_vec(),
             )
             .await;
+        cx.run_until_parked();
 
         // Base document with {ABS} placeholder for absolute path prefix.
         // Each test case replaces a specific line to add cursor (ˇ) or highlight («»ˇ) markers.
@@ -2278,6 +2427,7 @@ Sentence ending file2.rs.
                     .to_vec(),
             )
             .await;
+        cx.run_until_parked();
 
         // file2.rs:5:3 should be highlighted and clickable
         cx.set_state(indoc! {"
@@ -2354,6 +2504,7 @@ Sentence ending file2.rs.
                     .to_vec(),
             )
             .await;
+        cx.run_until_parked();
 
         // file2.rs:3 should be highlighted and clickable
         cx.set_state(indoc! {"
@@ -2411,6 +2562,7 @@ Sentence ending file2.rs.
                 "line 1\nline 2\nline 3\n".as_bytes().to_vec(),
             )
             .await;
+        cx.run_until_parked();
 
         // file2.rs:2:in should resolve to file2.rs line 2 (like Ruby backtraces)
         cx.set_state(indoc! {"
@@ -2469,6 +2621,7 @@ Sentence ending file2.rs.
                     .to_vec(),
             )
             .await;
+        cx.run_until_parked();
 
         // Markdown link [text](file2.rs:3:2) should highlight only the inner link,
         // not the surrounding markdown syntax.

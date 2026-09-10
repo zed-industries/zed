@@ -15,9 +15,12 @@ use gpui::{
     FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
     WeakEntity, Window, anchored, deferred, point,
 };
-use project::{DisableAiSettings, project_settings::DiagnosticSeverity};
+use project::{
+    DisableAiSettings,
+    project_settings::{DiagnosticSeverity, ProjectSettings},
+};
 use search::{BufferSearchBar, buffer_search};
-use settings::{Settings, SettingsStore};
+use settings::{GitDiffBaseSetting, Settings, SettingsStore, update_settings_file};
 use ui::{
     ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
@@ -324,6 +327,12 @@ impl Render for QuickActionBar {
         let editor_settings_dropdown = {
             let vim_mode_enabled = VimModeSetting::get_global(cx).0;
             let helix_mode_enabled = HelixModeSetting::get_global(cx).0;
+            let diff_against_default_branch =
+                ProjectSettings::get_global(cx).git.diff_base == GitDiffBaseSetting::DefaultBranch;
+            let fs = self
+                .workspace
+                .upgrade()
+                .map(|workspace| workspace.read(cx).app_state().fs.clone());
 
             PopoverMenu::new("editor-settings")
                 .trigger_with_tooltip(
@@ -633,6 +642,28 @@ impl Render for QuickActionBar {
                                     }
                                 },
                             );
+
+                            if let Some(fs) = fs.clone() {
+                                menu = menu.toggleable_entry(
+                                    "Diff Against Default Branch",
+                                    diff_against_default_branch,
+                                    IconPosition::Start,
+                                    None,
+                                    {
+                                        move |_window, cx| {
+                                            let diff_base = if diff_against_default_branch {
+                                                GitDiffBaseSetting::Head
+                                            } else {
+                                                GitDiffBaseSetting::DefaultBranch
+                                            };
+                                            update_settings_file(fs.clone(), cx, move |settings, _| {
+                                                settings.git.get_or_insert_default().diff_base =
+                                                    Some(diff_base);
+                                            });
+                                        }
+                                    },
+                                );
+                            }
 
                             menu = menu.separator();
 

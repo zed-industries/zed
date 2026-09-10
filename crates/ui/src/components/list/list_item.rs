@@ -14,6 +14,12 @@ pub enum ListItemSpacing {
     Sparse,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum DockSide {
+    Left,
+    Right,
+}
+
 #[derive(Default)]
 enum EndSlotVisibility {
     #[default]
@@ -51,7 +57,7 @@ pub struct ListItem {
     rounded: bool,
     overflow_x: bool,
     focused: Option<bool>,
-    docked_right: bool,
+    dock: Option<DockSide>,
     height: Option<DefiniteLength>,
     aria_role: Option<Role>,
     aria_label: Option<SharedString>,
@@ -87,7 +93,7 @@ impl ListItem {
             rounded: false,
             overflow_x: false,
             focused: None,
-            docked_right: false,
+            dock: None,
             height: None,
             aria_role: None,
             aria_label: None,
@@ -258,8 +264,8 @@ impl ListItem {
         self
     }
 
-    pub fn docked_right(mut self, docked_right: bool) -> Self {
-        self.docked_right = docked_right;
+    pub fn dock(mut self, dock: impl Into<Option<DockSide>>) -> Self {
+        self.dock = dock.into();
         self
     }
 
@@ -304,13 +310,14 @@ impl RenderOnce for ListItem {
             })
             .when(!self.inset, |this| {
                 this.when_some(self.focused, |this, focused| {
-                    if focused && !self.disabled {
-                        this.border_1()
-                            .when(self.docked_right, |this| this.border_r_2())
-                            .border_color(cx.theme().colors().border_focused)
-                    } else {
-                        this.border_1()
-                    }
+                    this.border_1()
+                        .when_some(self.dock, |this, dock| match dock {
+                            DockSide::Left => this.border_l_2(),
+                            DockSide::Right => this.border_r_2(),
+                        })
+                        .when(focused && !self.disabled, |this| {
+                            this.border_color(cx.theme().colors().border_focused)
+                        })
                 })
                 .when(self.selectable && !self.disabled, |this| {
                     this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))

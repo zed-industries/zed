@@ -16,19 +16,16 @@ use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, TaskExt,
-    WeakEntity, Window, actions, rems,
+    WeakEntity, Window, actions,
 };
 use language::{BufferSnapshot, Point};
-use open_path_prompt::{
-    OpenPathPrompt,
-    file_finder_settings::{FileFinderSettings, FileFinderWidth},
-};
+use open_path_prompt::{OpenPathPrompt, file_finder_settings::FileFinderSettings};
 use picker::{Picker, PickerDelegate};
 use project::{
     PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
 };
-use project_panel::project_panel_settings::ProjectPanelSettings;
-use settings::Settings;
+
+use settings::{ModalWidthContent, Settings, SettingsStore};
 use std::{
     borrow::Cow,
     cmp, mem,
@@ -48,8 +45,8 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::{
-    ModalView, OpenChannelNotesById, OpenOptions, OpenVisible, SplitDirection, Workspace,
-    item::PreviewTabsSettings, notifications::NotifyResultExt, pane,
+    MAX_RECENT_SELECTIONS, ModalView, OpenChannelNotesById, OpenOptions, OpenVisible,
+    SplitDirection, Workspace, item::PreviewTabsSettings, notifications::NotifyResultExt, pane,
 };
 use zed_actions::search::ToggleIncludeIgnored;
 
@@ -325,17 +322,9 @@ impl FileFinder {
         });
     }
 
-    pub fn modal_max_width(width_setting: FileFinderWidth, window: &mut Window) -> Pixels {
-        let window_width = window.viewport_size().width;
-        let small_width = rems(34.).to_pixels(window.rem_size());
-
-        match width_setting {
-            FileFinderWidth::Small => small_width,
-            FileFinderWidth::Full => window_width,
-            FileFinderWidth::XLarge => (window_width - px(512.)).max(small_width),
-            FileFinderWidth::Large => (window_width - px(768.)).max(small_width),
-            FileFinderWidth::Medium => (window_width - px(1024.)).max(small_width),
-        }
+    pub fn modal_max_width(width_setting: ModalWidthContent, window: &mut Window) -> Pixels {
+        let small_width = picker::DEFAULT_MODAL_WIDTH.to_pixels(window.rem_size());
+        width_setting.to_pixels(small_width, window.viewport_size().width)
     }
 }
 
@@ -789,7 +778,14 @@ fn should_hide_root_in_entry_path(worktree_store: &Entity<WorktreeStore>, cx: &A
         .filter(|worktree| !worktree.read(cx).is_single_file())
         .nth(1)
         .is_some();
-    ProjectPanelSettings::get_global(cx).hide_root && !multiple_worktrees
+    let hide_root = cx
+        .global::<SettingsStore>()
+        .merged_settings()
+        .project_panel
+        .as_ref()
+        .and_then(|project_panel| project_panel.hide_root)
+        .unwrap_or(false);
+    hide_root && !multiple_worktrees
 }
 
 fn worktree_names_for_history_matching(
@@ -844,7 +840,6 @@ impl FoundPath {
     }
 }
 
-const MAX_RECENT_SELECTIONS: usize = 20;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
 const WORKTREE_UPDATE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -1109,14 +1104,23 @@ impl FileFinderDelegate {
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
-            let query_changed = Some(query.path_query())
+            let path_query_changed = Some(query.path_query())
                 != self
                     .latest_search_query
                     .as_ref()
                     .map(|query| query.path_query());
-            let extend_old_matches = self.latest_search_did_cancel && !query_changed;
+            let extend_old_matches = self.latest_search_did_cancel && !path_query_changed;
 
-            let selected_match = if query_changed {
+            // The line/column suffix doesn't affect which files match, but it
+            // does change the user's intent ("go inside this file" vs. "pick a
+            // file"). Drop the preserved selection when it appears or changes
+            // so the new intent can be honored by `calculate_selected_index`.
+            let position_changed = self
+                .latest_search_query
+                .as_ref()
+                .and_then(|q| q.path_position.row)
+                != query.path_position.row;
+            let selected_match = if path_query_changed || position_changed {
                 None
             } else {
                 self.matches.get(self.selected_index).cloned()
@@ -1196,7 +1200,7 @@ impl FileFinderDelegate {
                 }
             }
 
-            let query_path = query.raw_query.as_str();
+            let query_path = query.path_query();
             if let Ok(mut query_path) = RelPath::new(Path::new(query_path), path_style) {
                 let available_worktree = self
                     .project
@@ -1231,8 +1235,8 @@ impl FileFinderDelegate {
                 if let Some(worktree) = expect_worktree {
                     let worktree = worktree.read(cx);
                     if worktree.entry_for_path(&query_path).is_none()
-                        && !query.raw_query.ends_with("/")
-                        && !(path_style.is_windows() && query.raw_query.ends_with("\\"))
+                        && !query.path_query().ends_with('/')
+                        && !(path_style.is_windows() && query.path_query().ends_with('\\'))
                     {
                         self.matches.matches.push(Match::CreateNew(ProjectPath {
                             worktree_id: worktree.id(),
@@ -1247,8 +1251,9 @@ impl FileFinderDelegate {
             self.selected_index = if !self.selected_matches.is_empty() {
                 0
             } else {
+                let query_has_position = query.path_position.row.is_some();
                 selected_match.map_or_else(
-                    || self.calculate_selected_index(cx),
+                    || self.calculate_selected_index(query_has_position, cx),
                     |m| {
                         self.matches
                             .position(&m, self.currently_opened_path.as_ref())
@@ -1399,8 +1404,9 @@ impl FileFinderDelegate {
         }
 
         (
-            HighlightedLabel::new(file_name, file_name_positions),
+            HighlightedLabel::new(file_name, file_name_positions).single_line(),
             HighlightedLabel::new(full_path, full_path_positions)
+                .single_line()
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         )
@@ -1515,8 +1521,17 @@ impl FileFinderDelegate {
     }
 
     /// Skips first history match (that is displayed topmost) if it's currently opened.
-    fn calculate_selected_index(&self, cx: &mut Context<Picker<Self>>) -> usize {
-        if FileFinderSettings::get_global(cx).skip_focus_for_active_in_search
+    ///
+    /// When the query carries a row (e.g. `foo.rs:42`), the user is asking to
+    /// navigate inside a specific file, so we never skip past the active match
+    /// even if the setting is enabled.
+    fn calculate_selected_index(
+        &self,
+        query_has_position: bool,
+        cx: &mut Context<Picker<Self>>,
+    ) -> usize {
+        if !query_has_position
+            && FileFinderSettings::get_global(cx).skip_focus_for_active_in_search
             && let Some(Match::History { path, .. }) = self.matches.get(0)
             && Some(path) == self.currently_opened_path.as_ref()
         {
@@ -1821,6 +1836,11 @@ impl PickerDelegate for FileFinderDelegate {
         self.selected_index
     }
 
+    fn set_hovered_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.selected_index = ix;
+        cx.notify();
+    }
+
     fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.has_changed_selected_index = true;
         self.selected_index = ix;
@@ -2028,7 +2048,7 @@ impl PickerDelegate for FileFinderDelegate {
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<FileFinderDelegate>>) {
         self.file_finder
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
     }
 
     fn try_get_preview_data_for_match(&self, cx: &App) -> Option<picker::PreviewUpdate> {
@@ -2173,8 +2193,8 @@ impl FileFinderDelegate {
                         .w_full()
                         .min_w_0()
                         .gap_1p5()
-                        .child(file_name_label.truncate_middle())
-                        .child(full_path_label.truncate_start()),
+                        .child(file_name_label.flex_none().truncate_middle())
+                        .child(full_path_label.flex_1().truncate_start()),
                 )
                 .end_slot::<AnyElement>(end_slot),
         )

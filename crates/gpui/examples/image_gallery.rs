@@ -1,11 +1,13 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use futures::FutureExt;
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use gpui::{
-    App, AppContext, Asset as _, AssetLogger, Bounds, ClickEvent, Context, ElementId, Entity,
-    ImageAssetLoader, ImageCache, ImageCacheProvider, KeyBinding, Menu, MenuItem,
-    RetainAllImageCache, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
-    actions, div, hash, image_cache, img, prelude::*, px, rgb, size,
+    App, AppContext, Bounds, ClickEvent, Context, ElementId, Entity, ImageCache,
+    ImageCacheProvider, KeyBinding, Menu, MenuItem, RetainAllImageCache, SharedString,
+    TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, hash, image_cache, img,
+    prelude::*, px, rgb, size,
 };
 #[cfg(not(target_family = "wasm"))]
 use reqwest_client::ReqwestClient;
@@ -173,7 +175,7 @@ struct SimpleLruCache {
 impl SimpleLruCache {
     fn new(max_items: usize, cx: &mut Context<Self>) -> Self {
         cx.on_release(|simple_cache, cx| {
-            for (_, mut item) in std::mem::take(&mut simple_cache.cache) {
+            for (_, item) in std::mem::take(&mut simple_cache.cache) {
                 if let Some(Ok(image)) = item.get() {
                     cx.drop_image(image, None);
                 }
@@ -210,14 +212,12 @@ impl ImageCache for SimpleLruCache {
             self.usages.remove(current_ix);
             self.usages.insert(0, hash);
 
-            return item.get();
+            return item.use_image(window);
         }
 
-        let fut = AssetLogger::<ImageAssetLoader>::load(resource.clone(), cx);
-        let task = cx.background_executor().spawn(fut).shared();
         if self.usages.len() == self.max_items {
             let oldest = self.usages.pop().unwrap();
-            let mut image = self
+            let image = self
                 .cache
                 .remove(&oldest)
                 .expect("cache and usages must be in sync");
@@ -225,23 +225,12 @@ impl ImageCache for SimpleLruCache {
                 cx.drop_image(image, Some(window));
             }
         }
-        self.cache
-            .insert(hash, gpui::ImageCacheItem::Loading(task.clone()));
+        let item = gpui::ImageCacheItem::new(resource, cx);
+        let result = item.use_image(window);
+        self.cache.insert(hash, item);
         self.usages.insert(0, hash);
 
-        let entity = window.current_view();
-        window
-            .spawn(cx, {
-                async move |cx| {
-                    _ = task.await;
-                    cx.on_next_frame(move |_, cx| {
-                        cx.notify(entity);
-                    });
-                }
-            })
-            .detach();
-
-        None
+        result
     }
 }
 
@@ -254,19 +243,12 @@ fn run_example() {
     let app = gpui_platform::single_threaded_web();
 
     app.run(move |cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         #[cfg(not(target_family = "wasm"))]
         {
             let http_client = ReqwestClient::user_agent("gpui example").unwrap();
-            cx.set_http_client(Arc::new(http_client));
-        }
-        #[cfg(target_family = "wasm")]
-        {
-            // Safety: the web examples run single-threaded; the client is
-            // created and used exclusively on the main thread.
-            let http_client = unsafe {
-                gpui_web::FetchHttpClient::with_user_agent("gpui example")
-                    .expect("failed to create FetchHttpClient")
-            };
             cx.set_http_client(Arc::new(http_client));
         }
 

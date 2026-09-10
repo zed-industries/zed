@@ -2,7 +2,9 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use collections::HashMap;
-use editor::actions::{FindAllReferences, GoToDefinition, GoToImplementation};
+use editor::actions::{
+    FindAllReferences, GoToDeclaration, GoToDefinition, GoToImplementation, GoToTypeDefinition,
+};
 use editor::{Editor, EditorSettings, GotoDefinitionKind, OpenResultsIn};
 use file_icons::FileIcons;
 use fuzzy::StringMatchCandidate;
@@ -54,10 +56,38 @@ fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut Context<
     editor
         .register_action({
             let handle = handle.clone();
+            move |action: &GoToDeclaration, window, cx| {
+                handle_nav_action(
+                    action.open_results_in,
+                    LspPickerKind::Declaration,
+                    &handle,
+                    window,
+                    cx,
+                );
+            }
+        })
+        .detach();
+    editor
+        .register_action({
+            let handle = handle.clone();
             move |action: &GoToImplementation, window, cx| {
                 handle_nav_action(
                     action.open_results_in,
                     LspPickerKind::Implementation,
+                    &handle,
+                    window,
+                    cx,
+                );
+            }
+        })
+        .detach();
+    editor
+        .register_action({
+            let handle = handle.clone();
+            move |action: &GoToTypeDefinition, window, cx| {
+                handle_nav_action(
+                    action.open_results_in,
+                    LspPickerKind::TypeDefinition,
                     &handle,
                     window,
                     cx,
@@ -162,7 +192,9 @@ fn show_no_results_toast(
 pub enum LspPickerKind {
     References,
     Definition,
+    Declaration,
     Implementation,
+    TypeDefinition,
 }
 
 impl LspPickerKind {
@@ -170,7 +202,9 @@ impl LspPickerKind {
         match self {
             LspPickerKind::References => "Filter references…",
             LspPickerKind::Definition => "Filter definitions…",
+            LspPickerKind::Declaration => "Filter declarations…",
             LspPickerKind::Implementation => "Filter implementations…",
+            LspPickerKind::TypeDefinition => "Filter type definitions…",
         }
     }
 
@@ -180,7 +214,9 @@ impl LspPickerKind {
         match self {
             LspPickerKind::References => "No references found",
             LspPickerKind::Definition => "No definitions found",
+            LspPickerKind::Declaration => "No declarations found",
             LspPickerKind::Implementation => "No implementations found",
+            LspPickerKind::TypeDefinition => "No type definitions found",
         }
     }
 
@@ -197,8 +233,14 @@ impl LspPickerKind {
             LspPickerKind::Definition => {
                 editor.definition_locations_of_kind(GotoDefinitionKind::Symbol, cx)
             }
+            LspPickerKind::Declaration => {
+                editor.definition_locations_of_kind(GotoDefinitionKind::Declaration, cx)
+            }
             LspPickerKind::Implementation => {
                 editor.definition_locations_of_kind(GotoDefinitionKind::Implementation, cx)
+            }
+            LspPickerKind::TypeDefinition => {
+                editor.definition_locations_of_kind(GotoDefinitionKind::Type, cx)
             }
         }
     }
@@ -778,6 +820,7 @@ mod tests {
     use editor::test::editor_lsp_test_context::EditorLspTestContext;
     use gpui::TestAppContext;
     use indoc::indoc;
+    use workspace::Item as _;
 
     async fn rust_cx(
         capabilities: lsp::ServerCapabilities,
@@ -968,5 +1011,133 @@ mod tests {
         assert_eq!(matches(&mut cx, "lx"), 1);
         assert_eq!(matches(&mut cx, "zzzz"), 0);
         assert_eq!(matches(&mut cx, ""), 2);
+    }
+
+    #[gpui::test]
+    async fn test_cmd_click_fallback_honors_lsp_results_location(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        cx.update(|_window, cx| {
+            cx.update_global::<settings::SettingsStore, _>(|settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.editor.lsp_results_location = Some(OpenResultsIn::Picker);
+                });
+            });
+        });
+        cx.set_state(SOURCE);
+        cx.lsp
+            .set_request_handler::<lsp::request::GotoDefinition, _, _>(async move |_params, _| {
+                Ok(None)
+            });
+        cx.lsp
+            .set_request_handler::<lsp::request::References, _, _>(async move |params, _| {
+                let uri = params.text_document_position.text_document.uri;
+                Ok(Some(references(uri, &[(1, 8, 11), (2, 14, 17)])))
+            });
+
+        let screen_coord = cx
+            .editor(|editor, _, cx| editor.pixel_position_of_cursor(cx))
+            .unwrap();
+        cx.simulate_click(screen_coord, gpui::Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        assert!(
+            active_picker(&mut cx).is_some(),
+            "the cmd-click go-to-definition fallback should open the references picker when lsp_results_location is picker"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_type_definition_honors_lsp_results_location(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        cx.update(|_window, cx| {
+            cx.update_global::<settings::SettingsStore, _>(|settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.editor.lsp_results_location = Some(OpenResultsIn::Picker);
+                });
+            });
+        });
+        cx.set_state(indoc! {r#"
+            fn main() {
+                struct Foo<T>(T);
+                struct Bar;
+                let fˇoo: Foo<Bar>;
+            }
+        "#});
+        cx.lsp
+            .set_request_handler::<lsp::request::GotoTypeDefinition, _, _>(
+                async move |params, _| {
+                    let uri = params.text_document_position_params.text_document.uri;
+                    Ok(Some(lsp::GotoDefinitionResponse::Array(references(
+                        uri,
+                        &[(1, 11, 14), (2, 11, 14)],
+                    ))))
+                },
+            );
+
+        cx.dispatch_action(GoToTypeDefinition::default());
+
+        assert!(
+            active_picker(&mut cx).is_some(),
+            "type definition should open the picker when lsp_results_location is picker"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_declaration_honors_lsp_results_location(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                declaration_provider: Some(lsp::DeclarationCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        cx.update(|_window, cx| {
+            cx.update_global::<settings::SettingsStore, _>(|settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.editor.lsp_results_location = Some(OpenResultsIn::Picker);
+                });
+            });
+        });
+        cx.set_state(indoc! {r#"
+            fn main() {
+                let foo = ();
+                let foo = ();
+                let bar = fˇoo;
+            }
+        "#});
+        cx.lsp
+            .set_request_handler::<lsp::request::GotoDeclaration, _, _>(async move |params, _| {
+                let uri = params.text_document_position_params.text_document.uri;
+                Ok(Some(lsp::GotoDefinitionResponse::Array(references(
+                    uri,
+                    &[(1, 8, 11), (2, 8, 11)],
+                ))))
+            });
+
+        cx.dispatch_action(GoToDeclaration::default());
+
+        assert!(
+            active_picker(&mut cx).is_some(),
+            "declaration should open the picker when lsp_results_location is picker"
+        );
     }
 }

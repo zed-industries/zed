@@ -177,7 +177,7 @@ impl Client {
         log::debug!(
             "starting context server (executable={:?}, args={:?})",
             binary.executable,
-            &binary.args
+            binary.args
         );
 
         let server_name = binary
@@ -279,7 +279,7 @@ impl Client {
         let mut receiver = transport.receive();
 
         while let Some(message) = receiver.next().await {
-            log::trace!("recv: {}", &message);
+            log::trace!("recv: {message}");
             if let Ok(request) = serde_json::from_str::<AnyRequest>(&message) {
                 let mut request_handlers = request_handlers.lock();
                 if let Some(handler) = request_handlers.get_mut(request.method) {
@@ -592,9 +592,14 @@ impl NotificationSubscriptionSet {
             return;
         };
 
-        for handler_id in handler_ids {
-            if let Some(handler) = self.handlers.get_mut(*handler_id) {
-                handler(payload.clone(), cx.clone());
+        if let Some((last_handler_id, handler_ids)) = handler_ids.split_last() {
+            for handler_id in handler_ids {
+                if let Some(handler) = self.handlers.get_mut(*handler_id) {
+                    handler(payload.clone(), cx.clone());
+                }
+            }
+            if let Some(handler) = self.handlers.get_mut(*last_handler_id) {
+                handler(payload, cx.clone());
             }
         }
     }

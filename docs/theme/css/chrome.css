@@ -660,57 +660,6 @@ ul#searchresults span.teaser em {
   gap: 0.6em;
 }
 
-.theme-popup {
-  position: absolute;
-  right: 155px;
-  top: calc(var(--menu-bar-height) - 18px);
-  z-index: 1000;
-  border-radius: 4px;
-  font-size: 1.4rem;
-  color: var(--fg);
-  background: var(--popover-bg);
-  border: 1px solid var(--popover-border);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: none;
-  overflow: hidden;
-}
-
-[dir="rtl"] .theme-popup {
-  left: unset;
-  right: 10px;
-}
-.theme-popup .default {
-  color: var(--icons);
-}
-.theme-popup .theme {
-  width: 100%;
-  border: 0;
-  margin: 0;
-  padding: 2px 24px;
-  line-height: 25px;
-  white-space: nowrap;
-  text-align: start;
-  cursor: pointer;
-  color: inherit;
-  background: inherit;
-  font-size: inherit;
-  font-family: inherit;
-}
-.theme-popup .theme:hover {
-  background-color: var(--theme-hover);
-}
-
-.theme-selected::before {
-  font-family: Arial, Helvetica, sans-serif;
-  text-align: center;
-  display: inline-block;
-  content: "✓";
-  margin-inline-start: -20px;
-  width: 20px;
-}
-
 .download-button {
   max-height: 28px;
   margin-left: 8px;
@@ -860,9 +809,5 @@ ul#searchresults span.teaser em {
 
   .search-content-mobile {
     display: flex;
-  }
-
-  .theme-popup {
-    right: 15px;
   }
 }

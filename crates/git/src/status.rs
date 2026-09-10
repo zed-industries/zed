@@ -503,26 +503,13 @@ pub enum DiffTreeType {
         base: SharedString,
         head: SharedString,
     },
+    MergeBaseWithWorktree {
+        base: SharedString,
+    },
     Since {
         base: SharedString,
         head: SharedString,
     },
-}
-
-impl DiffTreeType {
-    pub fn base(&self) -> &SharedString {
-        match self {
-            DiffTreeType::MergeBase { base, .. } => base,
-            DiffTreeType::Since { base, .. } => base,
-        }
-    }
-
-    pub fn head(&self) -> &SharedString {
-        match self {
-            DiffTreeType::MergeBase { head, .. } => head,
-            DiffTreeType::Since { head, .. } => head,
-        }
-    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -620,7 +607,7 @@ pub fn parse_numstat(output: &str) -> GitDiffStat {
         };
         entries.push((path, DiffStat { added, deleted }));
     }
-    entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+    entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
     entries.dedup_by(|(a, _), (b, _)| a == b);
 
     GitDiffStat {

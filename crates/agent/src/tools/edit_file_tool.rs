@@ -3061,6 +3061,19 @@ mod tests {
         assert!(input.edits.is_none());
     }
 
+    #[test]
+    fn test_wrong_edit_field_names_produce_actionable_error() {
+        let err = serde_json::from_value::<EditFileToolInput>(json!({
+            "path": "test.go",
+            "edits": [{"old_str": "hello", "new_text": "world"}]
+        }))
+        .unwrap_err();
+
+        // When the model uses incorrect field names, the error should
+        // tell it what to fix.
+        assert_eq!(err.to_string(), "missing field `old_text`");
+    }
+
     async fn setup_test_with_fs(
         cx: &mut TestAppContext,
         fs: Arc<project::FakeFs>,

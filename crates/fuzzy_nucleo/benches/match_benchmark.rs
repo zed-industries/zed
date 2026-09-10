@@ -1,7 +1,7 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use fuzzy::CharBag;
+use path::{PathStyle, rel_path::RelPath};
 use std::sync::atomic::AtomicBool;
-use util::{paths::PathStyle, rel_path::RelPath};
 
 const DIRS: &[&str] = &[
     "src",
