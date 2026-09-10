@@ -751,7 +751,8 @@ impl WaylandClient {
         let startup_activation_token = take_startup_activation_token_from_environment();
         let conn = Connection::connect_to_env().unwrap();
 
-        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
+        let (globals, mut event_queue) =
+            registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
@@ -968,6 +969,9 @@ impl WaylandClient {
             event_loop: Some(event_loop),
             ime_enabled: None,
         }));
+
+        let mut state_ptr = WaylandClientStatePtr(Rc::downgrade(&state));
+        event_queue.roundtrip(&mut state_ptr).unwrap();
 
         WaylandSource::new(conn, event_queue)
             .insert(handle)
