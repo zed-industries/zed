@@ -9,10 +9,10 @@ pub mod layer_shell;
 /// Types for configuring parent-anchored popup windows such as menus, dropdowns and tooltips.
 pub mod popup;
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 mod threaded_dispatcher;
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 mod test;
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
@@ -47,7 +47,7 @@ use anyhow::bail;
 use anyhow::{Context as _, Result};
 use async_task::Runnable;
 use futures::channel::oneshot;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use image::RgbaImage;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, DynamicImage, Frame};
@@ -78,17 +78,36 @@ pub use app_menu::*;
 pub use keyboard::*;
 pub use keystroke::*;
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub(crate) use test::*;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub use threaded_dispatcher::ThreadedDispatcher;
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
+
+/// Keeps an operating system activity, such as an idle sleep inhibitor, alive until dropped.
+pub struct ActivityGuard {
+    _release: gpui_util::Deferred<Box<dyn FnOnce() + Send>>,
+}
+
+impl ActivityGuard {
+    /// Runs `release` when the guard is dropped.
+    pub fn new(release: impl FnOnce() + Send + 'static) -> Self {
+        Self {
+            _release: gpui_util::defer(Box::new(release)),
+        }
+    }
+
+    /// A guard for platforms without a corresponding activity.
+    pub fn noop() -> Self {
+        Self::new(|| {})
+    }
+}
 
 // TODO(jk): return an enum instead of a string
 /// Return which compositor we're guessing we'll use.
@@ -200,7 +219,7 @@ pub trait Platform: 'static {
     fn reveal_path(&self, path: &Path);
     fn open_with_system(&self, path: &Path);
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>);
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
     fn on_system_wake(&self, callback: Box<dyn FnMut()>);
 
@@ -249,6 +268,7 @@ pub trait Platform: 'static {
 
     fn thermal_state(&self) -> ThermalState;
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>);
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>>;
 
     /// Sets the application's process-wide identity and user-visible name.
     ///
@@ -827,6 +847,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn capslock(&self) -> Capslock;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
+    /// Apply the focused text region's [`TextInputConfiguration`] to the
+    /// platform's text input session (e.g. attributes of the hidden editable
+    /// element on web). Called only when the configuration changes, because
+    /// reconfiguring a live input session can restart the IME connection.
+    fn set_text_input_configuration(&mut self, _configuration: TextInputConfiguration) {}
     fn prompt(
         &self,
         level: PromptLevel,
@@ -894,6 +919,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn move_tab_to_new_window(&self) {}
     fn toggle_window_tab_overview(&self) {}
     fn set_tabbing_identifier(&self, _identifier: Option<String>) {}
+
+    fn native_window_state(&self) -> Option<Vec<u8>> {
+        None
+    }
+    fn restore_native_window_state(&self, _state: &[u8]) {}
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND;
@@ -974,7 +1004,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Inform the adapter of updated window bounds.
     fn a11y_update_window_bounds(&self) {}
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
     }
@@ -989,7 +1019,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 }
 
 /// A renderer for headless windows that can produce real rendered output.
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub trait PlatformHeadlessRenderer {
     /// Render a scene and return the result as an RGBA image.
     fn render_scene_to_image(
@@ -1055,14 +1085,18 @@ pub trait PlatformDispatcher: Send + Sync {
         gpui_util::defer(Box::new(|| {}))
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    fn prevent_app_nap(&self, _reason: &str) -> ActivityGuard {
+        ActivityGuard::noop()
+    }
+
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn as_test(&self) -> Option<&TestDispatcher> {
         None
     }
 
     // This cfg must match the `threaded_dispatcher` module's, which implements
     // this method whenever it compiles.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn as_threaded(&self) -> Option<&ThreadedDispatcher> {
         None
     }
@@ -1075,6 +1109,8 @@ pub trait PlatformTextSystem: Send + Sync {
     fn all_font_names(&self) -> Vec<String>;
     /// Get the font ID for a font descriptor.
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
+    /// Prewarm any system font caches needed to shape text.
+    fn prewarm_fonts(&self, _font_ids: &[FontId]) {}
     /// Get metrics for a font.
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
     /// Get typographic bounds for a glyph.
@@ -1329,7 +1365,7 @@ pub trait PlatformAtlas {
     ) -> Result<Option<AtlasTile>>;
     fn remove(&self, key: &AtlasKey);
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn contains(&self, _key: &AtlasKey) -> bool {
         false
     }
@@ -1652,6 +1688,23 @@ impl PlatformInputHandler {
             })
             .unwrap_or(false)
     }
+
+    /// See [`InputHandler::text_input_configuration`].
+    pub fn text_input_configuration(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> TextInputConfiguration {
+        self.handler.text_input_configuration(window, cx)
+    }
+
+    /// See [`InputHandler::text_input_editable_range`].
+    pub fn text_input_editable_range(&mut self) -> Option<Range<usize>> {
+        self.cx
+            .update(|window, cx| self.handler.text_input_editable_range(window, cx))
+            .ok()
+            .flatten()
+    }
 }
 
 /// A struct representing a selection in a text buffer, in UTF16 characters.
@@ -1810,6 +1863,24 @@ pub trait InputHandler: 'static {
         true
     }
 
+    /// The contiguous range of text, in UTF-16 code units, that platform text
+    /// input may read and edit around the current selection.
+    ///
+    /// Platforms that mirror document text into an IME-editable buffer clamp
+    /// the mirrored window to this range, so multi-step IME edit gestures
+    /// (word deletion, autocorrect rewrites, suggestion picks) cannot reach
+    /// content outside it. The range should contain the current selection;
+    /// when it cannot (a selection spanning a region boundary), platforms
+    /// degrade the mirrored IME context rather than widening the range.
+    /// `None` places no bound.
+    fn text_input_editable_range(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<Range<usize>> {
+        None
+    }
+
     /// Returns whether printable keys should be routed to the IME before keybinding
     /// matching when a non-ASCII input source (e.g. Japanese, Korean, Chinese IME)
     /// is active. This prevents multi-stroke keybindings like `jj` from intercepting
@@ -1821,6 +1892,84 @@ pub trait InputHandler: 'static {
     fn prefers_ime_for_printable_keys(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
         false
     }
+
+    /// Get this handler's preferences for platform text assistance.
+    ///
+    /// GPUI re-queries this every frame and forwards it to the platform window
+    /// only when it changes, so implementations must be cheap and may vary the
+    /// result with application state (e.g. with the cursor's position).
+    fn text_input_configuration(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> TextInputConfiguration {
+        TextInputConfiguration::default()
+    }
+}
+
+/// Platform text-assistance preferences for the focused text region.
+///
+/// Returned by [`InputHandler::text_input_configuration`] and forwarded to the
+/// platform whenever it changes; the platform maps the fields onto its native
+/// input-session attributes (on web, DOM attributes of the hidden editable
+/// element such as `autocorrect` and `enterkeyhint`).
+///
+/// The default disables all text assistance and requests no particular action
+/// key presentation.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TextInputConfiguration {
+    /// Whether the platform may automatically correct entered text.
+    pub autocorrect: bool,
+    /// How software keyboards automatically capitalize entered text.
+    pub autocapitalize: Autocapitalize,
+    /// Whether software keyboards may offer word suggestions and spellcheck.
+    pub suggestions: bool,
+    /// The action advertised on a software keyboard's confirm ("enter") key.
+    pub input_action: TextInputAction,
+}
+
+/// Automatic capitalization applied by software keyboards.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Autocapitalize {
+    /// No automatic capitalization.
+    #[default]
+    None,
+    /// Capitalize the first letter of each word.
+    Words,
+    /// Capitalize the first letter of each sentence.
+    Sentences,
+    /// Capitalize every letter.
+    Characters,
+}
+
+/// The action a software keyboard advertises on its confirm ("enter") key.
+///
+/// This affects only how the key is presented (icon or label); pressing it is
+/// still delivered as ordinary input.
+///
+/// The variants are the HTML `enterkeyhint` attribute's value set
+/// (<https://html.spec.whatwg.org/multipage/interaction.html#input-modalities:-the-enterkeyhint-attribute>),
+/// which also maps onto Android's `IME_ACTION_*` constants and iOS's
+/// `UIReturnKeyType`; [`TextInputAction::Unspecified`] means "emit no hint".
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextInputAction {
+    /// Let the platform choose its default presentation.
+    #[default]
+    Unspecified,
+    /// Inserting a line break.
+    Enter,
+    /// Committing the field's value.
+    Done,
+    /// Navigating to the typed target.
+    Go,
+    /// Moving to the next field.
+    Next,
+    /// Moving to the previous field.
+    Previous,
+    /// Executing a search.
+    Search,
+    /// Sending a message.
+    Send,
 }
 
 /// The variables that can be configured when creating a new window

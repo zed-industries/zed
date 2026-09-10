@@ -12,12 +12,13 @@ workspace = true
 path = "src/settings_json.rs"
 
 [features]
-default = []
+default = ["editing"]
+editing = ["dep:tree-sitter", "dep:tree-sitter-json"]
 
 [dependencies]
 anyhow.workspace = true
-tree-sitter = { workspace = true, features = ["wasm"] }
-tree-sitter-json.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"], optional = true }
+tree-sitter-json = { workspace = true, optional = true }
 util.workspace = true
 serde.workspace = true
 serde_json.workspace = true

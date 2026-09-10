@@ -335,10 +335,7 @@ impl Editor {
                 );
 
                 // Remove shortcode from buffer
-                edits.push((
-                    emoji_shortcode_start..selection.start,
-                    "".to_string().into(),
-                ));
+                edits.push((emoji_shortcode_start..selection.start, Arc::from("")));
                 new_selections.push((
                     Selection {
                         id: selection.id,
@@ -503,11 +500,12 @@ impl Editor {
                 this.show_edit_predictions_in_menu() || !had_active_edit_prediction;
             if this.hard_wrap.is_some() {
                 let latest: Range<Point> = this.selections.newest(&map).range();
+                // Reuse the post-edit snapshot captured in `map` above; the buffer
+                // is not mutated between there and here (only selections move), so a
+                // fresh `buffer().snapshot(cx)` would be redundant.
                 if latest.is_empty()
-                    && this
-                        .buffer()
-                        .read(cx)
-                        .snapshot(cx)
+                    && map
+                        .buffer_snapshot()
                         .line_len(MultiBufferRow(latest.start.row))
                         == latest.start.column
                 {
@@ -558,6 +556,8 @@ impl Editor {
                         let end = selection.end;
                         let selection_is_empty = start == end;
                         let language_scope = buffer.language_scope_at(start);
+                        existing_indent =
+                            logical_indent_for_newline(&start_point, &buffer, existing_indent);
                         let (delimiter, newline_config) = if let Some(language) = &language_scope {
                             let needs_extra_newline = NewlineConfig::insert_extra_newline_brackets(
                                 &buffer,
@@ -2617,6 +2617,28 @@ fn documentation_delimiter_for_newline(
     } else {
         None
     }
+}
+
+/// The indentation a line inserted at `start_point` should start at, which is
+/// `existing_indent` unless the cursor sits after the closing delimiter of a
+/// multi-line block comment. See [`language::BufferSnapshot::block_comment_closing_indent`].
+fn logical_indent_for_newline(
+    start_point: &Point,
+    buffer: &MultiBufferSnapshot,
+    existing_indent: IndentSize,
+) -> IndentSize {
+    let Some((snapshot, line_range)) = buffer.buffer_line_for_row(MultiBufferRow(start_point.row))
+    else {
+        return existing_indent;
+    };
+    // Columns agree between the multi-buffer and the underlying buffer for a line
+    // an excerpt shows in full, which is the case we care about. For a partial
+    // first line the column comes out too small and the lookup below declines,
+    // leaving the indent alone.
+    let position = Point::new(line_range.start.row, start_point.column);
+    snapshot
+        .block_comment_closing_indent(position)
+        .unwrap_or(existing_indent)
 }
 
 fn list_delimiter_for_newline(

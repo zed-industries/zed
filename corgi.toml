@@ -1,0 +1,90 @@
+corgi_version = "0.1.43"
+
+# corgi build configuration for Zed.
+# Corgi source and documentation: https://github.com/ConradIrwin/corgi
+#
+# corgi runs build.rs scripts and proc-macros in a sandbox with no network,
+# no ambient environment, and reads limited to each package's own source plus
+# what is declared here. Every setting names the packages it applies to, so
+# only those packages' actions key on it — comment or command-text edits
+# rebuild nothing.
+#
+# See the top-level Cargo.toml `[patch.crates-io]` for the local `scratch` patch
+# that lets cxx/webrtc-sys build under the sandbox, and `util::fs_embed!` for
+# how dev builds read embedded assets from the checkout instead of baking the
+# build path into the binary.
+
+# sha256-pinned tools, fetched into the corgi store and exposed to the named
+# packages' build scripts via the given environment variable. URLs and hashes
+# are for the macOS arm64 build host.
+#
+# Note: no protoc tool is needed. `proto` and `livekit_api` compile their
+# protobufs with `protox` (a pure-Rust protoc) and `prost_build::compile_fds`,
+# so nothing shells out to a protoc binary.
+
+[tools.cmake]
+version = "4.1.2"
+url = "https://github.com/Kitware/CMake/releases/download/v4.1.2/cmake-4.1.2-macos-universal.tar.gz"
+sha256 = "3be85f5b999e327b1ac7d804cbc9acd767059e9f603c42ec2765f6ab68fbd367"
+bin = "cmake-4.1.2-macos-universal/CMake.app/Contents/bin/cmake"
+env = "CMAKE"
+packages = ["webrtc-sys", "wasmtime-c-api-impl"]
+
+# Prebuilt libwebrtc, so webrtc-sys-build does not have to download it over the
+# network (which the sandbox forbids). The tag must match WEBRTC_TAG in the
+# pinned livekit-rust-sdks revision; webrtc-sys-build reads LK_CUSTOM_WEBRTC and
+# skips the download when it is set.
+[tools.webrtc-prebuilt]
+version = "0001d84-4"
+url = "https://github.com/zed-industries/livekit-rust-sdks/releases/download/webrtc-0001d84-4/webrtc-mac-arm64-release.zip"
+sha256 = "09ba71bfbc15c6aacced7fe20451a9648dfe648c24295f28d75fc386dbd7281a"
+path = "mac-arm64-release"
+env = "LK_CUSTOM_WEBRTC"
+packages = ["webrtc-sys"]
+
+# Plan-time probe: the git SHA is read here (outside the sandbox) and frozen
+# into the keyed value. zed/build.rs prefers $ZED_COMMIT_SHA over running git,
+# which the sandbox blocks. Release-only; dev builds embed no SHA (the source
+# reads it via option_env!). cli/remote_server build.rs run git directly rather
+# than reading this var, so they are not listed here.
+[env.ZED_COMMIT_SHA]
+command = "git rev-parse HEAD"
+packages = ["zed"]
+profiles = ["release"]
+
+# Reads a package's actions perform that corgi's sandbox does not grant by
+# default. By default only a package's own `.rs` files (plus its manifest) are
+# readable, so non-`.rs` files a build script or macro reads must be listed even
+# when they live inside the package. Entries are glob patterns relative to the
+# named package's root, and every file they match is granted and hashed as an
+# input. A pattern selects files, never directories: `dir/**` is how you take
+# everything under a directory, and `dir/*` takes only what sits directly in it.
+[extra-inputs]
+# Own non-.rs files read at build time (protobufs, bindgen headers, doc/data).
+proto = ["proto/**"]
+livekit_api = ["vendored/protocol/**"]
+media = ["src/bindings.h"]
+gpui = ["README.md"]
+git = ["src/checkpoint.gitignore"]
+git_ui = ["src/commit_message_prompt.txt"]
+editor = ["../grammars/src/**"]
+edit_prediction = ["license_patterns/**"]
+agent_skills = ["builtin/**"]
+agent_settings = ["src/prompts/**"]
+json_schema_store = ["src/schemas/**"]
+prettier = ["src/prettier_server.js"]
+zed = ["resources/**"]
+zed_extension_api = ["wit/**"]
+gpui_wgpu = ["src/*.wgsl"]
+# Cross-package reads (and, for gpui_apple, its own metal shader source).
+extension_host = ["../extension_api/wit/**"]
+gpui_apple = ["../gpui/src/**", "src/shaders.metal"]
+eval_cli = ["../zed/Cargo.toml"]
+prompt_store = ["../git_ui/src/commit_message_prompt.txt"]
+release_channel = ["../zed/RELEASE_CHANNEL"]
+cli = ["../../script/uninstall.sh"]
+remote_server = ["../zed/Cargo.toml"]
+# `../zed/Cargo.toml`: build.rs reads it for ZED_PKG_VERSION. `../grammars/src`
+# and `src/prompts` are embedded in release builds; dev builds read them at
+# runtime via fs_embed.
+edit_prediction_cli = ["../zed/Cargo.toml", "../grammars/src/**", "src/prompts/**"]

@@ -348,10 +348,14 @@ impl LanguageModel for DeepSeekLanguageModel {
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
         let stream = self.stream_completion(request, cx);
+        let executor = cx.background_executor().clone();
 
         async move {
             let mapper = DeepSeekEventMapper::new();
-            Ok(mapper.map_stream(stream.await?).boxed())
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(stream.await?).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }

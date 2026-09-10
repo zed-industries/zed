@@ -412,8 +412,10 @@ impl RemoteConnection for SshRemoteConnection {
         let src_path_display = src_path.display().to_string();
 
         let mut sftp_command = self.build_sftp_command();
+        sftp_command.kill_on_drop(true);
         let mut scp_command =
             self.build_scp_command(&src_path, &dest_path_str, Some(&["-C", "-r"]));
+        scp_command.kill_on_drop(true);
 
         cx.background_spawn(async move {
             // We will try SFTP first, and if that fails, we will fall back to SCP.
