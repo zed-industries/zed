@@ -1032,7 +1032,7 @@ impl VsCodeSettings {
     }
 
     fn screencast_settings_content(&self) -> Option<ScreencastSettingsContent> {
-        skip_default(ScreencastSettingsContent {
+        Some(ScreencastSettingsContent {
             font_size: self.read_f32("screencastMode.fontSize").map(FontSize::from),
             vertical_offset: self.read_f32("screencastMode.verticalOffset"),
             keyboard_overlay_timeout: self.read_u64("screencastMode.keyboardOverlayTimeout"),
