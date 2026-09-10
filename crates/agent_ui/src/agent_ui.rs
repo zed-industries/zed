@@ -30,6 +30,7 @@ pub mod terminal_thread_metadata_store;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 mod thread_import;
+mod thread_item;
 pub mod thread_metadata_store;
 pub mod thread_worktree_archive;
 
@@ -72,7 +73,7 @@ use crate::agent_configuration::ManageProfilesModal;
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
 pub use crate::agent_panel::{
     AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo, MaxIdleRetainedThreads, TerminalId,
-    ThreadTitleRegenerationResult,
+    ThreadOpened, ThreadTitleRegenerationResult,
 };
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
@@ -89,6 +90,7 @@ pub use thread_import::{
     AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,
 };
+pub use thread_item::ThreadItem;
 use zed_actions;
 pub use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, SwitchWorktree};
 
@@ -189,6 +191,7 @@ const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfill
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentThreadSource {
     AgentPanel,
+    CenterPane,
     GitPanel,
     Sidebar,
 }
@@ -197,6 +200,7 @@ impl AgentThreadSource {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::AgentPanel => "agent_panel",
+            Self::CenterPane => "center_pane",
             Self::GitPanel => "git_panel",
             Self::Sidebar => "sidebar",
         }
@@ -382,6 +386,16 @@ pub struct ToggleCommandPattern {
 #[serde(deny_unknown_fields)]
 pub struct NewThread;
 
+/// Opens a new agent thread as a tab in the center pane.
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct NewCenterThread {
+    /// The agent to use. Defaults to the agent panel's selected agent.
+    #[serde(default, deserialize_with = "deserialize_optional_external_agent_id")]
+    pub agent: Option<AgentId>,
+}
+
 /// Creates a new external agent conversation thread.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
@@ -392,24 +406,37 @@ pub struct NewExternalAgentThread {
     agent: AgentId,
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AgentIdOrLegacyAgent {
+    LegacyAgent(Agent),
+    AgentId(AgentId),
+}
+
+impl AgentIdOrLegacyAgent {
+    fn into_agent_id(self) -> AgentId {
+        match self {
+            Self::AgentId(agent_id) => agent_id,
+            Self::LegacyAgent(agent) => agent.id(),
+        }
+    }
+}
+
 fn deserialize_external_agent_id<'de, D>(deserializer: D) -> Result<AgentId, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum AgentIdOrLegacyAgent {
-        LegacyAgent(Agent),
-        AgentId(AgentId),
-    }
+    Ok(AgentIdOrLegacyAgent::deserialize(deserializer)?.into_agent_id())
+}
 
-    match AgentIdOrLegacyAgent::deserialize(deserializer)? {
-        AgentIdOrLegacyAgent::AgentId(agent_id) => Ok(agent_id),
-        AgentIdOrLegacyAgent::LegacyAgent(Agent::Custom { id }) => Ok(id),
-        AgentIdOrLegacyAgent::LegacyAgent(Agent::NativeAgent) => Ok(Agent::NativeAgent.id()),
-        #[cfg(any(test, feature = "test-support"))]
-        AgentIdOrLegacyAgent::LegacyAgent(Agent::Stub) => Ok(Agent::Stub.id()),
-    }
+fn deserialize_optional_external_agent_id<'de, D>(
+    deserializer: D,
+) -> Result<Option<AgentId>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<AgentIdOrLegacyAgent>::deserialize(deserializer)?
+        .map(AgentIdOrLegacyAgent::into_agent_id))
 }
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -614,6 +641,10 @@ pub fn init(
         init_language_model_settings(cx);
     }
     agent_panel::init(cx);
+    cx.set_global(workspace::PaneNewItemMenuCallbacks {
+        center_entries: thread_item::center_entries,
+    });
+    workspace::register_serializable_item::<ThreadItem>(cx);
     context_server_configuration::init(language_registry, fs.clone(), cx);
     thread_metadata_store::init(cx);
     terminal_thread_metadata_store::init(cx);

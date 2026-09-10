@@ -21,9 +21,9 @@ use git::{CopyFilePermalink, OpenFilePermalink};
 use gpui::{
     Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, TaskExt, WeakEntity, WeakFocusHandle, Window, actions,
-    anchored, deferred, prelude::*,
+    Focusable, Global, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel,
+    Render, ScrollHandle, Subscription, Task, TaskExt, WeakEntity, WeakFocusHandle, Window,
+    actions, anchored, deferred, prelude::*,
 };
 use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
@@ -391,6 +391,13 @@ impl fmt::Debug for Event {
         }
     }
 }
+
+pub struct PaneNewItemMenuCallbacks {
+    pub center_entries:
+        fn(ContextMenu, &WeakEntity<Workspace>, &mut Window, &mut App) -> ContextMenu,
+}
+
+impl Global for PaneNewItemMenuCallbacks {}
 
 /// A container for 0 to many items that are open in the workspace.
 /// Treats all items uniformly via the [`ItemHandle`] trait, whether it's an editor, search results multibuffer, terminal or something else,
@@ -4323,6 +4330,7 @@ fn default_render_tab_bar_buttons(
     };
     // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
     // `end_slot`, but due to needing a view here that isn't possible.
+    let workspace = pane.workspace.clone();
     let right_children = h_flex()
         // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
         .gap(DynamicSpacing::Base04.rems(cx))
@@ -4335,18 +4343,26 @@ fn default_render_tab_bar_buttons(
                 .anchor(Anchor::TopRight)
                 .with_handle(pane.new_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
-                    Some(ContextMenu::build(window, cx, |menu, _, _| {
-                        menu.action("New File", NewFile.boxed_clone())
+                    let workspace = workspace.clone();
+                    Some(ContextMenu::build(window, cx, move |menu, window, cx| {
+                        let menu = menu
+                            .action("New File", NewFile.boxed_clone())
                             .action("Open File", ToggleFileFinder::default().boxed_clone())
                             .separator()
                             .action("Search Project", DeploySearch::default().boxed_clone())
                             .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
                             .separator()
-                            .action("New Terminal", NewTerminal::default().boxed_clone())
-                            .action(
+                            .action("New Terminal", NewTerminal::default().boxed_clone());
+                        let center_entries = cx
+                            .try_global::<PaneNewItemMenuCallbacks>()
+                            .map(|callbacks| callbacks.center_entries);
+                        match center_entries {
+                            Some(center_entries) => center_entries(menu, &workspace, window, cx),
+                            None => menu.action(
                                 "New Center Terminal",
                                 NewCenterTerminal::default().boxed_clone(),
-                            )
+                            ),
+                        }
                     }))
                 }),
         )
