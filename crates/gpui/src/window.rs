@@ -2332,6 +2332,18 @@ impl Window {
         self.platform_window.inner_window_bounds()
     }
 
+    /// Encode the window's native restorable state into an opaque blob.
+    /// Returns `None` on platforms without native state restoration or if encoding fails.
+    pub fn native_window_state(&self) -> Option<Vec<u8>> {
+        self.platform_window.native_window_state()
+    }
+
+    /// Restore the window's native state from a blob previously produced
+    /// by [`Window::native_window_state`]. A no-op on platforms without native state restoration.
+    pub fn restore_native_window_state(&self, state: &[u8]) {
+        self.platform_window.restore_native_window_state(state);
+    }
+
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>, cx: &mut App) {
         let focus_id = self.focused(cx).map(|handle| handle.id);
