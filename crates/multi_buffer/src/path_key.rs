@@ -258,6 +258,7 @@ impl MultiBuffer {
             cursor.seek_forward(path, Bias::Left);
             let Some((buffer, buffer_snapshot)) = cursor
                 .item()
+                .filter(|excerpt| &excerpt.path_key == path)
                 .map(|excerpt| (excerpt.buffer(&self), excerpt.buffer_snapshot(&snapshot)))
             else {
                 continue;
