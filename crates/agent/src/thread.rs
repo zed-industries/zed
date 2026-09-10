@@ -3053,7 +3053,9 @@ impl Thread {
 
             this.update(cx, |this, cx| {
                 this.flush_pending_message(cx);
-                if this.title.is_none() {
+                if this.title.is_none()
+                    && AgentSettings::get_global(cx).auto_generate_thread_titles
+                {
                     this.generate_title(cx);
                 }
             })?;
