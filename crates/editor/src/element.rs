@@ -85,7 +85,7 @@ use std::{
     time::{Duration, Instant},
 };
 use sum_tree::Bias;
-use text::BufferId;
+use text::{BufferId, ToPoint as _};
 use theme::{ActiveTheme, Appearance, PlayerColor};
 use theme_settings::BufferLineHeight;
 use ui::utils::ensure_minimum_contrast;
@@ -5689,25 +5689,83 @@ impl EditorElement {
         }
     }
 
+    fn add_point_diagnostic<'a>(
+        point_diagnostics: &mut Vec<(Point, &'a Diagnostic)>,
+        seen: &mut HashSet<(Point, *const Diagnostic)>,
+        range: &Range<Point>,
+        point: Point,
+        diagnostic: &'a Diagnostic,
+    ) {
+        if point >= range.start
+            && point <= range.end
+            && seen.insert((point, std::ptr::from_ref(diagnostic)))
+        {
+            point_diagnostics.push((point, diagnostic));
+        }
+    }
+
     fn point_diagnostics_in_range(
         snapshot: &MultiBufferSnapshot,
         range: Range<Point>,
     ) -> Vec<(Point, &Diagnostic)> {
-        snapshot
-            .range_to_buffer_ranges(range)
-            .into_iter()
-            .flat_map(|(buffer, buffer_range, _)| {
-                buffer
-                    .diagnostic_entries_in_range(buffer_range, false)
-                    .filter(|entry| entry.range.start == entry.range.end)
-                    .filter_map(|entry| {
-                        let anchor = snapshot
-                            .anchor_in_excerpt(entry.range.start)?
-                            .bias_right(snapshot);
-                        Some((anchor.to_point(snapshot), &entry.diagnostic))
-                    })
-            })
-            .collect()
+        let mut point_diagnostics = Vec::new();
+        let mut seen = HashSet::default();
+
+        for (buffer, buffer_range, _) in snapshot.range_to_buffer_ranges(range.clone()) {
+            for entry in buffer
+                .diagnostic_entries_in_range(buffer_range, false)
+                .filter(|entry| entry.range.start == entry.range.end)
+            {
+                let Some(anchor) =
+                    snapshot.anchor_in_excerpt_with_bias(entry.range.start, Bias::Right)
+                else {
+                    continue;
+                };
+                Self::add_point_diagnostic(
+                    &mut point_diagnostics,
+                    &mut seen,
+                    &range,
+                    anchor.to_point(snapshot),
+                    &entry.diagnostic,
+                );
+            }
+        }
+
+        for (_, _, deleted_hunk_anchor) in
+            snapshot.range_to_buffer_ranges_with_deleted_hunks(range.clone())
+        {
+            let Some(deleted_hunk_anchor) = deleted_hunk_anchor else {
+                continue;
+            };
+            let Some((live_anchor, buffer)) = snapshot.anchor_to_buffer_anchor(deleted_hunk_anchor)
+            else {
+                continue;
+            };
+            let live_point = live_anchor.to_point(buffer);
+
+            for entry in buffer
+                .diagnostic_entries_in_range(live_point..live_point, false)
+                .filter(|entry| entry.range.start == entry.range.end)
+            {
+                if entry.range.start.to_point(buffer) != live_point {
+                    continue;
+                }
+                let Some(anchor) =
+                    snapshot.anchor_in_excerpt_with_bias(entry.range.start, Bias::Right)
+                else {
+                    continue;
+                };
+                Self::add_point_diagnostic(
+                    &mut point_diagnostics,
+                    &mut seen,
+                    &range,
+                    anchor.to_point(snapshot),
+                    &entry.diagnostic,
+                );
+            }
+        }
+
+        point_diagnostics
     }
 
     fn paint_text(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
@@ -11089,6 +11147,7 @@ mod tests {
         language_settings, tree_sitter_python,
     };
     use log::info;
+    use multi_buffer::PathKey;
     use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
     use util::test::sample_text;
@@ -11342,6 +11401,78 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_point_diagnostic_stays_in_edited_excerpt(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let (buffer, multi_buffer) = cx.update(|cx| {
+            let buffer = cx.new(|cx| Buffer::local("lead\n\nhidden\nsafe", cx));
+            let multi_buffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+            multi_buffer.update(cx, |multi_buffer, cx| {
+                multi_buffer.set_excerpts_for_path(
+                    PathKey::for_buffer(&buffer, cx),
+                    buffer.clone(),
+                    vec![
+                        Point::new(0, 0)..Point::new(1, 0),
+                        Point::new(3, 0)..Point::new(3, 4),
+                    ],
+                    0,
+                    cx,
+                );
+            });
+            (buffer, multi_buffer)
+        });
+
+        buffer.update(cx, |buffer, cx| {
+            let point = text::PointUtf16::new(1, 0);
+            buffer.update_diagnostics(
+                lsp::LanguageServerId(0),
+                DiagnosticSet::new(
+                    [DiagnosticEntry::new(
+                        point..point,
+                        Diagnostic {
+                            severity: lsp::DiagnosticSeverity::ERROR,
+                            underline: true,
+                            ..Default::default()
+                        },
+                    )],
+                    &buffer.snapshot(),
+                ),
+                cx,
+            );
+            let snapshot = buffer.snapshot();
+            buffer.edit(
+                [(snapshot.anchor_before(5)..snapshot.anchor_after(6), "")],
+                None,
+                cx,
+            );
+        });
+
+        let snapshot = cx.update(|cx| multi_buffer.read(cx).snapshot(cx));
+        let excerpts = snapshot.excerpts().collect::<Vec<_>>();
+        let first_range = snapshot
+            .anchor_in_excerpt(excerpts[0].context.start)
+            .unwrap()
+            .to_point(&snapshot)
+            ..snapshot
+                .anchor_in_excerpt(excerpts[0].context.end)
+                .unwrap()
+                .to_point(&snapshot);
+        let second_range = snapshot
+            .anchor_in_excerpt(excerpts[1].context.start)
+            .unwrap()
+            .to_point(&snapshot)
+            ..snapshot
+                .anchor_in_excerpt(excerpts[1].context.end)
+                .unwrap()
+                .to_point(&snapshot);
+        let first_diagnostics = EditorElement::point_diagnostics_in_range(&snapshot, first_range);
+        let second_diagnostics = EditorElement::point_diagnostics_in_range(&snapshot, second_range);
+        assert_eq!(first_diagnostics.len(), 1);
+        assert_eq!(first_diagnostics[0].0, Point::new(1, 0));
+        assert!(second_diagnostics.is_empty());
+    }
+
+    #[gpui::test]
     fn test_point_diagnostic_without_glyph_has_render_layout(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
@@ -11464,6 +11595,7 @@ mod tests {
         init_test(cx, |_| {});
 
         for (text, base_text, point, expected_display_row) in [
+            ("", "two\n", Point::new(0, 0), 1),
             ("\nthree\n", "one\n\nthree\n", Point::new(0, 0), 1),
             ("one\n\nthree\n", "one\ntwo\n\nthree\n", Point::new(1, 0), 2),
             ("one\n", "one\ntwo\n", Point::new(1, 0), 2),
@@ -11507,9 +11639,12 @@ mod tests {
 
             let snapshot = cx.update(|cx| multi_buffer.read(cx).snapshot(cx));
             let expected_point = Point::new(expected_display_row as u32, 0);
-            for query_start in iter::once(Point::zero())
-                .chain((expected_point < snapshot.max_point()).then_some(expected_point))
-            {
+            let deleted_region_start = snapshot
+                .diff_hunks_in_range(Point::zero()..snapshot.max_point())
+                .find(|hunk| hunk.status.kind == DiffHunkStatusKind::Deleted)
+                .map(|hunk| Point::new(hunk.row_range.start.0, 0))
+                .expect("expanded deletion should have a deleted display region");
+            for query_start in [Point::zero(), deleted_region_start, expected_point] {
                 let point_diagnostics = EditorElement::point_diagnostics_in_range(
                     &snapshot,
                     query_start..snapshot.max_point(),
@@ -11517,12 +11652,21 @@ mod tests {
                 assert_eq!(
                     point_diagnostics.len(),
                     2,
-                    "text: {text:?}, base: {base_text:?}, query start: {query_start:?}"
+                    "text: {text:?}, base: {base_text:?}, query start: {query_start:?}, points: {:?}",
+                    point_diagnostics
+                        .iter()
+                        .map(|(point, _)| point)
+                        .collect::<Vec<_>>()
                 );
                 assert!(
                     point_diagnostics
                         .iter()
-                        .all(|(point, _)| *point == expected_point)
+                        .all(|(point, _)| *point == expected_point),
+                    "text: {text:?}, base: {base_text:?}, query start: {query_start:?}, points: {:?}",
+                    point_diagnostics
+                        .iter()
+                        .map(|(point, _)| point)
+                        .collect::<Vec<_>>()
                 );
             }
 

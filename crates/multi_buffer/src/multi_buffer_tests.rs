@@ -39,6 +39,34 @@ fn test_empty_singleton(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_right_biased_anchor_stays_in_excerpt(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local("first\nsecond\nthird", cx));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            PathKey::for_buffer(&buffer, cx),
+            buffer,
+            vec![
+                Point::new(0, 0)..Point::new(0, 5),
+                Point::new(2, 0)..Point::new(2, 5),
+            ],
+            0,
+            cx,
+        );
+    });
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    let first_excerpt_end = snapshot.excerpts().next().unwrap().context.end;
+    let expected = snapshot.anchor_in_excerpt(first_excerpt_end).unwrap();
+    let actual = snapshot
+        .anchor_in_excerpt_with_bias(first_excerpt_end, Bias::Right)
+        .unwrap();
+
+    assert_eq!(actual, expected);
+}
+
+#[gpui::test]
 fn test_singleton(cx: &mut App) {
     let buffer = cx.new(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
