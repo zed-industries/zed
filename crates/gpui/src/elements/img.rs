@@ -347,19 +347,30 @@ impl Element for Img {
 
                             let image_size = data.render_size(frame_index);
 
+                            // An axis backfilled from the intrinsic size is definite, and a
+                            // definite axis beats `aspect_ratio` in layout. So derive the
+                            // missing axis from the ratio the caller asked for rather than
+                            // from the image's own, and where the other axis is a fraction
+                            // whose value is not known yet, leave this one `Auto` so layout
+                            // can apply the ratio once that fraction resolves.
+                            let explicit_aspect_ratio = style.aspect_ratio;
+                            let aspect_ratio = explicit_aspect_ratio
+                                .unwrap_or(image_size.width / image_size.height);
+
                             if style.aspect_ratio.is_none() {
-                                style.aspect_ratio = Some(image_size.width / image_size.height);
+                                style.aspect_ratio = Some(aspect_ratio);
                             }
 
                             if let Length::Auto = style.size.width {
                                 style.size.width = match style.size.height {
                                     Length::Definite(DefiniteLength::Absolute(abs_length)) => {
                                         let height_px = abs_length.to_pixels(window.rem_size());
-                                        Length::Definite(
-                                            px(image_size.width.0 * height_px.0
-                                                / image_size.height.0)
-                                            .into(),
-                                        )
+                                        Length::Definite(px(height_px.0 * aspect_ratio).into())
+                                    }
+                                    Length::Definite(DefiniteLength::Fraction(_))
+                                        if explicit_aspect_ratio.is_some() =>
+                                    {
+                                        Length::Auto
                                     }
                                     _ => Length::Definite(image_size.width.into()),
                                 };
@@ -369,11 +380,12 @@ impl Element for Img {
                                 style.size.height = match style.size.width {
                                     Length::Definite(DefiniteLength::Absolute(abs_length)) => {
                                         let width_px = abs_length.to_pixels(window.rem_size());
-                                        Length::Definite(
-                                            px(image_size.height.0 * width_px.0
-                                                / image_size.width.0)
-                                            .into(),
-                                        )
+                                        Length::Definite(px(width_px.0 / aspect_ratio).into())
+                                    }
+                                    Length::Definite(DefiniteLength::Fraction(_))
+                                        if explicit_aspect_ratio.is_some() =>
+                                    {
+                                        Length::Auto
                                     }
                                     _ => Length::Definite(image_size.height.into()),
                                 };
@@ -802,7 +814,10 @@ impl From<image::ImageError> for ImageCacheError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ParentElement as _, TestAppContext, canvas, div, point, px, size};
+    use crate::{
+        ParentElement as _, Size, TestAppContext, VisualTestContext, canvas, div, point, px,
+        relative, size,
+    };
     use image::{Frame, ImageBuffer, Rgba};
 
     const TEST_IMG_ID: &str = "test-img";
@@ -934,6 +949,132 @@ mod tests {
                 size: size(px(50.).scale(scale_factor), px(100.).scale(scale_factor)),
             }
         );
+    }
+
+    /// Lays out a single `img` filling its element box and returns the painted
+    /// bounds in unscaled pixels, which for `ObjectFit::Fill` are the element's
+    /// own layout bounds.
+    fn layout_size_of(
+        window: &mut VisualTestContext,
+        window_size: Size<Pixels>,
+        build: impl FnOnce(Img) -> Img,
+    ) -> Size<Pixels> {
+        let image = test_image_with_size(200, 100);
+        window.draw(point(px(0.), px(0.)), window_size, |_, _| {
+            build(img(ImageSource::Render(image)))
+                .object_fit(ObjectFit::Fill)
+                .into_any_element()
+        });
+
+        window.update(|window, _| {
+            let sprite = window
+                .rendered_frame
+                .scene
+                .polychrome_sprites
+                .last()
+                .expect("image should paint a sprite");
+            let scale_factor = window.scale_factor();
+            size(
+                px(sprite.bounds.size.width.0 / scale_factor),
+                px(sprite.bounds.size.height.0 / scale_factor),
+            )
+        })
+    }
+
+    #[gpui::test]
+    fn explicit_aspect_ratio_drives_auto_height_under_relative_width(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+
+        // 200x100 image, so the intrinsic ratio (2:1) disagrees with the explicit one.
+        // The width resolves to the full 120px, leaving the ratio to give 120 / (4/3) = 90.
+        // Before the image loads the placeholder already lays out at 90; the loaded image
+        // used to jump to the intrinsic 100.
+        let laid_out = layout_size_of(window, size(px(120.), px(400.)), |img| {
+            img.w(relative(1.)).aspect_ratio(4. / 3.)
+        });
+
+        assert_eq!(laid_out, size(px(120.), px(90.)));
+    }
+
+    #[gpui::test]
+    fn explicit_aspect_ratio_drives_auto_width_under_absolute_height(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+
+        // The mirrored axis: 90 * (4/3) = 120, rather than the 180 the intrinsic 2:1 gives.
+        let laid_out = layout_size_of(window, size(px(400.), px(400.)), |img| {
+            img.h(px(90.)).aspect_ratio(4. / 3.)
+        });
+
+        assert_eq!(laid_out, size(px(120.), px(90.)));
+    }
+
+    #[gpui::test]
+    fn explicit_aspect_ratio_derives_height_from_intrinsic_width(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+
+        // With neither axis constrained the intrinsic width anchors the box, and the
+        // explicit ratio still decides the height: 200 / (4/3) = 150.
+        let laid_out = layout_size_of(window, size(px(400.), px(400.)), |img| {
+            img.aspect_ratio(4. / 3.)
+        });
+
+        assert_eq!(laid_out, size(px(200.), px(150.)));
+    }
+
+    #[gpui::test]
+    fn explicit_aspect_ratio_survives_being_a_flex_child(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+        let image = test_image_with_size(200, 100);
+
+        // A flex parent stretches a child whose cross axis is `Auto`, so the derived
+        // axis has to come out of `request_layout` definite rather than left to layout.
+        window.draw(point(px(0.), px(0.)), size(px(400.), px(400.)), |_, _| {
+            div()
+                .flex()
+                .h(px(200.))
+                .child(
+                    img(ImageSource::Render(image))
+                        .w(px(100.))
+                        .aspect_ratio(1.0)
+                        .object_fit(ObjectFit::Fill),
+                )
+                .into_any_element()
+        });
+
+        let laid_out = window.update(|window, _| {
+            let sprite = window
+                .rendered_frame
+                .scene
+                .polychrome_sprites
+                .last()
+                .expect("image should paint a sprite");
+            let scale_factor = window.scale_factor();
+            size(
+                px(sprite.bounds.size.width.0 / scale_factor),
+                px(sprite.bounds.size.height.0 / scale_factor),
+            )
+        });
+
+        // Square as asked, not stretched to the parent's 200px and not the intrinsic 2:1.
+        assert_eq!(laid_out, size(px(100.), px(100.)));
+    }
+
+    #[gpui::test]
+    fn image_without_explicit_aspect_ratio_keeps_intrinsic_size(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+
+        let unconstrained = layout_size_of(window, size(px(400.), px(400.)), |img| img);
+        assert_eq!(unconstrained, size(px(200.), px(100.)));
+
+        // A relative width with no explicit ratio still falls back to the intrinsic height.
+        let relative_width =
+            layout_size_of(window, size(px(120.), px(400.)), |img| img.w(relative(1.)));
+        assert_eq!(relative_width, size(px(120.), px(100.)));
+
+        // An absolute height still derives the width from the intrinsic 2:1 ratio.
+        let absolute_height =
+            layout_size_of(window, size(px(400.), px(400.)), |img| img.h(px(90.)));
+        assert_eq!(absolute_height, size(px(180.), px(90.)));
     }
 
     #[gpui::test]
