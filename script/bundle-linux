@@ -121,12 +121,17 @@ else
     fi
 fi
 
-# Strip debug symbols and save them for upload to DigitalOcean.
+# Split debug symbols into local .dbg files, then strip debug info and local
+# symbols from the shipped binaries. Sentry receives the full unstripped
+# binaries above; the .dbg files keep symbols recoverable when that upload
+# is skipped.
 # We use llvm-objcopy because GNU objcopy on older distros (e.g. Ubuntu 20.04)
 # doesn't understand CREL sections produced by newer LLVM.
-llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/zed"
-llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/cli"
-llvm-objcopy --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
+llvm-objcopy --only-keep-debug "${target_dir}/${target_triple}/release/zed" "${target_dir}/${target_triple}/release/zed.dbg"
+llvm-objcopy --only-keep-debug "${target_dir}/${remote_server_triple}/release/remote_server" "${target_dir}/${remote_server_triple}/release/remote_server.dbg"
+llvm-objcopy --strip-debug --discard-all "${target_dir}/${target_triple}/release/zed"
+llvm-objcopy --strip-debug --discard-all "${target_dir}/${target_triple}/release/cli"
+llvm-objcopy --strip-debug --discard-all "${target_dir}/${remote_server_triple}/release/remote_server"
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
 if ldd "${target_dir}/${remote_server_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'; then

@@ -201,6 +201,11 @@ impl LanguageModel for CopilotChatLanguageModel {
                     if anthropic_request.thinking.is_some() {
                         anthropic_request.thinking = Some(anthropic::Thinking::Adaptive {
                             display: Some(anthropic::AdaptiveThinkingDisplay::Summarized),
+                            // Thinking block binding needs a beta header on
+                            // the upstream Anthropic request, which the
+                            // Copilot proxy controls, so opting in belongs
+                            // server-side.
+                            block_binding: None,
                         });
                         anthropic_request.output_config =
                             effort.map(|effort| anthropic::OutputConfig {
