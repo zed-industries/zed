@@ -7439,10 +7439,11 @@ mod tests {
     use crate::{
         AnyWindowHandle, AppContext as _, Bounds, Context, DispatchPhase, DragMoveEvent, Empty,
         ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
-        InputEvent as _, InteractiveElement as _, IntoElement, LongPressEvent, MouseButton,
-        MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
-        StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
-        TouchId, TouchPhase, Window, WindowAppearance, WindowOptions, canvas, div, point, px, size,
+        InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke,
+        LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels,
+        PlatformInput, Point, Render, RequestFrameOptions, StatefulInteractiveElement as _, Styled,
+        TestAppContext, TouchDragEvent, TouchEvent, TouchId, TouchPhase, Window, WindowAppearance,
+        WindowOptions, canvas, div, point, px, size,
     };
 
     #[gpui::test]
@@ -8068,6 +8069,14 @@ mod tests {
 
         let update_result = cx.update_window(second_destination, |_, window, cx| {
             window.draw(cx).clear(cx);
+            window.dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke: Keystroke::parse("down").expect("valid keystroke"),
+                    is_held: false,
+                    prefer_character_input: false,
+                }),
+                cx,
+            );
             window.dispatch_event(
                 FileDropEvent::Entered {
                     position: reentry_position,

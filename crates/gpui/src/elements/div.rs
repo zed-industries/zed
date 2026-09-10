@@ -343,7 +343,7 @@ impl Interactivity {
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble
                     && matches!(event, FileDropEvent::Exited)
-                    && hitbox.is_hovered(window)
+                    && hitbox.id.is_hovered_ignoring_last_input(window)
                 {
                     (listener)(event, window, cx);
                 }
