@@ -685,9 +685,16 @@ impl LogStore {
                                 );
                             }
                             crate::Event::CollaboratorLeft(peer_id) => {
-                                log_store.release_downstream_log_streams_for_peer(
+                                log_store.release_downstream_log_streams(
                                     &project.downgrade(),
-                                    *peer_id,
+                                    Some(*peer_id),
+                                    cx,
+                                );
+                            }
+                            crate::Event::RemoteIdChanged(None) => {
+                                log_store.release_downstream_log_streams(
+                                    &project.downgrade(),
+                                    None,
                                     cx,
                                 );
                             }
@@ -1114,22 +1121,29 @@ impl LogStore {
         )
     }
 
-    fn release_downstream_log_streams_for_peer(
+    fn release_downstream_log_streams(
         &mut self,
         project: &WeakEntity<Project>,
-        peer_id: proto::PeerId,
+        peer_id: Option<proto::PeerId>,
         cx: &mut Context<Self>,
     ) {
         let mut streams = Vec::new();
         for (key, state) in &self.language_servers {
-            if key.kind.project() == Some(project)
-                && let Some(log_kinds) = state.downstream_log_streams.get(&peer_id)
-            {
-                streams.extend(log_kinds.iter().map(|log_kind| (key.clone(), *log_kind)));
+            if key.kind.project() != Some(project) {
+                continue;
+            }
+            for (downstream_peer_id, log_kinds) in &state.downstream_log_streams {
+                if peer_id.is_none_or(|peer_id| peer_id == *downstream_peer_id) {
+                    streams.extend(
+                        log_kinds
+                            .iter()
+                            .map(|log_kind| (key.clone(), *downstream_peer_id, *log_kind)),
+                    );
+                }
             }
         }
 
-        for (key, log_kind) in streams {
+        for (key, peer_id, log_kind) in streams {
             self.set_downstream_log_stream(&key, peer_id, log_kind, false, cx);
         }
     }
