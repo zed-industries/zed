@@ -437,6 +437,16 @@ pub struct ElicitationStore {
 
 impl EventEmitter<ElicitationStoreEvent> for ElicitationStore {}
 
+fn elicitation_targets_tool_call(
+    request: &acp::CreateElicitationRequest,
+    tool_call_id: &acp::ToolCallId,
+) -> bool {
+    match request.scope() {
+        acp::ElicitationScope::Session(scope) => scope.tool_call_id.as_ref() == Some(tool_call_id),
+        _ => false,
+    }
+}
+
 impl ElicitationStore {
     pub fn elicitations(&self) -> &[Elicitation] {
         &self.elicitations
@@ -2436,6 +2446,23 @@ impl AcpThread {
 
     pub fn entries(&self) -> &[AgentThreadEntry] {
         &self.entries
+    }
+
+    /// Form elicitations stop rendering after accept, so the associated tool
+    /// call is the scroll target for the user's answer.
+    pub fn is_user_authored_scroll_target(&self, entry: &AgentThreadEntry) -> bool {
+        match entry {
+            AgentThreadEntry::UserMessage(_) => true,
+            AgentThreadEntry::ToolCall(call) => self.tool_call_has_accepted_user_answer(&call.id),
+            _ => false,
+        }
+    }
+
+    fn tool_call_has_accepted_user_answer(&self, tool_call_id: &acp::ToolCallId) -> bool {
+        self.elicitations.elicitations().iter().any(|elicitation| {
+            matches!(elicitation.status, ElicitationStatus::Accepted)
+                && elicitation_targets_tool_call(&elicitation.request, tool_call_id)
+        })
     }
 
     pub fn is_compacting(&self) -> bool {
