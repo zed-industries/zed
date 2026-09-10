@@ -1404,7 +1404,19 @@ impl BufferStore {
                     let new_path = file.path.clone();
 
                     buffer.file_updated(Arc::new(file), cx);
-                    if old_file.as_ref().is_none_or(|old| *old.path() != new_path) {
+                    if old_file.as_ref().is_none_or(|old| {
+                        if *old.path() == new_path {
+                            return false;
+                        }
+
+                        let old_path = ProjectPath {
+                            worktree_id: old.worktree_id(cx),
+                            path: old.path().clone(),
+                        };
+
+                        this.path_to_buffer_id.remove(&old_path);
+                        true
+                    }) {
                         Some(old_file)
                     } else {
                         None
