@@ -7897,6 +7897,17 @@ mod tests {
         observed_drops: Rc<RefCell<Vec<PathBuf>>>,
     }
 
+    struct FileDropExitView(Rc<Cell<usize>>);
+
+    impl Render for FileDropExitView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().on_file_drop_exit({
+                let observed_file_drop_exit = self.0.clone();
+                move |_, _, _| observed_file_drop_exit.set(observed_file_drop_exit.get() + 1)
+            })
+        }
+    }
+
     impl Render for FileDragView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div()
@@ -8014,10 +8025,24 @@ mod tests {
             Some(&outside_position)
         );
 
-        let destination: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+        let first_destination_exit_count = Rc::new(Cell::new(0));
+        let first_destination: AnyWindowHandle = cx
+            .add_window({
+                let first_destination_exit_count = first_destination_exit_count.clone();
+                move |_, _| FileDropExitView(first_destination_exit_count)
+            })
+            .into();
+        let second_destination_exit_count = Rc::new(Cell::new(0));
+        let second_destination: AnyWindowHandle = cx
+            .add_window({
+                let second_destination_exit_count = second_destination_exit_count.clone();
+                move |_, _| FileDropExitView(second_destination_exit_count)
+            })
+            .into();
         let reentry_position = point(px(30.), px(30.));
         let external_paths = || ExternalPaths([successful_path.clone()].into_iter().collect());
-        let update_result = cx.update_window(destination, |_, window, cx| {
+        let update_result = cx.update_window(first_destination, |_, window, cx| {
+            window.draw(cx).clear(cx);
             window.dispatch_event(
                 FileDropEvent::Entered {
                     position: reentry_position,
@@ -8033,10 +8058,40 @@ mod tests {
             );
             window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
             assert!(cx.active_drag.is_none());
+            assert_eq!(first_destination_exit_count.get(), 1);
+            assert_eq!(second_destination_exit_count.get(), 0);
         });
         assert!(
             update_result.is_ok(),
-            "failed to handle drag in destination window: {update_result:?}"
+            "failed to handle drag in first destination window: {update_result:?}"
+        );
+
+        let update_result = cx.update_window(second_destination, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: external_paths(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<ExternalPaths>().is_some())
+            );
+            assert_eq!(first_destination_exit_count.get(), 1);
+            assert_eq!(second_destination_exit_count.get(), 0);
+
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+            assert_eq!(first_destination_exit_count.get(), 1);
+            assert_eq!(second_destination_exit_count.get(), 1);
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to handle drag in second destination window: {update_result:?}"
         );
 
         let update_result = cx.update_window(successful.window, |_, window, cx| {
