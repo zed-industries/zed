@@ -54,6 +54,7 @@ objc.workspace = true
 objc2.workspace = true
 objc2-app-kit.workspace = true
 objc2-foundation.workspace = true
+objc2-screen-capture-kit.workspace = true
 objc2-user-notifications.workspace = true
 parking_lot.workspace = true
 pathfinder_geometry.workspace = true
