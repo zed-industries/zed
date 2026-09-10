@@ -9,8 +9,8 @@ use util::ResultExt;
 
 use crate::ScreencastSettings;
 
-// Likely to become a setting later, for now, hardcode to 21.
-const MAX_VISIBLE_KEYS: usize = 21;
+// Likely to become a setting later, for now, hardcode to 15.
+const MAX_VISIBLE_KEYS: usize = 15;
 
 enum DisplayedKey {
     Modifier(Modifiers),
@@ -98,6 +98,18 @@ impl ScreencastOverlay {
         }
 
         self.remove_pending_modifier_keys();
+
+        if keystroke.modifiers.modified()
+            && matches!(
+                self.recent_keys.back(),
+                Some(DisplayedKey::Keystroke(previous_keystroke))
+                    if previous_keystroke == &keystroke
+            )
+        {
+            self.refresh_hide_task(cx);
+            return;
+        }
+
         self.record_displayed_key(DisplayedKey::Keystroke(keystroke), cx);
     }
 
@@ -142,8 +154,19 @@ impl ScreencastOverlay {
 
         for (was_pressed, is_pressed, modifier) in modifier_changes {
             if !was_pressed && is_pressed {
-                self.pending_modifier_keys.push(modifier);
-                self.record_displayed_key(DisplayedKey::Modifier(modifier), cx);
+                if !self.pending_modifier_keys.contains(&modifier) {
+                    self.pending_modifier_keys.push(modifier);
+                }
+
+                if matches!(
+                    self.recent_keys.back(),
+                    Some(DisplayedKey::Modifier(previous_modifier))
+                        if previous_modifier == &modifier
+                ) {
+                    self.refresh_hide_task(cx);
+                } else {
+                    self.record_displayed_key(DisplayedKey::Modifier(modifier), cx);
+                }
             }
         }
     }
@@ -171,6 +194,10 @@ impl ScreencastOverlay {
             self.pending_modifier_keys.clear();
         }
 
+        self.refresh_hide_task(cx);
+    }
+
+    fn refresh_hide_task(&mut self, cx: &mut Context<Self>) {
         self.hide_task.take();
 
         let overlay = cx.weak_entity();
@@ -203,7 +230,7 @@ impl Render for ScreencastOverlay {
         let colors = cx.theme().colors();
         let font_size = rems_from_px(self.settings.font_size);
 
-        let keycaps: _ = self.recent_keys.iter().map(|key| {
+        let keycaps = self.recent_keys.iter().map(|key| {
             let contents = match key {
                 DisplayedKey::Modifier(modifiers) => ui::render_modifiers(
                     modifiers,
@@ -232,6 +259,7 @@ impl Render for ScreencastOverlay {
 
             div()
                 .flex()
+                .flex_none()
                 .items_center()
                 .justify_center()
                 .min_w(font_size)
@@ -255,7 +283,15 @@ impl Render for ScreencastOverlay {
             .bg(colors.status_bar_background.opacity(0.85))
             .border_t_1()
             .border_color(colors.border.opacity(0.5))
-            .child(h_flex().w_full().justify_center().gap_1().children(keycaps))
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .justify_center()
+                    .gap_2()
+                    .overflow_hidden()
+                    .children(keycaps),
+            )
             .into_any_element()
     }
 }
