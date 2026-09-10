@@ -1392,11 +1392,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
 
             let (package_name, package_spec) = bounded_npm_package_spec(&package);
             node_runtime
-                .run_npm_subcommand(
-                    Some(&install_dir),
-                    "install",
-                    &[package_spec.as_str(), "--save-exact"],
-                )
+                .run_npm_install_with_lock(&install_dir, &[package_spec.as_str(), "--save-exact"])
                 .await?;
             let executable = node_runtime::read_package_executable(
                 install_dir.join("node_modules"),

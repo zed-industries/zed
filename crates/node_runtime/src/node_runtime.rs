@@ -228,6 +228,16 @@ impl NodeRuntime {
             .await
     }
 
+    pub async fn run_npm_install_with_lock(
+        &self,
+        directory: &Path,
+        args: &[&str],
+    ) -> Result<Output> {
+        let _install_lock = acquire_npm_install_lock(directory).await?;
+        self.run_npm_subcommand(Some(directory), "install", args)
+            .await
+    }
+
     pub async fn npm_package_installed_version(
         &self,
         local_package_directory: &Path,
@@ -401,6 +411,24 @@ impl NodeRuntime {
         );
         should_install
     }
+}
+
+async fn acquire_npm_install_lock(directory: &Path) -> Result<std::fs::File> {
+    let lock_path = directory.join(".zed-npm-install.lock");
+    smol::unblock(move || {
+        let lock_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .with_context(|| format!("opening npm install lock {}", lock_path.display()))?;
+        lock_file
+            .lock()
+            .with_context(|| format!("acquiring npm install lock {}", lock_path.display()))?;
+        Ok(lock_file)
+    })
+    .await
 }
 
 fn should_install_npm_package_version(
@@ -1190,16 +1218,130 @@ pub fn npm_command_env(node_binary: &Path) -> HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{
+        path::{Path, PathBuf},
+        process::{ExitStatus, Output},
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt as _;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt as _;
 
     use anyhow::{Result, bail};
+    use async_trait::async_trait;
+    use futures::{FutureExt as _, channel::oneshot, future};
+    use http_client::BlockedHttpClient;
     use http_client::Url;
     use semver::{Version, VersionReq};
+    use smol::lock::Mutex;
 
     use super::{
-        NpmInfo, VersionStrategy, build_npm_command_args, deserialize_npm_info_from_response,
+        NodeBinaryOptions, NodeRuntime, NodeRuntimeState, NodeRuntimeTrait, NpmCommand, NpmInfo,
+        VersionStrategy, build_npm_command_args, deserialize_npm_info_from_response,
         proxy_argument, select_npm_package_version, should_install_npm_package_version,
     };
+
+    #[derive(Clone)]
+    struct ConcurrentNpmRuntime {
+        active_installs: Arc<AtomicUsize>,
+        maximum_concurrent_installs: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl NodeRuntimeTrait for ConcurrentNpmRuntime {
+        fn boxed_clone(&self) -> Box<dyn NodeRuntimeTrait> {
+            Box::new(self.clone())
+        }
+
+        fn binary_path(&self) -> Result<PathBuf> {
+            Ok(PathBuf::from("node"))
+        }
+
+        async fn run_npm_subcommand(
+            &self,
+            _directory: Option<&Path>,
+            _proxy: Option<&Url>,
+            _subcommand: &str,
+            _args: &[&str],
+        ) -> Result<Output> {
+            let active_installs = self.active_installs.fetch_add(1, Ordering::SeqCst) + 1;
+            self.maximum_concurrent_installs
+                .fetch_max(active_installs, Ordering::SeqCst);
+            smol::future::yield_now().await;
+            self.active_installs.fetch_sub(1, Ordering::SeqCst);
+
+            Ok(Output {
+                status: ExitStatus::from_raw(0),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        }
+
+        async fn npm_command(
+            &self,
+            _prefix_dir: Option<&Path>,
+            _proxy: Option<&Url>,
+            _subcommand: &str,
+            _args: &[&str],
+        ) -> Result<NpmCommand> {
+            bail!("not used by this test")
+        }
+
+        async fn npm_package_installed_version(
+            &self,
+            _local_package_directory: &Path,
+            _name: &str,
+        ) -> Result<Option<Version>> {
+            bail!("not used by this test")
+        }
+    }
+
+    fn concurrent_npm_runtime(
+        active_installs: Arc<AtomicUsize>,
+        maximum_concurrent_installs: Arc<AtomicUsize>,
+    ) -> NodeRuntime {
+        let options = NodeBinaryOptions::default();
+        NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
+            http: Arc::new(BlockedHttpClient),
+            instance: Some(Box::new(ConcurrentNpmRuntime {
+                active_installs,
+                maximum_concurrent_installs,
+            })),
+            last_options: Some(options.clone()),
+            options: watch::channel(Some(options)).1,
+            shell_env_loaded: oneshot::channel().1.shared(),
+        })))
+    }
+
+    #[test]
+    fn test_npm_installs_are_serialized_per_directory() {
+        smol::block_on(async {
+            let temp_dir = tempfile::tempdir().unwrap();
+            let active_installs = Arc::new(AtomicUsize::new(0));
+            let maximum_concurrent_installs = Arc::new(AtomicUsize::new(0));
+            let first_runtime = concurrent_npm_runtime(
+                active_installs.clone(),
+                maximum_concurrent_installs.clone(),
+            );
+            let second_runtime =
+                concurrent_npm_runtime(active_installs, maximum_concurrent_installs.clone());
+
+            let (first_result, second_result) = future::join(
+                first_runtime.run_npm_install_with_lock(temp_dir.path(), &["test-package"]),
+                second_runtime.run_npm_install_with_lock(temp_dir.path(), &["test-package"]),
+            )
+            .await;
+
+            first_result.unwrap();
+            second_result.unwrap();
+            assert_eq!(maximum_concurrent_installs.load(Ordering::SeqCst), 1);
+        });
+    }
 
     // Map localhost to 127.0.0.1
     // NodeRuntime without environment information can not parse `localhost` correctly.
