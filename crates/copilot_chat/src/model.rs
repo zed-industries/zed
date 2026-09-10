@@ -130,6 +130,10 @@ impl LanguageModel for CopilotChatLanguageModel {
         self.model.max_token_count()
     }
 
+    fn max_output_tokens(&self) -> Option<u64> {
+        Some(self.model.max_output_tokens() as u64)
+    }
+
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -1292,6 +1296,54 @@ mod tests {
     use futures::StreamExt;
     use language_model::ProviderErrorCategory;
     use serde_json::json;
+
+    #[gpui::test]
+    fn language_model_exposes_token_limits(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext as _;
+
+        let copilot_chat = cx.new(|cx| {
+            CopilotChat::new(
+                Arc::new(http_client::BlockedHttpClient::new()),
+                Arc::new(EmptyCredentialsProvider),
+                crate::CopilotChatConfiguration::default(),
+                cx,
+            )
+        });
+        let model = create_language_model(test_responses_model(), copilot_chat);
+
+        assert_eq!(model.max_token_count(), 128_000);
+        assert_eq!(model.max_output_tokens(), Some(4_096));
+    }
+
+    struct EmptyCredentialsProvider;
+
+    impl credentials_provider::CredentialsProvider for EmptyCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
 
     fn map_events(events: Vec<responses::StreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         futures::executor::block_on(async {
