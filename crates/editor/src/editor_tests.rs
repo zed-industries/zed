@@ -23269,7 +23269,7 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
         }
     "});
 
-    // If a selection span multiple lines, empty lines are not toggled.
+    // If a selection spans multiple lines, empty lines are also toggled.
     cx.set_state(indoc! {"
         fn a() {
             «a();
@@ -23282,9 +23282,9 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
 
     cx.assert_editor_state(indoc! {"
         fn a() {
-            // «a();
-
-            // c();ˇ»
+        //     «a();
+        //•
+        //     c();ˇ»
         }
     "});
 
@@ -23450,10 +23450,7 @@ async fn test_toggle_comment_commenting_blank_lines(cx: &mut TestAppContext) {
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-    let toggle_comments = &ToggleComments {
-        comment_empty_lines: true,
-        ..Default::default()
-    };
+    let toggle_comments = &ToggleComments::default();
 
     cx.set_state(indoc! {"
         «fn a() {
@@ -23520,11 +23517,11 @@ async fn test_toggle_comment_uncomments_after_parameter_change(cx: &mut TestAppC
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-    let skip_blank_lines = &ToggleComments::default();
-    let comment_blank_lines = &ToggleComments {
-        comment_empty_lines: true,
+    let skip_blank_lines = &ToggleComments {
+        comment_empty_lines: false,
         ..Default::default()
     };
+    let comment_blank_lines = &ToggleComments::default();
 
     cx.set_state(indoc! {"
         «fn a() {
@@ -23571,10 +23568,7 @@ async fn test_toggle_comment_selection_of_only_blank_lines(cx: &mut TestAppConte
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-    let toggle_comments = &ToggleComments {
-        comment_empty_lines: true,
-        ..Default::default()
-    };
+    let toggle_comments = &ToggleComments::default();
 
     // No line carries a marker, so there is nothing to remove: comment them.
     cx.set_state(indoc! {"
