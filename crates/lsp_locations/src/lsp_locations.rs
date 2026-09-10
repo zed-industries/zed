@@ -1055,6 +1055,80 @@ mod tests {
         );
     }
 
+    /// Sets up an editor whose language server answers `textDocument/definition`
+    /// with two locations, with `lsp_results_location` set to the picker.
+    async fn multiple_definitions_cx(cx: &mut TestAppContext) -> EditorLspTestContext {
+        cx.update(crate::init);
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        cx.update(|_window, cx| {
+            cx.update_global::<settings::SettingsStore, _>(|settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.editor.lsp_results_location = Some(OpenResultsIn::Picker);
+                });
+            });
+        });
+        cx.set_state(indoc! {r#"
+            fn main() {
+                let foo = ();
+                let foo = ();
+                let bar = fˇoo;
+            }
+        "#});
+        cx.lsp
+            .set_request_handler::<lsp::request::GotoDefinition, _, _>(async move |params, _| {
+                let uri = params.text_document_position_params.text_document.uri;
+                Ok(Some(lsp::GotoDefinitionResponse::Array(references(
+                    uri,
+                    &[(1, 8, 11), (2, 8, 11)],
+                ))))
+            });
+        cx
+    }
+
+    #[gpui::test]
+    async fn test_cmd_click_definitions_honor_lsp_results_location(cx: &mut TestAppContext) {
+        let mut cx = multiple_definitions_cx(cx).await;
+
+        let screen_coord = cx
+            .editor(|editor, _, cx| editor.pixel_position_of_cursor(cx))
+            .unwrap();
+        cx.simulate_click(screen_coord, gpui::Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        assert!(
+            active_picker(&mut cx).is_some(),
+            "cmd-click should open the definitions picker when lsp_results_location is picker"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cmd_click_hovered_link_honors_lsp_results_location(cx: &mut TestAppContext) {
+        let mut cx = multiple_definitions_cx(cx).await;
+
+        let screen_coord = cx
+            .editor(|editor, _, cx| editor.pixel_position_of_cursor(cx))
+            .unwrap();
+        // Hovering with the modifier held resolves and caches the links, which
+        // is the path cmd-click actually takes in practice.
+        cx.simulate_mouse_move(screen_coord, None, gpui::Modifiers::secondary_key());
+        cx.run_until_parked();
+        cx.simulate_click(screen_coord, gpui::Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        assert!(
+            active_picker(&mut cx).is_some(),
+            "cmd-click on an already hovered link should open the definitions picker \
+             when lsp_results_location is picker"
+        );
+    }
+
     #[gpui::test]
     async fn test_type_definition_honors_lsp_results_location(cx: &mut TestAppContext) {
         cx.update(crate::init);

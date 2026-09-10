@@ -1,18 +1,19 @@
 use crate::{
-    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinitionSplit,
-    GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind, HighlightKey, Navigated,
-    PointForPosition, SelectPhase, editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
+    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDeclaration,
+    GoToDefinition, GoToDefinitionSplit, GoToImplementation, GoToTypeDefinition,
+    GoToTypeDefinitionSplit, GotoDefinitionKind, HighlightKey, Navigated, PointForPosition,
+    SelectPhase, editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
 };
 use gpui::{
-    App, AsyncWindowContext, Context, Entity, Focusable, HighlightStyle, Modifiers, Pixels, Task,
-    UnderlineStyle, Window, px,
+    Action, App, AsyncWindowContext, Context, Entity, Focusable, HighlightStyle, Modifiers, Pixels,
+    Task, UnderlineStyle, Window, px,
 };
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
 use project::{InlayId, LocationLink, Project, ResolvedPath};
 use regex::Regex;
-use settings::Settings;
+use settings::{OpenResultsIn, Settings};
 use std::{ops::Range, str::FromStr as _, sync::LazyLock};
 use text::OffsetRangeExt;
 use theme::ActiveTheme as _;
@@ -250,6 +251,22 @@ impl Editor {
         }
     }
 
+    /// Dispatches a navigation action once the current editor update is done:
+    /// its handler reads the editor, so dispatching inline would re-enter it.
+    fn dispatch_navigation_action(
+        &mut self,
+        action: Box<dyn Action>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Task<anyhow::Result<Navigated>> {
+        let focus_handle = self.focus_handle(cx);
+        self.select(SelectPhase::End, window, cx);
+        cx.spawn_in(window, async move |_, cx| {
+            cx.update(|window, cx| focus_handle.dispatch_action(action.as_ref(), window, cx))?;
+            Ok(Navigated::Yes)
+        })
+    }
+
     fn cmd_click_reveal_task(
         &mut self,
         point: PointForPosition,
@@ -283,7 +300,7 @@ impl Editor {
                 else {
                     return Task::ready(Ok(Navigated::No));
                 };
-                let links = hovered_link_state
+                let links: Vec<HoverLink> = hovered_link_state
                     .links
                     .into_iter()
                     .filter(|link| {
@@ -294,8 +311,17 @@ impl Editor {
                         }
                     })
                     .collect();
-                let nav_entry = self.navigation_entry(multi_buffer_anchor, cx);
                 let split = Self::is_alt_pressed(&modifiers, cx);
+                // Symbol links are re-resolved by the action so that the
+                // `lsp_results_location` picker gets a chance to handle them;
+                // URL and file links keep opening directly.
+                if !split
+                    && links.iter().all(|link| matches!(link, HoverLink::Text(_)))
+                    && let Some(action) = picker_action(hovered_link_state.preferred_kind, cx)
+                {
+                    return self.dispatch_navigation_action(action, window, cx);
+                }
+                let nav_entry = self.navigation_entry(multi_buffer_anchor, cx);
                 let navigate_task =
                     self.navigate_to_hover_links(None, links, nav_entry, split, window, cx);
                 self.select(SelectPhase::End, window, cx);
@@ -317,6 +343,14 @@ impl Editor {
 
         let navigate_task = if point.as_valid().is_some() {
             let split = Self::is_alt_pressed(&modifiers, cx);
+            let kind = if modifiers.shift {
+                GotoDefinitionKind::Type
+            } else {
+                GotoDefinitionKind::Symbol
+            };
+            if !split && let Some(action) = picker_action(kind, cx) {
+                return self.dispatch_navigation_action(action, window, cx);
+            }
             match (modifiers.shift, split) {
                 (true, true) => {
                     self.go_to_type_definition_split(&GoToTypeDefinitionSplit, window, cx)
@@ -335,6 +369,21 @@ impl Editor {
         self.select(SelectPhase::End, window, cx);
         navigate_task
     }
+}
+
+/// The navigation action that opens `kind` in the `lsp_results_location`
+/// picker, or `None` when the setting asks for a multibuffer -- in which case
+/// the caller keeps navigating on its own, as it always did.
+fn picker_action(kind: GotoDefinitionKind, cx: &App) -> Option<Box<dyn Action>> {
+    if EditorSettings::get_global(cx).lsp_results_location != OpenResultsIn::Picker {
+        return None;
+    }
+    Some(match kind {
+        GotoDefinitionKind::Symbol => Box::new(GoToDefinition::default()),
+        GotoDefinitionKind::Declaration => Box::new(GoToDeclaration::default()),
+        GotoDefinitionKind::Type => Box::new(GoToTypeDefinition::default()),
+        GotoDefinitionKind::Implementation => Box::new(GoToImplementation::default()),
+    })
 }
 
 pub fn show_link_definition(
