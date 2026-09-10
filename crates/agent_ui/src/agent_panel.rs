@@ -1169,6 +1169,8 @@ pub struct AgentPanel {
     retained_threads: HashMap<ThreadId, Entity<ConversationView>>,
     terminals: HashMap<TerminalId, AgentTerminal>,
     pending_terminal_spawn: Option<TerminalId>,
+    #[cfg(test)]
+    test_terminal_spawn_gate: Option<futures::channel::oneshot::Receiver<()>>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     _extension_subscription: Option<Subscription>,
@@ -1582,6 +1584,8 @@ impl AgentPanel {
             retained_threads: HashMap::default(),
             terminals: HashMap::default(),
             pending_terminal_spawn: None,
+            #[cfg(test)]
+            test_terminal_spawn_gate: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
 
@@ -2080,9 +2084,7 @@ impl AgentPanel {
         self.pending_terminal_spawn = Some(terminal_id);
         let terminal_working_directory = working_directory.clone();
         let init_command = Self::terminal_init_command(run_init_command, cx);
-        let terminal_task = self.project.update(cx, |project, cx| {
-            project.create_terminal_shell(working_directory, cx)
-        });
+        let terminal_task = self.create_terminal_shell(working_directory, cx);
         let workspace = self.workspace.clone();
         let workspace_id = self.workspace_id;
         let project = self.project.downgrade();
@@ -2131,6 +2133,27 @@ impl AgentPanel {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    fn create_terminal_shell(
+        &mut self,
+        working_directory: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<terminal::Terminal>>> {
+        // A real shell ties the spawn's timing to the host, so a test that needs
+        // to observe the panel mid-spawn installs a gate and gets a display-only
+        // terminal when it releases it.
+        #[cfg(test)]
+        if let Some(gate) = self.test_terminal_spawn_gate.take() {
+            return cx.spawn(async move |this, cx| {
+                gate.await.ok();
+                this.update(cx, |this, cx| this.build_display_only_terminal(cx))
+            });
+        }
+
+        self.project.update(cx, |project, cx| {
+            project.create_terminal_shell(working_directory, cx)
+        })
     }
 
     fn terminal_init_command(run_init_command: bool, cx: &App) -> Option<String> {
@@ -6796,6 +6819,21 @@ impl AgentPanel {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    fn build_display_only_terminal(&self, cx: &mut Context<Self>) -> Entity<terminal::Terminal> {
+        let settings = TerminalSettings::get_global(cx).clone();
+        let path_style = self.project.read(cx).path_style(cx);
+        let builder = terminal::TerminalBuilder::new_display_only(
+            settings.cursor_shape,
+            settings.alternate_scroll,
+            settings.max_scroll_history_lines,
+            cx.entity_id().as_u64(),
+            cx.background_executor(),
+            path_style,
+        );
+        cx.new(|cx| builder.subscribe(cx))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     fn insert_display_only_terminal(
         &mut self,
         terminal_id: TerminalId,
@@ -6811,17 +6849,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let init_command = Self::terminal_init_command(run_init_command, cx);
-        let settings = TerminalSettings::get_global(cx).clone();
-        let path_style = self.project.read(cx).path_style(cx);
-        let builder = terminal::TerminalBuilder::new_display_only(
-            settings.cursor_shape,
-            settings.alternate_scroll,
-            settings.max_scroll_history_lines,
-            cx.entity_id().as_u64(),
-            cx.background_executor(),
-            path_style,
-        );
-        let terminal = cx.new(|cx| builder.subscribe(cx));
+        let terminal = self.build_display_only_terminal(cx);
         let terminal_for_init_command = terminal.clone();
         let terminal_view = cx.new(|cx| {
             let mut view = TerminalView::new(
@@ -7676,10 +7704,14 @@ mod tests {
     async fn test_new_terminal_prevents_initial_terminal_creation(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
 
+        let (terminal_landed, spawn_gate) = futures::channel::oneshot::channel::<()>();
+
         // `create_new_terminal` in the sidebar calls `new_terminal` and then
         // focuses the panel, which activates it while the spawn is still in
-        // flight.
+        // flight. The gate keeps the spawn in flight for as long as the test
+        // wants, instead of racing a real shell.
         panel.update_in(&mut cx, |panel, window, cx| {
+            panel.test_terminal_spawn_gate = Some(spawn_gate);
             panel.new_terminal(None, AgentThreadSource::AgentPanel, window, cx);
             assert!(
                 panel.pending_terminal_spawn.is_some(),
@@ -7687,14 +7719,39 @@ mod tests {
             );
             panel.set_active(true, window, cx);
         });
-        for _ in 0..8 {
-            cx.run_until_parked();
-        }
+        cx.run_until_parked();
 
         panel.read_with(&cx, |panel, cx| {
             assert!(
-                panel.terminals(cx).len() <= 1,
+                panel.terminals(cx).is_empty(),
+                "no terminal should land while the spawn is held"
+            );
+            assert!(
+                panel.pending_terminal_spawn.is_some(),
+                "the in-flight spawn should still be pending after activation"
+            );
+        });
+
+        terminal_landed
+            .send(())
+            .expect("the panel should still be waiting on the terminal spawn");
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminals = panel.terminals(cx);
+            assert_eq!(
+                terminals.len(),
+                1,
                 "activation while a new terminal is spawning should not create a second terminal"
+            );
+            assert_eq!(
+                panel.active_terminal_id(),
+                terminals.first().map(|terminal| terminal.id),
+                "the terminal that was spawned should be the active one"
+            );
+            assert!(
+                panel.pending_terminal_spawn.is_none(),
+                "the pending marker should be cleared once the terminal lands"
             );
         });
     }
