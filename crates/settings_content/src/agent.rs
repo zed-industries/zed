@@ -279,6 +279,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: never
     pub play_sound_when_agent_done: Option<PlaySoundWhenAgentDone>,
+    /// Whether to keep the system awake while agent threads are running.
+    ///
+    /// Default: true
+    pub prevent_idle_sleep: Option<bool>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
     /// Default: false

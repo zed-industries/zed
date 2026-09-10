@@ -19,6 +19,7 @@ use project::{
     },
 };
 use serde_json::json;
+use unindent::Unindent;
 use util::path;
 
 use crate::init_test;
@@ -473,6 +474,114 @@ fn test_multi_len_chars_normalization() {
             vec![(0..6, HighlightId::new(1))],
         )
     );
+}
+
+#[test]
+fn test_completion_label_snippet_normalization() {
+    for line_ending in ["\n", "\r\n", "\r"] {
+        let text = "
+            #[cfg(test)]
+            mod tests {
+                use super::*;
+
+                #[test]
+                fn test_name() {
+
+                }
+            }"
+        .unindent()
+        .replace('\n', line_ending);
+        let name_start = text.find("test_name").expect("snippet has a test name");
+        let text_len = text.len();
+        let mut label = CodeLabel::new(
+            text,
+            0..text_len,
+            vec![
+                (0..12, HighlightId::new(1)),
+                (name_start..name_start + 9, HighlightId::TABSTOP_REPLACE_ID),
+            ],
+        );
+
+        ensure_uniform_list_compatible_label(&mut label);
+
+        assert_eq!(
+            label,
+            CodeLabel::new(
+                "#[cfg(test)] mod tests { use super::*; #[test] fn test_name() { } }".to_string(),
+                0..67,
+                vec![
+                    (0..12, HighlightId::new(1)),
+                    (50..59, HighlightId::TABSTOP_REPLACE_ID),
+                ],
+            ),
+            "line ending: {line_ending:?}",
+        );
+    }
+}
+
+#[test]
+fn test_completion_label_unicode_normalization() {
+    for line_ending in ["\n", "\r\n", "\r"] {
+        let text = "
+            héllo {
+                🦀value: 世界,
+            }"
+        .unindent()
+        .replace('\n', line_ending);
+        let value_start = text.find("🦀value").expect("label has a value");
+        let type_start = text.find("世界").expect("label has a type");
+        let text_len = text.len();
+        let mut label = CodeLabel::new(
+            text,
+            value_start..value_start + 9,
+            vec![
+                (0..text_len, HighlightId::new(0)),
+                (0..6, HighlightId::new(1)),
+                (
+                    value_start..value_start + 9,
+                    HighlightId::TABSTOP_REPLACE_ID,
+                ),
+                (type_start..type_start + 6, HighlightId::new(2)),
+            ],
+        );
+
+        ensure_uniform_list_compatible_label(&mut label);
+
+        assert_eq!(
+            label,
+            CodeLabel::new(
+                "héllo { 🦀value: 世界, }".to_string(),
+                9..18,
+                vec![
+                    (0..29, HighlightId::new(0)),
+                    (0..6, HighlightId::new(1)),
+                    (9..18, HighlightId::TABSTOP_REPLACE_ID),
+                    (20..26, HighlightId::new(2)),
+                ],
+            ),
+            "line ending: {line_ending:?}",
+        );
+    }
+}
+
+#[test]
+fn test_completion_label_whitespace_normalization() {
+    for line_ending in ["\n", "\r\n", "\r", "\n\r", "\r\r\n"] {
+        for before in ["", " ", " \t "] {
+            for after in ["", " ", " \t "] {
+                let mut label = CodeLabel::plain(format!("{before}{line_ending}{after}"), None);
+                ensure_uniform_list_compatible_label(&mut label);
+                assert_eq!(label, CodeLabel::plain(" ".to_string(), None));
+            }
+        }
+    }
+
+    for text in ["", " ", " \t ", "héllo  世界", "héllo\t世界"] {
+        let mut label = CodeLabel::plain(text.to_string(), None);
+        let expected = label.clone();
+        ensure_uniform_list_compatible_label(&mut label);
+        assert_eq!(label, expected);
+    }
 }
 
 #[test]

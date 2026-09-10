@@ -1,6 +1,5 @@
 use anyhow::Result;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use prost::Message as _;
 use rpc::proto::Envelope;
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -20,7 +19,7 @@ pub async fn read_message_with_len<S: AsyncRead + Unpin>(
 ) -> Result<Envelope> {
     buffer.resize(message_len as usize, 0);
     stream.read_exact(buffer).await?;
-    Ok(Envelope::decode(buffer.as_slice())?)
+    Ok(Envelope::decode_from_slice(buffer.as_slice())?)
 }
 
 pub async fn read_message<S: AsyncRead + Unpin>(
@@ -40,13 +39,13 @@ pub async fn write_message<S: AsyncWrite + Unpin>(
     buffer: &mut Vec<u8>,
     message: Envelope,
 ) -> Result<()> {
-    let message_len = message.encoded_len() as u32;
+    let message_len = message.encoded_size() as u32;
     stream
         .write_all(message_len.to_le_bytes().as_slice())
         .await?;
     buffer.clear();
     buffer.reserve(message_len as usize);
-    message.encode(buffer)?;
+    message.encode_to_buffer(buffer)?;
     stream.write_all(buffer).await?;
     Ok(())
 }
