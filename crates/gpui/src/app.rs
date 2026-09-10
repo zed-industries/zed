@@ -2522,14 +2522,9 @@ impl App {
         }
     }
 
-    /// Is there currently a GPUI-owned drag?
+    /// Is there currently something being dragged?
     pub fn has_active_drag(&self) -> bool {
         self.active_drag.is_some()
-    }
-
-    /// Is there a drag in progress, including one owned by the platform?
-    pub fn is_drag_in_progress(&self) -> bool {
-        self.active_drag.is_some() || self.platform_owned_drag.is_some()
     }
 
     /// Gets the cursor style of the currently active drag operation.
