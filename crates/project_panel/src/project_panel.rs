@@ -1769,7 +1769,13 @@ impl ProjectPanel {
     fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
         let preview_tabs_enabled =
             PreviewTabsSettings::get_global(cx).enable_preview_from_project_panel;
-        self.open_internal(true, !preview_tabs_enabled, None, window, cx);
+        self.open_internal(
+            preview_tabs_enabled,
+            !preview_tabs_enabled,
+            None,
+            window,
+            cx,
+        );
     }
 
     fn open_permanent(&mut self, _: &OpenPermanent, window: &mut Window, cx: &mut Context<Self>) {

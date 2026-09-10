@@ -1106,7 +1106,7 @@ impl TerminalElement {
     }
 
     fn rem_size(&self, cx: &mut App) -> Option<Pixels> {
-        let settings = ThemeSettings::get_global(cx).clone();
+        let settings = ThemeSettings::get_global(cx);
         let buffer_font_size = settings.buffer_font_size(cx);
         let rem_size_scale = {
             // Our default UI font size is 14px on a 16px base scale.
@@ -1205,7 +1205,7 @@ impl Element for TerminalElement {
             cx,
             |_, _, hitbox, window, cx| {
                 let hitbox = hitbox.unwrap();
-                let settings = ThemeSettings::get_global(cx).clone();
+                let settings = ThemeSettings::get_global(cx);
 
                 let buffer_font_size = settings.buffer_font_size(cx);
 

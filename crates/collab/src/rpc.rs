@@ -401,6 +401,7 @@ impl Server {
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
             )
             .add_request_handler(forward_mutating_project_request::<proto::ApplyCodeAction>)
+            .add_request_handler(forward_mutating_project_request::<proto::ExecuteLspCommand>)
             .add_request_handler(forward_mutating_project_request::<proto::PrepareRename>)
             .add_request_handler(forward_mutating_project_request::<proto::PerformRename>)
             .add_request_handler(forward_mutating_project_request::<proto::ReloadBuffers>)
@@ -436,6 +437,9 @@ impl Server {
                 broadcast_project_message_from_host::<proto::RefreshDocumentColors>,
             )
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshDocumentLinks>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RefreshDocumentHighlights>,
+            )
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshFoldingRanges>)
             .add_message_handler(
                 broadcast_project_message_from_host::<proto::RefreshDocumentSymbols>,
