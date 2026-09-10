@@ -1,6 +1,9 @@
 //! Handles conversions of `language` items to and from the [`rpc`] protocol.
 
-use crate::{CursorShape, Diagnostic, DiagnosticSourceKind, diagnostic_set::DiagnosticEntry};
+use crate::{
+    CursorShape, Diagnostic, DiagnosticMessage, DiagnosticSourceKind,
+    diagnostic_set::DiagnosticEntry,
+};
 use anyhow::{Context as _, Result};
 use clock::ReplicaId;
 use gpui::SharedString;
@@ -210,41 +213,51 @@ pub fn serialize_diagnostics<'a>(
 ) -> Vec<proto::Diagnostic> {
     diagnostics
         .into_iter()
-        .map(|entry| proto::Diagnostic {
-            source: entry.diagnostic.source.clone(),
-            source_kind: match entry.diagnostic.source_kind {
-                DiagnosticSourceKind::Pulled => proto::diagnostic::SourceKind::Pulled,
-                DiagnosticSourceKind::Pushed => proto::diagnostic::SourceKind::Pushed,
-                DiagnosticSourceKind::Other => proto::diagnostic::SourceKind::Other,
-            } as i32,
-            start: Some(serialize_anchor(&entry.range.start)),
-            end: Some(serialize_anchor(&entry.range.end)),
-            message: entry.diagnostic.message.clone(),
-            markdown: entry.diagnostic.markdown.clone(),
-            severity: match entry.diagnostic.severity {
-                DiagnosticSeverity::ERROR => proto::diagnostic::Severity::Error,
-                DiagnosticSeverity::WARNING => proto::diagnostic::Severity::Warning,
-                DiagnosticSeverity::INFORMATION => proto::diagnostic::Severity::Information,
-                DiagnosticSeverity::HINT => proto::diagnostic::Severity::Hint,
-                _ => proto::diagnostic::Severity::None,
-            } as i32,
-            group_id: entry.diagnostic.group_id as u64,
-            is_primary: entry.diagnostic.is_primary,
-            underline: entry.diagnostic.underline,
-            code: entry.diagnostic.code.as_ref().map(|s| s.to_string()),
-            code_description: entry
-                .diagnostic
-                .code_description
-                .as_ref()
-                .map(|s| s.to_string()),
-            is_disk_based: entry.diagnostic.is_disk_based,
-            is_unnecessary: entry.diagnostic.is_unnecessary,
-            data: entry.diagnostic.data.as_ref().map(|data| data.to_string()),
-            registration_id: entry
-                .diagnostic
-                .registration_id
-                .as_ref()
-                .map(ToString::to_string),
+        .map(|entry| {
+            let lsp_markup = entry.diagnostic.message.lsp_markup();
+            proto::Diagnostic {
+                source: entry.diagnostic.source.clone(),
+                source_kind: match entry.diagnostic.source_kind {
+                    DiagnosticSourceKind::Pulled => proto::diagnostic::SourceKind::Pulled,
+                    DiagnosticSourceKind::Pushed => proto::diagnostic::SourceKind::Pushed,
+                    DiagnosticSourceKind::Other => proto::diagnostic::SourceKind::Other,
+                } as i32,
+                start: Some(serialize_anchor(&entry.range.start)),
+                end: Some(serialize_anchor(&entry.range.end)),
+                message: entry.diagnostic.message.to_string(),
+                markdown: match lsp_markup {
+                    Some(_) => None,
+                    None => entry.diagnostic.message.markdown().map(ToOwned::to_owned),
+                },
+                markup_message_kind: lsp_markup.map(|(kind, _)| serialize_markup_kind(kind) as i32),
+                untrimmed_markup_message: lsp_markup.and_then(|(_, value)| {
+                    (value != entry.diagnostic.message.as_str()).then(|| value.to_string())
+                }),
+                severity: match entry.diagnostic.severity {
+                    DiagnosticSeverity::ERROR => proto::diagnostic::Severity::Error,
+                    DiagnosticSeverity::WARNING => proto::diagnostic::Severity::Warning,
+                    DiagnosticSeverity::INFORMATION => proto::diagnostic::Severity::Information,
+                    DiagnosticSeverity::HINT => proto::diagnostic::Severity::Hint,
+                    _ => proto::diagnostic::Severity::None,
+                } as i32,
+                group_id: entry.diagnostic.group_id as u64,
+                is_primary: entry.diagnostic.is_primary,
+                underline: entry.diagnostic.underline,
+                code: entry.diagnostic.code.as_ref().map(|s| s.to_string()),
+                code_description: entry
+                    .diagnostic
+                    .code_description
+                    .as_ref()
+                    .map(|s| s.to_string()),
+                is_disk_based: entry.diagnostic.is_disk_based,
+                is_unnecessary: entry.diagnostic.is_unnecessary,
+                data: entry.diagnostic.data.as_ref().map(|data| data.to_string()),
+                registration_id: entry
+                    .diagnostic
+                    .registration_id
+                    .as_ref()
+                    .map(ToString::to_string),
+            }
         })
         .collect()
 }
@@ -432,6 +445,20 @@ pub fn deserialize_selection(selection: proto::Selection) -> Option<Selection<An
     })
 }
 
+pub fn serialize_markup_kind(kind: &lsp::MarkupKind) -> proto::MarkupKind {
+    match kind {
+        lsp::MarkupKind::PlainText => proto::MarkupKind::PlainText,
+        lsp::MarkupKind::Markdown => proto::MarkupKind::Markdown,
+    }
+}
+
+pub fn deserialize_markup_kind(kind: i32) -> Option<lsp::MarkupKind> {
+    match proto::MarkupKind::try_from(kind).ok()? {
+        proto::MarkupKind::PlainText => Some(lsp::MarkupKind::PlainText),
+        proto::MarkupKind::Markdown => Some(lsp::MarkupKind::Markdown),
+    }
+}
+
 /// Deserializes a list of diagnostics from the RPC representation.
 pub fn deserialize_diagnostics(
     diagnostics: Vec<proto::Diagnostic>,
@@ -443,6 +470,21 @@ pub fn deserialize_diagnostics(
                 Some(Value::from_str(&data).ok()?)
             } else {
                 None
+            };
+            let message = match diagnostic
+                .markup_message_kind
+                .and_then(deserialize_markup_kind)
+            {
+                Some(kind) => DiagnosticMessage::from_lsp_markup(&lsp::MarkupContent {
+                    kind,
+                    value: diagnostic
+                        .untrimmed_markup_message
+                        .unwrap_or(diagnostic.message),
+                }),
+                None => DiagnosticMessage::plain_with_adapter_markdown(
+                    diagnostic.message,
+                    diagnostic.markdown.map(SharedString::from),
+                ),
             };
             Some(DiagnosticEntry::new(
                 deserialize_anchor(diagnostic.start?)?..deserialize_anchor(diagnostic.end?)?,
@@ -457,8 +499,7 @@ pub fn deserialize_diagnostics(
                         proto::diagnostic::Severity::Hint => DiagnosticSeverity::HINT,
                         proto::diagnostic::Severity::None => return None,
                     },
-                    message: diagnostic.message,
-                    markdown: diagnostic.markdown,
+                    message,
                     group_id: diagnostic.group_id as usize,
                     code: diagnostic.code.map(lsp::NumberOrString::from_string),
                     code_description: diagnostic

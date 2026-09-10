@@ -25,6 +25,7 @@
       // In VS Code `cmd-k z` is Zen Mode; the word wrap toggle moves to `alt-z`.
       "cmd-k z": "workspace::ToggleCenteredLayout",
       "cmd-i": "assistant::InlineAssist", // Inline Chat
+      "shift-alt-h": "call_hierarchy::ShowIncomingCalls",
     },
   },
   {
@@ -77,6 +78,13 @@
     "bindings": {
       "f10": "debugger::StepOver",
       "f11": "debugger::StepInto",
+    },
+  },
+  {
+    "context": "CallHierarchyPicker > Picker > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-alt-h": "call_hierarchy::ToggleDirection",
     },
   },
 ]

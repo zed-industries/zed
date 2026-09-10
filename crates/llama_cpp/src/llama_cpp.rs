@@ -4,6 +4,10 @@ use http_client::{
     AsyncBody, CustomHeaders, HttpClient, HttpRequestExt, Method, Request as HttpRequest,
     RequestBuilderExt, http,
 };
+pub use language_model_core::chat_completion::{
+    ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamError, ResponseStreamEvent,
+    ResponseStreamResult, ToolCallChunk, Usage,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
@@ -187,64 +191,6 @@ pub struct ChatCompletionRequest {
 #[derive(Serialize, Debug)]
 pub struct StreamOptions {
     pub include_usage: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Usage {
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub total_tokens: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct LlamaCppError {
-    pub message: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)]
-pub enum ResponseStreamResult {
-    Ok(ResponseStreamEvent),
-    Err { error: LlamaCppError },
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ResponseStreamEvent {
-    pub model: String,
-    pub object: String,
-    pub choices: Vec<ChoiceDelta>,
-    pub usage: Option<Usage>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ChoiceDelta {
-    pub index: u32,
-    pub delta: ResponseMessageDelta,
-    pub finish_reason: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ResponseMessageDelta {
-    pub content: Option<String>,
-    /// `llama-server` emits reasoning as a dedicated `reasoning_content` field
-    /// when started with a reasoning format (e.g. `--reasoning-format deepseek`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_content: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCallChunk>>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ToolCallChunk {
-    pub index: usize,
-    pub id: Option<String>,
-    pub function: Option<FunctionChunk>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct FunctionChunk {
-    pub name: Option<String>,
-    pub arguments: Option<String>,
 }
 
 /// Response of `GET /v1/models`.
@@ -522,7 +468,7 @@ pub async fn stream_chat_completion(
                         if line == "[DONE]" {
                             None
                         } else {
-                            match serde_json::from_str(line) {
+                            match serde_json::from_str::<ResponseStreamResult>(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
                                 Ok(ResponseStreamResult::Err { error }) => {
                                     Some(Err(anyhow!(error.message)))
@@ -889,7 +835,7 @@ mod tests {
             ]
         });
         let event: ResponseStreamEvent = serde_json::from_value(event).unwrap();
-        let delta = &event.choices[0].delta;
+        let delta = event.choices[0].delta.as_ref().unwrap();
         assert_eq!(delta.reasoning_content.as_deref(), Some("thinking..."));
         assert_eq!(delta.tool_calls.as_ref().unwrap().len(), 1);
     }
