@@ -4,13 +4,13 @@ use crate::{
     set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
-use block::ConcreteBlock;
+use block2::RcBlock;
 use cocoa::{
     appkit::{
         NSAppearanceNameVibrantDark, NSAppearanceNameVibrantLight, NSApplication,
         NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular, NSControl as _,
-        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSSavePanel,
-        NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSEventModifierFlags, NSMenu, NSMenuItem, NSVisualEffectState, NSVisualEffectView,
+        NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -45,6 +45,7 @@ use objc::{
     sel, sel_impl,
 };
 use objc2::MainThreadMarker;
+use objc2_app_kit::{NSModalResponse, NSModalResponseOK, NSOpenPanel, NSSavePanel, NSWorkspace};
 use objc2_foundation::NSActivityOptions;
 use parking_lot::Mutex;
 use ptr::null_mut;
@@ -637,7 +638,7 @@ impl Platform for MacPlatform {
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>> {
-        crate::screen_capture::get_sources()
+        crate::screen_capture::get_sources(self.1)
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -727,8 +728,6 @@ impl Platform for MacPlatform {
     }
 
     fn register_url_scheme(&self, scheme: &str) -> Task<anyhow::Result<()>> {
-        use block2::RcBlock;
-        use objc2_app_kit::NSWorkspace;
         use objc2_foundation::{NSBundle, NSError, NSString};
 
         // API only available post Monterey
@@ -786,47 +785,45 @@ impl Platform for MacPlatform {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
+        use objc2_foundation::NSString;
+
+        let marker = self.1;
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-                unsafe {
-                    let panel = NSOpenPanel::openPanel(nil);
-                    panel.setCanChooseDirectories_(options.directories.to_objc());
-                    panel.setCanChooseFiles_(options.files.to_objc());
-                    panel.setAllowsMultipleSelection_(options.multiple.to_objc());
+                let panel = NSOpenPanel::openPanel(marker);
+                panel.setCanChooseDirectories(options.directories);
+                panel.setCanChooseFiles(options.files);
+                panel.setAllowsMultipleSelection(options.multiple);
 
-                    panel.setCanCreateDirectories(true.to_objc());
-                    panel.setResolvesAliases_(false.to_objc());
-                    let done_tx = Cell::new(Some(done_tx));
-                    let block = ConcreteBlock::new(move |response: NSModalResponse| {
-                        let result = if response == NSModalResponse::NSModalResponseOk {
-                            let mut result = Vec::new();
-                            let urls = panel.URLs();
-                            for i in 0..urls.count() {
-                                let url = urls.objectAtIndex(i);
-                                if url.isFileURL() == YES
-                                    && let Ok(path) = ns_url_to_path(url)
-                                {
-                                    result.push(path)
-                                }
-                            }
-                            Some(result)
-                        } else {
-                            None
+                panel.setCanCreateDirectories(true);
+                panel.setResolvesAliases(false);
+
+                let done_tx = Cell::new(Some(done_tx));
+                let handler = RcBlock::new({
+                    let panel = panel.clone();
+                    move |response: NSModalResponse| {
+                        let Some(done_tx) = done_tx.take() else {
+                            return;
                         };
 
-                        if let Some(done_tx) = done_tx.take() {
-                            let _ = done_tx.send(Ok(result));
-                        }
-                    });
-                    let block = block.copy();
-
-                    if let Some(prompt) = options.prompt {
-                        let _: () = msg_send![panel, setPrompt: ns_string(&prompt)];
+                        let result = (response == NSModalResponseOK).then(|| {
+                            panel
+                                .URLs()
+                                .iter()
+                                .filter(|url| url.isFileURL())
+                                .filter_map(|url| url.to_file_path())
+                                .collect::<Vec<_>>()
+                        });
+                        _ = done_tx.send(Ok(result));
                     }
+                });
 
-                    let _: () = msg_send![panel, beginWithCompletionHandler: block];
+                if let Some(prompt) = options.prompt {
+                    panel.setPrompt(Some(&NSString::from_str(prompt.as_str())));
                 }
+
+                panel.beginWithCompletionHandler(&handler);
             })
             .detach();
         done_rx
@@ -837,31 +834,37 @@ impl Platform for MacPlatform {
         directory: &Path,
         suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
-        let directory = directory.to_owned();
-        let suggested_name = suggested_name.map(|s| s.to_owned());
+        use objc2_foundation::{NSString, NSURL};
+
+        let url = NSURL::from_directory_path(directory);
+        let suggested_name = suggested_name.map(NSString::from_str);
         let (done_tx, done_rx) = oneshot::channel();
+        let marker = self.1;
         self.foreground_executor()
             .spawn(async move {
-                unsafe {
-                    let panel = NSSavePanel::savePanel(nil);
-                    let path = ns_string(directory.to_string_lossy().as_ref());
-                    let url = NSURL::fileURLWithPath_isDirectory_(nil, path, true.to_objc());
-                    panel.setDirectoryURL(url);
+                let panel = NSSavePanel::savePanel(marker);
+                panel.setDirectoryURL(url.as_deref());
 
-                    if let Some(suggested_name) = suggested_name {
-                        let name_string = ns_string(&suggested_name);
-                        let _: () = msg_send![panel, setNameFieldStringValue: name_string];
-                    }
+                if let Some(suggested_name) = suggested_name {
+                    panel.setNameFieldStringValue(&suggested_name);
+                }
 
-                    let done_tx = Cell::new(Some(done_tx));
-                    let block = ConcreteBlock::new(move |response: NSModalResponse| {
-                        let mut result = None;
-                        if response == NSModalResponse::NSModalResponseOk {
-                            let url = panel.URL();
-                            if url.isFileURL() == YES {
-                                result = ns_url_to_path(panel.URL()).ok().map(|mut result| {
-                                    let Some(filename) = result.file_name() else {
-                                        return result;
+                let done_tx = Cell::new(Some(done_tx));
+                let handler = RcBlock::new({
+                    let panel = panel.clone();
+                    move |response: NSModalResponse| {
+                        let Some(done_tx) = done_tx.take() else {
+                            return;
+                        };
+
+                        let result = if response == NSModalResponseOK {
+                            panel
+                                .URL()
+                                .filter(|url| url.isFileURL())
+                                .and_then(|url| url.to_file_path())
+                                .map(|mut path| {
+                                    let Some(filename) = path.file_name() else {
+                                        return path;
                                     };
                                     let chunks = filename
                                         .as_bytes()
@@ -875,29 +878,24 @@ impl Platform for MacPlatform {
                                     // This is conditional on OS version because I'd like to get rid of it, so that
                                     // you can manually create a file called `a.sql.s`. That said it seems better
                                     // to break that use-case than breaking `a.sql`.
-                                    if chunks.len() == 3
-                                        && chunks[1].starts_with(chunks[2])
+                                    if let &[_, second, third] = chunks.as_slice()
+                                        && second.starts_with(third)
                                         && Self::os_version() >= Version::new(15, 0, 0)
                                     {
-                                        let new_filename = OsStr::from_bytes(
-                                            &filename.as_bytes()
-                                                [..chunks[0].len() + 1 + chunks[1].len()],
-                                        )
-                                        .to_owned();
-                                        result.set_file_name(&new_filename);
+                                        path.set_extension("");
                                     }
-                                    result
-                                })
-                            }
-                        }
 
-                        if let Some(done_tx) = done_tx.take() {
-                            let _ = done_tx.send(Ok(result));
-                        }
-                    });
-                    let block = block.copy();
-                    let _: () = msg_send![panel, beginWithCompletionHandler: block];
-                }
+                                    path
+                                })
+                        } else {
+                            None
+                        };
+
+                        _ = done_tx.send(Ok(result));
+                    }
+                });
+
+                panel.beginWithCompletionHandler(&handler);
             })
             .detach();
 
