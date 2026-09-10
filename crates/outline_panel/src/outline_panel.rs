@@ -660,9 +660,7 @@ pub fn init(cx: &mut App) {
             workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
         });
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
-            if !workspace.toggle_panel_focus::<OutlinePanel>(window, cx) {
-                workspace.close_panel::<OutlinePanel>(window, cx);
-            }
+            workspace.toggle_panel::<OutlinePanel>(window, cx);
         });
         workspace.register_action(|workspace, _: &ToggleSymbols, window, cx| {
             if let Some(outline_panel) = workspace.panel::<OutlinePanel>(cx) {
