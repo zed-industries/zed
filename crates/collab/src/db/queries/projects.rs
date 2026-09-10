@@ -386,6 +386,7 @@ impl Database {
                 linked_worktrees: ActiveValue::Set(Some(
                     serde_json::to_string(&update.linked_worktrees).unwrap(),
                 )),
+                is_detached_head: ActiveValue::set(update.is_detached_head),
             })
             .on_conflict(
                 OnConflict::columns([
@@ -403,6 +404,7 @@ impl Database {
                     project_repository::Column::RepositoryDirAbsPath,
                     project_repository::Column::CommonDirAbsPath,
                     project_repository::Column::LinkedWorktrees,
+                    project_repository::Column::IsDetachedHead,
                 ])
                 .to_owned(),
             )
@@ -911,6 +913,7 @@ impl Database {
                             .as_deref()
                             .and_then(|s| serde_json::from_str(s).ok())
                             .unwrap_or_default(),
+                        is_detached_head: db_repository_entry.is_detached_head,
                     });
                 }
             }

@@ -313,6 +313,7 @@ CREATE TABLE public.project_repositories (
     remote_upstream_url character varying,
     remote_origin_url character varying,
     linked_worktrees text,
+    is_detached_head boolean NOT NULL DEFAULT false,
     repository_dir_abs_path character varying,
     common_dir_abs_path character varying
 );

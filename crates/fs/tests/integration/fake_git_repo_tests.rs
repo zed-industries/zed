@@ -122,6 +122,58 @@ async fn test_fake_worktree_lifecycle(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_detached_worktree_admin_names_are_unique(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project", json!({ ".git": {} })).await;
+    let repo = fs
+        .open_repo(Path::new("/project/.git"), None)
+        .expect("should open fake repo");
+
+    for (path, sha) in [("/a/review", "aaa111"), ("/b/review", "bbb222")] {
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            false,
+            git::repository::Worktree {
+                path: PathBuf::from(path),
+                ref_name: None,
+                sha: sha.into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+    }
+
+    let worktrees = repo.worktrees().await.unwrap();
+    assert!(worktrees.iter().any(|worktree| {
+        worktree.path == Path::new("/a/review")
+            && worktree.ref_name.is_none()
+            && worktree.sha.as_ref() == "aaa111"
+    }));
+    assert!(worktrees.iter().any(|worktree| {
+        worktree.path == Path::new("/b/review")
+            && worktree.ref_name.is_none()
+            && worktree.sha.as_ref() == "bbb222"
+    }));
+
+    fs.remove_worktree_for_repo(Path::new("/project/.git"), false, Path::new("/a/review"))
+        .await
+        .unwrap();
+
+    let worktrees = repo.worktrees().await.unwrap();
+    assert!(
+        worktrees
+            .iter()
+            .all(|worktree| worktree.path != Path::new("/a/review"))
+    );
+    assert!(
+        worktrees
+            .iter()
+            .any(|worktree| worktree.path == Path::new("/b/review"))
+    );
+}
+
+#[gpui::test]
 async fn test_checkpoints(executor: BackgroundExecutor) {
     let fs = FakeFs::new(executor);
     fs.insert_tree(

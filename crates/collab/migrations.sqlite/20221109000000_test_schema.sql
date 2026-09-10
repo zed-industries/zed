@@ -109,6 +109,7 @@ CREATE TABLE "project_repositories" (
     "remote_upstream_url" VARCHAR,
     "remote_origin_url" VARCHAR,
     "linked_worktrees" VARCHAR,
+    "is_detached_head" BOOLEAN NOT NULL DEFAULT FALSE,
     "repository_dir_abs_path" VARCHAR,
     "common_dir_abs_path" VARCHAR,
     PRIMARY KEY (project_id, id)
