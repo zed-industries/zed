@@ -1414,7 +1414,9 @@ impl BufferStore {
                             path: old.path().clone(),
                         };
 
-                        this.path_to_buffer_id.remove(&old_path);
+                        if this.path_to_buffer_id.get(&old_path) == Some(&buffer_id) {
+                            this.path_to_buffer_id.remove(&old_path);
+                        }
                         true
                     }) {
                         Some(old_file)

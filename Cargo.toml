@@ -523,6 +523,7 @@ aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 any_vec = "0.14"
 anyhow = "1.0.86"
+arc-swap = "1.9.0"
 ashpd = { version = "0.13", default-features = false, features = [
     "async-io",
     "inhibit",
@@ -699,7 +700,10 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSButton",
     "NSControl",
     "NSGraphics",
+    "NSOpenPanel",
+    "NSPanel",
     "NSResponder",
+    "NSSavePanel",
     "NSView",
     "NSWindow",
     "NSWorkspace",
