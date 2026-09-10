@@ -7,11 +7,12 @@ use std::{
 use gpui::Pixels;
 use itertools::{Either, Itertools as _};
 use language::{Bias, Point, Selection, SelectionGoal};
-use multi_buffer::{MultiBufferDimension, MultiBufferOffset, MultiBufferRow, ToPoint};
+use multi_buffer::{MultiBufferDimension, MultiBufferOffset, ToPoint};
 use util::post_inc;
 
 use crate::{
     Anchor, DisplayPoint, DisplayRow, MultiBufferSnapshot, SelectMode, ToOffset,
+    columnar_selection::ColumnarSelectionRows,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
 };
@@ -443,51 +444,20 @@ impl SelectionsCollection {
         })
     }
 
-    /// Attempts to build a selection in the provided buffer row using the
-    /// same tab-expanded column range as specified.
-    /// Returns `None` if the range is not empty but it starts past the line's
-    /// length, meaning that the line isn't long enough to be contained within
-    /// part of the provided range.
-    fn build_columnar_selection_from_tab_expanded_columns(
+    pub(crate) fn build_columnar_selection_from_tab_expanded_columns(
         &mut self,
-        display_map: &DisplaySnapshot,
-        multi_buffer_row: MultiBufferRow,
+        rows: &mut ColumnarSelectionRows<'_>,
+        tab_row: u32,
         goal_columns: &Range<u32>,
         reversed: bool,
-        text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {
-        let is_empty = goal_columns.start == goal_columns.end;
-        let line_len = display_map.tab_expanded_line_len(multi_buffer_row);
-
-        let (start, end) = if is_empty {
-            let point =
-                display_map.point_for_tab_expanded_column(multi_buffer_row, goal_columns.start);
-            (point, point)
-        } else {
-            if goal_columns.start >= line_len {
-                return None;
-            }
-
-            let start =
-                display_map.point_for_tab_expanded_column(multi_buffer_row, goal_columns.start);
-            let end = display_map.point_for_tab_expanded_column(multi_buffer_row, goal_columns.end);
-            (start, end)
-        };
-
-        let start_display_point = start.to_display_point(display_map);
-        let end_display_point = end.to_display_point(display_map);
-        let start_x = display_map.x_for_display_point(start_display_point, text_layout_details);
-        let end_x = display_map.x_for_display_point(end_display_point, text_layout_details);
-
+        let (start, end) = rows.points_for_row(tab_row, goal_columns)?;
         Some(Selection {
             id: post_inc(&mut self.next_selection_id),
             start,
             end,
             reversed,
-            goal: SelectionGoal::HorizontalRange {
-                start: start_x.min(end_x).into(),
-                end: start_x.max(end_x).into(),
-            },
+            goal: SelectionGoal::None,
         })
     }
 
@@ -524,37 +494,43 @@ impl SelectionsCollection {
         None
     }
 
-    /// Finds the next columnar selection by skipping to the next buffer row,
-    /// ignoring soft-wrapped lines.
     pub(crate) fn find_next_columnar_selection_by_buffer_row(
         &mut self,
         display_map: &DisplaySnapshot,
-        start_row: DisplayRow,
-        end_row: DisplayRow,
+        rows: &mut ColumnarSelectionRows<'_>,
+        selection: &Selection<Point>,
         above: bool,
         goal_columns: &Range<u32>,
-        reversed: bool,
-        text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {
-        let mut row = start_row;
-        let direction = if above { -1 } else { 1 };
-        while row != end_row {
-            let new_row =
-                display_map.start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction);
-            row = new_row.row();
-            let buffer_row = MultiBufferRow(new_row.to_point(display_map).row);
-
-            if let Some(selection) = self.build_columnar_selection_from_tab_expanded_columns(
-                display_map,
-                buffer_row,
+        let tabs = display_map.tab_snapshot();
+        let point = if above {
+            selection.start
+        } else {
+            selection.end
+        };
+        let mut row = tabs.point_to_tab_point(point, Bias::Left).row();
+        let max_row = tabs.max_point().row();
+        loop {
+            row = if above {
+                row.checked_sub(1)?
+            } else if row < max_row {
+                row + 1
+            } else {
+                return None;
+            };
+            if let Some(candidate) = self.build_columnar_selection_from_tab_expanded_columns(
+                rows,
+                row,
                 goal_columns,
-                reversed,
-                text_layout_details,
+                selection.reversed,
             ) {
-                return Some(selection);
+                if (above && candidate.start < selection.start)
+                    || (!above && candidate.end > selection.end)
+                {
+                    return Some(candidate);
+                }
             }
         }
-        None
     }
 
     pub fn change_with<R>(

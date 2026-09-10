@@ -321,7 +321,7 @@ impl TabSnapshot {
             chunk: Chunk {
                 text: unsafe { std::str::from_utf8_unchecked(&SPACES[..to_next_stop as usize]) },
                 is_tab: true,
-                chars: 1u128.unbounded_shl(to_next_stop) - 1,
+                chars: u128::MAX.unbounded_shr(u128::BITS - to_next_stop),
                 ..Default::default()
             },
             inside_leading_tab: to_next_stop > 0,
@@ -643,7 +643,7 @@ impl TabChunks<'_> {
         self.chunk = Chunk {
             text: unsafe { std::str::from_utf8_unchecked(&SPACES[..to_next_stop as usize]) },
             is_tab: true,
-            chars: 1u128.unbounded_shl(to_next_stop) - 1,
+            chars: u128::MAX.unbounded_shr(u128::BITS - to_next_stop),
             ..Default::default()
         };
         self.inside_leading_tab = to_next_stop > 0;
@@ -692,7 +692,7 @@ impl<'a> Iterator for TabChunks<'a> {
             return Some(Chunk {
                 text: unsafe { std::str::from_utf8_unchecked(&SPACES[..len as usize]) },
                 is_tab: true,
-                chars: 1u128.unbounded_shl(len) - 1,
+                chars: u128::MAX.unbounded_shr(u128::BITS - len),
                 tabs: 0,
                 newlines: 0,
                 ..self.chunk.clone()
@@ -1300,6 +1300,75 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_max_tab_size_full_chunks(cx: &mut gpui::App) {
+        for tab_size in [127, 128, 129] {
+            let buffer = MultiBuffer::build_simple("\tα\t🏀", cx);
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+            let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+            let (_, tab_snapshot) = TabMap::new(fold_snapshot, NonZeroU32::new(tab_size).unwrap());
+            let width = tab_size.min(128);
+            let expected = format!(
+                "{}α{}🏀",
+                " ".repeat(width as usize),
+                " ".repeat(width as usize - 1)
+            );
+            let mut chunks = tab_snapshot.chunks(
+                TabPoint::zero()..tab_snapshot.max_point(),
+                LanguageAwareStyling {
+                    tree_sitter: false,
+                    diagnostics: false,
+                },
+                Highlights::default(),
+            );
+            assert_max_tab_chunk_bitmaps(&mut chunks, &expected);
+            assert_eq!(tab_snapshot.text(), expected);
+            assert_eq!(
+                tab_snapshot.point_to_tab_point(Point::new(0, 4), Bias::Left),
+                TabPoint::new(0, 2 * width + 1),
+            );
+            assert_eq!(
+                tab_snapshot.tab_point_to_point(TabPoint::new(0, 2 * width + 1), Bias::Left),
+                Point::new(0, 4),
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_max_tab_size_partial_chunks_and_seek(cx: &mut gpui::App) {
+        let buffer = MultiBuffer::build_simple("\t🏀", cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_, tab_snapshot) = TabMap::new(fold_snapshot, NonZeroU32::new(128).unwrap());
+        let expected = format!("{}🏀", " ".repeat(128));
+        let mut reused = tab_snapshot.chunks(
+            TabPoint::zero()..tab_snapshot.max_point(),
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
+            Highlights::default(),
+        );
+        for start in 0..=128 {
+            for end in [start, (start + 1).min(128), 128, 132] {
+                let range = TabPoint::new(0, start)..TabPoint::new(0, end);
+                let mut chunks = tab_snapshot.chunks(
+                    range.clone(),
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: false,
+                    },
+                    Highlights::default(),
+                );
+                assert_max_tab_chunk_bitmaps(&mut chunks, &expected[start as usize..end as usize]);
+                reused.seek(range);
+                assert_max_tab_chunk_bitmaps(&mut reused, &expected[start as usize..end as usize]);
+            }
+        }
+    }
+
+    #[gpui::test]
     fn test_empty_chunk_after_leading_tab_trim(cx: &mut gpui::App) {
         // We fold "hello" (offsets 1..6) so the fold map creates a
         // transform boundary at offset 1, producing a 1-byte fold chunk
@@ -1754,5 +1823,27 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn assert_max_tab_chunk_bitmaps(chunks: &mut TabChunks<'_>, expected_text: &str) {
+        let initial_mask = chunks
+            .chunk
+            .text
+            .char_indices()
+            .fold(0u128, |mask, (index, _)| mask | (1u128 << index));
+        assert_eq!(chunks.chunk.chars, initial_mask);
+        let text = chunks
+            .map(|chunk| {
+                let expected_mask = chunk
+                    .text
+                    .char_indices()
+                    .fold(0u128, |mask, (index, _)| mask | (1u128 << index));
+                assert_eq!(chunk.chars, expected_mask, "chunk {:?}", chunk.text);
+                assert_eq!(chunk.tabs, 0);
+                assert_eq!(chunk.newlines, 0);
+                chunk.text
+            })
+            .collect::<String>();
+        assert_eq!(text, expected_text);
     }
 }

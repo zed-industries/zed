@@ -63,6 +63,7 @@ pub mod test;
 
 mod clipboard;
 mod code_actions;
+mod columnar_selection;
 mod completions;
 mod config;
 mod cursor_animation;
@@ -1547,12 +1548,14 @@ struct RowHighlight {
 #[derive(Clone, Debug)]
 struct AddSelectionsState {
     groups: Vec<AddSelectionsGroup>,
+    skip_soft_wrap: bool,
 }
 
 #[derive(Clone, Debug)]
 struct AddSelectionsGroup {
     above: bool,
     stack: Vec<usize>,
+    goal_source: Option<Range<Anchor>>,
 }
 
 #[derive(Clone)]
