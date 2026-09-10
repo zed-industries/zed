@@ -506,14 +506,6 @@ impl Modifiers {
         Default::default()
     }
 
-    /// Returns [`Modifiers`] with just the command key.
-    pub fn command() -> Modifiers {
-        Modifiers {
-            platform: true,
-            ..Default::default()
-        }
-    }
-
     /// A Returns [`Modifiers`] with just the secondary key pressed.
     pub fn secondary_key() -> Modifiers {
         #[cfg(target_os = "macos")]
@@ -533,20 +525,27 @@ impl Modifiers {
         }
     }
 
-    /// Returns [`Modifiers`] with just the windows key.
-    pub fn windows() -> Modifiers {
+    /// Returns [`Modifiers`] but platform agnostic naming
+    pub fn platform() -> Modifiers {
         Modifiers {
             platform: true,
             ..Default::default()
         }
     }
 
+    /// Returns [`Modifiers`] with just the windows key.
+    pub fn windows() -> Modifiers {
+        Self::platform()
+    }
+
+    /// Returns [`Modifiers`] with just the command key.
+    pub fn command() -> Modifiers {
+        Self::platform()
+    }
+
     /// Returns [`Modifiers`] with just the super key.
     pub fn super_key() -> Modifiers {
-        Modifiers {
-            platform: true,
-            ..Default::default()
-        }
+        Self::platform()
     }
 
     /// Returns [`Modifiers`] with just control.

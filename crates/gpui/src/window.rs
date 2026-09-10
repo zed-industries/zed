@@ -5714,6 +5714,12 @@ impl Window {
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
+        if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
+            cx.modifiers_changed_observers
+                .clone()
+                .retain(&(), |callback| callback(event, self, cx));
+        }
+
         let mut keystroke: Option<Keystroke> = None;
 
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
