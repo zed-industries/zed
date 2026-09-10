@@ -192,6 +192,70 @@ async fn test_lsp_log_view_labels_registered_supplementary_servers(cx: &mut Test
 }
 
 #[gpui::test]
+async fn test_lsp_log_view_rpc_checkbox_tracks_view_ownership(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/rpc-ownership"), json!({ "test.rs": "" }))
+        .await;
+    let project = Project::test(fs, [path!("/rpc-ownership").as_ref()], cx).await;
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
+    let server_keys = [
+        LanguageServerKind::Local {
+            project: project.downgrade(),
+        },
+        LanguageServerKind::Supplementary {
+            project: project.downgrade(),
+        },
+    ]
+    .map(|kind| LanguageServerLogKey::new(kind, LanguageServerId(100)));
+    log_store.update(cx, |store, cx| {
+        store.add_project(&project, cx);
+        for server_key in &server_keys {
+            store.add_language_server(
+                server_key.kind.clone(),
+                server_key.server_id,
+                Some(LanguageServerName::new_static("test-server")),
+                None,
+                None,
+                cx,
+            );
+            assert_eq!(
+                store.set_downstream_log_stream(
+                    server_key,
+                    PeerId { owner_id: 1, id: 1 },
+                    LogKind::Rpc,
+                    true,
+                    cx,
+                ),
+                Some(())
+            );
+        }
+    });
+
+    let window =
+        cx.add_window(|window, cx| LspLogView::new(project.clone(), log_store, window, cx));
+    let log_view = window.root(cx).expect("log view should exist");
+    let mut cx = VisualTestContext::from_window(*window, cx);
+    log_view.update_in(&mut cx, |view, window, cx| {
+        for enabled in [false, true] {
+            if enabled {
+                for server_key in &server_keys {
+                    view.show_entry_for_test(server_key.clone(), LogKind::Rpc, window, cx);
+                }
+            }
+            let menu_items = view.menu_items(cx).expect("server menu should exist");
+            assert_eq!(menu_items.len(), server_keys.len());
+            assert!(
+                menu_items
+                    .iter()
+                    .all(|item| item.rpc_trace_enabled == enabled)
+            );
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_log_store_does_not_retain_language_servers(cx: &mut TestAppContext) {
     init_test(cx);
 
