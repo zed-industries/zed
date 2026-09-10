@@ -653,6 +653,156 @@ async fn test_inlay_hint_resolve_state_uses_matching_dynamic_registration(
 }
 
 #[gpui::test]
+async fn test_dynamic_document_highlight_registration(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/documentHighlight";
+    let (refresh_events, _refresh_events_subscription) = observe_refresh_events(&project, cx);
+
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).document_highlight_provider,
+        None,
+    );
+
+    let registration_options = |language: &str| {
+        json!({
+            "documentSelector": [{ "language": language, "scheme": "file" }],
+        })
+    };
+    let registered_provider = Some(lsp::OneOf::Right(lsp::DocumentHighlightOptions {
+        work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
+    }));
+    register_capability(
+        &fake_server,
+        method,
+        "python-document-highlight",
+        Some(registration_options("python")),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).document_highlight_provider,
+        registered_provider,
+    );
+    assert_eq!(
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![format!("document_highlights({server_id})")],
+        "expected the first registration to refresh",
+    );
+
+    register_capability(
+        &fake_server,
+        method,
+        "rust-document-highlight",
+        Some(registration_options("rust")),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).document_highlight_provider,
+        registered_provider,
+    );
+    assert_eq!(
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![format!("document_highlights({server_id})")],
+        "expected adding a distinct selector with identical provider options to refresh",
+    );
+
+    register_capability(
+        &fake_server,
+        method,
+        "rust-document-highlight-duplicate",
+        Some(registration_options("rust")),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        refresh_events.lock().as_slice(),
+        &[] as &[String],
+        "expected a registration identical to an existing one to not refresh",
+    );
+
+    unregister_capabilities(&fake_server, method, &["rust-document-highlight-duplicate"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        refresh_events.lock().as_slice(),
+        &[] as &[String],
+        "expected removing a duplicate registration to not refresh",
+    );
+
+    unregister_capabilities(&fake_server, method, &["rust-document-highlight"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).document_highlight_provider,
+        registered_provider,
+    );
+    assert_eq!(
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![format!("document_highlights({server_id})")],
+        "expected removing a selector while another provider remains to refresh",
+    );
+
+    unregister_capabilities(&fake_server, method, &["python-document-highlight"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).document_highlight_provider,
+        None,
+    );
+    assert_eq!(
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![format!("document_highlights({server_id})")],
+        "expected the last unregistration to clear the capability and refresh",
+    );
+}
+
+#[gpui::test]
+async fn test_dynamic_registration_sends_metadata_downstream_before_refresh(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let downstream = Arc::new(RecordingProtoClient::default());
+    project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store.shared(1, rpc::AnyProtoClient::new(downstream.clone()), cx);
+        });
+    });
+    cx.executor().run_until_parked();
+    downstream.sent.lock().clear();
+
+    register_capability(
+        &fake_server,
+        "textDocument/documentHighlight",
+        "rust-document-highlight",
+        Some(json!({
+            "documentSelector": [{ "language": "rust", "scheme": "file" }],
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        downstream.sent.lock().drain(..).collect::<Vec<_>>(),
+        vec!["UpdateLanguageServer", "RefreshDocumentHighlights"],
+        "expected the capability update to reach guests before the refresh that depends on it",
+    );
+
+    unregister_capabilities(
+        &fake_server,
+        "textDocument/documentHighlight",
+        &["rust-document-highlight"],
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        downstream.sent.lock().drain(..).collect::<Vec<_>>(),
+        vec!["UpdateLanguageServer", "RefreshDocumentHighlights"],
+    );
+}
+
+#[gpui::test]
 async fn test_multi_registration_inlay_hint(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let (project, fake_server) =
@@ -2715,6 +2865,9 @@ fn observe_refresh_events(
                         label("document_colors", server_id)
                     }
                     Event::RefreshDocumentLinks { server_id } => label("document_links", server_id),
+                    Event::RefreshDocumentHighlights { server_id } => {
+                        label("document_highlights", server_id)
+                    }
                     Event::RefreshFoldingRanges { server_id } => label("folding_ranges", server_id),
                     Event::RefreshDocumentSymbols { server_id } => {
                         label("document_symbols", server_id)
@@ -3091,4 +3244,41 @@ async fn fetch_all_lsp_data(
     }
     labels.sort();
     labels
+}
+
+#[derive(Default)]
+struct RecordingProtoClient {
+    sent: Mutex<Vec<&'static str>>,
+    handler_set: Mutex<rpc::ProtoMessageHandlerSet>,
+}
+
+impl rpc::ProtoClient for RecordingProtoClient {
+    fn request(
+        &self,
+        _: rpc::proto::Envelope,
+        _: &'static str,
+    ) -> futures::future::BoxFuture<'static, Result<rpc::proto::Envelope>> {
+        unimplemented!()
+    }
+
+    fn send(&self, _: rpc::proto::Envelope, message_type: &'static str) -> Result<()> {
+        self.sent.lock().push(message_type);
+        Ok(())
+    }
+
+    fn send_response(&self, _: rpc::proto::Envelope, _: &'static str) -> Result<()> {
+        Ok(())
+    }
+
+    fn message_handler_set(&self) -> &Mutex<rpc::ProtoMessageHandlerSet> {
+        &self.handler_set
+    }
+
+    fn is_via_collab(&self) -> bool {
+        false
+    }
+
+    fn has_wsl_interop(&self) -> bool {
+        false
+    }
 }
