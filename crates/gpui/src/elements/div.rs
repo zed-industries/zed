@@ -2091,6 +2091,8 @@ pub struct Interactivity {
     pub hovered: Option<bool>,
     pub(crate) tooltip_id: Option<TooltipId>,
     pub(crate) content_size: Size<Pixels>,
+    /// The scroll range this frame, from `clamp_scroll_position`.
+    pub(crate) scroll_max: Point<Pixels>,
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) focusable: bool,
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
@@ -2376,7 +2378,7 @@ impl Interactivity {
     }
 
     fn clamp_scroll_position(
-        &self,
+        &mut self,
         bounds: Bounds<Pixels>,
         style: &Style,
         window: &mut Window,
@@ -2418,6 +2420,7 @@ impl Interactivity {
             let scroll_max = Point::from(padded_content_size - bounds.size)
                 .map(round_to_two_decimals)
                 .max(&Default::default());
+            self.scroll_max = scroll_max;
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -3266,11 +3269,15 @@ impl Interactivity {
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
+            let scroll_max = self.scroll_max;
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
+                if phase == DispatchPhase::Bubble
+                    && hitbox.should_handle_scroll(window)
+                    && !window.scroll_wheel_taken()
+                {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
                     let mut delta = event.delta.pixel_delta(line_height);
@@ -3309,10 +3316,11 @@ impl Interactivity {
                             delta_x = Pixels::ZERO;
                         }
                     }
-                    scroll_offset.y += delta_y;
-                    scroll_offset.x += delta_x;
+                    scroll_offset.y = (scroll_offset.y + delta_y).clamp(-scroll_max.y, px(0.));
+                    scroll_offset.x = (scroll_offset.x + delta_x).clamp(-scroll_max.x, px(0.));
                     if *scroll_offset != old_scroll_offset {
                         cx.notify(current_view);
+                        window.take_scroll_wheel();
                     }
                 }
             });
@@ -4313,7 +4321,7 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, InputEvent, Keystroke, MouseMoveEvent,
-        TestAppContext, canvas, util::FluentBuilder as _,
+        ScrollDelta, TestAppContext, VisualTestContext, canvas, util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
 
@@ -5415,5 +5423,95 @@ mod tests {
         assert_eq!(bounds("cell-0").origin.x, px(0.));
         assert_eq!(bounds("cell-1").origin.x, px(100.));
         assert_eq!(bounds("cell-2").origin.x, px(300.));
+    }
+
+    struct RenderWith(Box<dyn Fn(&mut Window, &mut App) -> AnyElement>);
+
+    impl Render for RenderWith {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            (self.0)(window, cx)
+        }
+    }
+
+    fn draw_view(
+        cx: &mut VisualTestContext,
+        render: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) {
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(px(100.), px(100.)),
+            move |_, cx| cx.new(|_| RenderWith(Box::new(render))).into_any_element(),
+        );
+    }
+
+    fn wheel(dy: f32) -> ScrollWheelEvent {
+        ScrollWheelEvent {
+            position: point(px(10.), px(10.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
+            ..Default::default()
+        }
+    }
+
+    struct NestedScroll {
+        outer: ScrollHandle,
+        inner: ScrollHandle,
+        outer_saw: Rc<Cell<usize>>,
+    }
+
+    impl NestedScroll {
+        fn new() -> Self {
+            Self {
+                outer: ScrollHandle::new(),
+                inner: ScrollHandle::new(),
+                outer_saw: Rc::new(Cell::new(0)),
+            }
+        }
+
+        fn draw(&self, cx: &mut VisualTestContext) {
+            let outer = self.outer.clone();
+            let inner = self.inner.clone();
+            let outer_saw = self.outer_saw.clone();
+            draw_view(cx, move |_, _| {
+                let outer_saw = outer_saw.clone();
+                div()
+                    .id("outer")
+                    .size(px(100.))
+                    .overflow_y_scroll()
+                    .track_scroll(&outer)
+                    .on_scroll_wheel(move |_, _, _| outer_saw.set(outer_saw.get() + 1))
+                    .child(
+                        div()
+                            .id("inner")
+                            .w_full()
+                            .h(px(50.))
+                            .overflow_y_scroll()
+                            .track_scroll(&inner)
+                            .child(div().w_full().h(px(100.))),
+                    )
+                    .child(div().w_full().h(px(200.)))
+                    .into_any_element()
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn the_inner_scroll_container_scrolls_until_its_end(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let nested = NestedScroll::new();
+        nested.draw(cx);
+
+        cx.simulate_event(wheel(-30.));
+        assert_eq!(nested.inner.offset().y, px(-30.));
+        assert_eq!(nested.outer.offset().y, px(0.));
+
+        cx.simulate_event(wheel(-30.));
+        assert_eq!(nested.inner.offset().y, px(-50.));
+        assert_eq!(nested.outer.offset().y, px(0.));
+
+        cx.simulate_event(wheel(-30.));
+        assert_eq!(nested.inner.offset().y, px(-50.));
+        assert_eq!(nested.outer.offset().y, px(-30.));
+
+        assert_eq!(nested.outer_saw.get(), 3);
     }
 }
