@@ -4,7 +4,7 @@ use crate::lsp_log_view::LogMenuItem;
 
 use super::*;
 use futures::StreamExt;
-use gpui::{AppContext as _, TestAppContext, VisualTestContext};
+use gpui::{AppContext as _, TestAppContext, VisualContext as _, VisualTestContext};
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageServerId, tree_sitter_rust,
 };
@@ -253,6 +253,166 @@ async fn test_lsp_log_view_rpc_checkbox_tracks_view_ownership(cx: &mut TestAppCo
             );
         }
     });
+}
+
+async fn rpc_registration_fixture(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Project>,
+    Entity<LogStore>,
+    LanguageServerLogKey,
+    VisualTestContext,
+) {
+    let project = Project::test(FakeFs::new(cx.background_executor.clone()), [], cx).await;
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
+    let key = LanguageServerLogKey::new(
+        LanguageServerKind::Local {
+            project: project.downgrade(),
+        },
+        LanguageServerId(100),
+    );
+    log_store.update(cx, |store, cx| {
+        store.add_project(&project, cx);
+        store.add_language_server(key.kind.clone(), key.server_id, None, None, None, cx);
+    });
+    let window = cx.add_window(|_, _| gpui::Empty);
+    let cx = VisualTestContext::from_window(*window, cx);
+    (project, log_store, key, cx)
+}
+
+fn assert_rpc_registration(
+    log_store: &Entity<LogStore>,
+    key: &LanguageServerLogKey,
+    enabled: bool,
+    cx: &VisualTestContext,
+) {
+    log_store.read_with(cx, |store, _| {
+        assert_eq!(
+            store
+                .language_servers
+                .get(key)
+                .map(|state| state.rpc_state.is_some()),
+            Some(enabled),
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_lsp_log_view_replacement_refreshes_rpc_ownership(cx: &mut TestAppContext) {
+    init_test(cx);
+    for (batched, active_entry) in [
+        (false, LogKind::Logs),
+        (true, LogKind::Logs),
+        (false, LogKind::Rpc),
+        (true, LogKind::Rpc),
+    ] {
+        let (project, log_store, key, mut cx) = rpc_registration_fixture(cx).await;
+        let log_view = cx.new_window_entity(|window, cx| {
+            LspLogView::new(project.clone(), log_store.clone(), window, cx)
+        });
+        cx.update(|window, cx| {
+            log_view.update(cx, |view, cx| {
+                view.show_entry_for_test(key.clone(), LogKind::Rpc, window, cx);
+                view.show_entry_for_test(key.clone(), active_entry, window, cx);
+                assert!(view.stream_enabled_for_test(&key, LogKind::Rpc));
+            });
+        });
+        if !batched {
+            log_store.update(&mut cx, |store, cx| store.remove_language_server(&key, cx));
+            log_view.update(&mut cx, |view, cx| {
+                assert!(!view.stream_enabled_for_test(&key, LogKind::Rpc));
+                assert!(view.menu_items(cx).expect("server menu").is_empty());
+            });
+        }
+        cx.update(|_, cx| {
+            log_store.update(cx, |store, cx| {
+                if batched {
+                    store.remove_language_server(&key, cx);
+                }
+                store.add_language_server(key.kind.clone(), key.server_id, None, None, None, cx);
+                store.add_language_server_log(&key, lsp::MessageType::LOG, "replacement log", cx);
+            });
+        });
+        let rpc_is_visible = active_entry == LogKind::Rpc;
+        assert_rpc_registration(&log_store, &key, rpc_is_visible, &cx);
+        cx.update(|window, cx| {
+            log_view.update(cx, |view, cx| {
+                if active_entry == LogKind::Logs {
+                    assert_eq!(view.editor.read(cx).text(cx), "replacement log\n");
+                }
+                assert_eq!(
+                    view.stream_enabled_for_test(&key, LogKind::Rpc),
+                    rpc_is_visible
+                );
+                let menu = view.menu_items(cx).expect("server menu");
+                assert_eq!(menu.len(), 1);
+                assert_eq!(
+                    menu.first().expect("replacement server").rpc_trace_enabled,
+                    rpc_is_visible
+                );
+                for _ in 0..2 {
+                    view.show_entry_for_test(key.clone(), LogKind::Rpc, window, cx);
+                    assert!(view.stream_enabled_for_test(&key, LogKind::Rpc));
+                }
+            });
+        });
+        assert_rpc_registration(&log_store, &key, true, &cx);
+        cx.update(|_, _| drop(log_view));
+        assert_rpc_registration(&log_store, &key, false, &cx);
+    }
+}
+
+#[gpui::test]
+async fn test_lsp_log_view_release_before_observer_preserves_replacement_rpc(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    for reenable_old_owner in [false, true] {
+        let (project, log_store, key, mut cx) = rpc_registration_fixture(cx).await;
+        let mut new_view = || {
+            cx.new_window_entity(|window, cx| {
+                LspLogView::new(project.clone(), log_store.clone(), window, cx)
+            })
+        };
+        let old_owner = new_view();
+        let new_owner = new_view();
+        cx.update(|window, cx| {
+            old_owner.update(cx, |view, cx| {
+                view.show_entry_for_test(key.clone(), LogKind::Rpc, window, cx);
+            });
+        });
+        cx.update(|window, cx| {
+            log_store.update(cx, |store, cx| {
+                store.remove_language_server(&key, cx);
+                store.add_language_server(key.kind.clone(), key.server_id, None, None, None, cx);
+            });
+            old_owner.update(cx, |view, cx| {
+                let menu = view.menu_items(cx).expect("server menu");
+                assert!(!menu.first().expect("replacement server").rpc_trace_enabled);
+                if reenable_old_owner {
+                    view.show_entry_for_test(key.clone(), LogKind::Rpc, window, cx);
+                }
+            });
+            if reenable_old_owner {
+                assert!(
+                    log_store
+                        .read(cx)
+                        .language_servers
+                        .get(&key)
+                        .is_some_and(|state| state.rpc_state.is_some())
+                );
+            }
+            new_owner.update(cx, |view, cx| {
+                assert!(!view.stream_enabled_for_test(&key, LogKind::Rpc));
+                view.show_entry_for_test(key.clone(), LogKind::Rpc, window, cx);
+            });
+            // Release runs before the coalesced notification can prune the old ownership.
+            drop(old_owner);
+        });
+        assert_rpc_registration(&log_store, &key, true, &cx);
+        cx.update(|_, _| drop(new_owner));
+        assert_rpc_registration(&log_store, &key, false, &cx);
+    }
 }
 
 #[gpui::test]
