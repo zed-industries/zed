@@ -61,8 +61,13 @@ impl AccentColors {
 }
 
 impl AccentColors {
-    /// Returns the color for the given index.
+    /// Returns the color for the given index, cycling through the array.
     pub fn color_for_index(&self, index: u32) -> Hsla {
-        self.0[index as usize % self.0.len()]
+        crate::cycle_hsla(&self.0, index)
+    }
+
+    /// Returns the accent colors with the given alpha applied, preserving their hues.
+    pub fn with_alpha(&self, alpha: f32) -> Vec<Hsla> {
+        self.0.iter().map(|color| color.alpha(alpha)).collect()
     }
 }
