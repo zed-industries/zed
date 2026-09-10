@@ -870,7 +870,7 @@ impl KeymapFile {
         generator.root_schema_for::<KeymapFile>().to_value()
     }
 
-    pub fn sections(&self) -> impl DoubleEndedIterator<Item = &KeymapSection> + ExactSizeIterator {
+    pub fn sections(&self) -> impl DoubleEndedIterator<Item = &KeymapSection> {
         self.0.iter()
     }
 
@@ -970,21 +970,40 @@ impl KeymapFile {
             }
         }
 
-        if let KeybindUpdateOperation::RemoveUnbind { target } = &operation {
+        if let KeybindUpdateOperation::RemoveUnbind {
+            target,
+            target_keybind_source,
+            target_keybind_occurrence,
+        } = &operation
+        {
             let target_action_value = target
                 .action_value()
                 .context("Failed to generate target action JSON value")?;
-            let mut removed_any = false;
-            loop {
-                let keymap = Self::parse(&keymap_contents).context("Failed to parse keymap")?;
-                let start_index = find_target_binding_section_index(
+            // Default rows are not stored in the user file, so every user
+            // unbind is a candidate (search from 0). User rows are only
+            // suppressed by later entries, mirroring runtime precedence
+            // (keymap_editor.rs `binding_is_unbound_by_unbind`), so start
+            // after the user binding itself. Bail instead of falling back
+            // to 0 when a user binding is not found: falling back would
+            // delete earlier unbinds that cannot suppress it.
+            let start_index = if *target_keybind_source == KeybindSource::User {
+                let Some(index) = find_target_binding_section_index(
                     &keymap,
                     target,
                     &target_action_value,
                     keyboard_mapper,
                     deprecated_aliases,
-                )
-                .map_or(0, |index| index + 1);
+                    *target_keybind_occurrence,
+                ) else {
+                    anyhow::bail!("Failed to find user binding to restore");
+                };
+                index + 1
+            } else {
+                0
+            };
+            let mut removed_any = false;
+            loop {
+                let keymap = Self::parse(&keymap_contents).context("Failed to parse keymap")?;
                 let Some(binding_location) = find_unbind_entry(
                     &keymap,
                     target,
@@ -1229,18 +1248,21 @@ impl KeymapFile {
             None
         }
 
-        /// Finds the section index of the target binding if it is defined in the
-        /// keymap file. Returns the latest matching section in file order.
+        /// Finds the section index of a particular occurrence of the target
+        /// binding in file order. The occurrence distinguishes identical user
+        /// bindings separated by unbind entries.
         fn find_target_binding_section_index<'a>(
             keymap: &KeymapFile,
             target: &KeybindUpdateTarget<'a>,
             target_action_value: &Value,
             keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
             deprecated_aliases: &HashMap<&'static str, &'static str>,
+            target_occurrence: usize,
         ) -> Option<usize> {
             let target_context_parsed =
                 parse_context_predicate(target.context.unwrap_or("")).ok()?;
-            for (index, section) in keymap.0.iter().enumerate().rev() {
+            let mut matches_to_skip = target_occurrence;
+            for (index, section) in keymap.0.iter().enumerate() {
                 let Ok(section_context_parsed) = parse_context_predicate(&section.context) else {
                     continue;
                 };
@@ -1248,7 +1270,7 @@ impl KeymapFile {
                     continue;
                 }
 
-                if let Some(binding_location) = find_binding_in_entries(
+                if let Some(binding_location) = find_nth_binding_in_entries(
                     section.bindings.as_ref(),
                     BindingKind::Binding,
                     index,
@@ -1257,9 +1279,10 @@ impl KeymapFile {
                     keyboard_mapper,
                     deprecated_aliases,
                     |action| &action.0,
+                    keymap.0[index].use_key_equivalents,
                     false,
-                    false,
-                    false,
+                    true,
+                    &mut matches_to_skip,
                 ) {
                     return Some(binding_location.index);
                 }
@@ -1329,6 +1352,37 @@ impl KeymapFile {
             action_name_only: bool,
             keystrokes_exact: bool,
         ) -> Option<BindingLocation<'b>> {
+            let mut matches_to_skip = 0;
+            find_nth_binding_in_entries(
+                entries,
+                kind,
+                index,
+                target,
+                target_action_value,
+                keyboard_mapper,
+                deprecated_aliases,
+                action_value,
+                use_key_equivalents,
+                action_name_only,
+                keystrokes_exact,
+                &mut matches_to_skip,
+            )
+        }
+
+        fn find_nth_binding_in_entries<'a, 'b, T>(
+            entries: Option<&'b IndexMap<String, T>>,
+            kind: BindingKind,
+            index: usize,
+            target: &KeybindUpdateTarget<'a>,
+            target_action_value: &Value,
+            keyboard_mapper: &dyn gpui::PlatformKeyboardMapper,
+            deprecated_aliases: &HashMap<&'static str, &'static str>,
+            action_value: impl Fn(&T) -> &Value,
+            use_key_equivalents: bool,
+            action_name_only: bool,
+            keystrokes_exact: bool,
+            matches_to_skip: &mut usize,
+        ) -> Option<BindingLocation<'b>> {
             let entries = entries?;
             for (keystrokes_str, action) in entries {
                 let Ok(keystrokes) = keystrokes_str
@@ -1349,10 +1403,9 @@ impl KeymapFile {
                     continue;
                 }
                 let keystrokes_match = if keystrokes_exact {
-                    keystrokes
-                        .iter()
-                        .zip(target.keystrokes)
-                        .all(|(a, b)| a == b)
+                    keystrokes.iter().zip(target.keystrokes).all(|(a, b)| {
+                        a.inner().key == b.inner().key && a.inner().modifiers == b.inner().modifiers
+                    })
                 } else {
                     keystrokes
                         .iter()
@@ -1376,6 +1429,10 @@ impl KeymapFile {
                     )
                 };
                 if !action_matches {
+                    continue;
+                }
+                if *matches_to_skip > 0 {
+                    *matches_to_skip -= 1;
                     continue;
                 }
                 return Some(BindingLocation {
@@ -1513,6 +1570,8 @@ pub enum KeybindUpdateOperation<'a> {
     },
     RemoveUnbind {
         target: KeybindUpdateTarget<'a>,
+        target_keybind_source: KeybindSource,
+        target_keybind_occurrence: usize,
     },
 }
 
@@ -1538,9 +1597,11 @@ impl KeybindUpdateOperation<'_> {
                 target,
                 target_keybind_source,
             } => (None, Some(target), Some(*target_keybind_source)),
-            KeybindUpdateOperation::RemoveUnbind { target } => {
-                (None, Some(target), Some(KeybindSource::User))
-            }
+            KeybindUpdateOperation::RemoveUnbind {
+                target,
+                target_keybind_source,
+                ..
+            } => (None, Some(target), Some(*target_keybind_source)),
         };
 
         let new_binding = new_binding
@@ -3035,6 +3096,8 @@ mod tests {
                     action_name: "editor::ConvertToLowerCase",
                     action_arguments: None,
                 },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
             },
             r#"
             [
@@ -3068,6 +3131,8 @@ mod tests {
                     action_name: "editor::ConvertToLowerCase",
                     action_arguments: None,
                 },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
             },
             r#"
             [
@@ -3105,6 +3170,8 @@ mod tests {
                     action_name: "editor::ConvertToLowerCase",
                     action_arguments: None,
                 },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
             },
             r#"
             [
@@ -3141,6 +3208,8 @@ mod tests {
                     action_name: "editor::ConvertToLowerCase",
                     action_arguments: None,
                 },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
             },
             r#"
             [
@@ -3178,6 +3247,8 @@ mod tests {
                     action_name: "editor::ConvertToLowerCase",
                     action_arguments: None,
                 },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
             },
             r#"
             [
@@ -3221,6 +3292,8 @@ mod tests {
                     action_name: "editor::ConvertToLowerCase",
                     action_arguments: None,
                 },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
             },
             r#"
             [
@@ -3267,6 +3340,8 @@ mod tests {
                     action_name: "editor::ConvertToLowerCase",
                     action_arguments: None,
                 },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
             },
             r#"
             [
@@ -3318,6 +3393,8 @@ mod tests {
                     action_name: "editor::ConvertToLowerCase",
                     action_arguments: None,
                 },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
             },
             r#"
             [
@@ -3376,6 +3453,8 @@ mod tests {
                     action_name: "test::Action",
                     action_arguments: None,
                 },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
             },
             r#"
             [
@@ -3437,6 +3516,8 @@ mod tests {
                     action_name: "test::Action",
                     action_arguments: None,
                 },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
             },
             r#"
             [
@@ -3493,6 +3574,8 @@ mod tests {
                     action_name: "editor::ConvertToLowerCase",
                     action_arguments: None,
                 },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
             },
             r#"
             [
@@ -3511,5 +3594,191 @@ mod tests {
             "#
             .unindent(),
         );
+
+        // A default binding re-declared in the user file after its unbind:
+        // restoring the default row must still find the earlier unbind
+        // instead of starting the search after the user copy.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "unbind": {
+                  "cmd-s": "workspace::Save"
+                }
+              },
+              {
+                "bindings": {
+                  "cmd-s": "workspace::Save"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("cmd-s"),
+                    action_name: "workspace::Save",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::Default,
+                target_keybind_occurrence: 0,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "cmd-s": "workspace::Save"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("shift-a"),
+                    action_name: "test::Action",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 1,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "bindings": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": ["test::Action", {"binding": "first"}]
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "bindings": {
+                  "shift-a": ["test::Action", {"binding": "second"}]
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("shift-a"),
+                    action_name: "test::Action",
+                    action_arguments: Some(r#"{"binding": "second"}"#),
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "shift-a": ["test::Action", {"binding": "first"}]
+                }
+              },
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              },
+              {
+                "bindings": {
+                  "shift-a": ["test::Action", {"binding": "second"}]
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // A user binding that is not present in the file must bail instead
+        // of falling back to index 0 and deleting unrelated earlier unbinds.
+        let result = KeymapFile::update_keybinding(
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: Some("vim"),
+                    keystrokes: &parse_keystrokes("shift-a"),
+                    action_name: "test::Action",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+            },
+            r#"
+            [
+              {
+                "unbind": {
+                  "shift-a": "test::Action"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            4,
+            &gpui::DummyKeyboardMapper,
+            &HashMap::default(),
+        );
+        assert!(result.is_err(), "expected bail for missing user binding");
     }
 }
