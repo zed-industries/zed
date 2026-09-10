@@ -285,8 +285,8 @@ limits, or a custom endpoint.
       "api_url": "https://api.deepseek.com/v1",
       "available_models": [
         {
-          "name": "deepseek-v4-flash",
-          "display_name": "DeepSeek V4 Flash",
+          "name": "deepseek-flash",
+          "display_name": "DeepSeek V4.1 Flash",
           "max_tokens": 1000000,
           "max_output_tokens": 384000
         },
