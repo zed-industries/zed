@@ -59,7 +59,7 @@ use language::{
 };
 use markdown::Markdown;
 use multi_buffer::{
-    Anchor, ExpandExcerptDirection, ExpandInfo, MultiBufferOffset, MultiBufferPoint,
+    Anchor, ExcerptRange, ExpandExcerptDirection, ExpandInfo, MultiBufferOffset, MultiBufferPoint,
     MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
 };
 
@@ -5689,6 +5689,26 @@ impl EditorElement {
         }
     }
 
+    fn point_diagnostic_anchor(
+        snapshot: &MultiBufferSnapshot,
+        excerpt: &ExcerptRange<text::Anchor>,
+        text_anchor: text::Anchor,
+    ) -> Option<Anchor> {
+        let buffer = snapshot.buffer_for_id(text_anchor.buffer_id)?;
+        if !excerpt.contains(&text_anchor, buffer) {
+            return None;
+        }
+        let anchor = text_anchor.bias_right(buffer);
+        let anchor = if excerpt.context.start.cmp(&anchor, buffer).is_gt() {
+            excerpt.context.start
+        } else if excerpt.context.end.cmp(&anchor, buffer).is_lt() {
+            excerpt.context.end
+        } else {
+            anchor
+        };
+        snapshot.anchor_in_buffer(anchor)
+    }
+
     fn add_point_diagnostic<'a>(
         point_diagnostics: &mut Vec<(Point, &'a Diagnostic)>,
         seen: &mut HashSet<(Point, *const Diagnostic)>,
@@ -5711,13 +5731,13 @@ impl EditorElement {
         let mut point_diagnostics = Vec::new();
         let mut seen = HashSet::default();
 
-        for (buffer, buffer_range, _) in snapshot.range_to_buffer_ranges(range.clone()) {
+        for (buffer, buffer_range, excerpt) in snapshot.range_to_buffer_ranges(range.clone()) {
             for entry in buffer
                 .diagnostic_entries_in_range(buffer_range, false)
                 .filter(|entry| entry.range.start == entry.range.end)
             {
                 let Some(anchor) =
-                    snapshot.anchor_in_excerpt_with_bias(entry.range.start, Bias::Right)
+                    Self::point_diagnostic_anchor(snapshot, &excerpt, entry.range.start)
                 else {
                     continue;
                 };
@@ -5741,6 +5761,11 @@ impl EditorElement {
             else {
                 continue;
             };
+            let Some((_, excerpt)) =
+                snapshot.excerpt_containing(deleted_hunk_anchor..deleted_hunk_anchor)
+            else {
+                continue;
+            };
             let live_point = live_anchor.to_point(buffer);
 
             for entry in buffer
@@ -5751,7 +5776,7 @@ impl EditorElement {
                     continue;
                 }
                 let Some(anchor) =
-                    snapshot.anchor_in_excerpt_with_bias(entry.range.start, Bias::Right)
+                    Self::point_diagnostic_anchor(snapshot, &excerpt, entry.range.start)
                 else {
                     continue;
                 };
@@ -7829,6 +7854,49 @@ impl LineWithInvisibles {
         self.draw_point_diagnostics(layout, content_origin, line_y, window);
     }
 
+    fn point_diagnostic_spans(
+        &self,
+        diagnostic: &PointDiagnostic,
+        em_advance: Pixels,
+    ) -> Vec<(Pixels, Pixels)> {
+        let start_x = self.x_for_index(diagnostic.column as usize);
+        let end_x = start_x + em_advance;
+        let mut spans = vec![(start_x, end_x)];
+
+        let mut subtract_span = |range_start_x, range_end_x| {
+            let mut next_spans = Vec::new();
+            for (span_start, span_end) in spans.drain(..) {
+                if span_end <= range_start_x || range_end_x <= span_start {
+                    next_spans.push((span_start, span_end));
+                } else {
+                    if span_start < range_start_x {
+                        next_spans.push((span_start, range_start_x));
+                    }
+                    if range_end_x < span_end {
+                        next_spans.push((range_end_x, span_end));
+                    }
+                }
+            }
+            spans = next_spans;
+        };
+
+        for (range, severity) in &self.diagnostic_underline_severity_ranges {
+            if *severity <= diagnostic.severity {
+                subtract_span(self.x_for_index(range.start), self.x_for_index(range.end));
+            }
+        }
+        for other in &self.point_diagnostics {
+            let owns_overlap = other.severity < diagnostic.severity
+                || (other.severity == diagnostic.severity && other.column < diagnostic.column);
+            if owns_overlap {
+                let start_x = self.x_for_index(other.column as usize);
+                subtract_span(start_x, start_x + em_advance);
+            }
+        }
+
+        spans
+    }
+
     fn draw_point_diagnostics(
         &self,
         layout: &EditorLayout,
@@ -7839,16 +7907,16 @@ impl LineWithInvisibles {
         let alignment_offset = self.alignment_offset(layout.text_align, layout.content_width);
         let scroll_x = Pixels::from(layout.position_map.scroll_pixel_position.x);
         for diagnostic in &self.point_diagnostics {
-            let origin = content_origin
-                + point(
-                    self.x_for_index(diagnostic.column as usize) + alignment_offset - scroll_x,
-                    line_y + layout.point_diagnostic_underline_offset,
-                );
-            window.paint_underline(
-                origin,
-                layout.position_map.em_advance,
-                &diagnostic.underline,
-            );
+            for (span_start, span_end) in
+                self.point_diagnostic_spans(diagnostic, layout.position_map.em_advance)
+            {
+                let origin = content_origin
+                    + point(
+                        span_start + alignment_offset - scroll_x,
+                        line_y + layout.point_diagnostic_underline_offset,
+                    );
+                window.paint_underline(origin, span_end - span_start, &diagnostic.underline);
+            }
         }
     }
 
@@ -8347,7 +8415,7 @@ impl Element for EditorElement {
                     let font_size = style.text.font_size.to_pixels(rem_size);
                     let line_height = style.text.line_height_in_pixels(rem_size);
                     let ascent = window.text_system().ascent(font_id, font_size);
-                    let descent = window.text_system().descent(font_id, font_size);
+                    let descent = window.text_system().descent(font_id, font_size).abs();
                     let point_diagnostic_underline_offset =
                         underline_y_offset(line_height, ascent, descent);
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
@@ -11588,6 +11656,182 @@ mod tests {
             return;
         };
         assert!(line.point_diagnostics.is_empty());
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostic_painted_span_overlaps_ranged_diagnostic(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.new(|cx| Buffer::local("\niabc", cx));
+        buffer.update(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot();
+            let diagnostics = DiagnosticSet::new(
+                [
+                    DiagnosticEntry::new(
+                        text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 0),
+                        Diagnostic {
+                            severity: lsp::DiagnosticSeverity::WARNING,
+                            underline: true,
+                            ..Default::default()
+                        },
+                    ),
+                    DiagnosticEntry::new(
+                        text::PointUtf16::new(1, 1)..text::PointUtf16::new(1, 4),
+                        Diagnostic {
+                            severity: lsp::DiagnosticSeverity::ERROR,
+                            underline: true,
+                            ..Default::default()
+                        },
+                    ),
+                ],
+                &snapshot,
+            );
+            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
+            buffer.edit([(0..1, "")], None, cx);
+        });
+
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let window = cx.add_window(|window, cx| {
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let Ok(editor) = window.root(cx) else {
+            assert!(false, "editor window should have a root view");
+            return;
+        };
+        let mut style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+        style.text.font_family = ".ZedSans".into();
+        let expected_offset = Cell::new(None);
+        let (_, state) = cx.draw(Default::default(), size(px(500.), px(200.)), |window, _| {
+            let font_id = window.text_system().resolve_font(&style.text.font());
+            let font_size = style.text.font_size.to_pixels(window.rem_size());
+            let line_height = style.text.line_height_in_pixels(window.rem_size());
+            let descent = window.text_system().descent(font_id, font_size);
+            expected_offset.set(Some(underline_y_offset(
+                line_height,
+                window.text_system().ascent(font_id, font_size),
+                descent.abs(),
+            )));
+            EditorElement::new(&editor, style.clone())
+        });
+
+        let line = &state.position_map.line_layouts[0];
+        assert!(
+            line.diagnostic_underline_severity_ranges
+                .iter()
+                .any(|(range, severity)| {
+                    range == &(1..4) && *severity == lsp::DiagnosticSeverity::ERROR
+                })
+        );
+        assert!(
+            line.point_diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.severity == lsp::DiagnosticSeverity::WARNING)
+        );
+        let point_start = line.x_for_index(0);
+        let point_end = point_start + state.position_map.em_advance;
+        let ranged_start = line.x_for_index(1);
+        let ranged_end = line.x_for_index(4);
+        assert!(point_start < ranged_end && ranged_start < point_end);
+        let warning = line
+            .point_diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.severity == lsp::DiagnosticSeverity::WARNING)
+            .expect("warning point diagnostic should be retained");
+        let spans = line.point_diagnostic_spans(warning, state.position_map.em_advance);
+        assert!(
+            spans
+                .iter()
+                .all(|(start, end)| *end <= ranged_start || ranged_end <= *start)
+        );
+        assert!(
+            spans
+                .iter()
+                .any(|(start, end)| { *start == point_start && *end == ranged_start })
+        );
+        let Some(expected_offset) = expected_offset.take() else {
+            assert!(
+                false,
+                "point diagnostic metric expectation was not calculated"
+            );
+            return;
+        };
+        assert_eq!(state.point_diagnostic_underline_offset, expected_offset);
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostics_with_retained_edit_can_overlap(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.new(|cx| Buffer::local("\niabc", cx));
+        buffer.update(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot();
+            buffer.update_diagnostics(
+                lsp::LanguageServerId(0),
+                DiagnosticSet::new(
+                    [
+                        DiagnosticEntry::new(
+                            text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 0),
+                            Diagnostic {
+                                severity: lsp::DiagnosticSeverity::ERROR,
+                                underline: true,
+                                ..Default::default()
+                            },
+                        ),
+                        DiagnosticEntry::new(
+                            text::PointUtf16::new(1, 1)..text::PointUtf16::new(1, 1),
+                            Diagnostic {
+                                severity: lsp::DiagnosticSeverity::ERROR,
+                                underline: true,
+                                ..Default::default()
+                            },
+                        ),
+                    ],
+                    &snapshot,
+                ),
+                cx,
+            );
+            buffer.edit([(0..1, "")], None, cx);
+        });
+
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let window = cx.add_window(|window, cx| {
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let Ok(editor) = window.root(cx) else {
+            assert!(false, "editor window should have a root view");
+            return;
+        };
+        let mut style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+        style.text.font_family = ".ZedSans".into();
+        let (_, state) = cx.draw(Default::default(), size(px(500.), px(200.)), |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+        let line = &state.position_map.line_layouts[0];
+        assert_eq!(line.point_diagnostics.len(), 2);
+        assert_eq!(line.point_diagnostics[0].column, 0);
+        assert_eq!(line.point_diagnostics[1].column, 1);
+        let first_start = line.x_for_index(0);
+        let second_start = line.x_for_index(1);
+        assert!(first_start < second_start + state.position_map.em_advance);
+        assert!(second_start < first_start + state.position_map.em_advance);
+
+        let first_spans =
+            line.point_diagnostic_spans(&line.point_diagnostics[0], state.position_map.em_advance);
+        let second_spans =
+            line.point_diagnostic_spans(&line.point_diagnostics[1], state.position_map.em_advance);
+        assert_eq!(
+            first_spans,
+            vec![(first_start, first_start + state.position_map.em_advance)]
+        );
+        assert_eq!(
+            second_spans,
+            vec![(
+                first_start + state.position_map.em_advance,
+                second_start + state.position_map.em_advance,
+            )]
+        );
     }
 
     #[gpui::test]

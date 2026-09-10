@@ -5343,23 +5343,6 @@ impl MultiBufferSnapshot {
 
     /// Creates a multibuffer anchor for the given buffer anchor, if it is contained in any excerpt.
     pub fn anchor_in_excerpt(&self, text_anchor: text::Anchor) -> Option<Anchor> {
-        self.anchor_in_excerpt_impl(text_anchor, None)
-    }
-
-    /// Maps a source-buffer anchor into the excerpt that contains it, applying `bias` without allowing the resulting anchor to escape that excerpt.
-    pub fn anchor_in_excerpt_with_bias(
-        &self,
-        text_anchor: text::Anchor,
-        bias: Bias,
-    ) -> Option<Anchor> {
-        self.anchor_in_excerpt_impl(text_anchor, Some(bias))
-    }
-
-    fn anchor_in_excerpt_impl(
-        &self,
-        text_anchor: text::Anchor,
-        bias: Option<Bias>,
-    ) -> Option<Anchor> {
         let excerpts = {
             let buffer_id = text_anchor.buffer_id;
             if let Some(buffer_state) = self.buffers.get(&buffer_id) {
@@ -5380,39 +5363,11 @@ impl MultiBufferSnapshot {
             .into_iter()
             .flatten()
         };
-
         for excerpt in excerpts {
             let buffer_snapshot = excerpt.buffer_snapshot(self);
-            if !excerpt.range.contains(&text_anchor, &buffer_snapshot) {
-                continue;
+            if excerpt.range.contains(&text_anchor, &buffer_snapshot) {
+                return Some(Anchor::in_buffer(excerpt.path_key_index, text_anchor));
             }
-
-            let anchor = match bias {
-                Some(Bias::Left) => text_anchor.bias_left(&buffer_snapshot),
-                Some(Bias::Right) => text_anchor.bias_right(&buffer_snapshot),
-                None => text_anchor,
-            };
-            let anchor = if excerpt
-                .range
-                .context
-                .start
-                .cmp(&anchor, &buffer_snapshot)
-                .is_gt()
-            {
-                excerpt.range.context.start
-            } else if excerpt
-                .range
-                .context
-                .end
-                .cmp(&anchor, &buffer_snapshot)
-                .is_lt()
-            {
-                excerpt.range.context.end
-            } else {
-                anchor
-            };
-
-            return Some(Anchor::in_buffer(excerpt.path_key_index, anchor));
         }
 
         None
