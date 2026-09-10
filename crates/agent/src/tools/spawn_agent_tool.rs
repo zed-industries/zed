@@ -30,6 +30,10 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 /// - When a plan has multiple independent steps, prefer delegating those steps in parallel rather than serializing them unnecessarily.
 /// - Reuse the returned session_id when you want to follow up on the same delegated subproblem instead of creating a duplicate session.
 ///
+/// ### Restricting subagent tools
+/// - By default a subagent inherits all of your tools. Pass `tools` to restrict it to an allowlist — for example read-only tools like ["read_file", "grep", "find_path"] for a search task, or an empty list for a pure reasoning task over content in the message.
+/// - A scoped allowlist keeps focused subtasks from performing side effects you did not intend.
+///
 /// ### Output
 /// - You will receive only the agent's final message as output.
 /// - Successful calls return a session_id that you can use for follow-up messages.
@@ -44,6 +48,9 @@ pub struct SpawnAgentToolInput {
     /// Session ID of an existing agent session to continue instead of creating a new one. Omit to create a new agent.
     #[serde(default, deserialize_with = "deserialize_session_id")]
     pub session_id: Option<acp::SessionId>,
+    /// Optional allowlist of tool names the subagent may use (e.g. ["read_file", "grep"]). When present, the subagent is restricted to only those tools; when omitted, it inherits your full tool set. An empty list gives the subagent no tools at all. Names must be a subset of your available tools. Ignored when resuming an existing session — the session keeps the filter it was created with.
+    #[serde(default)]
+    pub tools: Option<Vec<String>>,
 }
 
 fn deserialize_session_id<'de, D>(deserializer: D) -> Result<Option<acp::SessionId>, D::Error>
@@ -163,9 +170,14 @@ impl AgentTool for SpawnAgentTool {
 
             let (subagent, mut session_info) = cx.update(|cx| {
                 let subagent = if let Some(session_id) = input.session_id {
+                    // A resumed session keeps the tool filter it was created
+                    // with; `tools` is intentionally ignored here.
                     self.environment.resume_subagent(session_id, cx)
                 } else {
-                    self.environment.create_subagent(input.label, cx)
+                    let tool_filter = input
+                        .tools
+                        .map(|tools| tools.into_iter().map(SharedString::from).collect());
+                    self.environment.create_subagent(input.label, tool_filter, cx)
                 };
                 let subagent = subagent.map_err(|err| SpawnAgentToolOutput::Error {
                     session_id: None,
@@ -307,5 +319,44 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(input.session_id.unwrap().to_string(), "existing-session");
+    }
+
+    #[test]
+    fn deserializes_tools_allowlist() {
+        // Absent or explicit null means no restriction.
+        let input: SpawnAgentToolInput = serde_json::from_value(json!({
+            "label": "label",
+            "message": "message",
+        }))
+        .unwrap();
+        assert!(input.tools.is_none());
+
+        let input: SpawnAgentToolInput = serde_json::from_value(json!({
+            "label": "label",
+            "message": "message",
+            "tools": null,
+        }))
+        .unwrap();
+        assert!(input.tools.is_none());
+
+        // An empty list means the subagent gets no tools at all.
+        let input: SpawnAgentToolInput = serde_json::from_value(json!({
+            "label": "label",
+            "message": "message",
+            "tools": [],
+        }))
+        .unwrap();
+        assert_eq!(input.tools, Some(Vec::new()));
+
+        let input: SpawnAgentToolInput = serde_json::from_value(json!({
+            "label": "label",
+            "message": "message",
+            "tools": ["read_file", "grep"],
+        }))
+        .unwrap();
+        assert_eq!(
+            input.tools,
+            Some(vec!["read_file".to_string(), "grep".to_string()])
+        );
     }
 }
