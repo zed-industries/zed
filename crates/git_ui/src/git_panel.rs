@@ -4322,10 +4322,11 @@ impl GitPanel {
             .project
             .read(cx)
             .visible_worktrees(cx)
+            .filter(|worktree| !worktree.read(cx).is_single_file())
             .collect::<Vec<_>>();
 
-        let worktree = if worktrees.len() == 1 {
-            Task::ready(Some(worktrees.first().unwrap().clone()))
+        let worktree = if let [worktree] = worktrees.as_slice() {
+            Task::ready(Some(worktree.clone()))
         } else if worktrees.is_empty() {
             let result = window.prompt(
                 PromptLevel::Warning,
@@ -9702,6 +9703,7 @@ mod tests {
     };
     use gpui::{Modifiers, TestAppContext, UpdateGlobal, VisualTestContext, px};
     use indoc::indoc;
+    use picker::PickerDelegate;
     use project::FakeFs;
     use search::{BufferSearchBar, buffer_search::Deploy};
     use serde_json::json;
@@ -9886,6 +9888,193 @@ mod tests {
         await_git_panel_entries(&panel, &mut cx).await;
 
         (fs, project, workspace, panel, cx)
+    }
+
+    async fn setup_git_init_panel(
+        cx: &mut TestAppContext,
+        tree: serde_json::Value,
+        worktree_paths: &[&Path],
+    ) -> (
+        Arc<FakeFs>,
+        Entity<Project>,
+        Entity<Workspace>,
+        Entity<GitPanel>,
+        VisualTestContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/root"), tree).await;
+        let project = Project::test(fs.clone(), worktree_paths.iter().copied(), cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("workspace should exist");
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+
+        (fs, project, workspace, panel, cx)
+    }
+
+    #[gpui::test]
+    async fn test_git_init_rejects_single_file_worktree(cx: &mut TestAppContext) {
+        let (fs, project, _, panel, mut cx) = setup_git_init_panel(
+            cx,
+            json!({
+                "plain.txt": "hello",
+            }),
+            &[path!("/root/plain.txt").as_ref()],
+        )
+        .await;
+        assert!(project.read_with(&cx, |project, cx| {
+            project
+                .visible_worktrees(cx)
+                .next()
+                .is_some_and(|worktree| worktree.read(cx).is_single_file())
+        }));
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.git_init(window, cx);
+        });
+
+        let (title, detail) = cx
+            .pending_prompt()
+            .expect("single-file Git initialization should show a warning");
+        assert_eq!(title, "Unable to initialize a git repository");
+        assert_eq!(detail, "Open a directory first");
+        assert!(!fs.is_dir(Path::new(path!("/root/plain.txt/.git"))).await);
+
+        cx.simulate_prompt_answer("OK");
+        cx.cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_git_init_ignores_single_file_when_directory_is_available(
+        cx: &mut TestAppContext,
+    ) {
+        let (fs, project, _, panel, mut cx) = setup_git_init_panel(
+            cx,
+            json!({
+                "directory": {
+                    "nested.txt": "hello",
+                },
+                "plain.txt": "hello",
+            }),
+            &[
+                path!("/root/directory").as_ref(),
+                path!("/root/plain.txt").as_ref(),
+            ],
+        )
+        .await;
+        project.read_with(&cx, |project, cx| {
+            let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 2);
+            assert!(
+                worktrees
+                    .iter()
+                    .any(|worktree| worktree.read(cx).is_single_file())
+            );
+            assert!(
+                worktrees
+                    .iter()
+                    .any(|worktree| !worktree.read(cx).is_single_file())
+            );
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.git_init(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(fs.is_dir(Path::new(path!("/root/directory/.git"))).await);
+        assert!(!fs.is_dir(Path::new(path!("/root/plain.txt/.git"))).await);
+        assert!(!cx.has_pending_prompt());
+    }
+
+    #[gpui::test]
+    async fn test_git_init_picker_excludes_single_file_worktree(cx: &mut TestAppContext) {
+        let (fs, _, workspace, panel, mut cx) = setup_git_init_panel(
+            cx,
+            json!({
+                "directory-a": {
+                    "nested.txt": "hello",
+                },
+                "directory-b": {
+                    "nested.txt": "hello",
+                },
+                "plain.txt": "hello",
+            }),
+            &[
+                path!("/root/directory-a").as_ref(),
+                path!("/root/plain.txt").as_ref(),
+                path!("/root/directory-b").as_ref(),
+            ],
+        )
+        .await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.git_init(window, cx);
+        });
+        cx.cx.run_until_parked();
+
+        let picker = workspace.update(&mut cx, |workspace, cx| {
+            workspace
+                .active_modal::<picker_prompt::PickerPrompt>(cx)
+                .expect("worktree picker should be open")
+                .read(cx)
+                .picker
+                .clone()
+        });
+        picker.read_with(&cx, |picker, _| {
+            assert_eq!(picker.delegate.match_count(), 2);
+        });
+        picker.update_in(&mut cx, |picker, window, cx| {
+            picker.set_query("directory-b", window, cx);
+        });
+        cx.cx.run_until_parked();
+        picker.read_with(&cx, |picker, _| {
+            assert_eq!(picker.delegate.match_count(), 1);
+        });
+
+        cx.dispatch_action(menu::Confirm);
+        cx.cx.run_until_parked();
+
+        assert!(!fs.is_dir(Path::new(path!("/root/directory-a/.git"))).await);
+        assert!(fs.is_dir(Path::new(path!("/root/directory-b/.git"))).await);
+        assert!(!fs.is_dir(Path::new(path!("/root/plain.txt/.git"))).await);
+        assert!(workspace.update(&mut cx, |workspace, cx| {
+            workspace
+                .active_modal::<picker_prompt::PickerPrompt>(cx)
+                .is_none()
+        }));
+    }
+
+    #[gpui::test]
+    async fn test_git_init_initializes_directory_worktree(cx: &mut TestAppContext) {
+        let (fs, project, _, panel, mut cx) = setup_git_init_panel(
+            cx,
+            json!({
+                "directory": {
+                    "nested.txt": "hello",
+                },
+            }),
+            &[path!("/root/directory").as_ref()],
+        )
+        .await;
+        assert!(project.read_with(&cx, |project, cx| {
+            project
+                .visible_worktrees(cx)
+                .next()
+                .is_some_and(|worktree| !worktree.read(cx).is_single_file())
+        }));
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.git_init(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(fs.is_dir(Path::new(path!("/root/directory/.git"))).await);
+        assert!(!cx.has_pending_prompt());
     }
 
     #[gpui::test]
