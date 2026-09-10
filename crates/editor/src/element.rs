@@ -50,17 +50,17 @@ use gpui::{
     ParentElement, Pixels, ScrollHandle, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, StyledText, TaskExt, TextAlign, TextRun,
     TextStyleRefinement, UnderlineStyle, WeakEntity, Window, div, fill, outline, pattern_slash,
-    point, px, quad, relative, size, solid_background, transparent_black,
+    point, px, quad, relative, size, solid_background, transparent_black, underline_y_offset,
 };
 use itertools::Itertools;
 use language::{
-    HighlightedText, IndentGuideSettings, LanguageAwareStyling,
+    Diagnostic, HighlightedText, IndentGuideSettings, LanguageAwareStyling,
     language_settings::ShowWhitespaceSetting,
 };
 use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExpandExcerptDirection, ExpandInfo, MultiBufferOffset, MultiBufferPoint,
-    MultiBufferRow, RowInfo, ToOffset,
+    MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
 };
 
 use project::{
@@ -3202,6 +3202,7 @@ impl EditorElement {
                         len: line.len,
                         fragments: smallvec![LineFragment::Text(line)],
                         invisibles: Vec::new(),
+                        diagnostic_underline_severity_ranges: Vec::new(),
                         point_diagnostics: Vec::new(),
                         font_size,
                     }
@@ -5653,9 +5654,10 @@ impl EditorElement {
             .clip_ignoring_line_ends(DisplayPoint::new(visible_rows.end, 0), Bias::Right);
         let query_end = display_snapshot.display_point_to_point(query_end_display, Bias::Right);
 
-        for entry in buffer_snapshot.point_diagnostics_in_range(query_start..query_end) {
-            let diagnostic = entry.diagnostic;
-            if display_snapshot.intersects_fold(entry.range.start) {
+        for (point, diagnostic) in
+            Self::point_diagnostics_in_range(buffer_snapshot, query_start..query_end)
+        {
+            if display_snapshot.intersects_fold(point) {
                 continue;
             }
 
@@ -5668,7 +5670,7 @@ impl EditorElement {
                 continue;
             };
 
-            let display_point = entry.range.start.to_display_point(display_snapshot);
+            let display_point = point.to_display_point(display_snapshot);
             if !visible_rows.contains(&display_point.row()) {
                 continue;
             }
@@ -5683,16 +5685,29 @@ impl EditorElement {
                 severity: diagnostic.severity,
             };
 
-            if let Some(existing) = line_layout.point_diagnostics.last_mut()
-                && existing.column == point_diagnostic.column
-            {
-                if point_diagnostic.severity < existing.severity {
-                    *existing = point_diagnostic;
-                }
-            } else {
-                line_layout.point_diagnostics.push(point_diagnostic);
-            }
+            line_layout.add_point_diagnostic(point_diagnostic);
         }
+    }
+
+    fn point_diagnostics_in_range(
+        snapshot: &MultiBufferSnapshot,
+        range: Range<Point>,
+    ) -> Vec<(Point, &Diagnostic)> {
+        snapshot
+            .range_to_buffer_ranges(range)
+            .into_iter()
+            .flat_map(|(buffer, buffer_range, _)| {
+                buffer
+                    .diagnostic_entries_in_range(buffer_range, false)
+                    .filter(|entry| entry.range.start == entry.range.end)
+                    .filter_map(|entry| {
+                        let anchor = snapshot
+                            .anchor_in_excerpt(entry.range.start)?
+                            .bias_right(snapshot);
+                        Some((anchor.to_point(snapshot), &entry.diagnostic))
+                    })
+            })
+            .collect()
     }
 
     fn paint_text(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
@@ -7209,6 +7224,7 @@ fn render_blame_entry(
 pub(crate) struct LineWithInvisibles {
     fragments: SmallVec<[LineFragment; 1]>,
     invisibles: Vec<Invisible>,
+    diagnostic_underline_severity_ranges: Vec<(Range<usize>, lsp::DiagnosticSeverity)>,
     point_diagnostics: Vec<PointDiagnostic>,
     len: usize,
     pub(crate) width: Pixels,
@@ -7260,6 +7276,7 @@ impl LineWithInvisibles {
         // mid-line inlays/replacements, so marker offsets stay correct in that case.
         let mut line_byte_offset: usize = 0;
         let mut invisibles = Vec::new();
+        let mut diagnostic_underline_severity_ranges = Vec::new();
         let mut width = Pixels::ZERO;
         let mut len = 0;
         let mut styles = Vec::new();
@@ -7274,6 +7291,7 @@ impl LineWithInvisibles {
         for highlighted_chunk in chunks.chain([HighlightedChunk {
             text: "\n",
             style: None,
+            diagnostic_underline_severity: None,
             is_tab: false,
             is_inlay: false,
             replacement: None,
@@ -7339,6 +7357,12 @@ impl LineWithInvisibles {
                             cx,
                         );
 
+                        if let Some(severity) = highlighted_chunk.diagnostic_underline_severity {
+                            diagnostic_underline_severity_ranges.push((
+                                line_byte_offset..line_byte_offset + highlighted_chunk.text.len(),
+                                severity,
+                            ));
+                        }
                         width += size.width;
                         len += highlighted_chunk.text.len();
                         line_byte_offset += highlighted_chunk.text.len();
@@ -7369,6 +7393,12 @@ impl LineWithInvisibles {
                             .shape_line(x, font_size, &[run], None)
                             .with_len(highlighted_chunk.text.len());
 
+                        if let Some(severity) = highlighted_chunk.diagnostic_underline_severity {
+                            diagnostic_underline_severity_ranges.push((
+                                line_byte_offset..line_byte_offset + highlighted_chunk.text.len(),
+                                severity,
+                            ));
+                        }
                         width += line_layout.width;
                         len += highlighted_chunk.text.len();
                         line_byte_offset += highlighted_chunk.text.len();
@@ -7398,6 +7428,9 @@ impl LineWithInvisibles {
                             len: mem::take(&mut len),
                             fragments: mem::take(&mut fragments),
                             invisibles: std::mem::take(&mut invisibles),
+                            diagnostic_underline_severity_ranges: mem::take(
+                                &mut diagnostic_underline_severity_ranges,
+                            ),
                             point_diagnostics: Vec::new(),
                             font_size,
                         });
@@ -7443,6 +7476,13 @@ impl LineWithInvisibles {
                             strikethrough: text_style.strikethrough,
                         });
 
+                        if let Some(severity) = highlighted_chunk.diagnostic_underline_severity {
+                            diagnostic_underline_severity_ranges.push((
+                                line_byte_offset..line_byte_offset + line_chunk.len(),
+                                severity,
+                            ));
+                        }
+
                         if editor_mode.is_full() && !highlighted_chunk.is_inlay {
                             // Line wrap pads its contents with fake whitespaces,
                             // avoid printing them
@@ -7484,6 +7524,30 @@ impl LineWithInvisibles {
         }
 
         layouts
+    }
+
+    fn add_point_diagnostic(&mut self, point_diagnostic: PointDiagnostic) {
+        let column = point_diagnostic.column as usize;
+        if self
+            .diagnostic_underline_severity_ranges
+            .iter()
+            .filter(|(range, _)| range.contains(&column))
+            .any(|(_, severity)| *severity <= point_diagnostic.severity)
+        {
+            return;
+        }
+
+        if let Some(existing) = self
+            .point_diagnostics
+            .iter_mut()
+            .find(|existing| existing.column == point_diagnostic.column)
+        {
+            if point_diagnostic.severity < existing.severity {
+                *existing = point_diagnostic;
+            }
+        } else {
+            self.point_diagnostics.push(point_diagnostic);
+        }
     }
 
     /// Takes text runs and non-overlapping left-to-right background ranges with color.
@@ -8213,8 +8277,8 @@ impl Element for EditorElement {
                     let line_height = style.text.line_height_in_pixels(rem_size);
                     let ascent = window.text_system().ascent(font_id, font_size);
                     let descent = window.text_system().descent(font_id, font_size);
-                    let underline_offset =
-                        (line_height - ascent - descent) / 2. + ascent + descent * 0.618;
+                    let point_diagnostic_underline_offset =
+                        underline_y_offset(line_height, ascent, descent);
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
                     let em_layout_width = window.text_system().em_layout_width(font_id, font_size);
@@ -9667,7 +9731,7 @@ impl Element for EditorElement {
                         line_numbers,
                         blamed_display_rows,
                         inline_diagnostics,
-                        point_diagnostic_underline_offset: underline_offset,
+                        point_diagnostic_underline_offset,
                         inline_blame_layout,
                         inline_code_actions,
                         blocks,
@@ -11005,10 +11069,11 @@ mod tests {
         display_map::{BlockPlacement, BlockProperties, DisplayMap},
         editor_tests::{init_test, update_test_language_settings},
     };
+    use buffer_diff::BufferDiff;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, font};
     use language::{
-        Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, SelectionGoal, language_settings,
-        tree_sitter_python,
+        Buffer, Capability, Diagnostic, DiagnosticEntry, DiagnosticSet, SelectionGoal,
+        language_settings, tree_sitter_python,
     };
     use log::info;
     use rand::{RngCore, rngs::StdRng};
@@ -11326,6 +11391,221 @@ mod tests {
             assert_eq!(diagnostic.column, point.column);
             assert_eq!(diagnostic.underline.color, Some(style.status.error));
         }
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostic_respects_ranged_diagnostic_severity(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.new(|cx| Buffer::local("\nabc", cx));
+        buffer.update(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot();
+            let diagnostics = DiagnosticSet::new(
+                [
+                    DiagnosticEntry::new(
+                        text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 0),
+                        Diagnostic {
+                            severity: lsp::DiagnosticSeverity::WARNING,
+                            underline: true,
+                            ..Default::default()
+                        },
+                    ),
+                    DiagnosticEntry::new(
+                        text::PointUtf16::new(1, 0)..text::PointUtf16::new(1, 3),
+                        Diagnostic {
+                            severity: lsp::DiagnosticSeverity::ERROR,
+                            underline: true,
+                            ..Default::default()
+                        },
+                    ),
+                ],
+                &snapshot,
+            );
+            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
+            buffer.edit([(0..1, "")], None, cx);
+        });
+
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let window = cx.add_window(|window, cx| {
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let Ok(editor) = window.root(cx) else {
+            assert!(false, "editor window should have a root view");
+            return;
+        };
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+
+        let (_, state) = cx.draw(Default::default(), size(px(500.), px(200.)), |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+        let Some(line) = state.position_map.line_layouts.first() else {
+            assert!(false, "diagnostic row should have a line layout");
+            return;
+        };
+        assert!(line.point_diagnostics.is_empty());
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostics_follow_expanded_deletions(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        for (text, base_text, point, expected_display_row) in [
+            ("\nthree\n", "one\n\nthree\n", Point::new(0, 0), 1),
+            ("one\n\nthree\n", "one\ntwo\n\nthree\n", Point::new(1, 0), 2),
+            ("one\n", "one\ntwo\n", Point::new(1, 0), 2),
+        ] {
+            let buffer = cx.new(|cx| Buffer::local(text, cx));
+            buffer.update(cx, |buffer, cx| {
+                let point = text::PointUtf16::new(point.row, point.column);
+                let diagnostics = DiagnosticSet::new(
+                    [
+                        DiagnosticEntry::new(
+                            point..point,
+                            Diagnostic {
+                                severity: lsp::DiagnosticSeverity::WARNING,
+                                underline: true,
+                                ..Default::default()
+                            },
+                        ),
+                        DiagnosticEntry::new(
+                            point..point,
+                            Diagnostic {
+                                severity: lsp::DiagnosticSeverity::ERROR,
+                                underline: true,
+                                ..Default::default()
+                            },
+                        ),
+                    ],
+                    &buffer.snapshot(),
+                );
+                buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
+            });
+
+            let diff = cx.new(|cx| {
+                BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx)
+            });
+            let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            multi_buffer.update(cx, |multi_buffer, cx| {
+                multi_buffer.add_diff(diff, cx);
+                multi_buffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
+            });
+            cx.run_until_parked();
+
+            let snapshot = cx.update(|cx| multi_buffer.read(cx).snapshot(cx));
+            let expected_point = Point::new(expected_display_row as u32, 0);
+            for query_start in iter::once(Point::zero())
+                .chain((expected_point < snapshot.max_point()).then_some(expected_point))
+            {
+                let point_diagnostics = EditorElement::point_diagnostics_in_range(
+                    &snapshot,
+                    query_start..snapshot.max_point(),
+                );
+                assert_eq!(
+                    point_diagnostics.len(),
+                    2,
+                    "text: {text:?}, base: {base_text:?}, query start: {query_start:?}"
+                );
+                assert!(
+                    point_diagnostics
+                        .iter()
+                        .all(|(point, _)| *point == expected_point)
+                );
+            }
+
+            let window = cx.add_window(|window, cx| {
+                let mut editor = Editor::new(EditorMode::full(), multi_buffer, None, window, cx);
+                editor.set_read_only(true);
+                editor
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+            let Ok(editor) = window.root(cx) else {
+                assert!(false, "editor window should have a root view");
+                return;
+            };
+            let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+
+            let (_, state) = cx.draw(Default::default(), size(px(500.), px(300.)), |_, _| {
+                EditorElement::new(&editor, style.clone())
+            });
+            let point_diagnostic_rows = state
+                .position_map
+                .line_layouts
+                .iter()
+                .enumerate()
+                .filter_map(|(row, line)| (!line.point_diagnostics.is_empty()).then_some(row))
+                .collect::<Vec<_>>();
+            assert_eq!(point_diagnostic_rows, vec![expected_display_row]);
+            let Some(diagnostic) = state
+                .position_map
+                .line_layouts
+                .get(expected_display_row)
+                .and_then(|line| line.point_diagnostics.first())
+            else {
+                assert!(false, "point diagnostic should be on its live row");
+                return;
+            };
+            assert_eq!(diagnostic.underline.color, Some(style.status.error));
+        }
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostics_exclude_collapsed_and_clipped_ranges(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let collapsed_buffer = cx.new(|cx| Buffer::local("bad ok", cx));
+        collapsed_buffer.update(cx, |buffer, cx| {
+            let diagnostics = DiagnosticSet::new(
+                [DiagnosticEntry::new(
+                    text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 3),
+                    Diagnostic::default(),
+                )],
+                &buffer.snapshot(),
+            );
+            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
+            buffer.edit([(0..4, "")], None, cx);
+        });
+        let collapsed_multi_buffer = cx.new(|cx| MultiBuffer::singleton(collapsed_buffer, cx));
+        let snapshot = cx.update(|cx| collapsed_multi_buffer.read(cx).snapshot(cx));
+        assert!(
+            EditorElement::point_diagnostics_in_range(
+                &snapshot,
+                Point::zero()..snapshot.max_point(),
+            )
+            .is_empty()
+        );
+
+        let clipped_buffer = cx.new(|cx| Buffer::local("bad\ngood\n", cx));
+        clipped_buffer.update(cx, |buffer, cx| {
+            let diagnostics = DiagnosticSet::new(
+                [DiagnosticEntry::new(
+                    text::PointUtf16::new(0, 0)..text::PointUtf16::new(1, 0),
+                    Diagnostic::default(),
+                )],
+                &buffer.snapshot(),
+            );
+            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
+        });
+        let clipped_multi_buffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        clipped_multi_buffer.update(cx, |multi_buffer, cx| {
+            multi_buffer.set_excerpt_ranges_for_path(
+                multi_buffer::PathKey::sorted(0),
+                clipped_buffer.clone(),
+                &clipped_buffer.read(cx).snapshot(),
+                vec![multi_buffer::ExcerptRange::new(
+                    Point::new(1, 0)..Point::new(1, 4),
+                )],
+                cx,
+            );
+        });
+        let snapshot = cx.update(|cx| clipped_multi_buffer.read(cx).snapshot(cx));
+        assert!(
+            EditorElement::point_diagnostics_in_range(
+                &snapshot,
+                Point::zero()..snapshot.max_point(),
+            )
+            .is_empty()
+        );
     }
 
     #[gpui::test]
@@ -12498,6 +12778,7 @@ mod tests {
                 let chunks = std::iter::once(HighlightedChunk {
                     text: "\u{00a0}",
                     style: None,
+                    diagnostic_underline_severity: None,
                     is_tab: false,
                     is_inlay: false,
                     replacement: Some(ChunkReplacement::Str("\u{2007}".into())),
@@ -12505,6 +12786,7 @@ mod tests {
                 .chain(std::iter::once(HighlightedChunk {
                     text: "abcdefghi",
                     style: None,
+                    diagnostic_underline_severity: None,
                     is_tab: false,
                     is_inlay: false,
                     replacement: None,
@@ -12513,6 +12795,7 @@ mod tests {
                     std::iter::repeat_with(|| HighlightedChunk {
                         text: "\u{00a0}",
                         style: None,
+                        diagnostic_underline_severity: None,
                         is_tab: false,
                         is_inlay: false,
                         replacement: Some(ChunkReplacement::Str("\u{2007}".into())),
