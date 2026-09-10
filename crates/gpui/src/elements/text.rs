@@ -1114,6 +1114,20 @@ impl Element for InteractiveText {
                 self.text
                     .prepaint(None, inspector_id, bounds, state, window, cx);
                 let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                if let Some(global_id) = global_id
+                    && self.tooltip_builder.is_some()
+                {
+                    let text_layout = self.text.layout().clone();
+                    window.register_tooltip_owner(
+                        global_id,
+                        &hitbox,
+                        Rc::new(move |window| {
+                            text_layout
+                                .index_for_position(window.mouse_position())
+                                .is_ok()
+                        }),
+                    );
+                }
                 (hitbox, interactive_state)
             },
         )
@@ -1209,6 +1223,7 @@ impl Element for InteractiveText {
                 });
 
                 if let Some(tooltip_builder) = self.tooltip_builder.clone() {
+                    let tooltip_owner_id = global_id.unwrap().clone();
                     let active_tooltip = interactive_state.active_tooltip.clone();
                     let build_tooltip = Rc::new({
                         let tooltip_is_hoverable = false;
@@ -1222,30 +1237,23 @@ impl Element for InteractiveText {
                         }
                     });
 
-                    // Use bounds instead of testing hitbox since this is called during prepaint.
                     let check_is_hovered_during_prepaint = Rc::new({
-                        let source_bounds = hitbox.bounds;
-                        let text_layout = text_layout.clone();
                         let pending_mouse_down = interactive_state.mouse_down_index.clone();
+                        let tooltip_owner_id = tooltip_owner_id.clone();
                         move |window: &Window| {
-                            text_layout
-                                .index_for_position(window.mouse_position())
-                                .is_ok()
-                                && source_bounds.contains(&window.mouse_position())
+                            !window.last_input_was_keyboard()
                                 && pending_mouse_down.get().is_none()
+                                && window
+                                    .is_topmost_tooltip_owner_during_prepaint(&tooltip_owner_id)
                         }
                     });
 
                     let check_is_hovered = Rc::new({
-                        let hitbox = hitbox.clone();
-                        let text_layout = text_layout.clone();
                         let pending_mouse_down = interactive_state.mouse_down_index.clone();
                         move |window: &Window| {
-                            text_layout
-                                .index_for_position(window.mouse_position())
-                                .is_ok()
-                                && hitbox.is_hovered(window)
+                            !window.last_input_was_keyboard()
                                 && pending_mouse_down.get().is_none()
+                                && window.is_topmost_tooltip_owner(&tooltip_owner_id)
                         }
                     });
 
