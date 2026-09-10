@@ -41,7 +41,7 @@ pub use visual_test_context::*;
 use crate::InspectorElementRegistry;
 use crate::asset_cache::CachedLoad;
 use crate::{
-    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Arena,
+    Action, ActionBuildError, ActionRegistry, ActivityGuard, Any, AnyView, AnyWindowHandle, AppContext, Arena,
     ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, ClipboardReadError,
     CursorStyle, DispatchPhase, DisplayId, EventEmitter, ExternalDragPayload, FocusHandle,
     FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId,
