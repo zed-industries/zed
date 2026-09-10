@@ -48,6 +48,7 @@ pub struct LogStore {
     on_headless_host: bool,
     projects: HashMap<WeakEntity<Project>, ProjectState>,
     pub language_servers: HashMap<LanguageServerLogKey, LanguageServerState>,
+    next_server_generation: usize,
     io_tx: mpsc::UnboundedSender<(LanguageServerLogKey, IoKind, String, Instant)>,
 }
 
@@ -132,6 +133,8 @@ impl Message for RpcMessage {
 }
 
 pub struct LanguageServerState {
+    /// Distinguishes a re-registered key from the registration owned by an older view.
+    pub generation: usize,
     pub name: Option<LanguageServerName>,
     pub worktree_id: Option<WorktreeId>,
     server: Option<Weak<LanguageServer>>,
@@ -181,6 +184,7 @@ impl LanguageServerState {
 impl std::fmt::Debug for LanguageServerState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LanguageServerState")
+            .field("generation", &self.generation)
             .field("name", &self.name)
             .field("worktree_id", &self.worktree_id)
             .field("log_messages", &self.log_messages)
@@ -483,6 +487,7 @@ impl LogStore {
         let log_store = Self {
             projects: HashMap::default(),
             language_servers: HashMap::default(),
+            next_server_generation: 0,
 
             on_headless_host,
             io_tx,
@@ -739,8 +744,11 @@ impl LogStore {
             .language_servers
             .entry(server_key.clone())
             .or_insert_with(|| {
+                let generation = self.next_server_generation;
+                self.next_server_generation += 1;
                 cx.notify();
                 LanguageServerState {
+                    generation,
                     name: None,
                     worktree_id: None,
                     server: server.as_ref().map(Arc::downgrade),
