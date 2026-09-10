@@ -656,12 +656,15 @@ enum NextCommitDataRequest {
 }
 
 pub struct InitialGitGraphData {
-    fetch_task: Task<()>,
+    _fetch_task: Task<()>,
+    is_loading: bool,
     pub error: Option<SharedString>,
     pub commit_data: Vec<Arc<InitialGraphCommitData>>,
     pub commit_oid_to_index: HashMap<Oid, usize>,
     subscribers: Vec<async_channel::Sender<Result<Vec<Arc<InitialGraphCommitData>>, SharedString>>>,
 }
+
+const MAX_COMPLETED_SELECTION_GRAPH_DATA: usize = 32;
 
 pub struct GraphDataResponse<'a> {
     pub commits: &'a [Arc<InitialGraphCommitData>],
@@ -7320,6 +7323,48 @@ impl Repository {
         .detach();
     }
 
+    fn prune_completed_selection_graph_data(
+        &mut self,
+        max_completed: usize,
+        excluded_key: Option<&(LogSource, LogOrder)>,
+    ) {
+        let completed_count = self
+            .initial_graph_data
+            .iter()
+            .filter(|((source, _), data)| {
+                matches!(source, LogSource::Selection { .. }) && !data.is_loading
+            })
+            .count();
+        let remove_count = completed_count.saturating_sub(max_completed);
+        if remove_count == 0 {
+            return;
+        }
+
+        let keys = self
+            .initial_graph_data
+            .iter()
+            .filter(|(key, data)| {
+                matches!(key.0, LogSource::Selection { .. })
+                    && !data.is_loading
+                    && excluded_key != Some(key)
+            })
+            .take(remove_count)
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        for key in keys {
+            self.initial_graph_data.remove(&key);
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn prune_selection_graph_data_for_test(
+        &mut self,
+        max_completed: usize,
+        excluded_key: Option<&(LogSource, LogOrder)>,
+    ) {
+        self.prune_completed_selection_graph_data(max_completed, excluded_key);
+    }
+
     pub fn graph_data(
         &mut self,
         log_source: LogSource,
@@ -7327,9 +7372,15 @@ impl Repository {
         range: Range<usize>,
         cx: &mut Context<Self>,
     ) -> GraphDataResponse<'_> {
+        let graph_data_key = (log_source.clone(), log_order);
+        if matches!(log_source, LogSource::Selection { .. })
+            && !self.initial_graph_data.contains_key(&graph_data_key)
+        {
+            self.prune_completed_selection_graph_data(MAX_COMPLETED_SELECTION_GRAPH_DATA - 1, None);
+        }
         let initial_commit_data = self
             .initial_graph_data
-            .entry((log_source.clone(), log_order))
+            .entry(graph_data_key)
             .or_insert_with(|| {
                 let state = self.repository_state.clone();
                 let log_source = log_source.clone();
@@ -7362,32 +7413,37 @@ impl Repository {
 
                     repository
                         .update(cx, |repository, cx| {
-                            if let Some(data) = repository
-                                .initial_graph_data
-                                .get_mut(&(log_source.clone(), log_order))
+                            let graph_data_key = (log_source.clone(), log_order);
+                            let event = if let Some(data) =
+                                repository.initial_graph_data.get_mut(&graph_data_key)
                             {
-                                match &result {
-                                    Ok(()) => {
-                                        cx.emit(RepositoryEvent::GraphEvent(
-                                            (log_source.clone(), log_order),
-                                            GitGraphEvent::FullyLoaded,
-                                        ));
-                                    }
+                                let event = match &result {
+                                    Ok(()) => GitGraphEvent::FullyLoaded,
                                     Err(fetch_task_error) => {
                                         data.subscribers.retain(|sender| {
                                             sender.try_send(Err(fetch_task_error.clone())).is_ok()
                                         });
                                         data.error = Some(fetch_task_error.clone());
-                                        cx.emit(RepositoryEvent::GraphEvent(
-                                            (log_source.clone(), log_order),
-                                            GitGraphEvent::LoadingError,
-                                        ));
+                                        GitGraphEvent::LoadingError
                                     }
-                                }
+                                };
                                 data.subscribers.clear();
+                                data.is_loading = false;
+                                Some(event)
                             } else {
                                 debug_panic!(
                                     "This task would be dropped if this entry doesn't exist"
+                                );
+                                None
+                            };
+
+                            if let Some(event) = event {
+                                cx.emit(RepositoryEvent::GraphEvent(graph_data_key.clone(), event));
+                            }
+                            if matches!(log_source, LogSource::Selection { .. }) {
+                                repository.prune_completed_selection_graph_data(
+                                    MAX_COMPLETED_SELECTION_GRAPH_DATA,
+                                    Some(&graph_data_key),
                                 );
                             }
                         })
@@ -7395,7 +7451,8 @@ impl Repository {
                 });
 
                 InitialGitGraphData {
-                    fetch_task,
+                    _fetch_task: fetch_task,
+                    is_loading: true,
                     error: None,
                     commit_data: Vec::new(),
                     commit_oid_to_index: HashMap::default(),
@@ -7409,7 +7466,7 @@ impl Repository {
         GraphDataResponse {
             commits: &initial_commit_data.commit_data
                 [range.start.min(max_start)..range.end.min(max_end)],
-            is_loading: !initial_commit_data.fetch_task.is_ready(),
+            is_loading: initial_commit_data.is_loading,
             error: initial_commit_data.error.clone(),
         }
     }
@@ -11083,6 +11140,15 @@ fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
             LogSource::Path(path) => {
                 proto::git_log_source::Source::Path(path.as_unix_str().to_owned())
             }
+            LogSource::Selection {
+                path,
+                start_line,
+                end_line,
+            } => proto::git_log_source::Source::Selection(proto::GitLogSourceSelection {
+                path: path.as_unix_str().to_owned(),
+                start_line: *start_line,
+                end_line: *end_line,
+            }),
         }),
     }
 }
@@ -11098,6 +11164,11 @@ fn log_source_from_proto(log_source: proto::GitLogSource) -> Result<LogSource> {
         proto::git_log_source::Source::Path(path) => {
             Ok(LogSource::Path(RepoPath::from_proto(&path)?))
         }
+        proto::git_log_source::Source::Selection(selection) => Ok(LogSource::Selection {
+            path: RepoPath::from_proto(&selection.path)?,
+            start_line: selection.start_line,
+            end_line: selection.end_line,
+        }),
     }
 }
 
@@ -12288,6 +12359,150 @@ mod tests {
             coalesced,
             repo_paths(&["submodule/a.txt", "submodule/nested/b.txt", "top_level.rs"])
         );
+    }
+
+    #[gpui::test]
+    async fn test_selection_graph_cache_is_bounded(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.rs": "fn main() {}\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let path = RepoPath::new("file.rs").unwrap();
+
+        repository.update(cx, |repository, cx| {
+            repository.graph_data(LogSource::All, LogOrder::DateOrder, 0..usize::MAX, cx);
+            for start_line in 1..=33 {
+                repository.graph_data(
+                    LogSource::Selection {
+                        path: path.clone(),
+                        start_line,
+                        end_line: start_line,
+                    },
+                    LogOrder::DateOrder,
+                    0..usize::MAX,
+                    cx,
+                );
+            }
+
+            let selection_entries = repository
+                .initial_graph_data
+                .iter()
+                .filter(|((source, _), _)| matches!(source, LogSource::Selection { .. }))
+                .collect::<Vec<_>>();
+            assert_eq!(selection_entries.len(), 33);
+            assert!(selection_entries.iter().all(|(_, data)| data.is_loading));
+        });
+
+        cx.run_until_parked();
+
+        let evicted_line = repository.read_with(cx, |repository, _| {
+            assert!(
+                repository
+                    .initial_graph_data
+                    .contains_key(&(LogSource::All, LogOrder::DateOrder))
+            );
+            let selection_entries = repository
+                .initial_graph_data
+                .iter()
+                .filter(|((source, _), _)| matches!(source, LogSource::Selection { .. }))
+                .collect::<Vec<_>>();
+            assert_eq!(selection_entries.len(), 32);
+            assert!(selection_entries.iter().all(|(_, data)| !data.is_loading));
+
+            (1..=33)
+                .find(|line| {
+                    !repository.initial_graph_data.contains_key(&(
+                        LogSource::Selection {
+                            path: path.clone(),
+                            start_line: *line,
+                            end_line: *line,
+                        },
+                        LogOrder::DateOrder,
+                    ))
+                })
+                .expect("one completed selection entry should be evicted")
+        });
+
+        repository.update(cx, |repository, cx| {
+            repository.graph_data(
+                LogSource::Selection {
+                    path: path.clone(),
+                    start_line: evicted_line,
+                    end_line: evicted_line,
+                },
+                LogOrder::DateOrder,
+                0..usize::MAX,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        repository.read_with(cx, |repository, _| {
+            assert_eq!(
+                repository
+                    .initial_graph_data
+                    .keys()
+                    .filter(|(source, _)| matches!(source, LogSource::Selection { .. }))
+                    .count(),
+                32
+            );
+            assert!(repository.initial_graph_data.contains_key(&(
+                LogSource::Selection {
+                    path,
+                    start_line: evicted_line,
+                    end_line: evicted_line,
+                },
+                LogOrder::DateOrder,
+            )));
+        });
+    }
+
+    #[test]
+    fn test_log_source_selection_proto_roundtrip() {
+        let original = LogSource::Selection {
+            path: RepoPath::new("src/main.rs").unwrap(),
+            start_line: 2,
+            end_line: 4,
+        };
+
+        // LogSource -> proto
+        let proto = log_source_to_proto(&original);
+
+        // proto -> LogSource
+        let roundtrip = log_source_from_proto(proto).unwrap();
+
+        match (original, roundtrip) {
+            (
+                LogSource::Selection {
+                    path: p1,
+                    start_line: s1,
+                    end_line: e1,
+                },
+                LogSource::Selection {
+                    path: p2,
+                    start_line: s2,
+                    end_line: e2,
+                },
+            ) => {
+                assert_eq!(p1, p2);
+                assert_eq!(s1, s2);
+                assert_eq!(e1, e2);
+            }
+            _ => panic!("roundtrip did not preserve LogSource::Selection variant"),
+        }
     }
 }
 
