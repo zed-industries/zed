@@ -9,8 +9,12 @@ use util::ResultExt;
 
 use crate::ScreencastSettings;
 
-// Likely to become a setting later, for now, hardcode to 15.
-const MAX_VISIBLE_KEYS: usize = 15;
+/// Likely to become a setting later, for now, hardcode to 21
+/// VS Code's default is 21, if it hits 22 it clears the queue
+///
+/// I'm not sure it's my decision to go based on the VS Code side of things,
+/// but that's the default for now. Up to change it whenever.
+const MAX_VISIBLE_KEYS: usize = 21;
 
 enum DisplayedKey {
     Modifier(Modifiers),
