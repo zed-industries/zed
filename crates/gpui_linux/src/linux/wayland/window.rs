@@ -1174,6 +1174,7 @@ impl WaylandWindowStatePtr {
             if initial_configure {
                 self.frame(None, FrameRequestSource::NativeCallback);
             } else {
+                update_window(self.state.borrow_mut());
                 self.request_redraw();
             }
         }
