@@ -572,7 +572,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         .detach();
 
         #[cfg(not(any(test, target_os = "macos")))]
-        initialize_file_watcher(window, cx);
+        initialize_file_watcher(workspace.app_state().fs.as_ref(), window, cx);
 
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
@@ -663,8 +663,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[allow(unused)]
-fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
-    if let Err(e) = fs::fs_watcher::global(|_| {}) {
+fn initialize_file_watcher(fs: &dyn Fs, window: &mut Window, cx: &mut Context<Workspace>) {
+    if let Err(e) = fs.start_native_watcher() {
         let message = format!(
             db::indoc! {r#"
             inotify_init returned {}
@@ -694,8 +694,8 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
 
 #[cfg(target_os = "windows")]
 #[allow(unused)]
-fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
-    if let Err(e) = fs::fs_watcher::global(|_| {}) {
+fn initialize_file_watcher(fs: &dyn Fs, window: &mut Window, cx: &mut Context<Workspace>) {
+    if let Err(e) = fs.start_native_watcher() {
         let message = format!(
             db::indoc! {r#"
             ReadDirectoryChangesW initialization failed: {}
@@ -5935,6 +5935,7 @@ mod tests {
                 "language_selector",
                 "welcome",
                 "line_ending_selector",
+                "lsp_command_selector",
                 "lsp_tool",
                 "markdown",
                 "menu",
@@ -8258,6 +8259,7 @@ mod tests {
             )
             .await
             .expect("failed to save disable_ai=true to the fake settings file");
+        executor.advance_clock(Duration::from_secs(2));
         executor.run_until_parked();
 
         cx.update(|cx| {

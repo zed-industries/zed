@@ -212,7 +212,8 @@ pub struct PreviewTabsSettingsContent {
     ///
     /// Default: true
     pub enabled: Option<bool>,
-    /// Whether to open tabs in preview mode when opened from the project panel with a single click.
+    /// Whether to open tabs in preview mode when opened from the project panel
+    /// with a single click or the `project_panel::Open` action.
     ///
     /// Default: true
     pub enable_preview_from_project_panel: Option<bool>,
