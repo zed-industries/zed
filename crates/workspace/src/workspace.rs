@@ -9550,9 +9550,7 @@ impl Render for Workspace {
         let should_use_centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();
-        // A zoomed center pane is drawn as an overlay covering the whole workspace, so
-        // it needs its own padding.
-        let should_use_zoomed_centered_layout =
+        let should_use_zoomed_and_centered_layout =
             self.centered_layout && self.zoomed.is_some() && self.zoomed_position.is_none();
         let render_padding = |size| {
             (size > 0.0).then(|| {
@@ -9578,7 +9576,7 @@ impl Render for Workspace {
             )
         };
         let paddings = centered_paddings(should_use_centered_layout);
-        let zoomed_paddings = centered_paddings(should_use_zoomed_centered_layout);
+        let zoomed_paddings = centered_paddings(should_use_zoomed_and_centered_layout);
         let ui_font = theme_settings::setup_ui_font(window, cx);
 
         let theme = cx.theme().clone();
