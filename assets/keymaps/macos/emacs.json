@@ -47,7 +47,7 @@
       "alt-c": "editor::ConvertToUpperCamelCase", // capitalize-word
       "ctrl-t": "editor::Transpose", // transpose-chars
       "alt-;": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": false }],
-      "ctrl-x ctrl-;": "editor::ToggleComments",
+      "ctrl-x ctrl-;": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": false }],
       "alt-.": "editor::GoToDefinition", // xref-find-definitions
       "alt-?": "editor::FindAllReferences", // xref-find-references
       "alt-,": "pane::GoBack", // xref-pop-marker-stack
