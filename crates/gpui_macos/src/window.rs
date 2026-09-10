@@ -2279,7 +2279,8 @@ impl PlatformWindow for MacWindow {
                     );
                     let workspace = NSWorkspace::sharedWorkspace();
                     let file_type = NSString::from_str(&file_type);
-                    #[allow(deprecated)]
+                    // TODO: Replace with `iconForContentType` once Zed no longer supports MacOS 10.15
+                    #[expect(deprecated, reason = "Support for MacOS 10.15")]
                     let icon = workspace.iconForFileType(&file_type);
                     component.setContents(Some(&icon));
                     // Component frames are relative to the item's dragging frame.
