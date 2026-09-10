@@ -409,7 +409,10 @@ impl LspLogView {
                         server_name: state.name.clone().unwrap_or(unknown_server.clone()),
                         server_kind: key.kind.clone(),
                         worktree_root_name,
-                        rpc_trace_enabled: state.rpc_state.is_some(),
+                        rpc_trace_enabled: self
+                            .enabled_streams
+                            .get(key)
+                            .is_some_and(|log_kinds| log_kinds.contains(&LogKind::Rpc)),
                         selected_entry: self.active_entry_kind,
                         trace_level: lsp::TraceValue::Off,
                     }
@@ -420,7 +423,10 @@ impl LspLogView {
                     server_name: state.name.clone().unwrap_or(unknown_server.clone()),
                     server_kind: key.kind.clone(),
                     worktree_root_name: "supplementary".to_string(),
-                    rpc_trace_enabled: state.rpc_state.is_some(),
+                    rpc_trace_enabled: self
+                        .enabled_streams
+                        .get(key)
+                        .is_some_and(|log_kinds| log_kinds.contains(&LogKind::Rpc)),
                     selected_entry: self.active_entry_kind,
                     trace_level: lsp::TraceValue::Off,
                 },
