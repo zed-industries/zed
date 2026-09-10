@@ -36,11 +36,12 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
-    FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
-    LineLayout, Pixels, PlatformGestures, PlatformInput, Point, Priority, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString,
-    Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, DynamicTextureParams, Edges,
+    ExternalDragPayload, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs,
+    Hsla, ImageSource, Keymap, LineLayout, Pixels, PlatformGestures, PlatformInput, Point,
+    Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window,
+    WindowControlArea, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -1330,6 +1331,7 @@ pub enum AtlasKey {
     Glyph(RenderGlyphParams),
     Svg(RenderSvgParams),
     Image(RenderImageParams),
+    DynamicTexture(DynamicTextureParams),
 }
 
 impl AtlasKey {
@@ -1354,6 +1356,7 @@ impl AtlasKey {
             }
             AtlasKey::Svg(_) => AtlasTextureKind::Monochrome,
             AtlasKey::Image(_) => AtlasTextureKind::Polychrome,
+            AtlasKey::DynamicTexture(_) => AtlasTextureKind::Polychrome,
         }
     }
 }
@@ -1376,13 +1379,31 @@ impl From<RenderImageParams> for AtlasKey {
     }
 }
 
+impl From<DynamicTextureParams> for AtlasKey {
+    fn from(params: DynamicTextureParams) -> Self {
+        Self::DynamicTexture(params)
+    }
+}
+
 #[expect(missing_docs)]
 pub trait PlatformAtlas {
+    /// The returned bytes must be consumed or copied before this method returns.
     fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
+
+    /// Updates a device-pixel region relative to the top-left of an existing atlas entry.
+    fn update(&self, _key: &AtlasKey, _bounds: Bounds<DevicePixels>, _bytes: &[u8]) -> Result<()> {
+        anyhow::bail!("dynamic texture updates are not supported by this platform atlas")
+    }
+
+    /// Returns the generation of GPU resources backing this atlas.
+    fn resource_generation(&self) -> u64 {
+        0
+    }
+
     fn remove(&self, key: &AtlasKey);
 
     #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
@@ -2983,6 +3004,17 @@ mod image_tests {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn dynamic_texture_keys_use_the_polychrome_atlas() {
+        use crate::{DynamicTextureId, DynamicTextureParams};
+
+        let key = AtlasKey::DynamicTexture(DynamicTextureParams {
+            texture_id: DynamicTextureId(7),
+        });
+
+        assert_eq!(key.texture_kind(), AtlasTextureKind::Polychrome);
+    }
 
     #[test]
     fn test_window_button_layout_parse_standard() {

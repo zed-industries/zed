@@ -32,11 +32,68 @@ impl AssetSource for () {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ImageId(pub usize);
 
+/// A unique identifier for a mutable dynamic texture.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct DynamicTextureId(pub usize);
+
 #[derive(PartialEq, Eq, Hash, Clone)]
 #[expect(missing_docs)]
 pub struct RenderImageParams {
     pub image_id: ImageId,
     pub frame_index: usize,
+}
+
+/// The atlas lookup parameters for a dynamic texture.
+#[derive(PartialEq, Eq, Hash, Clone)]
+#[doc(hidden)]
+pub struct DynamicTextureParams {
+    /// The stable identity of the dynamic texture.
+    pub texture_id: DynamicTextureId,
+}
+
+/// A mutable BGRA texture with a stable identity and fixed device-pixel size.
+pub struct DynamicTexture {
+    /// The stable ID associated with this texture.
+    pub id: DynamicTextureId,
+    size: Size<DevicePixels>,
+}
+
+impl PartialEq for DynamicTexture {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for DynamicTexture {}
+
+impl DynamicTexture {
+    /// Creates a dynamic texture with the given device-pixel size.
+    pub fn new(size: Size<DevicePixels>) -> Self {
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+        let id = NEXT_ID
+            .fetch_update(SeqCst, SeqCst, |id| id.checked_add(1))
+            .expect("dynamic texture identifier space exhausted");
+
+        Self {
+            id: DynamicTextureId(id),
+            size,
+        }
+    }
+
+    /// Returns the fixed size of this texture in device pixels.
+    pub fn size(&self) -> Size<DevicePixels> {
+        self.size
+    }
+}
+
+impl fmt::Debug for DynamicTexture {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DynamicTexture")
+            .field("id", &self.id)
+            .field("size", &self.size)
+            .finish()
+    }
 }
 
 /// A cached and processed image, in BGRA format
@@ -129,5 +186,16 @@ mod tests {
         assert_eq!(image.render_size(0), Size::default());
         assert_eq!(image.delay(0), Delay::from_numer_denom_ms(100, 1));
         let _ = format!("{image:?}");
+    }
+
+    #[test]
+    fn dynamic_textures_keep_distinct_stable_identities() {
+        let size = size(DevicePixels(640), DevicePixels(480));
+        let first = DynamicTexture::new(size);
+        let second = DynamicTexture::new(size);
+
+        assert_eq!(first.size(), size);
+        assert_ne!(first.id, second.id);
+        assert_ne!(first, second);
     }
 }
