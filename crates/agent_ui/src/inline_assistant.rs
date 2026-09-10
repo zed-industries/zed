@@ -158,6 +158,27 @@ impl InlineAssistant {
         .detach();
     }
 
+    fn focused_assist_id(&self, window: &Window, cx: &App) -> Option<InlineAssistId> {
+        self.assists.iter().find_map(|(id, assist)| {
+            let decorations = assist.decorations.as_ref()?;
+            decorations
+                .prompt_editor
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+                .then_some(*id)
+        })
+    }
+
+    pub fn has_focused_assist(&self, window: &Window, cx: &App) -> bool {
+        self.focused_assist_id(window, cx).is_some()
+    }
+
+    pub fn dismiss_focused_assist(&mut self, window: &mut Window, cx: &mut App) {
+        if let Some(assist_id) = self.focused_assist_id(window, cx) {
+            self.finish_assist(assist_id, true, window, cx);
+        }
+    }
+
     /// Hides all active inline assists when AI is disabled
     pub fn cancel_all_active_completions(&mut self, cx: &mut App) {
         // Cancel all active completions in editors
