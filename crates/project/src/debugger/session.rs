@@ -11,6 +11,7 @@ use super::dap_command::{
 };
 use super::dap_store::DapStore;
 use super::execution_order::{ExecutionOrder, ExecutionToken};
+
 use crate::debugger::breakpoint_store::BreakpointSessionState;
 use crate::debugger::dap_command::{DataBreakpointContext, ReadMemory};
 use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, PageAddress};
@@ -67,6 +68,9 @@ use util::command::Stdio;
 use util::command::new_command;
 use util::{ResultExt, debug_panic, maybe};
 use worktree::Worktree;
+
+#[cfg(test)]
+mod execution_tests;
 
 const MAX_TRACKED_OUTPUT_EVENTS: usize = 5000;
 const DEBUG_HISTORY_LIMIT: usize = 10;
