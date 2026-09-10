@@ -982,6 +982,9 @@
       // Whether to automatically open files dropped from external sources.
       "on_drop": true,
     },
+    // Whether to save and restore the collapsed state of worktree roots and
+    // directories in the project panel across sessions.
+    "restore_collapse_state": true,
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar

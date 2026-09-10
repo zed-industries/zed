@@ -876,6 +876,7 @@ impl VsCodeSettings {
             auto_open: None,
             diagnostic_badges: None,
             git_status_indicator: None,
+            restore_collapse_state: None,
         };
 
         if let (Some(false), Some(false)) = (
