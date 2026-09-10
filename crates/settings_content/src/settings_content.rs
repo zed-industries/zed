@@ -345,13 +345,14 @@ pub struct InstrumentationSettingsContent {
 }
 
 /// Settings for the keyboard screencast overlay.
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ScreencastSettingsContent {
     /// Font size in pixels used for displayed screencast keys.
     ///
     /// Default: 56
     #[schemars(range(min = 20, max = 100))]
-    pub font_size: Option<FontSize>,
+    pub font_size: Option<ScreencastFontSize>,
 
     /// Controls the vertical offset of the screencast mode overlay from bottom.
     ///

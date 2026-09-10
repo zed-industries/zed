@@ -3175,7 +3175,8 @@ mod test {
     use std::os::unix::ffi::OsStringExt;
 
     use crate::{
-        AppContext, Context, Empty, IntoElement, Modifiers, Render, TestAppContext, Window,
+        AppContext, Context, Empty, IntoElement, KeyDownEvent, Keystroke, Modifiers, Render,
+        TestAppContext, Window,
     };
 
     struct RenderCounter(Rc<Cell<usize>>);
@@ -3202,6 +3203,33 @@ mod test {
         cx.to_async().refresh();
 
         assert_eq!(render_count.get(), render_count_before_refresh + 1);
+    }
+
+    #[gpui::test]
+    fn intercept_keystrokes_receives_is_held(cx: &mut TestAppContext) {
+        let observed_is_held = Rc::new(RefCell::new(Vec::new()));
+
+        cx.update({
+            let observed_is_held = observed_is_held.clone();
+            move |cx| {
+                cx.intercept_keystrokes(move |event, _, _| {
+                    observed_is_held.borrow_mut().push(event.is_held);
+                })
+                .detach();
+            }
+        });
+
+        let window = cx.add_empty_window();
+        let keystroke = Keystroke::parse("a").expect("test keystroke should parse");
+        for is_held in [false, true] {
+            window.simulate_event(KeyDownEvent {
+                keystroke: keystroke.clone(),
+                is_held,
+                prefer_character_input: false,
+            });
+        }
+
+        assert_eq!(observed_is_held.borrow().as_slice(), [false, true]);
     }
 
     #[gpui::test]
