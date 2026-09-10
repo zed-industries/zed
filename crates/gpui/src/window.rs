@@ -7998,6 +7998,7 @@ mod tests {
                 cx,
             );
             assert!(cx.active_drag.is_none());
+            assert!(cx.is_drag_in_progress());
         });
         assert!(
             update_result.is_ok(),
@@ -8092,6 +8093,7 @@ mod tests {
             assert!(cx.active_drag.is_none());
             window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
             assert!(cx.active_drag.is_none());
+            assert!(!cx.is_drag_in_progress());
 
             window.dispatch_event(
                 FileDropEvent::Entered {
