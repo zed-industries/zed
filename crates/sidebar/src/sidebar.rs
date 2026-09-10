@@ -44,6 +44,7 @@ use project::{
 };
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
+use theme_settings::ThemeSettings;
 use ui::utils::platform_title_bar_height;
 
 use serde::{Deserialize, Serialize};
@@ -754,6 +755,27 @@ fn create_worktree_in_workspace(
             cx,
         );
     });
+}
+
+#[derive(Clone)]
+struct DraggedProjectGroup {
+    key: ProjectGroupKey,
+    label: SharedString,
+    index: usize,
+    width: Pixels,
+}
+
+impl Render for DraggedProjectGroup {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+        h_flex()
+            .font_family(ui_font)
+            .bg(cx.theme().colors().background)
+            .w(self.width)
+            .p_1()
+            .gap_1()
+            .child(Label::new(self.label.clone()))
+    }
 }
 
 /// The sidebar re-derives its entire entry list from scratch on every
@@ -2317,12 +2339,20 @@ impl Sidebar {
 
         let key_for_toggle = key.clone();
         let key_for_focus = key.clone();
+        let key_for_drag_over = key.clone();
+        let key_for_drop = key.clone();
 
         // The fade gradient renders as a visible patch on transparent windows,
         // so truncate the label instead.
         let opaque_window =
             cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
 
+        let dragged_project_group = DraggedProjectGroup {
+            key: key.clone(),
+            label: label.clone(),
+            index: ix,
+            width: self.width,
+        };
         let label = if highlight_positions.is_empty() {
             Label::new(label.clone())
                 .when(!is_active, |this| this.color(Color::Muted))
@@ -2479,6 +2509,35 @@ impl Sidebar {
                     }
                 }),
             )
+            .on_drag(
+                dragged_project_group.clone(),
+                move |dragged_project_group, _, _, cx| cx.new(|_| dragged_project_group.clone()),
+            )
+            .drag_over::<DraggedProjectGroup>({
+                move |style, dragged_project_group: &DraggedProjectGroup, _window, cx| {
+                    if dragged_project_group.key == key_for_drag_over {
+                        return style;
+                    }
+                    let style = style
+                        .bg(cx.theme().colors().drop_target_background)
+                        .border_color(cx.theme().colors().drop_target_border)
+                        .border_0();
+                    if ix < dragged_project_group.index {
+                        style.border_t_2()
+                    } else {
+                        style.border_b_2()
+                    }
+                }
+            })
+            .on_drop::<DraggedProjectGroup>(cx.listener(
+                move |this, dragged_project_group: &DraggedProjectGroup, _window, cx| {
+                    this.multi_workspace
+                        .update(cx, |mw, cx| {
+                            mw.move_project_group(&dragged_project_group.key, &key_for_drop, cx);
+                        })
+                        .ok();
+                },
+            ))
             .block_mouse_except_scroll();
 
         if !is_collapsed && !has_threads {
