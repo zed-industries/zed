@@ -100,10 +100,15 @@ pub struct LspLogView {
     log_store: Entity<LogStore>,
     current_server_key: Option<LanguageServerLogKey>,
     active_entry_kind: LogKind,
-    enabled_streams: HashMap<LanguageServerLogKey, HashSet<LogKind>>,
+    enabled_streams: HashMap<LanguageServerLogKey, EnabledLogStreams>,
     project: Entity<Project>,
     focus_handle: FocusHandle,
     _log_store_subscriptions: Vec<Subscription>,
+}
+
+struct EnabledLogStreams {
+    generation: usize,
+    log_kinds: HashSet<LogKind>,
 }
 
 pub struct LspLogToolbarItemView {
@@ -175,30 +180,41 @@ impl LspLogView {
             .next();
         let model_changes_subscription =
             cx.observe_in(&log_store, window, move |this, store, window, cx| {
-                let first_server_key_for_project = store
-                    .read(cx)
-                    .server_keys_for_project(&weak_project, &weak_lsp_store)
-                    .next();
-                if let Some(current_key) = this.current_server_key.as_ref() {
-                    let current_server_is_for_project =
-                        store.read(cx).language_servers.contains_key(current_key)
-                            && current_key.is_for_project(&weak_project, &weak_lsp_store);
-                    if !current_server_is_for_project
-                        && let Some(server_key) = first_server_key_for_project
-                    {
+                this.prune_enabled_streams(cx);
+                let server_key = this
+                    .current_server_key
+                    .as_ref()
+                    .filter(|key| {
+                        store.read(cx).language_servers.contains_key(key)
+                            && key.is_for_project(&weak_project, &weak_lsp_store)
+                    })
+                    .cloned()
+                    .or_else(|| {
+                        store
+                            .read(cx)
+                            .server_keys_for_project(&weak_project, &weak_lsp_store)
+                            .next()
+                    });
+                if let Some(server_key) = server_key {
+                    let stream_is_enabled = this.active_entry_kind == LogKind::ServerInfo
+                        || this
+                            .enabled_streams
+                            .get(&server_key)
+                            .is_some_and(|streams| {
+                                streams.log_kinds.contains(&this.active_entry_kind)
+                            });
+                    if this.current_server_key.as_ref() == Some(&server_key) {
+                        if !stream_is_enabled {
+                            // Rebuilding from the store would duplicate logs whose events are still queued.
+                            this.set_stream_enabled(&server_key, this.active_entry_kind, true, cx);
+                        }
+                    } else {
                         match this.active_entry_kind {
                             LogKind::Rpc => this.show_rpc_trace_for_server(server_key, window, cx),
                             LogKind::Trace => this.show_trace_for_server(server_key, window, cx),
                             LogKind::Logs => this.show_logs_for_server(server_key, window, cx),
                             LogKind::ServerInfo => this.show_server_info(server_key, window, cx),
                         }
-                    }
-                } else if let Some(server_key) = first_server_key_for_project {
-                    match this.active_entry_kind {
-                        LogKind::Rpc => this.show_rpc_trace_for_server(server_key, window, cx),
-                        LogKind::Trace => this.show_trace_for_server(server_key, window, cx),
-                        LogKind::Logs => this.show_logs_for_server(server_key, window, cx),
-                        LogKind::ServerInfo => this.show_server_info(server_key, window, cx),
                     }
                 }
 
@@ -263,8 +279,9 @@ impl LspLogView {
             let enabled_streams = log_view
                 .enabled_streams
                 .iter()
-                .flat_map(|(key, log_kinds)| {
-                    log_kinds
+                .flat_map(|(key, streams)| {
+                    streams
+                        .log_kinds
                         .iter()
                         .map(|log_kind| (key.clone(), *log_kind))
                         .collect::<Vec<_>>()
@@ -409,10 +426,10 @@ impl LspLogView {
                         server_name: state.name.clone().unwrap_or(unknown_server.clone()),
                         server_kind: key.kind.clone(),
                         worktree_root_name,
-                        rpc_trace_enabled: self
-                            .enabled_streams
-                            .get(key)
-                            .is_some_and(|log_kinds| log_kinds.contains(&LogKind::Rpc)),
+                        rpc_trace_enabled: self.enabled_streams.get(key).is_some_and(|streams| {
+                            streams.generation == state.generation
+                                && streams.log_kinds.contains(&LogKind::Rpc)
+                        }),
                         selected_entry: self.active_entry_kind,
                         trace_level: lsp::TraceValue::Off,
                     }
@@ -423,10 +440,10 @@ impl LspLogView {
                     server_name: state.name.clone().unwrap_or(unknown_server.clone()),
                     server_kind: key.kind.clone(),
                     worktree_root_name: "supplementary".to_string(),
-                    rpc_trace_enabled: self
-                        .enabled_streams
-                        .get(key)
-                        .is_some_and(|log_kinds| log_kinds.contains(&LogKind::Rpc)),
+                    rpc_trace_enabled: self.enabled_streams.get(key).is_some_and(|streams| {
+                        streams.generation == state.generation
+                            && streams.log_kinds.contains(&LogKind::Rpc)
+                    }),
                     selected_entry: self.active_entry_kind,
                     trace_level: lsp::TraceValue::Off,
                 },
@@ -436,6 +453,16 @@ impl LspLogView {
         Some(rows)
     }
 
+    fn prune_enabled_streams(&mut self, cx: &App) {
+        let log_store = self.log_store.read(cx);
+        self.enabled_streams.retain(|key, streams| {
+            log_store
+                .language_servers
+                .get(key)
+                .is_some_and(|state| state.generation == streams.generation)
+        });
+    }
+
     fn set_stream_enabled(
         &mut self,
         key: &LanguageServerLogKey,
@@ -443,31 +470,38 @@ impl LspLogView {
         enabled: bool,
         cx: &mut App,
     ) {
+        // A view can be released before the observer sees a removed or replaced registration.
+        self.prune_enabled_streams(cx);
         if enabled {
             let already_enabled = self
                 .enabled_streams
                 .get(key)
-                .is_some_and(|log_kinds| log_kinds.contains(&log_kind));
+                .is_some_and(|streams| streams.log_kinds.contains(&log_kind));
             if already_enabled {
                 return;
             }
-            let Some(()) = self.log_store.update(cx, |log_store, cx| {
-                log_store.retain_view_log_stream(key, log_kind, cx)
+            let Some(generation) = self.log_store.update(cx, |log_store, cx| {
+                log_store.retain_view_log_stream(key, log_kind, cx)?;
+                Some(log_store.get_language_server_state(key)?.generation)
             }) else {
                 return;
             };
             self.enabled_streams
                 .entry(key.clone())
-                .or_default()
+                .or_insert_with(|| EnabledLogStreams {
+                    generation,
+                    log_kinds: HashSet::default(),
+                })
+                .log_kinds
                 .insert(log_kind);
         } else {
-            let Some(log_kinds) = self.enabled_streams.get_mut(key) else {
+            let Some(streams) = self.enabled_streams.get_mut(key) else {
                 return;
             };
-            if !log_kinds.remove(&log_kind) {
+            if !streams.log_kinds.remove(&log_kind) {
                 return;
             }
-            if log_kinds.is_empty() {
+            if streams.log_kinds.is_empty() {
                 self.enabled_streams.remove(key);
             }
             self.log_store.update(cx, |log_store, cx| {
@@ -486,7 +520,7 @@ impl LspLogView {
         let stream_is_enabled = self
             .enabled_streams
             .get(key)
-            .is_some_and(|log_kinds| log_kinds.contains(&log_kind));
+            .is_some_and(|streams| streams.log_kinds.contains(&log_kind));
         if stream_is_enabled {
             self.disable_visible_log_streams(Some((key, log_kind)), cx);
         }
@@ -500,8 +534,9 @@ impl LspLogView {
         let visible_log_streams = self
             .enabled_streams
             .iter()
-            .flat_map(|(key, log_kinds)| {
-                log_kinds
+            .flat_map(|(key, streams)| {
+                streams
+                    .log_kinds
                     .iter()
                     .filter(|log_kind| matches!(log_kind, LogKind::Logs | LogKind::Trace))
                     .map(|log_kind| (key.clone(), *log_kind))
@@ -542,7 +577,7 @@ impl LspLogView {
     ) -> bool {
         self.enabled_streams
             .get(key)
-            .is_some_and(|log_kinds| log_kinds.contains(&log_kind))
+            .is_some_and(|streams| streams.log_kinds.contains(&log_kind))
     }
 
     fn show_logs_for_server(
