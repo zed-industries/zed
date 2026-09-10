@@ -32,7 +32,6 @@ use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
 use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
-use futures::FutureExt;
 use futures::channel::oneshot;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
@@ -2333,6 +2332,18 @@ impl Window {
         self.platform_window.inner_window_bounds()
     }
 
+    /// Encode the window's native restorable state into an opaque blob.
+    /// Returns `None` on platforms without native state restoration or if encoding fails.
+    pub fn native_window_state(&self) -> Option<Vec<u8>> {
+        self.platform_window.native_window_state()
+    }
+
+    /// Restore the window's native state from a blob previously produced
+    /// by [`Window::native_window_state`]. A no-op on platforms without native state restoration.
+    pub fn restore_native_window_state(&self, state: &[u8]) {
+        self.platform_window.restore_native_window_state(state);
+    }
+
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>, cx: &mut App) {
         let focus_id = self.focused(cx).map(|handle| handle.id);
@@ -3852,25 +3863,7 @@ impl Window {
     /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
     /// time.
     pub fn use_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) -> Option<A::Output> {
-        let (task, is_first) = cx.fetch_asset::<A>(source);
-        task.clone().now_or_never().or_else(|| {
-            if is_first {
-                let entity_id = self.current_view();
-                self.spawn(cx, {
-                    let task = task.clone();
-                    async move |cx| {
-                        task.await;
-
-                        cx.on_next_frame(move |_, cx| {
-                            cx.notify(entity_id);
-                        });
-                    }
-                })
-                .detach();
-            }
-
-            None
-        })
+        cx.asset_entry::<A>(source).use_by(self.current_view())
     }
 
     /// Asynchronously load an asset, if the asset hasn't finished loading or doesn't exist this will return None.
@@ -3879,8 +3872,7 @@ impl Window {
     /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
     /// time.
     pub fn get_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) -> Option<A::Output> {
-        let (task, _) = cx.fetch_asset::<A>(source);
-        task.now_or_never()
+        cx.fetch_asset::<A>(source)
     }
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
