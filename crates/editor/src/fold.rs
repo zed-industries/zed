@@ -640,13 +640,14 @@ impl Editor {
         });
 
         let snapshot = self.display_snapshot(cx);
+        let previous = self.selections.disjoint_anchors_arc();
         let (changed, ()) = self.selections.change_with(&snapshot, |selections| {
             for buffer_id in ids_to_fold.iter().copied() {
                 selections.remove_selections_from_buffer(buffer_id);
             }
         });
         if changed {
-            self.invalidate_add_selection_goals();
+            self.invalidate_add_selection_goals_after_change(Some(&previous));
         }
 
         cx.emit(EditorEvent::BufferFoldToggled {

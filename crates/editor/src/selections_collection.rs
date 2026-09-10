@@ -1,14 +1,15 @@
 use std::{
     cmp, fmt, iter, mem,
-    ops::{AddAssign, Deref, DerefMut, Range, Sub},
+    ops::{AddAssign, Deref, DerefMut, Range, RangeInclusive, Sub},
     sync::Arc,
 };
 
+use collections::HashMap;
 use gpui::Pixels;
 use itertools::{Either, Itertools as _};
 use language::{Bias, Point, Selection, SelectionGoal};
 use multi_buffer::{MultiBufferDimension, MultiBufferOffset, ToPoint};
-use util::post_inc;
+use smallvec::SmallVec;
 
 use crate::{
     Anchor, DisplayPoint, DisplayRow, MultiBufferSnapshot, SelectMode, ToOffset,
@@ -26,6 +27,8 @@ pub struct PendingSelection {
 #[derive(Debug, Clone)]
 pub struct SelectionsCollection {
     next_selection_id: usize,
+    used_selection_ids: SmallVec<[RangeInclusive<usize>; 1]>,
+    overflow_selection_id_order: HashMap<usize, usize>,
     line_mode: bool,
     /// The non-pending, non-overlapping selections.
     /// The [SelectionsCollection::pending] selection could possibly overlap these
@@ -40,6 +43,8 @@ impl SelectionsCollection {
     pub fn new() -> Self {
         Self {
             next_selection_id: 1,
+            used_selection_ids: SmallVec::from_buf([0..=0]),
+            overflow_selection_id_order: HashMap::default(),
             line_mode: false,
             disjoint: Arc::default(),
             pending: Some(PendingSelection {
@@ -59,6 +64,10 @@ impl SelectionsCollection {
 
     pub fn clone_state(&mut self, other: &SelectionsCollection) {
         self.next_selection_id = other.next_selection_id;
+        self.used_selection_ids
+            .clone_from(&other.used_selection_ids);
+        self.overflow_selection_id_order
+            .clone_from(&other.overflow_selection_id_order);
         self.line_mode = other.line_mode;
         self.disjoint = other.disjoint.clone();
         self.pending.clone_from(&other.pending);
@@ -116,6 +125,13 @@ impl SelectionsCollection {
         resolve_selections_wrapping_blocks(self.pending_anchor(), &snapshot).next()
     }
 
+    pub(crate) fn all_unexpanded<D>(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<D>>
+    where
+        D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
+    {
+        self.all_iter(snapshot, false).collect()
+    }
+
     pub(crate) fn pending_mode(&self) -> Option<SelectMode> {
         self.pending.as_ref().map(|pending| pending.mode.clone())
     }
@@ -124,19 +140,21 @@ impl SelectionsCollection {
     where
         D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     {
-        self.all_iter(snapshot).collect()
+        self.all_iter(snapshot, true).collect()
     }
 
     fn all_iter<'a, D>(
         &'a self,
         snapshot: &'a DisplaySnapshot,
+        expand_blocks: bool,
     ) -> impl 'a + Iterator<Item = Selection<D>>
     where
         D: 'a + MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     {
         let mut disjoint =
-            resolve_selections_wrapping_blocks::<D, _>(self.disjoint.iter(), snapshot).peekable();
-        let mut pending_opt = self.pending::<D>(snapshot);
+            resolve_selections::<D, _>(self.disjoint.iter(), snapshot, expand_blocks).peekable();
+        let mut pending_opt =
+            resolve_selections::<D, _>(self.pending_anchor(), snapshot, expand_blocks).next();
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
@@ -292,7 +310,11 @@ impl SelectionsCollection {
         self.pending
             .as_ref()
             .map(|s| &s.selection)
-            .or_else(|| self.disjoint.iter().max_by_key(|s| s.id))
+            .or_else(|| {
+                self.disjoint
+                    .iter()
+                    .max_by_key(|selection| self.selection_id_order(selection.id))
+            })
             .unwrap()
     }
 
@@ -314,7 +336,7 @@ impl SelectionsCollection {
     pub fn oldest_anchor(&self) -> &Selection<Anchor> {
         self.disjoint
             .iter()
-            .min_by_key(|s| s.id)
+            .min_by_key(|selection| self.selection_id_order(selection.id))
             .or_else(|| self.pending.as_ref().map(|p| &p.selection))
             .unwrap()
     }
@@ -348,7 +370,7 @@ impl SelectionsCollection {
                 .next()
                 .unwrap();
         }
-        self.all_iter(snapshot).next().unwrap()
+        self.all_iter(snapshot, true).next().unwrap()
     }
 
     pub fn last<D>(&self, snapshot: &DisplaySnapshot) -> Selection<D>
@@ -362,7 +384,7 @@ impl SelectionsCollection {
                 .next()
                 .unwrap();
         }
-        self.all_iter(snapshot).last().unwrap()
+        self.all_iter(snapshot, true).last().unwrap()
     }
 
     /// Returns a list of (potentially backwards!) ranges representing the selections.
@@ -414,6 +436,9 @@ impl SelectionsCollection {
         reversed: bool,
         text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {
+        if display_map.is_block_line(row) {
+            return None;
+        }
         let is_empty = positions.start == positions.end;
         let line_len = display_map.line_len(row);
         let line = display_map.layout_row(row, text_layout_details);
@@ -433,7 +458,7 @@ impl SelectionsCollection {
         };
 
         Some(Selection {
-            id: post_inc(&mut self.next_selection_id),
+            id: self.allocate_selection_id(),
             start: start.to_point(display_map),
             end: end.to_point(display_map),
             reversed,
@@ -453,7 +478,7 @@ impl SelectionsCollection {
     ) -> Option<Selection<Point>> {
         let (start, end) = rows.points_for_row(tab_row, goal_columns)?;
         Some(Selection {
-            id: post_inc(&mut self.next_selection_id),
+            id: self.allocate_selection_id(),
             start,
             end,
             reversed,
@@ -518,17 +543,21 @@ impl SelectionsCollection {
             } else {
                 return None;
             };
+            if let Some(hidden_rows) = display_map.fully_replaced_tab_rows(row) {
+                row = if above {
+                    *hidden_rows.start()
+                } else {
+                    *hidden_rows.end()
+                };
+                continue;
+            }
             if let Some(candidate) = self.build_columnar_selection_from_tab_expanded_columns(
                 rows,
                 row,
                 goal_columns,
                 selection.reversed,
             ) {
-                if (above && candidate.start < selection.start)
-                    || (!above && candidate.end > selection.end)
-                {
-                    return Some(candidate);
-                }
+                return Some(candidate);
             }
         }
     }
@@ -619,6 +648,79 @@ impl SelectionsCollection {
     pub fn set_is_extending(&mut self, is_extending: bool) {
         self.is_extending = is_extending;
     }
+
+    pub(crate) fn selection_id_order(&self, id: usize) -> (usize, usize) {
+        (
+            self.overflow_selection_id_order
+                .get(&id)
+                .copied()
+                .unwrap_or(0),
+            id,
+        )
+    }
+
+    fn allocate_selection_id(&mut self) -> usize {
+        let id = self.next_selection_id;
+        self.reserve_selection_ids(iter::once(id));
+        id
+    }
+
+    fn reserve_selection_ids(&mut self, ids: impl Iterator<Item = usize>) {
+        let mut ids = ids.collect::<SmallVec<[usize; 4]>>();
+        ids.sort_unstable();
+        for id in ids {
+            let index = self
+                .used_selection_ids
+                .partition_point(|range| *range.end() < id);
+            if self
+                .used_selection_ids
+                .get(index)
+                .is_some_and(|range| range.contains(&id))
+            {
+                continue;
+            }
+            if self
+                .used_selection_ids
+                .last()
+                .is_some_and(|range| *range.end() == usize::MAX)
+            {
+                self.overflow_selection_id_order
+                    .insert(id, self.overflow_selection_id_order.len() + 1);
+            }
+            let previous = index.checked_sub(1).filter(|previous| {
+                self.used_selection_ids[*previous].end().checked_add(1) == Some(id)
+            });
+            let joins_next = self
+                .used_selection_ids
+                .get(index)
+                .is_some_and(|range| id.checked_add(1) == Some(*range.start()));
+            match (previous, joins_next) {
+                (Some(previous), true) => {
+                    let end = *self.used_selection_ids.remove(index).end();
+                    self.used_selection_ids[previous] =
+                        *self.used_selection_ids[previous].start()..=end;
+                }
+                (Some(previous), false) => {
+                    self.used_selection_ids[previous] =
+                        *self.used_selection_ids[previous].start()..=id;
+                }
+                (None, true) => {
+                    self.used_selection_ids[index] = id..=*self.used_selection_ids[index].end();
+                }
+                (None, false) => self.used_selection_ids.insert(index, id..=id),
+            }
+        }
+        self.next_selection_id = self
+            .used_selection_ids
+            .last()
+            .and_then(|range| range.end().checked_add(1))
+            .or_else(|| {
+                self.used_selection_ids
+                    .first()
+                    .and_then(|range| range.end().checked_add(1))
+            })
+            .expect("selection ID space exhausted");
+    }
 }
 
 pub struct MutableSelectionsCollection<'snap, 'a> {
@@ -690,7 +792,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
                 .and_then(|excerpt| buffer_snapshot.anchor_in_excerpt(excerpt.context.start))
                 .unwrap_or_else(|| self.snapshot.anchor_before(MultiBufferOffset(0)));
             self.collection.disjoint = Arc::from([Selection {
-                id: post_inc(&mut self.collection.next_selection_id),
+                id: self.collection.allocate_selection_id(),
                 start: anchor,
                 end: anchor,
                 reversed: false,
@@ -722,7 +824,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
                     false
                 };
                 Selection {
-                    id: post_inc(&mut self.collection.next_selection_id),
+                    id: self.collection.allocate_selection_id(),
                     start,
                     end,
                     reversed,
@@ -735,6 +837,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     }
 
     pub(crate) fn set_pending(&mut self, selection: Selection<Anchor>, mode: SelectMode) {
+        self.reserve_selection_ids(iter::once(selection.id));
         self.collection.pending = Some(PendingSelection { selection, mode });
         self.selections_changed = true;
     }
@@ -782,7 +885,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             false
         };
         selections.push(Selection {
-            id: post_inc(&mut self.collection.next_selection_id),
+            id: self.collection.allocate_selection_id(),
             start,
             end,
             reversed,
@@ -795,6 +898,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     where
         T: ToOffset + std::marker::Copy + std::fmt::Debug,
     {
+        self.reserve_selection_ids(selections.iter().map(|selection| selection.id));
         let mut selections = selections
             .into_iter()
             .map(|selection| selection.map(|it| it.to_offset(self.snapshot)))
@@ -837,6 +941,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     }
 
     pub fn select_anchors(&mut self, selections: Vec<Selection<Anchor>>) {
+        self.reserve_selection_ids(selections.iter().map(|selection| selection.id));
         let map = self.display_snapshot();
         let resolved_selections =
             resolve_selections_wrapping_blocks::<MultiBufferOffset, _>(&selections, &map)
@@ -871,7 +976,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
                     false
                 };
                 Selection {
-                    id: post_inc(&mut self.collection.next_selection_id),
+                    id: self.collection.allocate_selection_id(),
                     start,
                     end,
                     reversed,
@@ -899,7 +1004,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
                     false
                 };
                 Selection {
-                    id: post_inc(&mut self.collection.next_selection_id),
+                    id: self.collection.allocate_selection_id(),
                     start,
                     end,
                     reversed,
@@ -911,7 +1016,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     }
 
     pub fn new_selection_id(&mut self) -> usize {
-        post_inc(&mut self.next_selection_id)
+        self.collection.allocate_selection_id()
     }
 
     pub fn select_display_ranges<T>(&mut self, ranges: T)
@@ -930,7 +1035,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
                     false
                 };
                 Selection {
-                    id: post_inc(&mut self.collection.next_selection_id),
+                    id: self.collection.allocate_selection_id(),
                     start: start.to_point(self.snapshot),
                     end: end.to_point(self.snapshot),
                     reversed,
@@ -946,7 +1051,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         let disjoint = self.disjoint.clone();
         for selection in disjoint
             .iter()
-            .sorted_by(|first, second| Ord::cmp(&second.id, &first.id))
+            .sorted_by_key(|selection| cmp::Reverse(self.selection_id_order(selection.id)))
         {
             new_selections.push(Selection {
                 id: self.new_selection_id(),
@@ -1064,7 +1169,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             .map(|cursor| {
                 let cursor_point = cursor.to_point(self.snapshot);
                 Selection {
-                    id: post_inc(&mut self.collection.next_selection_id),
+                    id: self.collection.allocate_selection_id(),
                     start: cursor_point,
                     end: cursor_point,
                     reversed: false,
@@ -1078,6 +1183,10 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     pub fn pending_anchor_mut(&mut self) -> Option<&mut Selection<Anchor>> {
         self.selections_changed = true;
         self.pending.as_mut().map(|pending| &mut pending.selection)
+    }
+
+    pub(crate) fn select_anchors_unexpanded(&mut self, selections: Vec<Selection<Anchor>>) {
+        self.select(selections);
     }
 }
 
@@ -1189,9 +1298,21 @@ where
     D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
+    resolve_selections(selections, map, true)
+}
+
+fn resolve_selections<'a, D, I>(
+    selections: I,
+    map: &'a DisplaySnapshot,
+    expand_blocks: bool,
+) -> impl 'a + Iterator<Item = Selection<D>>
+where
+    D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
+    I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
+{
     // Without collapsed content, coalescing in buffer point space is equivalent to coalescing in
     // display point space, so skip the per-selection display-coordinate round trip.
-    if !map.has_collapsed_content() {
+    if !expand_blocks || !map.has_collapsed_content() {
         Either::Left(resolve_selections_without_display_round_trip(
             selections, map,
         ))
@@ -1332,36 +1453,19 @@ mod tests {
     use super::*;
     use crate::{
         MultiBuffer,
-        display_map::{BlockPlacement, BlockProperties, BlockStyle, DisplayMap, FoldPlaceholder},
+        display_map::{
+            BlockPlacement, BlockProperties, BlockStyle, Crease, DisplayMap, FoldPlaceholder,
+        },
         test::test_font,
     };
     use gpui::{AppContext as _, IntoElement as _, div, px};
     use project::project_settings::DiagnosticSeverity;
     use rand::{Rng as _, rngs::StdRng};
     use settings::SettingsStore;
-    use std::sync::Arc;
+    use std::{collections::BTreeSet, sync::Arc};
 
     fn row_range_snapshot(cx: &mut gpui::TestAppContext, text: &str) -> DisplaySnapshot {
-        cx.update(|cx| {
-            let settings = SettingsStore::test(cx);
-            cx.set_global(settings);
-            crate::init(cx);
-        });
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
-        let display_map = cx.new(|cx| {
-            DisplayMap::new(
-                buffer,
-                test_font(),
-                px(14.),
-                None,
-                1,
-                1,
-                FoldPlaceholder::test(),
-                DiagnosticSeverity::Warning,
-                cx,
-            )
-        });
-        display_map.update(cx, |map, cx| map.snapshot(cx))
+        selection_test_display_map(cx, text).update(cx, |map, cx| map.snapshot(cx))
     }
 
     fn row_range_collection(
@@ -1526,6 +1630,608 @@ mod tests {
         )
         .collect::<Vec<_>>();
         assert_eq!(fast_offsets, slow_offsets);
+    }
+
+    #[gpui::test]
+    fn imported_selection_ids_advance_allocator(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "abcdef");
+        for expand_blocks in [false, true] {
+            for imported_id in [1, 40, usize::MAX - 2] {
+                let imported = Selection {
+                    id: imported_id,
+                    start: MultiBufferOffset(0),
+                    end: MultiBufferOffset(1),
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                };
+                let mut collection = SelectionsCollection::new();
+                collection.change_with(&snapshot, |selections| {
+                    let anchors = vec![selection_to_anchor_selection(imported, &snapshot)];
+                    if expand_blocks {
+                        selections.select_anchors(anchors);
+                    } else {
+                        selections.select_anchors_unexpanded(anchors);
+                    }
+                    assert_eq!(selections.next_selection_id(), imported_id + 1);
+                    selections.insert_range(MultiBufferOffset(3)..MultiBufferOffset(3));
+                });
+                assert_eq!(
+                    collection.all_unexpanded::<MultiBufferOffset>(&snapshot),
+                    vec![
+                        imported,
+                        Selection {
+                            id: imported_id + 1,
+                            start: MultiBufferOffset(3),
+                            end: MultiBufferOffset(3),
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        },
+                    ]
+                );
+                collection.change_with(&snapshot, |selections| {
+                    selections.delete(imported_id + 1);
+                    selections.select(vec![imported]);
+                    assert_eq!(selections.next_selection_id(), imported_id + 2);
+                });
+                assert_eq!(
+                    collection.all_unexpanded::<MultiBufferOffset>(&snapshot),
+                    vec![imported]
+                );
+                let mut cloned = SelectionsCollection::new();
+                cloned.clone_state(&collection);
+                assert_eq!(cloned.next_selection_id(), imported_id + 2);
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn imported_selection_ids_wrap_without_collisions(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "abcdefghijklmnop");
+        for (imported_id, expected_ids) in [
+            (usize::MAX, [3, 4, 5, 6, 7, 8]),
+            (usize::MAX - 1, [usize::MAX, 3, 4, 5, 6, 7]),
+            (usize::MAX - 2, [usize::MAX - 1, usize::MAX, 3, 4, 5, 6]),
+        ] {
+            for import_mode in 0..4 {
+                let mut collection = SelectionsCollection::new();
+                collection.change_with(&snapshot, |selections| {
+                    selections.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(1)]);
+                    selections.select_ranges([MultiBufferOffset(2)..MultiBufferOffset(3)]);
+                });
+                let retained = collection.all_unexpanded::<MultiBufferOffset>(&snapshot)[0];
+                assert_eq!(retained.id, 2);
+                let imported = Selection {
+                    id: imported_id,
+                    start: MultiBufferOffset(0),
+                    end: MultiBufferOffset(1),
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                };
+                let mut expected = vec![imported, retained];
+                collection.change_with(&snapshot, |selections| {
+                    match import_mode {
+                        0 => selections.select(expected.clone()),
+                        1 => selections.select_anchors(
+                            expected
+                                .iter()
+                                .map(|selection| {
+                                    selection_to_anchor_selection(*selection, &snapshot)
+                                })
+                                .collect(),
+                        ),
+                        2 => selections.select_anchors_unexpanded(
+                            expected
+                                .iter()
+                                .map(|selection| {
+                                    selection_to_anchor_selection(*selection, &snapshot)
+                                })
+                                .collect(),
+                        ),
+                        3 => selections.set_pending(
+                            selection_to_anchor_selection(imported, &snapshot),
+                            SelectMode::Character,
+                        ),
+                        _ => unreachable!(),
+                    }
+                    assert_eq!(
+                        selections.all_unexpanded::<MultiBufferOffset>(&snapshot),
+                        expected
+                    );
+                    for (index, id) in expected_ids.into_iter().enumerate() {
+                        let position = MultiBufferOffset(6 + index);
+                        selections.insert_range(position..position);
+                        expected.push(Selection {
+                            id,
+                            start: position,
+                            end: position,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        });
+                        assert_eq!(
+                            selections.all_unexpanded::<MultiBufferOffset>(&snapshot),
+                            expected,
+                            "imported_id={imported_id}, import_mode={import_mode}, index={index}"
+                        );
+                        let anchors = selections.disjoint_anchors().to_vec();
+                        selections.select_anchors_unexpanded(anchors);
+                    }
+                    for id in expected_ids {
+                        selections.delete(id);
+                    }
+                    assert_eq!(
+                        selections.all_unexpanded::<MultiBufferOffset>(&snapshot),
+                        [imported, retained]
+                    );
+                });
+                let mut cloned = SelectionsCollection::new();
+                cloned.clone_state(&collection);
+                cloned.change_with(&snapshot, |selections| {
+                    let next_id = expected_ids[5] + 1;
+                    assert_eq!(selections.new_selection_id(), next_id);
+                    assert_eq!(selections.new_selection_id(), next_id + 1);
+                    assert_eq!(selections.new_selection_id(), next_id + 2);
+                });
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn imported_selection_ids_wrap_preserves_selection_age(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "abcdef");
+        let source = Selection {
+            id: usize::MAX,
+            start: MultiBufferOffset(0),
+            end: MultiBufferOffset(1),
+            reversed: false,
+            goal: SelectionGoal::None,
+        };
+        let mut collection = SelectionsCollection::new();
+        collection.change_with(&snapshot, |selections| {
+            selections.select(vec![source]);
+            selections.insert_range(MultiBufferOffset(3)..MultiBufferOffset(3));
+        });
+        assert_eq!(collection.oldest_anchor().id, usize::MAX);
+        assert_eq!(collection.newest_anchor().id, 1);
+        let mut cloned = SelectionsCollection::new();
+        cloned.clone_state(&collection);
+        assert_eq!(cloned.oldest_anchor().id, usize::MAX);
+        assert_eq!(cloned.newest_anchor().id, 1);
+        cloned.change_with(&snapshot, |selections| selections.reverse_selections());
+        assert_eq!(
+            cloned.newest::<MultiBufferOffset>(&snapshot).range(),
+            MultiBufferOffset(0)..MultiBufferOffset(1)
+        );
+        assert_eq!(
+            cloned.oldest::<MultiBufferOffset>(&snapshot).range(),
+            MultiBufferOffset(3)..MultiBufferOffset(3)
+        );
+        collection.change_with(&snapshot, |selections| {
+            selections.select(vec![
+                Selection {
+                    id: 100,
+                    start: MultiBufferOffset(2),
+                    end: MultiBufferOffset(3),
+                    ..source
+                },
+                source,
+            ]);
+        });
+        assert_eq!(collection.newest_anchor().id, 100);
+        collection.change_with(&snapshot, |selections| {
+            selections.insert_range(MultiBufferOffset(5)..MultiBufferOffset(5));
+        });
+        assert_eq!(collection.newest_anchor().id, 2);
+        assert_eq!(collection.oldest_anchor().id, usize::MAX);
+    }
+
+    #[gpui::test]
+    fn imported_selection_ids_wrap_preserves_reserved_gaps(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "abcdef");
+        let imports = [usize::MAX - 2, 9, 3, usize::MAX, 5, 4, 2, usize::MAX - 1];
+        for reverse in [false, true] {
+            let mut imports = imports;
+            if reverse {
+                imports.reverse();
+            }
+            let mut reserved = BTreeSet::from([0]);
+            let mut collection = SelectionsCollection::new();
+            collection.change_with(&snapshot, |selections| {
+                for id in imports {
+                    let imported = Selection {
+                        id,
+                        start: snapshot.anchor_after(MultiBufferOffset(1)),
+                        end: snapshot.anchor_before(MultiBufferOffset(2)),
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    };
+                    selections.set_pending(imported, SelectMode::Character);
+                    reserved.insert(id);
+                    for _ in 0..3 {
+                        let expected = reserved
+                            .last()
+                            .and_then(|id| id.checked_add(1))
+                            .unwrap_or_else(|| {
+                                (1..).find(|id| !reserved.contains(id)).expect("unused ID")
+                            });
+                        assert_eq!(selections.new_selection_id(), expected);
+                        assert!(reserved.insert(expected));
+                    }
+                    assert_eq!(selections.pending_anchor(), Some(&imported));
+                }
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn imported_selection_ids_wrap_after_coalescing(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "abcdef");
+        for (imported_id, expected_ids) in [
+            (usize::MAX, [2, 3, 4]),
+            (usize::MAX - 1, [usize::MAX, 2, 3]),
+            (usize::MAX - 2, [usize::MAX - 1, usize::MAX, 2]),
+        ] {
+            for expand_blocks in [false, true] {
+                let mut collection = SelectionsCollection::new();
+                collection.change_with(&snapshot, |selections| {
+                    let retained = Selection {
+                        id: 1,
+                        start: MultiBufferOffset(0),
+                        end: MultiBufferOffset(1),
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    };
+                    let imported = Selection {
+                        id: imported_id,
+                        start: retained.end,
+                        end: retained.end,
+                        ..retained
+                    };
+                    let anchors = [retained, imported]
+                        .into_iter()
+                        .map(|selection| selection_to_anchor_selection(selection, &snapshot))
+                        .collect();
+                    if expand_blocks {
+                        selections.select_anchors(anchors);
+                    } else {
+                        selections.select_anchors_unexpanded(anchors);
+                    }
+                    assert_eq!(
+                        selections.all_unexpanded::<MultiBufferOffset>(&snapshot),
+                        [retained]
+                    );
+                    for expected_id in expected_ids {
+                        assert_eq!(selections.new_selection_id(), expected_id);
+                    }
+                });
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn imported_selection_ids_wrap_across_selection_builders(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "abcdef");
+        let mut collection = SelectionsCollection::new();
+        collection.change_with(&snapshot, |selections| {
+            let imported = Selection {
+                id: usize::MAX,
+                start: MultiBufferOffset(0),
+                end: MultiBufferOffset(1),
+                reversed: false,
+                goal: SelectionGoal::None,
+            };
+            selections.select(vec![imported]);
+            selections.set_pending_anchor_range(
+                snapshot.anchor_after(MultiBufferOffset(3))
+                    ..snapshot.anchor_before(MultiBufferOffset(4)),
+                SelectMode::Character,
+            );
+            assert_eq!(
+                selections.pending_anchor().map(|selection| selection.id),
+                Some(1)
+            );
+            selections.select_ranges([
+                MultiBufferOffset(0)..MultiBufferOffset(1),
+                MultiBufferOffset(3)..MultiBufferOffset(4),
+            ]);
+            assert_eq!(
+                selections
+                    .disjoint_anchors()
+                    .iter()
+                    .map(|selection| selection.id)
+                    .collect::<Vec<_>>(),
+                [2, 3]
+            );
+            selections.select_anchor_ranges([
+                snapshot.anchor_after(MultiBufferOffset(0))
+                    ..snapshot.anchor_before(MultiBufferOffset(1)),
+                snapshot.anchor_after(MultiBufferOffset(3))
+                    ..snapshot.anchor_before(MultiBufferOffset(4)),
+            ]);
+            assert_eq!(
+                selections
+                    .disjoint_anchors()
+                    .iter()
+                    .map(|selection| selection.id)
+                    .collect::<Vec<_>>(),
+                [4, 5]
+            );
+            selections.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 4),
+            ]);
+            assert_eq!(
+                selections
+                    .disjoint_anchors()
+                    .iter()
+                    .map(|selection| selection.id)
+                    .collect::<Vec<_>>(),
+                [6, 7]
+            );
+            selections.replace_cursors_with(|_| {
+                vec![
+                    DisplayPoint::new(DisplayRow(0), 0),
+                    DisplayPoint::new(DisplayRow(0), 3),
+                ]
+            });
+            assert_eq!(
+                selections
+                    .disjoint_anchors()
+                    .iter()
+                    .map(|selection| selection.id)
+                    .collect::<Vec<_>>(),
+                [8, 9]
+            );
+            selections.reverse_selections();
+            assert_eq!(
+                selections
+                    .disjoint_anchors()
+                    .iter()
+                    .map(|selection| selection.id)
+                    .collect::<Vec<_>>(),
+                [11, 10]
+            );
+            let buffer_id = snapshot
+                .anchor_to_buffer_anchor(selections.first_anchor().start)
+                .expect("selection buffer")
+                .0
+                .buffer_id;
+            selections.remove_selections_from_buffer(buffer_id);
+            assert_eq!(selections.first_anchor().id, 12);
+        });
+    }
+
+    #[gpui::test]
+    fn coalesced_and_pending_imports_reserve_selection_ids(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "abcdef");
+        let imported = [
+            Selection {
+                id: 1,
+                start: MultiBufferOffset(0),
+                end: MultiBufferOffset(1),
+                reversed: false,
+                goal: SelectionGoal::None,
+            },
+            Selection {
+                id: 40,
+                start: MultiBufferOffset(1),
+                end: MultiBufferOffset(1),
+                reversed: false,
+                goal: SelectionGoal::None,
+            },
+        ];
+        for expand_blocks in [false, true] {
+            let mut collection = SelectionsCollection::new();
+            collection.change_with(&snapshot, |selections| {
+                let anchors = imported
+                    .iter()
+                    .map(|selection| selection_to_anchor_selection(*selection, &snapshot))
+                    .collect();
+                if expand_blocks {
+                    selections.select_anchors(anchors);
+                } else {
+                    selections.select_anchors_unexpanded(anchors);
+                }
+                assert_eq!(selections.next_selection_id(), 41);
+                assert_eq!(
+                    selections.all_unexpanded::<MultiBufferOffset>(&snapshot),
+                    vec![imported[0]]
+                );
+            });
+        }
+        let mut collection = SelectionsCollection::new();
+        collection.change_with(&snapshot, |selections| {
+            selections.select(imported.to_vec());
+            assert_eq!(selections.next_selection_id(), 41);
+            assert_eq!(
+                selections.all_unexpanded::<MultiBufferOffset>(&snapshot),
+                vec![imported[0]]
+            );
+        });
+        for disjoint in [Vec::new(), vec![imported[0]]] {
+            let mut collection = SelectionsCollection::new();
+            collection.change_with(&snapshot, |selections| {
+                selections.select_anchors(
+                    disjoint
+                        .into_iter()
+                        .map(|selection| selection_to_anchor_selection(selection, &snapshot))
+                        .collect(),
+                );
+                selections.set_pending(
+                    selection_to_anchor_selection(imported[1], &snapshot),
+                    SelectMode::Character,
+                );
+                assert_eq!(selections.next_selection_id(), 41);
+                selections.insert_range(MultiBufferOffset(5)..MultiBufferOffset(5));
+                assert_eq!(selections.newest_anchor().id, 41);
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn select_anchors_unexpanded_preserves_hidden_buffer_ranges(cx: &mut gpui::TestAppContext) {
+        let map = selection_test_display_map(cx, "aaaa\nbbbb\ncccc\ndddd\neeee\nffff");
+        let snapshot = map.update(cx, |map, cx| {
+            map.fold(
+                vec![Crease::simple(
+                    Point::new(1, 0)..Point::new(2, 4),
+                    FoldPlaceholder::test(),
+                )],
+                cx,
+            );
+            let buffer = map.snapshot(cx).buffer_snapshot().clone();
+            map.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Replace(
+                        buffer.anchor_after(Point::new(4, 0))
+                            ..=buffer.anchor_before(Point::new(5, 4)),
+                    ),
+                    height: Some(1),
+                    style: BlockStyle::Fixed,
+                    render: Arc::new(|_| div().into_any_element()),
+                    priority: 0,
+                }],
+                cx,
+            );
+            map.snapshot(cx)
+        });
+        let saved = [1, 2, 4, 5]
+            .into_iter()
+            .map(|row| Selection {
+                id: row as usize + 10,
+                start: Point::new(row, 1),
+                end: Point::new(row, 2),
+                reversed: row % 2 == 0,
+                goal: SelectionGoal::None,
+            })
+            .collect::<Vec<_>>();
+        let anchors = saved
+            .iter()
+            .map(|selection| {
+                selection_to_anchor_selection(
+                    selection.map(|point| point.to_offset(&snapshot)),
+                    &snapshot,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut collection = SelectionsCollection::new();
+        collection.change_with(&snapshot, |selections| {
+            selections.select_anchors_unexpanded(anchors);
+        });
+        assert_eq!(collection.all_unexpanded::<Point>(&snapshot), saved);
+        assert_eq!(collection.pending_anchor(), None);
+        assert_eq!(collection.next_selection_id(), 16);
+
+        let mut overlapping = saved[0];
+        overlapping.id = 30;
+        overlapping.end.column = 3;
+        collection.change_with(&snapshot, |selections| {
+            selections.select_anchors_unexpanded(
+                [saved[0], overlapping]
+                    .into_iter()
+                    .map(|selection| {
+                        selection_to_anchor_selection(
+                            selection.map(|point| point.to_offset(&snapshot)),
+                            &snapshot,
+                        )
+                    })
+                    .collect(),
+            );
+        });
+        assert_eq!(
+            collection.all_unexpanded::<Point>(&snapshot),
+            vec![Selection {
+                end: overlapping.end,
+                ..saved[0]
+            }]
+        );
+        assert_eq!(collection.next_selection_id(), 31);
+    }
+
+    #[gpui::test]
+    fn columnar_selection_skips_replacement_input_rows(cx: &mut gpui::TestAppContext) {
+        let text = iter::repeat_n("abcd", 1002).collect::<Vec<_>>().join("\n");
+        for hidden in [1..=1000, 0..=1000, 1..=1001, 0..=1001] {
+            let map = selection_test_display_map(cx, &text);
+            let snapshot = map.update(cx, |map, cx| {
+                let buffer = map.snapshot(cx).buffer_snapshot().clone();
+                map.insert_blocks(
+                    [BlockProperties {
+                        placement: BlockPlacement::Replace(
+                            buffer.anchor_after(Point::new(*hidden.start(), 0))
+                                ..=buffer.anchor_before(Point::new(*hidden.end(), 4)),
+                        ),
+                        height: Some(1),
+                        style: BlockStyle::Fixed,
+                        render: Arc::new(|_| div().into_any_element()),
+                        priority: 0,
+                    }],
+                    cx,
+                );
+                map.snapshot(cx)
+            });
+            for above in [false, true] {
+                let source_row = if above { 1001 } else { 0 };
+                let source = Selection {
+                    id: 0,
+                    start: Point::new(source_row, 0),
+                    end: Point::new(source_row, 1),
+                    reversed: above,
+                    goal: SelectionGoal::None,
+                };
+                let expected_row = if above {
+                    hidden.start().checked_sub(1)
+                } else if *hidden.end() == 1001 {
+                    None
+                } else {
+                    Some(hidden.end() + 1)
+                };
+                let mut collection = SelectionsCollection::new();
+                let mut rows = ColumnarSelectionRows::new(&snapshot);
+                let actual = collection.find_next_columnar_selection_by_buffer_row(
+                    &snapshot,
+                    &mut rows,
+                    &source,
+                    above,
+                    &(0..1),
+                );
+                assert_eq!(
+                    actual,
+                    expected_row.map(|row| Selection {
+                        id: 1,
+                        start: Point::new(row, 0),
+                        end: Point::new(row, 1),
+                        reversed: above,
+                        goal: SelectionGoal::None,
+                    }),
+                    "hidden: {hidden:?}, above: {above}"
+                );
+            }
+        }
+    }
+
+    fn selection_test_display_map(
+        cx: &mut gpui::TestAppContext,
+        text: &str,
+    ) -> gpui::Entity<DisplayMap> {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            crate::init(cx);
+        });
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                test_font(),
+                px(14.),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        })
     }
 
     fn random_text(rng: &mut StdRng) -> String {

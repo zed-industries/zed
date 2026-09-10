@@ -485,8 +485,11 @@ impl Editor {
                             self.buffer.read(cx).last_transaction_id(cx)
                         {
                             if transaction_id_prev != Some(transaction_id_now) {
-                                self.selection_history
-                                    .insert_transaction(transaction_id_now, selections);
+                                self.selection_history.insert_transaction(
+                                    transaction_id_now,
+                                    selections,
+                                    self.add_selections_state.clone(),
+                                );
                             }
                         }
 

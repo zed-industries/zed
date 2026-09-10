@@ -11662,6 +11662,8 @@ async fn test_add_selection_grapheme_columns(cx: &mut TestAppContext) {
         ("éx|Z\ne\u{301}x|Zˇ", [3..3, 4..4]),
         ("👩\u{200d}💻x|Z\nax|Zˇ", [12..13, 2..3]),
         ("🇦🇶x|Z\nax|Zˇ", [8..9, 1..2]),
+        ("\t\u{301}x\n\t\u{301}xˇ", [1..1, 1..1]),
+        ("\t\u{301}x\n\t\u{301}xˇ", [1..3, 1..3]),
     ] {
         for above in [false, true] {
             for reversed in [false, true] {
@@ -11671,6 +11673,88 @@ async fn test_add_selection_grapheme_columns(cx: &mut TestAppContext) {
                 });
             }
         }
+    }
+}
+
+#[gpui::test]
+fn test_add_selection_with_synchronized_selections(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    for skip_soft_wrap in [false, true] {
+        let buffer = cx.new(|cx| Buffer::local("abcdef\nabcdef", cx));
+        let source =
+            cx.add_window(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        source
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([Point::new(0, 2)..Point::new(0, 2)]);
+                });
+            })
+            .expect("source window");
+        let source = source.root(cx).expect("source editor");
+        let destination =
+            cx.add_window(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        destination
+            .update(cx, |editor, window, cx| {
+                let _subscription = editor.sync_selections(source.clone(), cx);
+                add_selection_in_direction(editor, false, skip_soft_wrap, window, cx);
+                let ids = editor
+                    .selections
+                    .disjoint_anchors()
+                    .iter()
+                    .map(|selection| selection.id)
+                    .collect::<Vec<_>>();
+                assert_eq!(ids, [1, 2]);
+                editor.begin_selection(DisplayPoint::new(DisplayRow(1), 2), true, 1, window, cx);
+                assert_eq!(
+                    stored_selection_ranges(editor, cx),
+                    [Point::new(0, 2)..Point::new(0, 2)]
+                );
+            })
+            .expect("destination window");
+    }
+}
+
+#[gpui::test]
+async fn test_add_selection_after_importing_maximum_id(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    for skip_soft_wrap in [false, true] {
+        cx.set_state("abcdef\nabcdef\nabcdefˇ");
+        cx.update_editor(|editor, window, cx| {
+            let buffer = editor.buffer.read(cx).snapshot(cx);
+            editor.set_selections_from_remote(
+                vec![Selection {
+                    id: usize::MAX,
+                    start: buffer.anchor_after(Point::new(0, 1)),
+                    end: buffer.anchor_before(Point::new(0, 2)),
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                }],
+                None,
+                window,
+                cx,
+            );
+            add_selection_in_direction(editor, false, skip_soft_wrap, window, cx);
+            add_selection_in_direction(editor, false, skip_soft_wrap, window, cx);
+            let selections = editor.selections.disjoint_anchors();
+            assert_eq!(selections.len(), 3);
+            assert_eq!(selections[0].id, usize::MAX);
+            let mut ids = selections
+                .iter()
+                .map(|selection| selection.id)
+                .collect::<Vec<_>>();
+            ids.sort_unstable();
+            ids.dedup();
+            assert_eq!(ids.len(), 3);
+        });
+        cx.assert_editor_state("a«bˇ»cdef\na«bˇ»cdef\na«bˇ»cdef");
+        cx.update_editor(|editor, window, cx| {
+            add_selection_in_direction(editor, true, skip_soft_wrap, window, cx);
+            add_selection_in_direction(editor, true, skip_soft_wrap, window, cx);
+            assert_eq!(editor.selections.disjoint_anchors().len(), 1);
+            assert_eq!(editor.selections.first_anchor().id, usize::MAX);
+        });
+        cx.assert_editor_state("a«bˇ»cdef\nabcdef\nabcdef");
     }
 }
 
@@ -11919,6 +12003,378 @@ fn test_add_selection_unwrapped_reseeds_after_folding_source_buffer(cx: &mut Tes
 }
 
 #[gpui::test]
+fn test_add_selection_unwrapped_retains_goal_after_folding_projection_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    for above in [false, true] {
+        let mut cx = EditorTestContext::new_multibuffer(
+            cx,
+            if above {
+                ["«abcdef»", "«uvwxyz»", "«defghi\nabc»"]
+            } else {
+                ["«abc\ndefghi»", "«uvwxyz»", "«abcdef»"]
+            },
+        );
+        let projection_buffer_id = cx.multibuffer(|buffer, cx| {
+            buffer
+                .snapshot(cx)
+                .excerpts()
+                .nth(1)
+                .expect("projection excerpt")
+                .context
+                .start
+                .buffer_id
+        });
+        cx.set_selections_state(if above {
+            "abcdef\nuvwxyz\ndefg«hi\naˇ»bc"
+        } else {
+            "a«bc\ndefgˇ»hi\nuvwxyz\nabcdef"
+        });
+        cx.update_editor(|editor, window, cx| {
+            add_selection_in_direction(editor, above, true, window, cx);
+        });
+        cx.assert_editor_state(if above {
+            "abcdef\nu«vwxˇ»yz\nd«efgˇ»hi\na«bcˇ»"
+        } else {
+            "a«bcˇ»\nd«efgˇ»hi\nu«vwxˇ»yz\nabcdef"
+        });
+        cx.update_editor(|editor, _, cx| {
+            editor.fold_buffer(projection_buffer_id, cx);
+        });
+        cx.assert_editor_state(if above {
+            "abcdef\nuvwxyz\nd«efgˇ»hi\na«bcˇ»"
+        } else {
+            "a«bcˇ»\nd«efgˇ»hi\nuvwxyz\nabcdef"
+        });
+        for _ in 0..2 {
+            cx.update_editor(|editor, window, cx| {
+                add_selection_in_direction(editor, above, true, window, cx);
+            });
+            cx.assert_editor_state(if above {
+                "a«bcdˇ»ef\nuvwxyz\nd«efgˇ»hi\na«bcˇ»"
+            } else {
+                "a«bcˇ»\nd«efgˇ»hi\nuvwxyz\na«bcdˇ»ef"
+            });
+            cx.update_editor(|editor, window, cx| {
+                add_selection_in_direction(editor, !above, true, window, cx);
+            });
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_add_selection_reverses_groups_with_deleted_sources(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    for skip_soft_wrap in [false, true] {
+        cx.set_state("abˇcdef\nabcdef\nabcdef\nabˇcdef\nabcdef\nabcdef");
+        cx.update_editor(|editor, window, cx| {
+            add_selection_in_direction(editor, false, skip_soft_wrap, window, cx);
+        });
+        cx.assert_editor_state("abˇcdef\nabˇcdef\nabcdef\nabˇcdef\nabˇcdef\nabcdef");
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let source_ids = editor
+                .selections
+                .all::<Point>(&snapshot)
+                .into_iter()
+                .filter(|selection| selection.start.row % 3 == 0)
+                .map(|selection| selection.id)
+                .collect::<Vec<_>>();
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                for id in source_ids {
+                    selections.delete(id);
+                }
+            });
+            add_selection_in_direction(editor, true, skip_soft_wrap, window, cx);
+        });
+        cx.assert_editor_state("abˇcdef\nabˇcdef\nabcdef\nabˇcdef\nabˇcdef\nabcdef");
+    }
+}
+
+#[gpui::test]
+async fn test_add_selection_after_members_span_rows(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    for skip_soft_wrap in [false, true] {
+        cx.set_state("abˇcdef\nabcdef\nabcdef\nabcdef");
+        cx.update_editor(|editor, window, cx| {
+            add_selection_in_direction(editor, false, skip_soft_wrap, window, cx);
+            editor.select_down(&SelectDown, window, cx);
+        });
+        cx.assert_editor_state("ab«cdef\nabˇ»«cdef\nabˇ»cdef\nabcdef");
+        cx.update_editor(|editor, window, cx| {
+            add_selection_in_direction(editor, false, skip_soft_wrap, window, cx);
+        });
+        cx.assert_editor_state("ab«cdef\nabˇ»«cdef\nabˇ»cdef\nabˇcdef");
+    }
+}
+
+#[gpui::test]
+async fn test_add_selection_fresh_pixel_source_reseeds_goal(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    for above in [false, true] {
+        cx.set_state(if above {
+            "abcdef\nx\nabcdˇef"
+        } else {
+            "abcdˇef\nx\nabcdef"
+        });
+        cx.update_editor(|editor, window, cx| {
+            add_selection_in_direction(editor, above, false, window, cx);
+        });
+        cx.assert_editor_state(if above {
+            "abcdef\nxˇ\nabcdˇef"
+        } else {
+            "abcdˇef\nxˇ\nabcdef"
+        });
+        cx.update_editor(|editor, window, cx| {
+            let source_row = if above { 2 } else { 0 };
+            let source_id = editor
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .find(|selection| {
+                    selection
+                        .start
+                        .to_point(&editor.buffer.read(cx).snapshot(cx))
+                        .row
+                        == source_row
+                })
+                .expect("source selection")
+                .id;
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.delete(source_id);
+            });
+            let clamped_id = editor.selections.disjoint_anchors()[0].id;
+            add_selection_in_direction(editor, above, false, window, cx);
+            assert_eq!(
+                stored_selection_ranges(editor, cx),
+                if above {
+                    [
+                        Point::new(0, 1)..Point::new(0, 1),
+                        Point::new(1, 1)..Point::new(1, 1),
+                    ]
+                } else {
+                    [
+                        Point::new(1, 1)..Point::new(1, 1),
+                        Point::new(2, 1)..Point::new(2, 1),
+                    ]
+                }
+            );
+            assert!(
+                editor
+                    .selections
+                    .disjoint_anchors()
+                    .iter()
+                    .any(|selection| selection.id == clamped_id)
+            );
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_add_selection_keeps_fresh_source_inside_fold(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    for skip_soft_wrap in [false, true] {
+        cx.set_state("abˇcdef\nabcdef\nabcdef");
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_creases(
+                vec![Crease::simple(
+                    Point::new(0, 0)..Point::new(1, 6),
+                    FoldPlaceholder::test(),
+                )],
+                false,
+                window,
+                cx,
+            );
+            assert_eq!(editor.display_text(cx), "⋯\nabcdef");
+            let source_id = editor.selections.disjoint_anchors()[0].id;
+            add_selection_in_direction(editor, false, skip_soft_wrap, window, cx);
+            let stored = stored_selection_ranges(editor, cx);
+            assert_eq!(stored[0], Point::new(0, 2)..Point::new(0, 2));
+            assert_eq!(stored.len(), 2);
+            assert_eq!(stored[1].start.row, 2);
+            assert_eq!(editor.selections.disjoint_anchors()[0].id, source_id);
+            add_selection_in_direction(editor, true, skip_soft_wrap, window, cx);
+            assert_eq!(
+                stored_selection_ranges(editor, cx),
+                [Point::new(0, 2)..Point::new(0, 2)]
+            );
+            assert_eq!(editor.selections.disjoint_anchors()[0].id, source_id);
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_add_selection_keeps_group_members_coalesced_by_fold(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    for skip_soft_wrap in [false, true] {
+        cx.set_state("abˇcdef\nabcdef\nabcdef");
+        cx.update_editor(|editor, window, cx| {
+            add_selection_in_direction(editor, false, skip_soft_wrap, window, cx);
+            editor.fold_creases(
+                vec![Crease::simple(
+                    Point::new(0, 0)..Point::new(1, 6),
+                    FoldPlaceholder::test(),
+                )],
+                false,
+                window,
+                cx,
+            );
+            assert_eq!(editor.display_text(cx), "⋯\nabcdef");
+            add_selection_in_direction(editor, false, skip_soft_wrap, window, cx);
+            let stored = stored_selection_ranges(editor, cx);
+            assert_eq!(
+                stored[..2],
+                [
+                    Point::new(0, 2)..Point::new(0, 2),
+                    Point::new(1, 2)..Point::new(1, 2),
+                ]
+            );
+            assert_eq!(stored.len(), 3);
+            assert_eq!(stored[2].start.row, 2);
+            add_selection_in_direction(editor, true, skip_soft_wrap, window, cx);
+            add_selection_in_direction(editor, true, skip_soft_wrap, window, cx);
+            assert_eq!(
+                stored_selection_ranges(editor, cx),
+                [Point::new(0, 2)..Point::new(0, 2)]
+            );
+        });
+    }
+}
+
+#[gpui::test]
+fn test_add_selection_keeps_sources_on_block_rows(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    for skip_soft_wrap in [false, true] {
+        for visible_source in [None, Some(false), Some(true)] {
+            let mut cx = EditorTestContext::new_multibuffer(cx, ["«abcdef»", "«abcdef\nabcdef»"]);
+            let buffer_ids = cx.multibuffer(|buffer, cx| {
+                buffer
+                    .snapshot(cx)
+                    .excerpts()
+                    .map(|excerpt| excerpt.context.start.buffer_id)
+                    .collect::<Vec<_>>()
+            });
+            let folded = if visible_source.is_some() {
+                &buffer_ids[..1]
+            } else {
+                &buffer_ids[..]
+            };
+            cx.set_selections_state("abˇcdef\nabcdef\nabcdef");
+            cx.update_editor(|editor, _, cx| {
+                editor.fold_buffers(folded.iter().copied(), cx);
+            });
+            let mut expected = vec![Point::zero()..Point::zero()];
+            cx.update_editor(|editor, window, cx| {
+                assert_eq!(stored_selection_ranges(editor, cx), expected);
+                if let Some(pending) = visible_source {
+                    expected.push(Point::new(1, 2)..Point::new(1, 2));
+                    if pending {
+                        let position =
+                            Point::new(1, 2).to_display_point(&editor.display_snapshot(cx));
+                        editor.begin_selection(position, true, 1, window, cx);
+                        assert!(editor.selections.pending_anchor().is_some());
+                    } else {
+                        editor.change_selections(
+                            SelectionEffects::no_scroll(),
+                            window,
+                            cx,
+                            |selections| {
+                                selections.select_ranges(expected.clone());
+                            },
+                        );
+                    }
+                    assert_eq!(stored_selection_ranges(editor, cx), expected);
+                }
+                add_selection_in_direction(editor, false, skip_soft_wrap, window, cx);
+                if visible_source.is_some() {
+                    expected.push(Point::new(2, 2)..Point::new(2, 2));
+                }
+                assert_eq!(stored_selection_ranges(editor, cx), expected);
+                add_selection_in_direction(editor, true, skip_soft_wrap, window, cx);
+                if visible_source.is_some() {
+                    expected.pop();
+                }
+                assert_eq!(stored_selection_ranges(editor, cx), expected);
+                editor.handle_input("X", window, cx);
+            });
+            cx.update_editor(|editor, _, cx| {
+                for buffer_id in folded {
+                    editor.unfold_buffer(*buffer_id, cx);
+                }
+            });
+            cx.assert_editor_state(if visible_source.is_some() {
+                "Xˇabcdef\nabXˇcdef\nabcdef"
+            } else {
+                "Xˇabcdef\nabcdef\nabcdef"
+            });
+        }
+    }
+}
+
+#[gpui::test]
+fn test_add_selection_skips_block_rows(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new_multibuffer(
+        cx,
+        ["«abcdef»", "«abcdefghij\nx»", "«abcdef»", "«abcdefghij\nx»"],
+    );
+    let folded_buffer_ids = cx.multibuffer(|buffer, cx| {
+        buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .skip(1)
+            .step_by(2)
+            .collect::<Vec<_>>()
+    });
+    for skip_soft_wrap in [false, true] {
+        for column in [0, 4] {
+            let source = Point::new(0, column)..Point::new(0, column);
+            cx.update_editor(|editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([source.clone()]);
+                });
+                add_selection_in_direction(editor, false, skip_soft_wrap, window, cx);
+                assert_add_selection_ranges(
+                    editor,
+                    &[source.clone(), Point::new(1, column)..Point::new(1, column)],
+                    cx,
+                );
+            });
+        }
+    }
+    cx.update_editor(|editor, _, cx| {
+        editor.fold_buffers(folded_buffer_ids, cx);
+    });
+    for skip_soft_wrap in [false, true] {
+        for (column, above) in [(0, false), (4, false), (0, true), (4, true)] {
+            let source_row = if above { 3 } else { 0 };
+            let source = Point::new(source_row, column)..Point::new(source_row, column);
+            let target = Point::new(3 - source_row, column)..Point::new(3 - source_row, column);
+            cx.update_editor(|editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([source.clone()]);
+                });
+                add_selection_in_direction(editor, above, skip_soft_wrap, window, cx);
+                let mut expected = vec![source.clone(), target];
+                expected.sort_by_key(|range| range.start);
+                assert_add_selection_ranges(editor, &expected, cx);
+                add_selection_in_direction(editor, above, skip_soft_wrap, window, cx);
+                assert_add_selection_ranges(editor, &expected, cx);
+                add_selection_in_direction(editor, !above, skip_soft_wrap, window, cx);
+                assert_add_selection_ranges(editor, std::slice::from_ref(&source), cx);
+            });
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_add_selection_history_restores_groups(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
@@ -12126,6 +12582,110 @@ async fn test_add_selection_history_restores_unclipped_multiline_goal(cx: &mut T
             editor.redo_selection(&RedoSelection, window, cx);
         });
         cx.assert_editor_state(four);
+    }
+}
+
+#[gpui::test]
+async fn test_add_selection_text_undo_restores_multiline_goal(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    for (above, initial, three, four) in [
+        (
+            false,
+            "a«bc\ndefgˇ»hi\nuvwxyz\nabcdef",
+            "a«bcˇ»\nd«efgˇ»hi\nu«vwxˇ»yz\nabcdef",
+            "a«bcˇ»\nd«efgˇ»hi\nu«vwxˇ»yz\na«bcdˇ»ef",
+        ),
+        (
+            true,
+            "abcdef\nuvwxyz\ndefg«hi\naˇ»bc",
+            "abcdef\nu«vwxˇ»yz\nd«efgˇ»hi\na«bcˇ»",
+            "a«bcdˇ»ef\nu«vwxˇ»yz\nd«efgˇ»hi\na«bcˇ»",
+        ),
+    ] {
+        for grouped in [false, true] {
+            cx.set_state(initial);
+            cx.update_editor(|editor, window, cx| {
+                add_selection_in_direction(editor, above, true, window, cx);
+                editor.transact(window, cx, |editor, window, cx| {
+                    editor.insert("X", window, cx);
+                    if grouped {
+                        editor.insert("Y", window, cx);
+                    }
+                });
+                editor.undo(&Undo, window, cx);
+            });
+            cx.assert_editor_state(three);
+            cx.update_editor(|editor, window, cx| {
+                editor.redo(&Redo, window, cx);
+                editor.undo(&Undo, window, cx);
+                add_selection_in_direction(editor, above, true, window, cx);
+            });
+            cx.assert_editor_state(four);
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_add_selection_history_preserves_hidden_sources(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    for skip_soft_wrap in [false, true] {
+        for source_count in [1, 2] {
+            cx.set_state("abˇcdef\nabcdef\nabcdef");
+            cx.update_editor(|editor, window, cx| {
+                let sources = (0..source_count)
+                    .map(|row| Point::new(row, 2)..Point::new(row, 2))
+                    .collect::<Vec<_>>();
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges(sources.clone());
+                });
+                editor.fold_creases(
+                    vec![Crease::simple(
+                        Point::new(0, 0)..Point::new(1, 6),
+                        FoldPlaceholder::test(),
+                    )],
+                    false,
+                    window,
+                    cx,
+                );
+                add_selection_in_direction(editor, false, skip_soft_wrap, window, cx);
+                let mut added = sources.clone();
+                added.push(Point::new(2, 0)..Point::new(2, 0));
+                assert_eq!(stored_selection_ranges(editor, cx), added);
+                editor.undo_selection(&UndoSelection, window, cx);
+                assert_eq!(stored_selection_ranges(editor, cx), sources);
+                editor.redo_selection(&RedoSelection, window, cx);
+                assert_eq!(stored_selection_ranges(editor, cx), added);
+                editor.undo_selection(&UndoSelection, window, cx);
+                assert_eq!(stored_selection_ranges(editor, cx), sources);
+            });
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_add_selection_removing_projection_retains_goal(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    for remove_by_click in [false, true] {
+        cx.set_state("a«bc\ndefgˇ»hi\nuvwxyz");
+        cx.update_editor(|editor, window, cx| {
+            add_selection_in_direction(editor, false, true, window, cx);
+        });
+        cx.assert_editor_state("a«bcˇ»\nd«efgˇ»hi\nu«vwxˇ»yz");
+        cx.update_editor(|editor, window, cx| {
+            if remove_by_click {
+                editor.begin_selection(DisplayPoint::new(DisplayRow(2), 4), true, 1, window, cx);
+            } else {
+                add_selection_in_direction(editor, true, true, window, cx);
+            }
+        });
+        cx.assert_editor_state("a«bcˇ»\nd«efgˇ»hi\nuvwxyz");
+        cx.update_editor(|editor, window, cx| {
+            add_selection_in_direction(editor, false, true, window, cx);
+        });
+        cx.assert_editor_state("a«bcˇ»\nd«efgˇ»hi\nu«vwxˇ»yz");
     }
 }
 
@@ -47375,6 +47935,17 @@ fn assert_add_selection_ranges(
             .ranges::<Point>(&editor.display_snapshot(cx)),
         expected,
     );
+}
+
+fn stored_selection_ranges(editor: &Editor, cx: &App) -> Vec<Range<Point>> {
+    let buffer = editor.buffer.read(cx).snapshot(cx);
+    editor
+        .selections
+        .disjoint_anchors()
+        .iter()
+        .chain(editor.selections.pending_anchor())
+        .map(|selection| selection.range().to_point(&buffer))
+        .collect()
 }
 
 fn add_selection_in_direction(

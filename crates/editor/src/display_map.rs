@@ -127,7 +127,7 @@ use std::{
     fmt::Debug,
     iter,
     num::NonZeroU32,
-    ops::{self, Add, Range, Sub},
+    ops::{self, Add, Range, RangeInclusive, Sub},
     sync::Arc,
 };
 
@@ -2447,6 +2447,31 @@ impl DisplaySnapshot {
             ),
             Bias::Right,
         )
+    }
+
+    pub(crate) fn fully_replaced_tab_rows(&self, row: u32) -> Option<RangeInclusive<u32>> {
+        if !self.block_snapshot.has_replacement_blocks()
+            || row > self.tab_snapshot().max_point().row()
+        {
+            return None;
+        }
+        let wraps = self.wrap_snapshot();
+        let wrap_point = wraps.tab_point_to_wrap_point(TabPoint::new(row, 0));
+        let input_range = self
+            .block_snapshot
+            .replacement_block_input_range(wrap_point.row())?;
+        let start = wraps.to_tab_point(WrapPoint::new(input_range.start, 0));
+        let start_row = start.row().checked_add(u32::from(start.column() > 0))?;
+        let end_row = if input_range.end > wraps.max_point().row() {
+            self.tab_snapshot().max_point().row()
+        } else {
+            wraps
+                .to_tab_point(WrapPoint::new(input_range.end, 0))
+                .row()
+                .checked_sub(1)?
+        };
+        let rows = start_row..=end_row;
+        rows.contains(&row).then_some(rows)
     }
 }
 

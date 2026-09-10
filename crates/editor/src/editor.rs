@@ -1437,6 +1437,8 @@ struct DeferredSelectionEffectsState {
 pub struct TransactionSelections {
     pub undo: Arc<[Selection<Anchor>]>,
     pub redo: Option<Arc<[Selection<Anchor>]>>,
+    undo_add_selections_state: Option<AddSelectionsState>,
+    redo_add_selections_state: Option<AddSelectionsState>,
 }
 
 #[derive(Default)]
@@ -1453,6 +1455,7 @@ impl SelectionHistory {
         &mut self,
         transaction_id: TransactionId,
         selections: Arc<[Selection<Anchor>]>,
+        add_selections_state: Option<AddSelectionsState>,
     ) {
         if selections.is_empty() {
             log::error!(
@@ -1466,6 +1469,8 @@ impl SelectionHistory {
             TransactionSelections {
                 undo: selections,
                 redo: None,
+                undo_add_selections_state: add_selections_state,
+                redo_add_selections_state: None,
             },
         );
     }
@@ -7905,13 +7910,18 @@ impl Editor {
 
     fn restore_selections(
         &mut self,
-        selections: Option<Arc<[Selection<Anchor>]>>,
+        selections: Option<(Arc<[Selection<Anchor>]>, Option<AddSelectionsState>)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(selections) = selections.filter(|selections| !selections.is_empty()) {
-            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.select_anchors(selections.to_vec());
+        if let Some((selections, add_selections_state)) =
+            selections.filter(|(selections, _)| !selections.is_empty())
+        {
+            self.with_selection_effects_deferred(window, cx, |this, window, cx| {
+                this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_anchors_unexpanded(selections.to_vec());
+                });
+                this.add_selections_state = add_selections_state;
             });
         }
     }
@@ -7926,7 +7936,12 @@ impl Editor {
             if transaction.is_none() {
                 log::error!("No selection history for undone transaction; selection unchanged");
             }
-            let selections = transaction.map(|transaction| transaction.undo.clone());
+            let selections = transaction.map(|transaction| {
+                (
+                    transaction.undo.clone(),
+                    transaction.undo_add_selections_state.clone(),
+                )
+            });
             self.restore_selections(selections, window, cx);
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
@@ -7948,10 +7963,14 @@ impl Editor {
         }
 
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
-            let selections = self
-                .selection_history
-                .transaction(transaction_id)
-                .and_then(|transaction| transaction.redo.clone());
+            let selections =
+                self.selection_history
+                    .transaction(transaction_id)
+                    .and_then(|transaction| {
+                        transaction.redo.clone().map(|selections| {
+                            (selections, transaction.redo_add_selections_state.clone())
+                        })
+                    });
             self.restore_selections(selections, window, cx);
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
@@ -8478,7 +8497,7 @@ impl Editor {
         buffers.retain(|buffer| !buffer.read(cx).read_only());
 
         let transaction_id_prev = buffer.read(cx).last_transaction_id(cx);
-        let selections_prev = transaction_id_prev
+        let (selections_prev, add_selections_state_prev) = transaction_id_prev
             .and_then(|transaction_id_prev| {
                 // default to selections as they were after the last edit, if we have them,
                 // instead of how they are now.
@@ -8486,9 +8505,19 @@ impl Editor {
                 // will take you back to where you made the last edit, instead of staying where you scrolled
                 self.selection_history
                     .transaction(transaction_id_prev)
-                    .map(|t| t.undo.clone())
+                    .map(|transaction| {
+                        (
+                            transaction.undo.clone(),
+                            transaction.undo_add_selections_state.clone(),
+                        )
+                    })
             })
-            .unwrap_or_else(|| self.selections.disjoint_anchors_arc());
+            .unwrap_or_else(|| {
+                (
+                    self.selections.disjoint_anchors_arc(),
+                    self.add_selections_state.clone(),
+                )
+            });
 
         let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
         let format = project.update(cx, |project, cx| {
@@ -8520,9 +8549,11 @@ impl Editor {
                 if has_new_transaction {
                     editor
                         .update(cx, |editor, _| {
-                            editor
-                                .selection_history
-                                .insert_transaction(transaction_id_now, selections_prev);
+                            editor.selection_history.insert_transaction(
+                                transaction_id_now,
+                                selections_prev,
+                                add_selections_state_prev,
+                            );
                         })
                         .ok();
                 }
@@ -8692,8 +8723,11 @@ impl Editor {
             .buffer
             .update(cx, |buffer, cx| buffer.start_transaction_at(now, cx))
         {
-            self.selection_history
-                .insert_transaction(tx_id, self.selections.disjoint_anchors_arc());
+            self.selection_history.insert_transaction(
+                tx_id,
+                self.selections.disjoint_anchors_arc(),
+                self.add_selections_state.clone(),
+            );
             cx.emit(EditorEvent::TransactionBegun {
                 transaction_id: tx_id,
             });
@@ -8714,6 +8748,7 @@ impl Editor {
         {
             if let Some(transaction) = self.selection_history.transaction_mut(transaction_id) {
                 transaction.redo = Some(self.selections.disjoint_anchors_arc());
+                transaction.redo_add_selections_state = self.add_selections_state.clone();
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
@@ -8732,7 +8767,17 @@ impl Editor {
     ) -> bool {
         self.selection_history
             .transaction_mut(transaction_id)
-            .map(modify)
+            .map(|transaction| {
+                let undo = transaction.undo.clone();
+                let redo = transaction.redo.clone();
+                modify(transaction);
+                if undo != transaction.undo {
+                    transaction.undo_add_selections_state = None;
+                }
+                if redo != transaction.redo {
+                    transaction.redo_add_selections_state = None;
+                }
+            })
             .is_some()
     }
 
@@ -10665,7 +10710,7 @@ impl Editor {
             .all::<MultiBufferOffsetUtf16>(&self.display_snapshot(cx));
         let newest_selection = selections
             .iter()
-            .max_by_key(|selection| selection.id)
+            .max_by_key(|selection| self.selections.selection_id_order(selection.id))
             .unwrap();
         let start_delta = range.start.0.0 as isize - newest_selection.start.0.0 as isize;
         let end_delta = range.end.0.0 as isize - newest_selection.end.0.0 as isize;
