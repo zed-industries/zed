@@ -956,8 +956,14 @@ impl WaylandWindowStatePtr {
             let request_frame_callback = !state.acknowledged_first_configure;
             if request_frame_callback {
                 state.acknowledged_first_configure = true;
-                drop(state);
+            }
+
+            drop(state);
+
+            if request_frame_callback {
                 self.frame();
+            } else {
+                update_window(self.state.borrow_mut());
             }
         }
     }
