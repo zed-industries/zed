@@ -565,6 +565,71 @@ async fn test_local_views_and_downstream_peers_own_rpc_streams_independently(
 }
 
 #[gpui::test]
+async fn test_unsharing_releases_only_project_downstream_rpc_streams(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    let project = Project::test(fs.clone(), [], cx).await;
+    let other_project = Project::test(fs, [], cx).await;
+    let server_keys = [
+        (project.downgrade(), LanguageServerId(100)),
+        (project.downgrade(), LanguageServerId(101)),
+        (other_project.downgrade(), LanguageServerId(100)),
+    ]
+    .map(|(project, server_id)| {
+        LanguageServerLogKey::new(LanguageServerKind::Local { project }, server_id)
+    });
+    let [_, local_view_key, _] = &server_keys;
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
+    log_store.update(cx, |store, cx| {
+        store.add_project(&project, cx);
+        store.add_project(&other_project, cx);
+        for server_key in &server_keys {
+            store.add_language_server(
+                server_key.kind.clone(),
+                server_key.server_id,
+                None,
+                None,
+                None,
+                cx,
+            );
+            for peer_id in [PeerId { owner_id: 1, id: 1 }, PeerId { owner_id: 2, id: 2 }] {
+                store.set_downstream_log_stream(server_key, peer_id, LogKind::Rpc, true, cx);
+            }
+        }
+        store.retain_view_log_stream(local_view_key, LogKind::Rpc, cx);
+    });
+
+    project
+        .update(cx, |project, cx| project.shared(1, cx))
+        .expect("project should be shareable");
+    project
+        .update(cx, |project, cx| project.unshare(cx))
+        .expect("shared project should unshare");
+
+    log_store.update(cx, |store, cx| {
+        for (server_key, rpc_enabled) in server_keys.iter().zip([false, true, true]) {
+            assert_eq!(
+                store
+                    .language_servers
+                    .get(server_key)
+                    .map(|state| state.rpc_state.is_some()),
+                Some(rpc_enabled),
+                "unsharing must preserve local views and other projects"
+            );
+        }
+        store.release_view_log_stream(local_view_key, LogKind::Rpc, cx);
+        assert!(
+            store
+                .language_servers
+                .get(local_view_key)
+                .is_some_and(|state| state.rpc_state.is_none()),
+            "unsharing must release every downstream peer even while a local view owns the stream"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_lsp_log_view(cx: &mut TestAppContext) {
     zlog::init_test();
 
