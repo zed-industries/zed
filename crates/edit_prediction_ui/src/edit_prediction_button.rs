@@ -559,7 +559,6 @@ impl EditPredictionButton {
         cx.observe_global::<EditPredictionStore>(move |_, cx| cx.notify())
             .detach();
 
-        edit_prediction::ollama::ensure_authenticated(cx);
         let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
         let open_ai_compatible_api_token_task =
             edit_prediction::open_ai_compatible::load_open_ai_compatible_api_token(cx);
@@ -823,7 +822,12 @@ impl EditPredictionButton {
                     ContextMenuEntry::new("Subtle")
                         .toggleable(IconPosition::Start, subtle_mode)
                         .documentation_aside(DocumentationSide::Left, move |_| {
-                            Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
+                            Label::new(concat!(
+                                "Display predictions inline only when holding a modifier key (",
+                                ui::alt_key_name!(),
+                                " by default)."
+                            ))
+                            .into_any_element()
                         })
                         .handler({
                             let fs = fs.clone();
@@ -1125,7 +1129,7 @@ impl EditPredictionButton {
 
                         v_flex()
                             .max_w_64()
-                            .h(rems_from_px(148.))
+                            .h(rems_from_px(148_f32))
                             .child(render_zeta_tab_animation(cx))
                             .child(Label::new("Edit Prediction"))
                             .child(
@@ -1497,7 +1501,11 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         providers.push(EditPredictionProvider::Codestral);
     }
 
-    if edit_prediction::ollama::is_available(cx) {
+    if all_language_settings(None, cx)
+        .edit_predictions
+        .ollama
+        .is_some()
+    {
         providers.push(EditPredictionProvider::Ollama);
     }
 

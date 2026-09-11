@@ -15,7 +15,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
 };
-use std::{hash::Hash, ops::Range, path::Path, sync::Arc, u32};
+use std::{hash::Hash, ops::Range, path::Path, sync::Arc};
 use text::{Bias, Point, PointUtf16, Unclipped};
 use util::maybe;
 
@@ -242,8 +242,7 @@ impl BreakpointStore {
                 .breakpoints
                 .into_iter()
                 .filter_map(|breakpoint| {
-                    let position =
-                        language::proto::deserialize_anchor(breakpoint.position.clone()?)?;
+                    let position = language::proto::deserialize_anchor(breakpoint.position?)?;
                     let session_state = breakpoint
                         .session_state
                         .iter()
@@ -295,7 +294,6 @@ impl BreakpointStore {
         let position = language::proto::deserialize_anchor(
             breakpoint
                 .position
-                .clone()
                 .context("Anchor not present in RPC payload")?,
         )
         .context("Anchor deserialization failed")?;
@@ -1032,7 +1030,7 @@ impl Breakpoint {
 
     fn from_proto(breakpoint: client::proto::Breakpoint) -> Option<Self> {
         Some(Self {
-            state: match proto::BreakpointState::from_i32(breakpoint.state) {
+            state: match proto::BreakpointState::try_from(breakpoint.state).ok() {
                 Some(proto::BreakpointState::Disabled) => BreakpointState::Disabled,
                 None | Some(proto::BreakpointState::Enabled) => BreakpointState::Enabled,
             },

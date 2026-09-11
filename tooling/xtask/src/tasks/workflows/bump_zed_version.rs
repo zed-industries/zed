@@ -141,6 +141,7 @@ fn bump_main(
         .for_repository(steps::RepositoryTarget::current())
         .with_permissions([
             (steps::TokenPermissions::Contents, Level::Write),
+            (steps::TokenPermissions::Issues, Level::Write),
             (steps::TokenPermissions::PullRequests, Level::Write),
         ])
         .into();

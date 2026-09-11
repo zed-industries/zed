@@ -330,7 +330,7 @@ impl SelectionsCollection {
     pub fn first_anchor(&self) -> Selection<Anchor> {
         self.pending
             .as_ref()
-            .map(|pending| pending.selection.clone())
+            .map(|pending| pending.selection)
             .unwrap_or_else(|| self.disjoint.first().cloned().unwrap())
     }
 
@@ -772,7 +772,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             return true;
         }
 
-        let mut oldest = self.oldest_anchor().clone();
+        let mut oldest = *self.oldest_anchor();
         if self.count() > 1 {
             self.collection.disjoint = Arc::from([oldest]);
             self.selections_changed = true;
@@ -999,7 +999,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         let selections = selections
             .into_iter()
             .map(|selection| {
-                let mut moved_selection = selection.clone();
+                let mut moved_selection = selection;
                 move_selection(&display_map, &mut moved_selection);
                 if selection != moved_selection {
                     changed = true;
@@ -1024,7 +1024,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             .all::<MultiBufferOffset>(&display_map)
             .into_iter()
             .map(|selection| {
-                let mut moved_selection = selection.clone();
+                let mut moved_selection = selection;
                 move_selection(self.snapshot, &mut moved_selection);
                 if selection != moved_selection {
                     changed = true;

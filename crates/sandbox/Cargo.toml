@@ -74,3 +74,6 @@ tempfile.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 smol.workspace = true
+# Structural WSL-installed check (registered distros under HKCU\...\Lxss)
+# without spawning `wsl.exe`.
+windows-registry.workspace = true

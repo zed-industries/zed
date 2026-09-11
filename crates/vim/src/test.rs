@@ -26,7 +26,7 @@ use util::{path, test::marked_text_ranges};
 pub use vim_test_context::*;
 
 use gpui::VisualTestContext;
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 use project::FakeFs;
 use search::BufferSearchBar;
 use search::{ProjectSearchView, project_search};
@@ -35,7 +35,10 @@ use serde_json::json;
 use workspace::notifications::{NotificationId, simple_message_notification::MessageNotification};
 use workspace::{DeploySearch, MultiWorkspace};
 
-use crate::{PushSneak, PushSneakBackward, VimAddon, insert::NormalBefore, motion, state::Mode};
+use crate::{
+    PushSneak, PushSneakBackward, SwitchToNormalMode, VimAddon, insert::NormalBefore, motion,
+    state::Mode,
+};
 
 use util_macros::perf;
 
@@ -76,7 +79,7 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     // Selections aren't changed if editor is blurred but vim-mode is still disabled.
     cx.cx.set_state("«hjklˇ»");
     cx.assert_editor_state("«hjklˇ»");
-    cx.update_editor(|_, window, _cx| window.blur());
+    cx.update_editor(|_, window, cx| window.blur(cx));
     cx.assert_editor_state("«hjklˇ»");
     cx.update_editor(|_, window, cx| cx.focus_self(window));
     cx.assert_editor_state("«hjklˇ»");
@@ -387,6 +390,25 @@ async fn test_escape_cancels(cx: &mut gpui::TestAppContext) {
     cx.assert_state("aˇbc", Mode::Normal);
 }
 
+#[gpui::test]
+async fn test_insert_line_with_multi_keybinding_to_normal(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "j j",
+            SwitchToNormalMode,
+            Some("vim_mode == insert"),
+        )]);
+    });
+
+    cx.set_state("hello worldˇ\n", Mode::Insert);
+    cx.simulate_keystrokes("j j");
+    cx.assert_state("hello worldˇ\n", Mode::Normal);
+    cx.simulate_keystrokes("o");
+    cx.assert_state("hello world\nˇ\n", Mode::Insert);
+}
+
 #[cfg(target_os = "windows")]
 #[gpui::test]
 async fn test_escape_dismisses_workspace_notification_in_normal_modes(
@@ -597,6 +619,84 @@ async fn test_join_lines(cx: &mut gpui::TestAppContext) {
       twothreefourˇfive
       six
       "});
+}
+
+#[perf]
+#[gpui::test]
+async fn test_join_lines_rust_dereference(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    for dereference in ["*value.get()", "* value.get()"] {
+        let initial = formatdoc! {"
+            ˇlet another_value = unsafe {{
+             {dereference}
+            }};"};
+        let joined = formatdoc! {"
+            let another_value = unsafe {{ˇ {dereference}
+            }};"};
+        let fully_joined = format!("let another_value = unsafe {{ {dereference}ˇ }};");
+
+        for keystrokes in [
+            "shift-j",
+            "1 shift-j",
+            "2 shift-j",
+            "v j shift-j",
+            "shift-v j shift-j",
+            "j v k shift-j",
+            "j shift-v k shift-j",
+        ] {
+            cx.assert_binding_normal(keystrokes, &initial, &joined);
+        }
+
+        for keystrokes in [
+            "3 shift-j",
+            "v 2 j shift-j",
+            "shift-v 2 j shift-j",
+            "2 j v 2 k shift-j",
+            "2 j shift-v 2 k shift-j",
+        ] {
+            cx.assert_binding_normal(keystrokes, &initial, &fully_joined);
+        }
+    }
+}
+
+#[perf]
+#[gpui::test]
+async fn test_join_lines_rust_dereference_without_whitespace(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    for dereference in ["*value.get()", "* value.get()"] {
+        let initial = formatdoc! {"
+            ˇlet another_value = unsafe {{
+            {dereference}
+            }};"};
+        let joined = formatdoc! {"
+            let another_value = unsafe {{ˇ{dereference}
+            }};"};
+        let fully_joined = format!("let another_value = unsafe {{{dereference}ˇ}};");
+
+        for keystrokes in [
+            "g shift-j",
+            "1 g shift-j",
+            "2 g shift-j",
+            "v j g shift-j",
+            "shift-v j g shift-j",
+            "j v k g shift-j",
+            "j shift-v k g shift-j",
+        ] {
+            cx.assert_binding_normal(keystrokes, &initial, &joined);
+        }
+
+        for keystrokes in [
+            "3 g shift-j",
+            "v 2 j g shift-j",
+            "shift-v 2 j g shift-j",
+            "2 j v 2 k g shift-j",
+            "2 j shift-v 2 k g shift-j",
+        ] {
+            cx.assert_binding_normal(keystrokes, &initial, &fully_joined);
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1410,7 +1510,7 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
             "g w",
-            workspace::SendKeystrokes(": j enter".to_string()),
+            workspace::SendKeystrokes(": j o i n space l i n e s enter".to_string()),
             None,
         )])
     });

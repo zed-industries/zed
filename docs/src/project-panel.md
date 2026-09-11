@@ -24,6 +24,10 @@ permanent tab. Editing the file or double-clicking it promotes it to a permanent
 Middle-clicking a file skips the preview and opens it in a permanent, focused tab
 right away.
 
+Set [`preview_tabs.enable_preview_from_project_panel`](./reference/all-settings.md#enable-preview-from-project-panel)
+to `false` to open permanent tabs with a single click or {#action project_panel::Open}
+({#kb project_panel::Open}).
+
 ### Auto-reveal
 
 By default, switching to a file in the editor will automatically highlight it in the
@@ -123,6 +127,8 @@ be disabled with the `project_panel.drag_and_drop` setting.
 
 When `project_panel.git_status` is enabled (the default), file and directory names are tinted
 to reflect their git status—modified, added, deleted, untracked, or conflicting.
+In projects that are not rooted at a git repository, status is shown only for
+[active repositories](./git.md#repository-activation).
 
 Setting `project_panel.git_status_indicator` to `true` (disabled by default) adds a letter badge next
 to each name: **M** (modified), **A** (added), **D** (deleted), **U**

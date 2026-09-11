@@ -15,8 +15,8 @@ use db::{
     sqlez_macros::sql,
 };
 use workspace::{
-    ItemHandle, ItemId, Member, Pane, PaneAxis, PaneGroup, SerializableItem as _, Workspace,
-    WorkspaceDb, WorkspaceId,
+    ItemHandle, ItemId, Member, Pane, PaneAxis, PaneGroup, SerializableItem as _, SplitDirection,
+    Workspace, WorkspaceDb, WorkspaceId,
 };
 
 use crate::{
@@ -92,14 +92,12 @@ pub(crate) fn deserialize_terminal_panel(
     project: Entity<Project>,
     database_id: WorkspaceId,
     serialized_panel: SerializedTerminalPanel,
+    terminal_panel: WeakEntity<TerminalPanel>,
     window: &mut Window,
     cx: &mut App,
-) -> Task<anyhow::Result<Entity<TerminalPanel>>> {
+) -> Task<anyhow::Result<usize>> {
     window.spawn(cx, async move |cx| {
-        let terminal_panel = workspace.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| TerminalPanel::new(workspace, window, cx))
-        })?;
-        match &serialized_panel.items {
+        let restored_items = match &serialized_panel.items {
             SerializedItems::NoSplits(item_ids) => {
                 let items = deserialize_terminal_views(
                     database_id,
@@ -109,12 +107,14 @@ pub(crate) fn deserialize_terminal_panel(
                     cx,
                 )
                 .await;
+                let restored_items = items.len();
                 let active_item = serialized_panel.active_item_id;
                 terminal_panel.update_in(cx, |terminal_panel, window, cx| {
                     terminal_panel.active_pane.update(cx, |pane, cx| {
                         populate_pane_items(pane, items, active_item, window, cx);
                     });
                 })?;
+                restored_items
             }
             SerializedItems::WithSplits(serialized_pane_group) => {
                 let center_pane = deserialize_pane_group(
@@ -127,16 +127,48 @@ pub(crate) fn deserialize_terminal_panel(
                 )
                 .await;
                 if let Some((center_group, active_pane)) = center_pane {
-                    terminal_panel.update(cx, |terminal_panel, _| {
+                    terminal_panel.update_in(cx, |terminal_panel, window, cx| {
+                        let interim_panes = terminal_panel
+                            .center
+                            .panes()
+                            .into_iter()
+                            .filter(|pane| pane.read(cx).items_len() > 0)
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        let focused_interim_pane = interim_panes
+                            .iter()
+                            .find(|pane| pane.read(cx).has_focus(window, cx))
+                            .cloned();
                         terminal_panel.center = PaneGroup::with_root(center_group);
                         terminal_panel.active_pane =
                             active_pane.unwrap_or_else(|| terminal_panel.center.first_pane());
-                    });
+                        let restored_items = terminal_panel
+                            .center
+                            .panes()
+                            .into_iter()
+                            .map(|pane| pane.read(cx).items_len())
+                            .sum::<usize>();
+                        let restored_pane = terminal_panel.active_pane.clone();
+                        for interim_pane in &interim_panes {
+                            terminal_panel.center.split(
+                                &restored_pane,
+                                interim_pane,
+                                SplitDirection::Right,
+                                cx,
+                            );
+                        }
+                        if let Some(focused_interim_pane) = focused_interim_pane {
+                            terminal_panel.active_pane = focused_interim_pane;
+                        }
+                        restored_items
+                    })?
+                } else {
+                    0
                 }
             }
-        }
+        };
 
-        Ok(terminal_panel)
+        Ok(restored_items)
     })
 }
 
@@ -147,6 +179,7 @@ fn populate_pane_items(
     window: &mut Window,
     cx: &mut Context<Pane>,
 ) {
+    let interim_active_item = (pane.items_len() > 0).then(|| pane.active_item()).flatten();
     let mut active_item_index = None;
     for (item_index, item) in (pane.items_len()..).zip(items) {
         if Some(item.item_id().as_u64()) == active_item {
@@ -154,7 +187,11 @@ fn populate_pane_items(
         }
         pane.add_item(Box::new(item), false, false, None, window, cx);
     }
-    if let Some(index) = active_item_index {
+    if let Some(interim_active_item) = interim_active_item {
+        if let Some(index) = pane.index_for_item(interim_active_item.as_ref()) {
+            pane.activate_item(index, false, false, window, cx);
+        }
+    } else if let Some(index) = active_item_index {
         pane.activate_item(index, false, false, window, cx);
     }
 }
@@ -163,7 +200,7 @@ fn populate_pane_items(
 async fn deserialize_pane_group(
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    panel: Entity<TerminalPanel>,
+    panel: WeakEntity<TerminalPanel>,
     workspace_id: WorkspaceId,
     serialized: &SerializedPaneGroup,
     cx: &mut AsyncWindowContext,
