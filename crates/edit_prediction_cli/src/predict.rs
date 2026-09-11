@@ -648,6 +648,7 @@ pub async fn predict_baseten(
         temperature: Some(0.),
         stop: vec![],
         environment: None,
+        effort: None,
     };
 
     let body_bytes =

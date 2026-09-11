@@ -352,6 +352,7 @@ pub(crate) fn request_prediction_with_zeta(
                             .collect(),
                         max_tokens: Some(2048),
                         environment,
+                        effort: None,
                     };
 
                     let (mut response, usage) = EditPredictionStore::send_raw_llm_request(

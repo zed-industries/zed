@@ -67,6 +67,7 @@ pub(crate) async fn send_custom_server_request(
     prompt: String,
     max_tokens: u32,
     stop_tokens: Vec<String>,
+    effort: Option<String>,
     api_key: Option<Arc<str>>,
     http_client: &Arc<dyn http_client::HttpClient>,
 ) -> Result<(String, String)> {
@@ -92,6 +93,7 @@ pub(crate) async fn send_custom_server_request(
                     .map(std::borrow::Cow::Owned)
                     .collect(),
                 environment: None,
+                effort,
             };
 
             let request_body = serde_json::to_string(&request)?;

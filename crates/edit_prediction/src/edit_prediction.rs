@@ -929,6 +929,9 @@ fn predict_edits_request_trigger_from_editor_trigger(
             PredictEditsRequestTrigger::DiagnosticNavigation
         }
         EditPredictionRequestTrigger::Explicit => PredictEditsRequestTrigger::Explicit,
+        EditPredictionRequestTrigger::ExplicitHighEffort => {
+            PredictEditsRequestTrigger::ExplicitHighEffort
+        }
         EditPredictionRequestTrigger::BufferEdit => PredictEditsRequestTrigger::BufferEdit,
         EditPredictionRequestTrigger::LSPCompletionAccepted => {
             PredictEditsRequestTrigger::LSPCompletionAccepted

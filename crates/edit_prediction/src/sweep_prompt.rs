@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
+use cloud_llm_client::PredictEditsRequestTrigger;
 use gpui::{App, AppContext as _, Task};
 use language::{
     BufferSnapshot, OffsetRangeExt as _, Point, ToOffset as _, ToPoint as _,
@@ -17,6 +18,13 @@ use crate::{
 
 const WINDOW_LINES_ABOVE: u32 = 10;
 const WINDOW_LINES_BELOW: u32 = 10;
+// High effort requests send nearly the whole file as extra context so the model
+// can reason about code far from the cursor, while the editable window stays the
+// same size. The context is still bounded to keep enormous files from producing
+// prompts the server would reject.
+const HIGH_EFFORT_CONTEXT_LINES_ABOVE: u32 = 2000;
+const HIGH_EFFORT_CONTEXT_LINES_BELOW: u32 = 2000;
+const HIGH_EFFORT: &str = "high";
 const MAX_RECENT_CHANGE_BLOCKS: usize = 3;
 const MAX_RECENT_CHANGE_LINES: usize = 40;
 const RESERVED_SWEEP_TOKENS: [&str; 2] = ["<|file_sep|>", "</s>"];
@@ -24,6 +32,7 @@ const RESERVED_SWEEP_TOKENS: [&str; 2] = ["<|file_sep|>", "</s>"];
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SweepPromptInput {
     pub file_path: Arc<Path>,
+    pub file_context: Option<String>,
     pub original_window: String,
     pub current_window: String,
     pub recent_changes: Vec<RecentChangeBlock>,
@@ -77,6 +86,9 @@ pub fn request_prediction(
         ..
     } = input;
 
+    let is_high_effort = matches!(trigger, PredictEditsRequestTrigger::ExplicitHighEffort);
+    let effort = is_high_effort.then(|| HIGH_EFFORT.to_string());
+
     let cursor_point = position.to_point(&snapshot);
     let window_range = fixed_line_window_around_cursor(
         &snapshot,
@@ -84,6 +96,15 @@ pub fn request_prediction(
         WINDOW_LINES_ABOVE,
         WINDOW_LINES_BELOW,
     );
+    let file_context = is_high_effort.then(|| {
+        let context_range = fixed_line_window_around_cursor(
+            &snapshot,
+            cursor_point,
+            HIGH_EFFORT_CONTEXT_LINES_ABOVE,
+            HIGH_EFFORT_CONTEXT_LINES_BELOW,
+        );
+        snapshot.text_for_range(context_range).collect::<String>()
+    });
     let file_path = prompt_file_path(&snapshot);
     let filtered_related_files = filter_redundant_excerpts(
         related_files,
@@ -92,6 +113,7 @@ pub fn request_prediction(
     );
     let prompt_input = build_prompt_input(
         &file_path,
+        file_context,
         window_range.clone(),
         &snapshot,
         &stored_events,
@@ -143,6 +165,7 @@ pub fn request_prediction(
             prompt,
             custom_settings.max_output_tokens,
             RESERVED_SWEEP_TOKENS.map(str::to_string).to_vec(),
+            effort,
             api_key,
             &http_client,
         )
@@ -215,6 +238,10 @@ pub fn build_prompt(input: &SweepPromptInput) -> String {
         );
     }
 
+    if let Some(file_context) = &input.file_context {
+        write_file_block(&mut prompt, input.file_path.as_ref(), file_context);
+    }
+
     for recent_change in &input.recent_changes {
         let diff_path = format!("{}.diff", recent_change.file_path.display());
         let mut diff_body = String::new();
@@ -246,6 +273,9 @@ pub fn build_prompt(input: &SweepPromptInput) -> String {
 
 fn validate_prompt_input(input: &SweepPromptInput) -> Result<()> {
     validate_prompt_field("file path", &input.file_path.display().to_string())?;
+    if let Some(file_context) = &input.file_context {
+        validate_prompt_field("file context", file_context)?;
+    }
     validate_prompt_field("original window", &input.original_window)?;
     validate_prompt_field("current window", &input.current_window)?;
 
@@ -304,6 +334,7 @@ pub(crate) fn original_window_for_current_window(
 
 fn build_prompt_input(
     file_path: &Arc<Path>,
+    file_context: Option<String>,
     window_range: Range<Point>,
     snapshot: &BufferSnapshot,
     stored_events: &[StoredEvent],
@@ -321,6 +352,7 @@ fn build_prompt_input(
 
     SweepPromptInput {
         file_path: file_path.clone(),
+        file_context,
         original_window,
         current_window,
         recent_changes: build_recent_change_blocks(stored_events),
@@ -522,6 +554,7 @@ mod tests {
     fn test_build_prompt_uses_run_model_ordering() {
         let prompt = build_prompt(&SweepPromptInput {
             file_path: Path::new("src/main.rs").into(),
+            file_context: None,
             original_window: "old window".to_string(),
             current_window: "current window".to_string(),
             recent_changes: vec![RecentChangeBlock {

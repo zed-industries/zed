@@ -13,6 +13,7 @@ pub enum EditPredictionDiscardReason {
 pub enum EditPredictionRequestTrigger {
     DiagnosticNavigation,
     Explicit,
+    ExplicitHighEffort,
     BufferEdit,
     LSPCompletionAccepted,
     PredictionAccepted,

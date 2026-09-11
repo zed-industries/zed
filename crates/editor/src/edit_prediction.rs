@@ -353,6 +353,22 @@ impl Editor {
         self.update_visible_edit_prediction(window, cx);
     }
 
+    pub fn trigger_high_effort_edit_prediction(
+        &mut self,
+        _: &TriggerHighEffortEditPrediction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
+        self.refresh_edit_prediction(
+            false,
+            true,
+            EditPredictionRequestTrigger::ExplicitHighEffort,
+            window,
+            cx,
+        );
+    }
+
     pub fn accept_partial_edit_prediction(
         &mut self,
         granularity: EditPredictionGranularity,

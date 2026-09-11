@@ -26,6 +26,8 @@ pub struct RawCompletionRequest {
     pub stop: Vec<Cow<'static, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

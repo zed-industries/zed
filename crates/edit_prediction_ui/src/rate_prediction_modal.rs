@@ -1239,6 +1239,9 @@ impl RatePredictionsModal {
                     }
                     PredictEditsRequestTrigger::Cli => (IconName::Terminal, "CLI"),
                     PredictEditsRequestTrigger::Explicit => (IconName::Person, "Explicit"),
+                    PredictEditsRequestTrigger::ExplicitHighEffort => {
+                        (IconName::Person, "Explicit (High Effort)")
+                    }
                     PredictEditsRequestTrigger::BufferEdit => (IconName::Pencil, "Buffer Edit"),
                     PredictEditsRequestTrigger::LSPCompletionAccepted => {
                         (IconName::Code, "LSP Completion Accepted")
