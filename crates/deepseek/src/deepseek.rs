@@ -55,6 +55,8 @@ pub enum Model {
     #[serde(rename = "deepseek-v4-pro")]
     #[default]
     V4Pro,
+    #[serde(rename = "deepseek-v4-flash-vision-exp")]
+    V4FlashVisionExp,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -74,6 +76,7 @@ impl Model {
         match id {
             "deepseek-v4-flash" => Ok(Self::V4Flash),
             "deepseek-v4-pro" => Ok(Self::V4Pro),
+            "deepseek-v4-flash-vision-exp" => Ok(Self::V4FlashVisionExp),
             _ => anyhow::bail!("invalid model id {id}"),
         }
     }
@@ -82,6 +85,7 @@ impl Model {
         match self {
             Self::V4Flash => "deepseek-v4-flash",
             Self::V4Pro => "deepseek-v4-pro",
+            Self::V4FlashVisionExp => "deepseek-v4-flash-vision-exp",
             Self::Custom { name, .. } => name,
         }
     }
@@ -90,6 +94,7 @@ impl Model {
         match self {
             Self::V4Flash => "DeepSeek V4 Flash",
             Self::V4Pro => "DeepSeek V4 Pro",
+            Self::V4FlashVisionExp => "DeepSeek V4 Flash Vision Experimental",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name).as_str(),
@@ -98,14 +103,14 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::V4Flash | Self::V4Pro => 1_000_000,
+            Self::V4Flash | Self::V4Pro | Self::V4FlashVisionExp => 1_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
-            Self::V4Flash | Self::V4Pro => Some(384_000),
+            Self::V4Flash | Self::V4Pro | Self::V4FlashVisionExp => Some(384_000),
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
@@ -195,7 +200,7 @@ pub enum RequestMessage {
         reasoning_content: Option<String>,
     },
     User {
-        content: String,
+        content: UserContent,
     },
     System {
         content: String,
@@ -204,6 +209,29 @@ pub enum RequestMessage {
         content: String,
         tool_call_id: String,
     },
+}
+
+/// The content of a user message. Plain text serializes as a bare string;
+/// multimodal content (e.g. images) serializes as an array of parts.
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum UserContent {
+    Text(String),
+    Parts(Vec<UserContentPart>),
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum UserContentPart {
+    Text { text: String },
+    ImageUrl { image_url: ImageUrl },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ImageUrl {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -338,5 +366,44 @@ pub async fn stream_completion(
             response.status(),
             body,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_content_serializes_text_as_plain_string() {
+        let content = UserContent::Text("hello".to_string());
+        assert_eq!(serde_json::to_string(&content).unwrap(), r#""hello""#);
+    }
+
+    #[test]
+    fn user_content_serializes_parts_as_array() {
+        let content = UserContent::Parts(vec![
+            UserContentPart::Text {
+                text: "What is in this image?".to_string(),
+            },
+            UserContentPart::ImageUrl {
+                image_url: ImageUrl {
+                    url: "data:image/jpeg;base64,AAAA".to_string(),
+                    detail: None,
+                },
+            },
+        ]);
+        assert_eq!(
+            serde_json::to_string(&content).unwrap(),
+            r#"[{"type":"text","text":"What is in this image?"},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,AAAA"}}]"#
+        );
+    }
+
+    #[test]
+    fn vision_model_id_round_trips() {
+        assert_eq!(
+            Model::from_id("deepseek-v4-flash-vision-exp").unwrap(),
+            Model::V4FlashVisionExp
+        );
+        assert_eq!(Model::V4FlashVisionExp.id(), "deepseek-v4-flash-vision-exp");
     }
 }
