@@ -16,6 +16,8 @@ doctest = true
 
 [features]
 test-support = ["rand", "util_macros", "path/test-support"]
+# Embed `fs_embed!` assets at compile time even in debug builds.
+debug-embed = ["rust-embed/debug-embed"]
 
 [dependencies]
 anyhow.workspace = true

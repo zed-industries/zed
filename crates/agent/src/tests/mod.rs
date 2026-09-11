@@ -28,8 +28,8 @@ use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelImageExt, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResult, LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent,
-    ProviderErrorCategory, Role, StopReason, TokenUsage,
+    LanguageModelToolResult, LanguageModelToolUse, MessageContent, ProviderErrorCategory, Role,
+    StopReason, TokenUsage,
     fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
 };
 use pretty_assertions::assert_eq;
@@ -62,6 +62,11 @@ pub(crate) fn init_test(cx: &mut TestAppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
     });
+}
+
+pub(crate) fn release_dropped_entities(cx: &mut TestAppContext) {
+    cx.update(|_| ());
+    cx.run_until_parked();
 }
 
 pub(crate) struct FakeTerminalHandle {
@@ -1729,10 +1734,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
             name: "echo".into(),
             title: None,
             description: None,
-            input_schema: serde_json::to_value(EchoTool::input_schema(
-                LanguageModelToolSchemaFormat::JsonSchema,
-            ))
-            .unwrap(),
+            input_schema: EchoTool::input_schema().to_value(),
             output_schema: None,
             annotations: None,
         }],
@@ -2323,10 +2325,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 name: "echo".into(), // Conflicts with native EchoTool
                 title: None,
                 description: None,
-                input_schema: serde_json::to_value(EchoTool::input_schema(
-                    LanguageModelToolSchemaFormat::JsonSchema,
-                ))
-                .unwrap(),
+                input_schema: EchoTool::input_schema().to_value(),
                 output_schema: None,
                 annotations: None,
             },
@@ -2350,10 +2349,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 name: "echo".into(), // Also conflicts with native EchoTool
                 title: None,
                 description: None,
-                input_schema: serde_json::to_value(EchoTool::input_schema(
-                    LanguageModelToolSchemaFormat::JsonSchema,
-                ))
-                .unwrap(),
+                input_schema: EchoTool::input_schema().to_value(),
                 output_schema: None,
                 annotations: None,
             },
@@ -2424,10 +2420,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             name: "echo".into(), // Also conflicts - will be disambiguated as azure_dev_ops_echo
             title: None,
             description: None,
-            input_schema: serde_json::to_value(EchoTool::input_schema(
-                LanguageModelToolSchemaFormat::JsonSchema,
-            ))
-            .unwrap(),
+            input_schema: EchoTool::input_schema().to_value(),
             output_schema: None,
             annotations: None,
         }],
@@ -4279,10 +4272,8 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     request.await.expect("prompt should fail gracefully");
 
     // Explicitly close the session and drop the ACP thread.
-    cx.update(|cx| Rc::new(connection.clone()).close_session(&session_id, cx))
-        .await
-        .unwrap();
     drop(acp_thread);
+    release_dropped_entities(cx);
     let result = cx
         .update(|cx| {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
@@ -5608,7 +5599,8 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
             .get(&subagent_session_id)
             .expect("subagent session should exist")
             .acp_thread
-            .clone()
+            .upgrade()
+            .expect("subagent thread should be alive")
     });
 
     model.send_last_completion_stream_text_chunk("subagent task response");
@@ -5744,7 +5736,8 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
             .get(&subagent_session_id)
             .expect("subagent session should exist")
             .acp_thread
-            .clone()
+            .upgrade()
+            .expect("subagent thread should be alive")
     });
 
     model.send_last_completion_stream_text_chunk("subagent task response 1");
@@ -5892,7 +5885,8 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
             .get(&subagent_session_id)
             .expect("subagent session should exist")
             .acp_thread
-            .clone()
+            .upgrade()
+            .expect("subagent thread should be alive")
     });
 
     // model.send_last_completion_stream_text_chunk("subagent task response");
@@ -6024,7 +6018,8 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
             .get(&subagent_session_id)
             .expect("subagent session should exist")
             .acp_thread
-            .clone()
+            .upgrade()
+            .expect("subagent thread should be alive")
     });
 
     // Subagent responds

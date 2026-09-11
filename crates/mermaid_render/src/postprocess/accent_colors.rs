@@ -10,6 +10,7 @@ mod mindmap;
 mod sequence_diagram;
 
 use anyhow::Result;
+use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 
 use crate::MermaidTheme;
@@ -59,7 +60,7 @@ impl NodeTracker {
 
 pub(crate) fn parse_translate(e: &BytesStart<'_>) -> Option<(f64, f64)> {
     let attr = e.try_get_attribute("transform").ok()??;
-    let val = attr.unescape_value().ok()?;
+    let val = attr.normalized_value(XmlVersion::Implicit1_0).ok()?;
     let inner = val.strip_prefix("translate(")?.strip_suffix(')')?;
     let (x_str, y_str) = inner.split_once(',')?;
     Some((x_str.trim().parse().ok()?, y_str.trim().parse().ok()?))
@@ -67,7 +68,7 @@ pub(crate) fn parse_translate(e: &BytesStart<'_>) -> Option<(f64, f64)> {
 
 pub(crate) fn parse_path_half_height(e: &BytesStart<'_>) -> Option<f64> {
     let attr = e.try_get_attribute("d").ok()??;
-    let d = attr.unescape_value().ok()?;
+    let d = attr.normalized_value(XmlVersion::Implicit1_0).ok()?;
     let rest = d.strip_prefix('M')?.trim_start();
     // The path data starts with `M x,y ...`; the y coordinate is the second
     // whitespace/comma-separated token.
@@ -129,7 +130,7 @@ pub(crate) fn add_class<'a>(e: &BytesStart<'_>, class_to_add: &str) -> Result<By
     for attr in e.attributes() {
         let attr = attr?;
         if attr.key.local_name().as_ref() == b"class" {
-            let existing = attr.unescape_value()?;
+            let existing = attr.normalized_value(XmlVersion::Implicit1_0)?;
             let new_class = format!("{existing} {class_to_add}");
             new_elem.push_attribute(("class", new_class.as_str()));
             class_found = true;
@@ -191,7 +192,7 @@ pub(crate) fn lookup_position_accent(node_rects: &[NodeRect], e: &BytesStart<'_>
     let parse_attr = |name| -> Option<f64> {
         e.try_get_attribute(name)
             .ok()??
-            .unescape_value()
+            .normalized_value(XmlVersion::Implicit1_0)
             .ok()?
             .parse()
             .ok()
@@ -221,7 +222,7 @@ fn detect_diagram_type(e: &BytesStart<'_>) -> DiagramType {
         .try_get_attribute("class")
         .ok()
         .flatten()
-        .and_then(|a| a.unescape_value().ok())
+        .and_then(|a| a.normalized_value(XmlVersion::Implicit1_0).ok())
     {
         Some(c) => c,
         None => return DiagramType::SequenceDiagram,
@@ -279,7 +280,7 @@ impl<'a, 'theme, I: Iterator<Item = Result<Event<'a>>>> AccentColors<'theme, I> 
                     self.plot_depth += 1;
                 }
                 if let Some(class_attr) = e.try_get_attribute("class")? {
-                    let class = class_attr.unescape_value()?;
+                    let class = class_attr.normalized_value(XmlVersion::Implicit1_0)?;
                     if class.as_ref() == "plot" {
                         if is_start && !self.in_plot {
                             self.in_plot = true;
@@ -326,7 +327,7 @@ impl<'a, 'theme, I: Iterator<Item = Result<Event<'a>>>> AccentColors<'theme, I> 
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"path" => {
                 let class_val = e
                     .try_get_attribute("class")?
-                    .map(|a| a.unescape_value())
+                    .map(|a| a.normalized_value(XmlVersion::Implicit1_0))
                     .transpose()?;
 
                 if class_val.as_deref() == Some("pieCircle") {

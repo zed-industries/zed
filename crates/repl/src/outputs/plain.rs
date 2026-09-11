@@ -47,13 +47,13 @@ pub struct TerminalOutput {
 
 /// Returns the default text style for the terminal output.
 pub fn text_style(window: &mut Window, cx: &App) -> TextStyle {
-    let settings = ThemeSettings::get_global(cx).clone();
+    let settings = ThemeSettings::get_global(cx);
 
     let font_size = settings.buffer_font_size(cx).into();
-    let font_family = settings.buffer_font.family;
-    let font_features = settings.buffer_font.features;
+    let font_family = settings.buffer_font.family.clone();
+    let font_features = settings.buffer_font.features.clone();
     let font_weight = settings.buffer_font.weight;
-    let font_fallbacks = settings.buffer_font.fallbacks;
+    let font_fallbacks = settings.buffer_font.fallbacks.clone();
 
     let theme = cx.theme();
 
