@@ -623,7 +623,7 @@ async fn load_commit_object<R: smol::io::AsyncBufRead + Unpin>(
     }
 }
 
-async fn read_shallow_file(shallow_file_path: &Path) -> Result<Option<String>> {
+pub(crate) async fn read_shallow_file(shallow_file_path: &Path) -> Result<Option<String>> {
     match smol::fs::read_to_string(shallow_file_path).await {
         Ok(contents) => Ok(Some(contents)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -6727,6 +6727,79 @@ mod tests {
         assert_eq!(
             remote_urls.get("upstream").unwrap(),
             "/Users/user/My Projects/upstream.git"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_blame_complete_root_in_shallow_repository(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repository_directory = tempfile::tempdir().unwrap();
+        git_init_repo(repository_directory.path());
+        fs::write(repository_directory.path().join("a.txt"), "one\n").unwrap();
+        git_command(repository_directory.path(), ["add", "a.txt"]);
+        git_command(
+            repository_directory.path(),
+            ["commit", "-m", "complete root"],
+        );
+        let complete_root_sha =
+            git_command_output(repository_directory.path(), ["rev-parse", "HEAD"]);
+
+        let remote_directory = tempfile::tempdir().unwrap();
+        git_init_repo(remote_directory.path());
+        git_command(
+            remote_directory.path(),
+            ["commit", "--allow-empty", "-m", "first"],
+        );
+        git_command(
+            remote_directory.path(),
+            ["commit", "--allow-empty", "-m", "second"],
+        );
+        let shallow_sha = git_command_output(remote_directory.path(), ["rev-parse", "HEAD"]);
+        git_command(
+            repository_directory.path(),
+            [
+                "fetch".to_string(),
+                "--depth=1".to_string(),
+                format!("file://{}", remote_directory.path().display()),
+                "HEAD:refs/heads/shallow".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            git_command_output(
+                repository_directory.path(),
+                ["rev-parse", "--is-shallow-repository"],
+            ),
+            "true",
+        );
+        assert_eq!(
+            fs::read_to_string(repository_directory.path().join(".git/shallow"))
+                .unwrap()
+                .trim(),
+            shallow_sha,
+        );
+        assert_ne!(complete_root_sha, shallow_sha);
+
+        let repository = RealGitRepository::new(
+            &repository_directory.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let blame = repository
+            .blame(repo_path("a.txt"), Rope::from("one\n"), LineEnding::Unix)
+            .await
+            .unwrap();
+        assert_eq!(
+            blame
+                .entries
+                .iter()
+                .map(|entry| (entry.sha.to_string(), entry.range.clone(), entry.boundary))
+                .collect::<Vec<_>>(),
+            vec![(complete_root_sha, 0..1, false)],
         );
     }
 }

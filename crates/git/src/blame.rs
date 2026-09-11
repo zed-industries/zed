@@ -1,6 +1,6 @@
 use crate::Oid;
 use crate::commit::{get_messages, get_tag_names};
-use crate::repository::{GitBinary, RepoPath};
+use crate::repository::{GitBinary, RepoPath, read_shallow_file};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::{AsyncWriteExt, TryFutureExt, try_join};
@@ -113,19 +113,33 @@ async fn run_git_blame(
             .context("starting git blame process")?
     };
 
-    let is_shallow = {
-        let output = git
-            .build_command(&["rev-parse", "--is-shallow-repository"])
+    let shallow_file_content = {
+        let shallow_file_path = git
+            .build_command(&[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "shallow",
+            ])
             .kill_on_drop(true)
             .output()
             .await
-            .context("starting git rev-parse process")?;
+            .context("resolving shallow file path")?;
 
-        output.status.success()
-            && str::from_utf8(&output.stdout)
-                .map(str::trim)
-                .is_ok_and(|value| value == "true")
+        if shallow_file_path.status.success()
+            && let Ok(path) = str::from_utf8(&shallow_file_path.stdout).map(str::trim)
+            && let Ok(Some(content)) = read_shallow_file(&std::path::Path::new(path)).await
+        {
+            std::borrow::Cow::Owned(content)
+        } else {
+            std::borrow::Cow::Borrowed("")
+        }
     };
+
+    let shallow_boundaries_hash = shallow_file_content
+        .lines()
+        .map(str::trim)
+        .map(str::as_bytes);
 
     let stdin = child.stdin.take();
     let stdout = child
@@ -165,7 +179,11 @@ async fn run_git_blame(
             }
 
             let line = line_buffer.trim_end_matches(&['\r', '\n'][..]);
-            parser.push_line(line, is_shallow)?;
+            parser.push_line(line, |oid| {
+                shallow_boundaries_hash
+                    .clone()
+                    .any(|sha| sha == oid.as_bytes())
+            })?;
             lines_read += 1;
 
             if lines_read % BLAME_PARSE_YIELD_INTERVAL == 0 {
@@ -229,6 +247,8 @@ pub struct BlameEntry {
     pub previous: Option<String>,
     pub filename: String,
 
+    /// Whether this entry is a boundary entry. Not like git blame's `boundary` marker,
+    /// This `boundary` is `shallow boundary`
     #[serde(default)]
     pub boundary: bool,
 }
@@ -365,7 +385,7 @@ impl GitBlameParser {
         }
     }
 
-    fn push_line(&mut self, line: &str, is_shallow: bool) -> Result<()> {
+    fn push_line(&mut self, line: &str, check_shallow: impl FnOnce(&Oid) -> bool) -> Result<()> {
         let mut done = false;
 
         match &mut self.current_entry {
@@ -400,8 +420,8 @@ impl GitBlameParser {
                 self.current_entry.replace(new_entry);
             }
             Some(entry) => {
-                if is_shallow && line == "boundary" {
-                    entry.boundary = true;
+                if line == "boundary" {
+                    entry.boundary = check_shallow(&entry.sha);
                     return Ok(());
                 }
                 let Some((key, value)) = line.split_once(' ') else {
@@ -516,7 +536,7 @@ mod tests {
         let mut parser = GitBlameParser::new();
 
         for line in output.lines() {
-            parser.push_line(line, true)?;
+            parser.push_line(line, |_| true)?;
         }
 
         Ok(parser.entries)
