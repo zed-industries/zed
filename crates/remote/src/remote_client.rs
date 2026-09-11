@@ -1445,6 +1445,8 @@ mod tests {
                 name: "zed-dev".to_string(),
                 container_id: "container-123".to_string(),
                 remote_user: "anth".to_string(),
+                local_folder: None,
+                config_file: None,
                 upload_binary_over_docker_exec: false,
                 use_podman,
                 remote_env: Default::default(),
