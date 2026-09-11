@@ -248,6 +248,75 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
 }
 
 impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
+    fn anthropic_request(&self, request: LanguageModelRequest) -> Result<anthropic::Request> {
+        let enable_thinking = request.thinking_allowed && self.model.supports_thinking;
+        let effort = request
+            .thinking_effort
+            .as_ref()
+            .and_then(|effort| anthropic::Effort::from_str(effort).ok());
+        let mut request = into_anthropic(
+            request,
+            self.model.id.to_string(),
+            1.0,
+            self.model.max_output_tokens as u64,
+            if enable_thinking {
+                AnthropicModelMode::Thinking {
+                    budget_tokens: Some(4_096),
+                }
+            } else {
+                AnthropicModelMode::Default
+            },
+            AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
+        )?;
+        if enable_thinking && effort.is_some() {
+            request.thinking = Some(anthropic::Thinking::Adaptive {
+                display: Some(anthropic::AdaptiveThinkingDisplay::Summarized),
+                // The cloud proxy owns the beta header needed for block binding.
+                block_binding: None,
+            });
+            request.output_config = Some(anthropic::OutputConfig { effort });
+        }
+        if !self.model.supports_fast_mode {
+            request.speed = None;
+        }
+        Ok(request)
+    }
+
+    fn open_ai_request(
+        &self,
+        request: LanguageModelRequest,
+    ) -> Result<open_ai::responses::Request> {
+        let enable_thinking = request.thinking_allowed && self.model.supports_thinking;
+        let effort = request
+            .thinking_effort
+            .as_ref()
+            .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok())
+            .filter(|effort| *effort != open_ai::ReasoningEffort::None);
+        let supports_none_reasoning_effort =
+            self.model.supported_effort_levels.iter().any(|effort| {
+                open_ai::ReasoningEffort::from_str(&effort.value)
+                    .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
+            });
+        let mut request = into_open_ai_response(
+            request,
+            &self.model.id.0,
+            self.model.supports_parallel_tool_calls,
+            true,
+            None,
+            None,
+            supports_none_reasoning_effort,
+            &OPEN_AI_PROVIDER_ID,
+        )?;
+        if enable_thinking && let Some(effort) = effort {
+            request.reasoning = Some(open_ai::responses::ReasoningConfig {
+                effort,
+                summary: Some(open_ai::responses::ReasoningSummaryMode::Auto),
+            });
+        }
+        Ok(request)
+    }
+
     fn compact_anthropic(
         &self,
         request: LanguageModelRequest,
@@ -696,6 +765,72 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         Some(self.model.max_output_tokens as u64)
     }
 
+    fn count_input_tokens(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        use cloud_llm_client::LanguageModelProvider;
+        let provider_request = match self.model.provider {
+            LanguageModelProvider::Anthropic => self
+                .anthropic_request(request)
+                .and_then(|request| Ok(serde_json::to_value(request)?)),
+            LanguageModelProvider::OpenAi => self
+                .open_ai_request(request)
+                .and_then(|request| Ok(serde_json::to_value(request)?)),
+            _ => return async { Ok(None) }.boxed(),
+        };
+        let body = match provider_request {
+            Ok(provider_request) => CompletionBody {
+                thread_id: None,
+                prompt_id: None,
+                provider: self.model.provider,
+                model: self.model.id.to_string(),
+                provider_request,
+            },
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        let http_client = self.http_client.clone();
+        let token_provider = self.token_provider.clone();
+        let auth_context = token_provider.auth_context(cx);
+        let app_version = self.app_version.clone();
+        self.request_limiter
+            .run(async move {
+                let mut response = Self::perform_llm_request(
+                    "/count_tokens",
+                    false,
+                    &http_client,
+                    &*token_provider,
+                    auth_context,
+                    app_version,
+                    body,
+                )
+                .await?
+                .response;
+                let mut body = String::new();
+                response
+                    .body_mut()
+                    .read_to_string(&mut body)
+                    .await
+                    .map_err(|error| LanguageModelCompletionError::ApiReadResponseError {
+                        provider: PROVIDER_NAME,
+                        error,
+                    })?;
+                #[derive(Deserialize)]
+                struct CountResponse {
+                    tokens: u64,
+                }
+                let count: CountResponse = serde_json::from_str(&body).map_err(|error| {
+                    LanguageModelCompletionError::DeserializeResponse {
+                        provider: PROVIDER_NAME,
+                        error,
+                    }
+                })?;
+                Ok(Some(count.tokens))
+            })
+            .boxed()
+    }
+
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -723,52 +858,13 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let app_version = self.app_version.clone();
-        let thinking_allowed = request.thinking_allowed;
-        let enable_thinking = thinking_allowed && self.model.supports_thinking;
         let provider_name = provider_name(&self.model.provider);
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
-                let effort = request
-                    .thinking_effort
-                    .as_ref()
-                    .and_then(|effort| anthropic::Effort::from_str(effort).ok());
-
-                let mut request = match into_anthropic(
-                    request,
-                    self.model.id.to_string(),
-                    1.0,
-                    self.model.max_output_tokens as u64,
-                    if enable_thinking {
-                        AnthropicModelMode::Thinking {
-                            budget_tokens: Some(4_096),
-                        }
-                    } else {
-                        AnthropicModelMode::Default
-                    },
-                    AnthropicPromptCacheMode::Automatic,
-                    // Cloud proxies to Anthropic's own infrastructure, so
-                    // compaction state is owned by (and interchangeable with)
-                    // Anthropic proper, not by the cloud transport.
-                    &ANTHROPIC_PROVIDER_ID,
-                ) {
+                let request = match self.anthropic_request(request) {
                     Ok(request) => request,
                     Err(error) => return async move { Err(error.into()) }.boxed(),
                 };
-
-                if enable_thinking && effort.is_some() {
-                    request.thinking = Some(anthropic::Thinking::Adaptive {
-                        display: Some(anthropic::AdaptiveThinkingDisplay::Summarized),
-                        // Thinking block binding needs a beta header on the
-                        // upstream Anthropic request, which the cloud proxy
-                        // controls, so opting in belongs server-side.
-                        block_binding: None,
-                    });
-                    request.output_config = Some(anthropic::OutputConfig { effort });
-                }
-
-                if !self.model.supports_fast_mode {
-                    request.speed = None;
-                }
 
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
@@ -815,37 +911,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
-                let effort = request
-                    .thinking_effort
-                    .as_ref()
-                    .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok())
-                    .filter(|effort| *effort != open_ai::ReasoningEffort::None);
-                let supports_none_reasoning_effort =
-                    self.model.supported_effort_levels.iter().any(|effort| {
-                        open_ai::ReasoningEffort::from_str(&effort.value)
-                            .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
-                    });
-
-                let mut request = match into_open_ai_response(
-                    request,
-                    &self.model.id.0,
-                    self.model.supports_parallel_tool_calls,
-                    true,
-                    None,
-                    None,
-                    supports_none_reasoning_effort,
-                    &OPEN_AI_PROVIDER_ID,
-                ) {
+                let request = match self.open_ai_request(request) {
                     Ok(request) => request,
                     Err(error) => return async move { Err(error.into()) }.boxed(),
                 };
-
-                if enable_thinking && let Some(effort) = effort {
-                    request.reasoning = Some(open_ai::responses::ReasoningConfig {
-                        effort,
-                        summary: Some(open_ai::responses::ReasoningSummaryMode::Auto),
-                    });
-                }
 
                 let auth_context = token_provider.auth_context(cx);
                 let executor = cx.background_executor().clone();
@@ -1829,6 +1898,99 @@ mod tests {
 
         assert!(model.supports_explicit_compaction());
         assert!(!model.supports_explicit_compaction_output_limit());
+    }
+
+    #[gpui::test]
+    async fn hosted_input_counts_use_authenticated_count_endpoint(cx: &mut gpui::TestAppContext) {
+        for anthropic in [true, false] {
+            let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let http_client = FakeHttpClient::create({
+                let calls = calls.clone();
+                move |mut request| {
+                    let calls = calls.clone();
+                    async move {
+                        calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        assert_eq!(request.uri().path(), "/count_tokens");
+                        assert_eq!(request.headers()["Authorization"], "Bearer test-token");
+                        let mut body = String::new();
+                        request.body_mut().read_to_string(&mut body).await?;
+                        let body: serde_json::Value = serde_json::from_str(&body)?;
+                        let model = if anthropic {
+                            "claude-opus-4-6"
+                        } else {
+                            "gpt-5.4"
+                        };
+                        assert_eq!(body["model"], model);
+                        assert_eq!(body["provider_request"]["model"], model);
+                        assert!(body["provider_request"].to_string().contains("aW1hZ2U="));
+                        Ok(Response::builder()
+                            .status(200)
+                            .body(AsyncBody::from(r#"{"tokens":731}"#))?)
+                    }
+                }
+            });
+            let model = if anthropic {
+                cloud_anthropic_test_model(http_client)
+            } else {
+                cloud_test_model(http_client)
+            };
+            let mut request = compact_test_request();
+            request.messages[0].content.push(MessageContent::Image(
+                language_model::LanguageModelImage {
+                    source: "aW1hZ2U=".into(),
+                },
+            ));
+            assert_eq!(
+                model
+                    .count_input_tokens(request, &cx.to_async())
+                    .await
+                    .unwrap(),
+                Some(731)
+            );
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        }
+    }
+
+    #[gpui::test]
+    async fn hosted_input_counts_surface_errors_and_skip_unsupported_providers(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for (status, body) in [(429, "rate limit"), (200, r#"{"tokens":-1}"#), (200, "{}")] {
+            let model = cloud_test_model(FakeHttpClient::create(move |_| async move {
+                Ok(Response::builder()
+                    .status(status)
+                    .body(AsyncBody::from(body))?)
+            }));
+            let error = model
+                .count_input_tokens(compact_test_request(), &cx.to_async())
+                .await
+                .unwrap_err();
+            if status == 200 {
+                assert!(matches!(
+                    error,
+                    LanguageModelCompletionError::DeserializeResponse { .. }
+                ));
+            } else {
+                assert!(matches!(
+                    error,
+                    LanguageModelCompletionError::ProviderRejection {
+                        category: ProviderErrorCategory::RateLimit,
+                        ..
+                    }
+                ));
+            }
+        }
+        let mut model = cloud_test_model(FakeHttpClient::create(|_| async {
+            panic!("unsupported provider must not send a counting request");
+        }));
+        Arc::make_mut(&mut model.model).provider = cloud_llm_client::LanguageModelProvider::XAi;
+        assert_eq!(
+            model
+                .count_input_tokens(compact_test_request(), &cx.to_async())
+                .await
+                .unwrap(),
+            None
+        );
     }
 
     fn compact_test_request() -> LanguageModelRequest {
