@@ -69,4 +69,5 @@ best starting point for new applications:
 - `list_example` demonstrates bottom-aligned list state and scrollbar behavior.
 - `ownership_post` supports the ownership and data-flow documentation.
 - `paths_bench` is a path rendering benchmark.
+- `present_starvation` is a focused Windows present-starvation reproduction.
 - `tree` renders a deep tree of nested elements.
