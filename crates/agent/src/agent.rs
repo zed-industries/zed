@@ -3874,8 +3874,8 @@ mod internal_tests {
     use indoc::formatdoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
-        CompletionIntent, LanguageModelCompletionEvent, LanguageModelProviderId,
-        LanguageModelProviderName,
+        CompletionIntent, LanguageModelCompletionError, LanguageModelCompletionEvent,
+        LanguageModelProviderId, LanguageModelProviderName,
     };
     use serde_json::json;
     use settings::SettingsStore;
@@ -4084,6 +4084,10 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_compact_prompt_routes_to_manual_compaction(cx: &mut TestAppContext) {
+        use feature_flags::{
+            AcpBetaFeatureFlag, FeatureFlag as _, FeatureFlagAppExt as _, FeatureFlagsSettings,
+        };
+
         init_test(cx);
         let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
@@ -4092,6 +4096,17 @@ mod internal_tests {
         let old_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
+            cx.update_flags(true, Vec::new());
+            FeatureFlagsSettings::override_global(
+                FeatureFlagsSettings {
+                    overrides: HashMap::from_iter([(
+                        AcpBetaFeatureFlag::NAME.into(),
+                        "off".into(),
+                    )]),
+                },
+                cx,
+            );
+            assert!(!cx.has_flag::<AcpBetaFeatureFlag>());
             let path_style = project.read(cx).path_style(cx);
             thread.update(cx, |thread, cx| {
                 thread.set_model(model.clone(), cx);
@@ -4107,6 +4122,7 @@ mod internal_tests {
 
         let compact_message_id = ClientUserMessageId::new();
         let prompt_task = cx.update(|cx| {
+            assert!(!cx.has_flag::<AcpBetaFeatureFlag>());
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 compact_message_id,
@@ -4130,10 +4146,468 @@ mod internal_tests {
             ]
         );
 
-        model.send_completion_stream_text_chunk(&request, "summary");
+        let compaction_id = acp_thread.read_with(cx, |thread, cx| {
+            assert!(!cx.has_flag::<AcpBetaFeatureFlag>());
+            let Some(acp_thread::AgentThreadEntry::ContextCompaction(compaction)) =
+                thread.entries().last()
+            else {
+                panic!("native compaction should create an ACP-visible entry");
+            };
+            assert!(thread.is_compacting());
+            assert!(compaction.is_in_progress());
+            assert!(compaction.summary.is_empty());
+            compaction.id.clone()
+        });
+
+        model.send_completion_stream_text_chunk(&request, "retained ");
+        cx.run_until_parked();
+        let summary = acp_thread.read_with(cx, |thread, cx| {
+            let Some(acp_thread::AgentThreadEntry::ContextCompaction(compaction)) =
+                thread.entries().last()
+            else {
+                panic!("native compaction entry should remain in the timeline");
+            };
+            assert_eq!(compaction.id, compaction_id);
+            assert!(compaction.is_in_progress());
+            let [acp_thread::ContentBlock::Markdown { markdown }] = compaction.summary.as_slice()
+            else {
+                panic!("native text chunks should create one retained Markdown block");
+            };
+            assert_eq!(markdown.read(cx).source().as_ref(), "retained ");
+            markdown.clone()
+        });
+        model.send_completion_stream_text_chunk(&request, "context");
         model.end_completion_stream(&request);
         cx.run_until_parked();
-        prompt_task.await.unwrap();
+        prompt_task
+            .await
+            .expect("native compaction should complete");
+        acp_thread.read_with(cx, |thread, cx| {
+            let Some(acp_thread::AgentThreadEntry::ContextCompaction(compaction)) =
+                thread.entries().last()
+            else {
+                panic!("completed native compaction should remain in the timeline");
+            };
+            assert_eq!(compaction.id, compaction_id);
+            assert!(!thread.is_compacting());
+            assert_eq!(
+                compaction.status,
+                acp_thread::ContextCompactionStatus::Completed
+            );
+            assert!(compaction.error.is_none());
+            assert_eq!(compaction.summary.len(), 1);
+            assert_eq!(
+                compaction
+                    .summary
+                    .first()
+                    .and_then(|block| block.markdown()),
+                Some(&summary)
+            );
+            assert_eq!(summary.read(cx).source().as_ref(), "retained context");
+        });
+
+        agent.update(cx, |agent, cx| agent.save_thread(thread.clone(), cx));
+        cx.run_until_parked();
+        drop(thread);
+        drop(acp_thread);
+        release_dropped_entities(cx);
+        agent.read_with(cx, |agent, _| {
+            assert!(!agent.sessions.contains_key(&session_id));
+        });
+        let restored = cx
+            .update(|cx| {
+                assert!(!cx.has_flag::<AcpBetaFeatureFlag>());
+                connection.clone().load_session(
+                    session_id,
+                    project,
+                    PathList::new(&[Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("compacted native session should reload");
+        cx.run_until_parked();
+        restored.read_with(cx, |thread, cx| {
+            let compactions = thread
+                .entries()
+                .iter()
+                .filter_map(|entry| match entry {
+                    acp_thread::AgentThreadEntry::ContextCompaction(compaction) => Some(compaction),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let [compaction] = compactions.as_slice() else {
+                panic!("replay should restore exactly one compaction");
+            };
+            assert_eq!(
+                compaction.status,
+                acp_thread::ContextCompactionStatus::Completed
+            );
+            assert!(!thread.is_compacting());
+            assert_eq!(
+                compaction
+                    .summary
+                    .first()
+                    .map(|block| block.to_markdown(cx)),
+                Some("retained context")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_load_session_replays_provider_native_compaction(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        thread.update(cx, |thread, cx| {
+            thread.push_acp_user_block(
+                ClientUserMessageId::new(),
+                [acp::ContentBlock::from("before native compaction")],
+                project.read(cx).path_style(cx),
+                cx,
+            );
+        });
+        let mut saved_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let provider = LanguageModelProviderId::from("openai".to_string());
+        let items = vec![json!({"type": "compaction", "encrypted_content": "opaque state"})];
+        saved_thread.messages.push(Arc::new(Message::Compaction(
+            CompactionInfo::ProviderNative {
+                provider: provider.clone(),
+                items: items.clone(),
+            },
+        )));
+        let restored_session_id = acp::SessionId::new("provider-native-compaction");
+        let database = cx
+            .update(|cx| ThreadsDatabase::connect(cx))
+            .await
+            .expect("thread database should connect");
+        database
+            .save_thread(
+                restored_session_id.clone(),
+                saved_thread,
+                PathList::new(&[Path::new("/a")]),
+            )
+            .await
+            .expect("provider-native compaction should save");
+
+        drop(thread);
+        drop(acp_thread);
+        release_dropped_entities(cx);
+        agent.read_with(cx, |agent, _| {
+            assert!(!agent.sessions.contains_key(&session_id));
+            assert!(!agent.sessions.contains_key(&restored_session_id));
+        });
+        let restored = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    restored_session_id.clone(),
+                    project,
+                    PathList::new(&[Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("provider-native compaction should load");
+        cx.run_until_parked();
+        restored.read_with(cx, |thread, _| {
+            let Some(acp_thread::AgentThreadEntry::ContextCompaction(compaction)) =
+                thread.entries().last()
+            else {
+                panic!("provider-native replay should create a compaction entry");
+            };
+            assert_eq!(
+                compaction.status,
+                acp_thread::ContextCompactionStatus::Completed
+            );
+            assert!(compaction.summary.is_empty());
+            assert!(compaction.error.is_none());
+            assert!(!thread.is_compacting());
+        });
+
+        let restored_thread =
+            cx.update(|cx| native_thread_for_session(&agent, &restored_session_id, cx));
+        let saved_thread = restored_thread
+            .read_with(cx, |thread, cx| thread.to_db(cx))
+            .await;
+        let Some(Message::Compaction(CompactionInfo::ProviderNative {
+            provider: restored_provider,
+            items: restored_items,
+        })) = saved_thread.messages.last().map(Arc::as_ref)
+        else {
+            panic!("provider-native compaction should survive the database round trip");
+        };
+        assert_eq!(restored_provider, &provider);
+        assert_eq!(restored_items, &items);
+    }
+
+    #[gpui::test]
+    async fn test_retried_auto_compaction_terminalizes_each_attempt(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        model.set_max_token_count(1_000_000);
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.auto_compact = agent_settings::AutoCompactSettings {
+                enabled: true,
+                threshold: agent_settings::AutoCompactThreshold::Percentage(0.5),
+            };
+            agent_settings::AgentSettings::override_global(settings, cx);
+            thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        });
+
+        let first_prompt = cx.update(|cx| {
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
+                connection.as_ref(),
+                ClientUserMessageId::new(),
+                acp::PromptRequest::new(session_id.clone(), vec!["old user".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let first_request = model
+            .pending_completions()
+            .pop()
+            .expect("first user prompt should start a model request");
+        model.send_completion_stream_event(
+            &first_request,
+            LanguageModelCompletionEvent::UsageUpdate(language_model::TokenUsage {
+                input_tokens: 750_000,
+                ..Default::default()
+            }),
+        );
+        model.send_completion_stream_text_chunk(&first_request, "old assistant");
+        model.end_completion_stream(&first_request);
+        cx.run_until_parked();
+        first_prompt
+            .await
+            .expect("first user prompt should complete");
+
+        let second_prompt = cx.update(|cx| {
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
+                connection.as_ref(),
+                ClientUserMessageId::new(),
+                acp::PromptRequest::new(session_id, vec!["new user".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let first_compaction_request = model
+            .pending_completions()
+            .pop()
+            .expect("token threshold should start automatic compaction");
+        assert_eq!(
+            first_compaction_request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        model.send_completion_stream_error(
+            &first_compaction_request,
+            LanguageModelCompletionError::from_provider_response(
+                language_model::ANTHROPIC_PROVIDER_NAME,
+                None,
+                Some("rate_limit_error".to_string()),
+                "Rate limit exceeded".to_string(),
+                Some(Duration::ZERO),
+                language_model::ProviderErrorCategory::RateLimit,
+            ),
+        );
+        model.end_completion_stream(&first_compaction_request);
+        cx.run_until_parked();
+
+        let second_compaction_request = model
+            .pending_completions()
+            .pop()
+            .expect("retryable error should start another compaction attempt");
+        assert_eq!(
+            second_compaction_request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        acp_thread.read_with(cx, |thread, _cx| {
+            let statuses = thread
+                .entries()
+                .iter()
+                .filter_map(|entry| match entry {
+                    acp_thread::AgentThreadEntry::ContextCompaction(compaction) => {
+                        Some(compaction.status.clone())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                statuses,
+                [
+                    acp_thread::ContextCompactionStatus::Failed,
+                    acp_thread::ContextCompactionStatus::InProgress,
+                ]
+            );
+            assert!(thread.is_compacting());
+        });
+
+        model.send_completion_stream_text_chunk(&second_compaction_request, "summary");
+        model.end_completion_stream(&second_compaction_request);
+        cx.run_until_parked();
+
+        acp_thread.read_with(cx, |thread, _cx| {
+            let statuses = thread
+                .entries()
+                .iter()
+                .filter_map(|entry| match entry {
+                    acp_thread::AgentThreadEntry::ContextCompaction(compaction) => {
+                        Some(compaction.status.clone())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                statuses,
+                [
+                    acp_thread::ContextCompactionStatus::Failed,
+                    acp_thread::ContextCompactionStatus::Completed,
+                ]
+            );
+            assert!(
+                !thread.is_compacting(),
+                "a successful retry must not leave an older attempt in progress"
+            );
+        });
+
+        let final_request = model
+            .pending_completions()
+            .pop()
+            .expect("successful compaction should continue the user turn");
+        assert_eq!(final_request.intent, Some(CompletionIntent::UserPrompt));
+        model.send_completion_stream_text_chunk(&final_request, "new assistant");
+        model.end_completion_stream(&final_request);
+        cx.run_until_parked();
+        second_prompt
+            .await
+            .expect("user prompt should complete after the compaction retry");
+    }
+
+    #[gpui::test]
+    async fn test_native_compaction_cancellation_is_bridged_before_stop(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for (scenario, cancel_before_first_poll, partial_summary) in [
+            ("before first poll", true, None),
+            ("after initial update", false, None),
+            (
+                "after partial summary",
+                false,
+                Some("retained partial summary"),
+            ),
+        ] {
+            let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+            let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+            let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+            let model = Arc::new(FakeLanguageModel::default());
+
+            cx.update(|cx| {
+                let path_style = project.read(cx).path_style(cx);
+                thread.update(cx, |thread, cx| {
+                    thread.set_model(model.clone(), cx);
+                    thread.push_acp_user_block(
+                        ClientUserMessageId::new(),
+                        [acp::ContentBlock::from("old user")],
+                        path_style,
+                        cx,
+                    );
+                    thread.push_acp_agent_block("old assistant".into(), cx);
+                });
+            });
+
+            let (response_stream, cancellation_task) = if cancel_before_first_poll {
+                thread.update(cx, |thread, cx| {
+                    let response_stream = thread
+                        .compact(ClientUserMessageId::new(), cx)
+                        .expect("manual compaction should start");
+                    let cancellation_task = thread.cancel(cx);
+                    (response_stream, cancellation_task)
+                })
+            } else {
+                let response_stream = thread
+                    .update(cx, |thread, cx| {
+                        thread.compact(ClientUserMessageId::new(), cx)
+                    })
+                    .expect("manual compaction should start");
+                cx.run_until_parked();
+
+                let request = model
+                    .pending_completions()
+                    .pop()
+                    .expect("manual compaction should reach the model");
+                if let Some(partial_summary) = partial_summary {
+                    model.send_completion_stream_text_chunk(&request, partial_summary);
+                    cx.run_until_parked();
+                }
+
+                let cancellation_task = thread.update(cx, |thread, cx| thread.cancel(cx));
+                (response_stream, cancellation_task)
+            };
+            cancellation_task.await;
+
+            let response = cx
+                .update(|cx| {
+                    NativeAgentConnection::handle_thread_events(
+                        response_stream,
+                        acp_thread.downgrade(),
+                        Some(connection.as_ref().clone()),
+                        cx,
+                    )
+                })
+                .await
+                .expect("canceled compaction events should be bridged");
+            assert_eq!(
+                response.stop_reason,
+                acp::StopReason::Cancelled,
+                "{scenario}"
+            );
+
+            acp_thread.read_with(cx, |thread, cx| {
+                let compactions = thread
+                    .entries()
+                    .iter()
+                    .filter_map(|entry| match entry {
+                        acp_thread::AgentThreadEntry::ContextCompaction(compaction) => {
+                            Some(compaction)
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+
+                if cancel_before_first_poll {
+                    assert!(
+                        compactions.is_empty(),
+                        "{scenario}: cancellation before the task's first poll must not create a late compaction"
+                    );
+                    assert!(!thread.is_compacting(), "{scenario}");
+                    return;
+                }
+
+                let [compaction] = compactions.as_slice() else {
+                    panic!("{scenario}: expected exactly one visible compaction");
+                };
+                assert_eq!(
+                    compaction.status,
+                    acp_thread::ContextCompactionStatus::Canceled,
+                    "{scenario}"
+                );
+                assert!(!thread.is_compacting(), "{scenario}");
+                assert_eq!(
+                    compaction.summary.first().map(|block| block.to_markdown(cx)),
+                    partial_summary,
+                    "{scenario}"
+                );
+            });
+        }
     }
 
     #[gpui::test]
