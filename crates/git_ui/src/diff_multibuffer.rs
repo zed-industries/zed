@@ -559,7 +559,8 @@ impl DiffMultibuffer {
                     );
                 }
                 if is_excerpt_newly_added
-                    && (file_status.is_deleted()
+                    && (EditorSettings::get_global(cx).multibuffer_default_folded
+                        || file_status.is_deleted()
                         || (file_status.is_untracked()
                             && GitPanelSettings::get_global(cx).collapse_untracked_diff))
                 {
