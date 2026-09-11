@@ -1838,7 +1838,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn multibuffer_section() -> [SettingsPageItem; 7] {
+    fn multibuffer_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Multibuffer"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1880,6 +1880,22 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| settings_content.editor.excerpt_context_lines.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.editor.excerpt_context_lines = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Multibuffer Default Folded",
+                description: "Whether to fold all files in multibuffer by default.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("multibuffer_default_folded"),
+                    pick: |settings_content| {
+                        settings_content.editor.multibuffer_default_folded.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.editor.multibuffer_default_folded = value;
                     },
                 }),
                 metadata: None,
