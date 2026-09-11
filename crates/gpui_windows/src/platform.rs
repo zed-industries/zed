@@ -22,7 +22,15 @@ use windows::{
         Foundation::*,
         Graphics::{Direct3D11::ID3D11Device, Gdi::*},
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, Power::*, SystemInformation::*},
+        System::{
+            Com::*,
+            LibraryLoader::*,
+            Ole::*,
+            Power::*,
+            SystemInformation::*,
+            SystemServices::POWER_REQUEST_CONTEXT_VERSION,
+            Threading::{POWER_REQUEST_CONTEXT_SIMPLE_STRING, REASON_CONTEXT, REASON_CONTEXT_0},
+        },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
@@ -103,6 +111,45 @@ impl WindowsPlatformState {
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
         }
+    }
+}
+
+struct PowerRequest {
+    handle: HANDLE,
+}
+
+unsafe impl Send for PowerRequest {}
+
+impl PowerRequest {
+    fn prevent_idle_sleep(reason: &str) -> Result<Self> {
+        let mut reason = reason.encode_utf16().chain([0]).collect::<Vec<_>>();
+        let context = REASON_CONTEXT {
+            Version: POWER_REQUEST_CONTEXT_VERSION,
+            Flags: POWER_REQUEST_CONTEXT_SIMPLE_STRING,
+            Reason: REASON_CONTEXT_0 {
+                SimpleReasonString: PWSTR(reason.as_mut_ptr()),
+            },
+        };
+        let handle = unsafe { PowerCreateRequest(&context) }
+            .context("Failed to create a Windows power request")?;
+        if let Err(error) = unsafe { PowerSetRequest(handle, PowerRequestSystemRequired) } {
+            unsafe { CloseHandle(handle) }
+                .context("Failed to close the Windows power request")
+                .log_err();
+            return Err(error).context("Failed to set the Windows power request");
+        }
+        Ok(Self { handle })
+    }
+}
+
+impl Drop for PowerRequest {
+    fn drop(&mut self) {
+        unsafe { PowerClearRequest(self.handle, PowerRequestSystemRequired) }
+            .context("Failed to clear the Windows power request")
+            .log_err();
+        unsafe { CloseHandle(self.handle) }
+            .context("Failed to close the Windows power request")
+            .log_err();
     }
 }
 
@@ -442,6 +489,13 @@ impl Platform for WindowsPlatform {
 
     fn thermal_state(&self) -> ThermalState {
         ThermalState::Nominal
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(
+            PowerRequest::prevent_idle_sleep(reason)
+                .map(|request| ActivityGuard::new(move || drop(request))),
+        )
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
