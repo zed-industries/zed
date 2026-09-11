@@ -152,6 +152,11 @@ pub trait Fs: Send + Sync {
         Ok(())
     }
 
+    /// Records raw local watcher notifications until the returned recording is dropped.
+    fn record_watcher_diagnostics(&self) -> Option<fs_watcher::WatchRecording> {
+        None
+    }
+
     /// Whether `path` exists, without following a final symlink. Synchronous
     /// because watches are registered synchronously by the worktree scanner.
     fn path_exists(&self, path: &Path) -> bool;
@@ -1173,6 +1178,13 @@ impl Fs for RealFs {
 
     fn start_native_watcher(&self) -> Result<()> {
         self.native_watcher.ensure_backend()
+    }
+
+    fn record_watcher_diagnostics(&self) -> Option<fs_watcher::WatchRecording> {
+        Some(fs_watcher::WatchRecording::new([
+            self.native_watcher.clone(),
+            self.poll_watcher.clone(),
+        ]))
     }
 
     fn path_exists(&self, path: &Path) -> bool {
@@ -3395,6 +3407,13 @@ impl Fs for FakeFs {
 
     async fn git_config(&self, _abs_work_directory: &Path, _args: Vec<String>) -> Result<String> {
         anyhow::bail!("Git config is not supported in fake Fs")
+    }
+
+    fn record_watcher_diagnostics(&self) -> Option<fs_watcher::WatchRecording> {
+        Some(fs_watcher::WatchRecording::new([
+            self.native_watcher.clone(),
+            self.poll_watcher.clone(),
+        ]))
     }
 
     fn path_exists(&self, path: &Path) -> bool {
