@@ -16,7 +16,7 @@ use gpui::{
     App, AppContext as _, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
+use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     ConflictSet, Project, ProjectPath,
@@ -441,7 +441,7 @@ impl DiffMultibuffer {
         conflict_set: Option<Entity<ConflictSet>>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<BufferId> {
+    ) {
         let diff_subscription = cx.subscribe_in(&diff, window, {
             let repo_path = repo_path.clone();
             let path_key = path_key.clone();
@@ -524,7 +524,6 @@ impl DiffMultibuffer {
         };
 
         let buffer_id = snapshot.text.remote_id();
-        let mut needs_fold = false;
 
         let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
             let was_empty = editor.rhs_editor().read(cx).buffer().read(cx).is_empty();
@@ -564,7 +563,7 @@ impl DiffMultibuffer {
                         || (file_status.is_untracked()
                             && GitPanelSettings::get_global(cx).collapse_untracked_diff))
                 {
-                    needs_fold = true;
+                    editor.fold_buffer(buffer_id, cx);
                 }
             })
         });
@@ -585,8 +584,6 @@ impl DiffMultibuffer {
         if self.pending_scroll.as_ref() == Some(&path_key) {
             self.move_to_path(path_key, window, cx);
         }
-
-        needs_fold.then_some(buffer_id)
     }
 
     fn buffer_ranges_changed(
@@ -677,8 +674,6 @@ impl DiffMultibuffer {
             entries
         })?;
 
-        let mut buffers_to_fold = Vec::new();
-
         for (path_key, entry) in entries {
             if let Some(loaded_buffer) = entry.load.await.log_err() {
                 // We might be lagging behind enough that all future entry.load futures are no longer pending.
@@ -686,7 +681,7 @@ impl DiffMultibuffer {
                 yield_now().await;
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
-                        if let Some(buffer_id) = this.register_buffer(
+                        this.register_buffer(
                             entry.repo_path,
                             path_key,
                             entry.file_status,
@@ -696,22 +691,13 @@ impl DiffMultibuffer {
                             loaded_buffer.conflict_set,
                             window,
                             cx,
-                        ) {
-                            buffers_to_fold.push(buffer_id);
-                        }
+                        );
                     })
                     .ok();
                 })?;
             }
         }
         this.update(cx, |this, cx| {
-            if !buffers_to_fold.is_empty() {
-                this.editor.update(cx, |editor, cx| {
-                    editor
-                        .rhs_editor()
-                        .update(cx, |editor, cx| editor.fold_buffers(buffers_to_fold, cx));
-                });
-            }
             this.pending_scroll.take();
             cx.notify();
         })?;
