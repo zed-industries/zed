@@ -140,6 +140,10 @@ pub enum Model {
     DeepSeekV4Pro,
     #[serde(rename = "deepseek-v4-flash")]
     DeepSeekV4Flash,
+    #[serde(rename = "deepseek-v4-flash-vision-exp")]
+    DeepSeekV4FlashVisionExp,
+    #[serde(rename = "deepseek-v4.1-flash")]
+    DeepSeekV4_1Flash,
     #[serde(rename = "minimax-m2.5")]
     MiniMaxM2_5,
     #[serde(rename = "glm-5")]
@@ -150,6 +154,8 @@ pub enum Model {
     Glm5_2,
     #[serde(rename = "glm-5.3")]
     Glm5_3,
+    #[serde(rename = "glm-5.3-flash")]
+    Glm5_3Flash,
     #[serde(rename = "grok-build-0.1")]
     GrokBuild0_1,
     #[serde(rename = "grok-4.5")]
@@ -158,6 +164,10 @@ pub enum Model {
     Grok4_6,
     #[serde(rename = "muse-spark-1.2")]
     MuseSpark1_2,
+    #[serde(rename = "muse-spark-1.2-contributor")]
+    MuseSpark1_2Contributor,
+    #[serde(rename = "muse-spark-1.3-contributor")]
+    MuseSpark1_3Contributor,
     #[serde(rename = "kimi-k2.5")]
     KimiK2_5,
     #[serde(rename = "kimi-k2.6")]
@@ -174,6 +184,8 @@ pub enum Model {
     MimoV2_5Pro,
     #[serde(rename = "mimo-v2.5")]
     MimoV2_5,
+    #[serde(rename = "longcat-2.0")]
+    Longcat2_0,
     #[serde(rename = "qwen3.5-plus")]
     Qwen3_5Plus,
     #[serde(rename = "qwen3.6-plus")]
@@ -184,8 +196,12 @@ pub enum Model {
     Qwen3_7Max,
     #[serde(rename = "qwen3.8-max")]
     Qwen3_8Max,
+    #[serde(rename = "qwen3.8-flash")]
+    Qwen3_8Flash,
     #[serde(rename = "hy3")]
     Hy3,
+    #[serde(rename = "hy4-preview")]
+    Hy4Preview,
 
     // -- Custom model --
     #[serde(rename = "custom")]
@@ -219,6 +235,8 @@ impl Model {
             // Models available in both Zen and Go
             Self::Glm5_1
             | Self::Glm5_2
+            | Self::Glm5_3Flash
+            | Self::Grok4_6
             | Self::Grok4_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
@@ -227,6 +245,7 @@ impl Model {
             | Self::MiniMaxM3
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
+            | Self::DeepSeekV4FlashVisionExp
             | Self::Gpt5_6Luna
             | Self::Qwen3_6Plus => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
 
@@ -234,10 +253,16 @@ impl Model {
             Self::MimoV2_5Pro
             | Self::MimoV2_5
             | Self::Glm5_3
+            | Self::DeepSeekV4_1Flash
+            | Self::Longcat2_0
+            | Self::MuseSpark1_2Contributor
+            | Self::MuseSpark1_3Contributor
             | Self::Qwen3_7Plus
             | Self::Qwen3_7Max
             | Self::Qwen3_8Max
-            | Self::Hy3 => &[OpenCodeSubscription::Go],
+            | Self::Qwen3_8Flash
+            | Self::Hy3
+            | Self::Hy4Preview => &[OpenCodeSubscription::Go],
 
             // Deprecated on Go (per models.dev); still offered on Zen
             Self::Glm5 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus => {
@@ -296,15 +321,20 @@ impl Model {
 
             Self::DeepSeekV4Pro => "deepseek-v4-pro",
             Self::DeepSeekV4Flash => "deepseek-v4-flash",
+            Self::DeepSeekV4FlashVisionExp => "deepseek-v4-flash-vision-exp",
+            Self::DeepSeekV4_1Flash => "deepseek-v4.1-flash",
             Self::MiniMaxM2_5 => "minimax-m2.5",
             Self::Glm5 => "glm-5",
             Self::Glm5_1 => "glm-5.1",
             Self::Glm5_2 => "glm-5.2",
             Self::Glm5_3 => "glm-5.3",
+            Self::Glm5_3Flash => "glm-5.3-flash",
             Self::GrokBuild0_1 => "grok-build-0.1",
             Self::Grok4_5 => "grok-4.5",
             Self::Grok4_6 => "grok-4.6",
             Self::MuseSpark1_2 => "muse-spark-1.2",
+            Self::MuseSpark1_2Contributor => "muse-spark-1.2-contributor",
+            Self::MuseSpark1_3Contributor => "muse-spark-1.3-contributor",
             Self::KimiK2_5 => "kimi-k2.5",
             Self::KimiK2_6 => "kimi-k2.6",
             Self::KimiK2_7Code => "kimi-k2.7-code",
@@ -313,12 +343,15 @@ impl Model {
             Self::MiniMaxM3 => "minimax-m3",
             Self::MimoV2_5Pro => "mimo-v2.5-pro",
             Self::MimoV2_5 => "mimo-v2.5",
+            Self::Longcat2_0 => "longcat-2.0",
             Self::Qwen3_5Plus => "qwen3.5-plus",
             Self::Qwen3_6Plus => "qwen3.6-plus",
             Self::Qwen3_7Plus => "qwen3.7-plus",
             Self::Qwen3_7Max => "qwen3.7-max",
             Self::Qwen3_8Max => "qwen3.8-max",
+            Self::Qwen3_8Flash => "qwen3.8-flash",
             Self::Hy3 => "hy3",
+            Self::Hy4Preview => "hy4-preview",
 
             Self::Custom { name, .. } => name,
         }
@@ -368,15 +401,20 @@ impl Model {
 
             Self::DeepSeekV4Pro => "DeepSeek V4 Pro",
             Self::DeepSeekV4Flash => "DeepSeek V4 Flash",
+            Self::DeepSeekV4FlashVisionExp => "DeepSeek V4 Flash Vision Exp",
+            Self::DeepSeekV4_1Flash => "DeepSeek V4.1 Flash",
             Self::MiniMaxM2_5 => "MiniMax M2.5",
             Self::Glm5 => "GLM 5",
             Self::Glm5_1 => "GLM 5.1",
             Self::Glm5_2 => "GLM 5.2",
             Self::Glm5_3 => "GLM 5.3",
+            Self::Glm5_3Flash => "GLM 5.3 Flash",
             Self::GrokBuild0_1 => "Grok Build 0.1",
             Self::Grok4_5 => "Grok 4.5",
             Self::Grok4_6 => "Grok 4.6",
             Self::MuseSpark1_2 => "Muse Spark 1.2",
+            Self::MuseSpark1_2Contributor => "Muse Spark 1.2 Contributor",
+            Self::MuseSpark1_3Contributor => "Muse Spark 1.3 Contributor",
             Self::KimiK2_5 => "Kimi K2.5",
             Self::KimiK2_6 => "Kimi K2.6",
             Self::KimiK2_7Code => "Kimi K2.7 Code",
@@ -385,12 +423,15 @@ impl Model {
             Self::MiniMaxM3 => "MiniMax M3",
             Self::MimoV2_5Pro => "MiMo V2.5 Pro",
             Self::MimoV2_5 => "MiMo V2.5",
+            Self::Longcat2_0 => "LongCat 2.0",
             Self::Qwen3_5Plus => "Qwen3.5 Plus",
             Self::Qwen3_6Plus => "Qwen3.6 Plus",
             Self::Qwen3_7Plus => "Qwen3.7 Plus",
             Self::Qwen3_7Max => "Qwen3.7 Max",
             Self::Qwen3_8Max => "Qwen3.8 Max",
+            Self::Qwen3_8Flash => "Qwen3.8 Flash",
             Self::Hy3 => "Hy3",
+            Self::Hy4Preview => "Hy4 Preview",
 
             Self::Custom {
                 name, display_name, ..
@@ -451,6 +492,7 @@ impl Model {
             | Self::Gemini3_7Flash => ApiProtocol::Google,
 
             Self::Qwen3_8Max
+            | Self::Qwen3_8Flash
             | Self::Qwen3_7Max
             | Self::Qwen3_7Plus
             | Self::Qwen3_6Plus
@@ -460,6 +502,7 @@ impl Model {
             | Self::Glm5_1
             | Self::Glm5_2
             | Self::Glm5_3
+            | Self::Glm5_3Flash
             | Self::GrokBuild0_1
             | Self::KimiK2_5
             | Self::KimiK2_6
@@ -467,11 +510,19 @@ impl Model {
             | Self::KimiK3
             | Self::MimoV2_5Pro
             | Self::MimoV2_5
+            | Self::Longcat2_0
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
-            | Self::Hy3 => ApiProtocol::OpenAiChat,
+            | Self::DeepSeekV4FlashVisionExp
+            | Self::DeepSeekV4_1Flash
+            | Self::Hy3
+            | Self::Hy4Preview => ApiProtocol::OpenAiChat,
 
-            Self::Grok4_6 | Self::Grok4_5 | Self::MuseSpark1_2 => ApiProtocol::OpenAiResponses,
+            Self::Grok4_6
+            | Self::Grok4_5
+            | Self::MuseSpark1_2
+            | Self::MuseSpark1_2Contributor
+            | Self::MuseSpark1_3Contributor => ApiProtocol::OpenAiResponses,
 
             Self::Custom { protocol, .. } => *protocol,
         }
@@ -481,16 +532,20 @@ impl Model {
         match self {
             Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
+            | Self::DeepSeekV4FlashVisionExp
+            | Self::DeepSeekV4_1Flash
             | Self::KimiK2_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
             | Self::KimiK3
             | Self::MimoV2_5
             | Self::MimoV2_5Pro
+            | Self::Longcat2_0
             | Self::Glm5
             | Self::Glm5_1
             | Self::Glm5_2
             | Self::Glm5_3
+            | Self::Glm5_3Flash
             | Self::MiniMaxM2_5
             | Self::MiniMaxM2_7
             | Self::MiniMaxM3 => true,
@@ -553,14 +608,16 @@ impl Model {
                     204_800
                 }
             }
-            Self::Glm5_3 | Self::Glm5_2 => 1_000_000,
+            Self::Glm5_3 | Self::Glm5_3Flash | Self::Glm5_2 => 1_000_000,
             Self::KimiK2_6 | Self::KimiK2_5 | Self::KimiK2_7Code => 262_144,
             Self::KimiK3 => 1_048_576,
             Self::GrokBuild0_1 => 256_000,
             Self::Grok4_6 | Self::Grok4_5 => 500_000,
             Self::MuseSpark1_2 => 1_048_576,
+            Self::MuseSpark1_2Contributor | Self::MuseSpark1_3Contributor => 1_048_576,
             Self::MimoV2_5Pro => 1_048_576,
             Self::MimoV2_5 => 1_000_000,
+            Self::Longcat2_0 => 1_000_000,
             Self::Qwen3_5Plus => 262_144,
             Self::Qwen3_6Plus => {
                 if subscription == OpenCodeSubscription::Go {
@@ -569,9 +626,15 @@ impl Model {
                     262_144
                 }
             }
-            Self::Qwen3_8Max | Self::Qwen3_7Max | Self::Qwen3_7Plus => 1_000_000,
+            Self::Qwen3_8Max | Self::Qwen3_8Flash | Self::Qwen3_7Max | Self::Qwen3_7Plus => {
+                1_000_000
+            }
             Self::Hy3 => 256_000,
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 1_000_000,
+            Self::Hy4Preview => 1_024_000,
+            Self::DeepSeekV4Pro
+            | Self::DeepSeekV4Flash
+            | Self::DeepSeekV4FlashVisionExp
+            | Self::DeepSeekV4_1Flash => 1_000_000,
 
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -644,20 +707,25 @@ impl Model {
                     Some(131_072)
                 }
             }
-            Self::Glm5_3 | Self::Glm5_2 => Some(131_072),
+            Self::Glm5_3 | Self::Glm5_3Flash | Self::Glm5_2 => Some(131_072),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::KimiK2_7Code => Some(262_144),
             Self::KimiK3 => Some(131_072),
             Self::GrokBuild0_1 => Some(256_000),
             Self::Grok4_6 | Self::Grok4_5 => Some(500_000),
             Self::MuseSpark1_2 => Some(131_072),
+            Self::MuseSpark1_2Contributor | Self::MuseSpark1_3Contributor => Some(131_072),
             Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
                 Some(65_536)
             }
-            Self::Qwen3_8Max => Some(131_072),
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
+            Self::Qwen3_8Max | Self::Qwen3_8Flash => Some(131_072),
+            Self::DeepSeekV4Pro
+            | Self::DeepSeekV4Flash
+            | Self::DeepSeekV4FlashVisionExp
+            | Self::DeepSeekV4_1Flash => Some(384_000),
             Self::MimoV2_5Pro | Self::MimoV2_5 => Some(128_000),
-            Self::Hy3 => Some(64_000),
+            Self::Longcat2_0 => Some(131_072),
+            Self::Hy3 | Self::Hy4Preview => Some(64_000),
 
             Self::Custom {
                 max_output_tokens, ..
@@ -725,11 +793,17 @@ impl Model {
             | Self::Grok4_5
             | Self::Grok4_6
             | Self::MuseSpark1_2
+            | Self::MuseSpark1_2Contributor
+            | Self::MuseSpark1_3Contributor
             | Self::MimoV2_5
             | Self::Qwen3_5Plus
             | Self::Qwen3_6Plus
             | Self::Qwen3_7Plus
             | Self::Qwen3_8Max
+            | Self::Qwen3_8Flash
+            | Self::DeepSeekV4FlashVisionExp
+            | Self::DeepSeekV4_1Flash
+            | Self::Glm5_3Flash
             | Self::MiniMaxM3 => true,
 
             // OpenAI-compatible models without image support
@@ -743,7 +817,9 @@ impl Model {
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
             | Self::Qwen3_7Max
-            | Self::Hy3 => false,
+            | Self::Longcat2_0
+            | Self::Hy3
+            | Self::Hy4Preview => false,
 
             Self::Custom { protocol, .. } => matches!(
                 protocol,
@@ -857,7 +933,10 @@ impl Model {
             ]),
 
             // DeepSeek models
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(vec![
+            Self::DeepSeekV4Pro
+            | Self::DeepSeekV4Flash
+            | Self::DeepSeekV4FlashVisionExp
+            | Self::DeepSeekV4_1Flash => Some(vec![
                 // OpenCode also supports Low&Medium but as per DeepSeek those are mapped to High
                 ReasoningEffort::High,
                 ReasoningEffort::Max,
@@ -876,10 +955,20 @@ impl Model {
                 ReasoningEffort::High,
             ]),
 
+            // Meituan LongCat models
+            Self::Longcat2_0 => Some(vec![ReasoningEffort::Max]),
+
+            // Alibaba Qwen models
+            Self::Qwen3_8Flash => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::XHigh,
+            ]),
+
             // Z AI models
             Self::Glm5_2 => Some(vec![ReasoningEffort::High, ReasoningEffort::Max]),
 
-            Self::Glm5_3 => Some(vec![
+            Self::Glm5_3 | Self::Glm5_3Flash => Some(vec![
                 ReasoningEffort::Low,
                 ReasoningEffort::High,
                 ReasoningEffort::Max,
@@ -891,6 +980,8 @@ impl Model {
                 ReasoningEffort::Low,
                 ReasoningEffort::High,
             ]),
+
+            Self::Hy4Preview => Some(vec![ReasoningEffort::None, ReasoningEffort::High]),
 
             // SpaceXAI models
             Self::Grok4_6 => Some(vec![
@@ -907,13 +998,15 @@ impl Model {
             ]),
 
             // Meta AI models
-            Self::MuseSpark1_2 => Some(vec![
-                ReasoningEffort::Minimal,
-                ReasoningEffort::Low,
-                ReasoningEffort::Medium,
-                ReasoningEffort::High,
-                ReasoningEffort::XHigh,
-            ]),
+            Self::MuseSpark1_2 | Self::MuseSpark1_2Contributor | Self::MuseSpark1_3Contributor => {
+                Some(vec![
+                    ReasoningEffort::Minimal,
+                    ReasoningEffort::Low,
+                    ReasoningEffort::Medium,
+                    ReasoningEffort::High,
+                    ReasoningEffort::XHigh,
+                ])
+            }
 
             Self::Custom {
                 reasoning_effort_levels,
