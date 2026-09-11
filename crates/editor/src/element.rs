@@ -3197,10 +3197,11 @@ impl EditorElement {
                         &[run],
                         None,
                     );
+                    let rendered_len = line.len();
                     LineWithInvisibles {
                         width: line.width,
                         len: line.len,
-                        fragments: smallvec![LineFragment::Text(line)],
+                        fragments: smallvec![LineFragment::Text { rendered_len, line }],
                         invisibles: Vec::new(),
                         diagnostic_underline_severity_ranges: Vec::new(),
                         point_diagnostics: Vec::new(),
@@ -7328,7 +7329,10 @@ pub(crate) struct LineWithInvisibles {
 }
 
 enum LineFragment {
-    Text(ShapedLine),
+    Text {
+        line: ShapedLine,
+        rendered_len: usize,
+    },
     Element {
         id: ChunkRendererId,
         element: Option<AnyElement>,
@@ -7340,7 +7344,7 @@ enum LineFragment {
 impl fmt::Debug for LineFragment {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            LineFragment::Text(shaped_line) => f.debug_tuple("Text").field(shaped_line).finish(),
+            LineFragment::Text { line, .. } => f.debug_tuple("Text").field(line).finish(),
             LineFragment::Element { size, len, .. } => f
                 .debug_struct("Element")
                 .field("size", size)
@@ -7417,7 +7421,11 @@ impl LineWithInvisibles {
                     );
                     width += shaped_line.width;
                     len += shaped_line.len;
-                    fragments.push(LineFragment::Text(shaped_line));
+                    let rendered_len = shaped_line.len();
+                    fragments.push(LineFragment::Text {
+                        line: shaped_line,
+                        rendered_len,
+                    });
                     line.clear();
                     styles.clear();
                 }
@@ -7484,6 +7492,7 @@ impl LineWithInvisibles {
                             underline: text_style.underline,
                             strikethrough: text_style.strikethrough,
                         };
+                        let rendered_len = x.len();
                         let line_layout = window
                             .text_system()
                             .shape_line(x, font_size, &[run], None)
@@ -7498,7 +7507,10 @@ impl LineWithInvisibles {
                         width += line_layout.width;
                         len += highlighted_chunk.text.len();
                         line_byte_offset += highlighted_chunk.text.len();
-                        fragments.push(LineFragment::Text(line_layout))
+                        fragments.push(LineFragment::Text {
+                            line: line_layout,
+                            rendered_len,
+                        })
                     }
                 }
             } else {
@@ -7518,7 +7530,11 @@ impl LineWithInvisibles {
                         );
                         width += shaped_line.width;
                         len += shaped_line.len;
-                        fragments.push(LineFragment::Text(shaped_line));
+                        let rendered_len = shaped_line.len();
+                        fragments.push(LineFragment::Text {
+                            line: shaped_line,
+                            rendered_len,
+                        });
                         layouts.push(Self {
                             width: mem::take(&mut width),
                             len: mem::take(&mut len),
@@ -7759,7 +7775,7 @@ impl LineWithInvisibles {
             content_origin + gpui::point(Pixels::from(-scroll_pixel_position.x), line_y);
         for fragment in &mut self.fragments {
             match fragment {
-                LineFragment::Text(line) => {
+                LineFragment::Text { line, .. } => {
                     fragment_origin.x += line.width;
                 }
                 LineFragment::Element { element, size, .. } => {
@@ -7820,22 +7836,49 @@ impl LineWithInvisibles {
                 line_y,
             );
 
+        let alignment_offset = self.alignment_offset(layout.text_align, layout.content_width);
+        let scroll_x = Pixels::from(layout.position_map.scroll_pixel_position.x);
+        let line_origin_x = content_origin.x + alignment_offset - scroll_x;
+        let exclusions = self.diagnostic_underline_exclusions(layout.position_map.em_advance);
+        let mut fragment_start = 0;
         for fragment in &self.fragments {
             match fragment {
-                LineFragment::Text(line) => {
-                    line.paint(
+                LineFragment::Text { line, rendered_len } => {
+                    let fragment_end = fragment_start + line.len();
+                    let fragment_exclusions = exclusions
+                        .iter()
+                        .filter_map(|(range, span)| {
+                            let start = range.start.max(fragment_start);
+                            let end = range.end.min(fragment_end);
+                            (start < end).then(|| {
+                                let target_range = if *rendered_len == line.len() {
+                                    start - fragment_start..end - fragment_start
+                                } else {
+                                    0..*rendered_len
+                                };
+                                (
+                                    target_range,
+                                    line_origin_x + span.start..line_origin_x + span.end,
+                                )
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    line.paint_with_underline_exclusions(
                         fragment_origin,
                         line_height,
                         layout.text_align,
                         Some(layout.content_width),
+                        &fragment_exclusions,
                         window,
                         cx,
                     )
                     .log_err();
                     fragment_origin.x += line.width;
+                    fragment_start = fragment_end;
                 }
-                LineFragment::Element { size, .. } => {
+                LineFragment::Element { size, len, .. } => {
                     fragment_origin.x += size.width;
+                    fragment_start += len;
                 }
             }
         }
@@ -7897,6 +7940,32 @@ impl LineWithInvisibles {
         spans
     }
 
+    fn diagnostic_underline_exclusions(
+        &self,
+        em_advance: Pixels,
+    ) -> Vec<(Range<usize>, Range<Pixels>)> {
+        let mut exclusions = Vec::new();
+        for (range, severity) in &self.diagnostic_underline_severity_ranges {
+            for point_diagnostic in &self.point_diagnostics {
+                if point_diagnostic.severity >= *severity {
+                    continue;
+                }
+                for (point_start, point_end) in
+                    self.point_diagnostic_spans(point_diagnostic, em_advance)
+                {
+                    let range_start = self.x_for_index(range.start);
+                    let range_end = self.x_for_index(range.end);
+                    let start = point_start.max(range_start);
+                    let end = point_end.min(range_end);
+                    if start < end {
+                        exclusions.push((range.clone(), start..end));
+                    }
+                }
+            }
+        }
+        exclusions
+    }
+
     fn draw_point_diagnostics(
         &self,
         layout: &EditorLayout,
@@ -7939,7 +8008,7 @@ impl LineWithInvisibles {
 
         for fragment in &self.fragments {
             match fragment {
-                LineFragment::Text(line) => {
+                LineFragment::Text { line, .. } => {
                     line.paint_background(
                         fragment_origin,
                         line_height,
@@ -8089,7 +8158,9 @@ impl LineWithInvisibles {
 
         for fragment in &self.fragments {
             match fragment {
-                LineFragment::Text(shaped_line) => {
+                LineFragment::Text {
+                    line: shaped_line, ..
+                } => {
                     let fragment_end_index = fragment_start_index + shaped_line.len;
                     if index < fragment_end_index {
                         return fragment_start_x
@@ -8118,7 +8189,9 @@ impl LineWithInvisibles {
 
         for fragment in &self.fragments {
             match fragment {
-                LineFragment::Text(shaped_line) => {
+                LineFragment::Text {
+                    line: shaped_line, ..
+                } => {
                     let fragment_end_x = fragment_start_x + shaped_line.width;
                     if x < fragment_end_x {
                         return Some(
@@ -8147,7 +8220,9 @@ impl LineWithInvisibles {
 
         for fragment in &self.fragments {
             match fragment {
-                LineFragment::Text(shaped_line) => {
+                LineFragment::Text {
+                    line: shaped_line, ..
+                } => {
                     let fragment_end_index = fragment_start_index + shaped_line.len;
                     if index < fragment_end_index {
                         return shaped_line.font_id_for_index(index - fragment_start_index);
@@ -11757,6 +11832,87 @@ mod tests {
             return;
         };
         assert_eq!(state.point_diagnostic_underline_offset, expected_offset);
+    }
+
+    #[gpui::test]
+    fn test_stronger_point_clips_weaker_ranged_diagnostic(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.new(|cx| Buffer::local("\niabc", cx));
+        buffer.update(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot();
+            buffer.update_diagnostics(
+                lsp::LanguageServerId(0),
+                DiagnosticSet::new(
+                    [
+                        DiagnosticEntry::new(
+                            text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 0),
+                            Diagnostic {
+                                severity: lsp::DiagnosticSeverity::ERROR,
+                                underline: true,
+                                ..Default::default()
+                            },
+                        ),
+                        DiagnosticEntry::new(
+                            text::PointUtf16::new(1, 1)..text::PointUtf16::new(1, 4),
+                            Diagnostic {
+                                severity: lsp::DiagnosticSeverity::WARNING,
+                                underline: true,
+                                ..Default::default()
+                            },
+                        ),
+                    ],
+                    &snapshot,
+                ),
+                cx,
+            );
+            buffer.edit([(0..1, "")], None, cx);
+        });
+
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let window = cx.add_window(|window, cx| {
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let Ok(editor) = window.root(cx) else {
+            assert!(false, "editor window should have a root view");
+            return;
+        };
+        let mut style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+        style.text.font_family = ".ZedSans".into();
+        let (_, state) = cx.draw(Default::default(), size(px(500.), px(200.)), |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+
+        let line = &state.position_map.line_layouts[0];
+        assert!(
+            line.diagnostic_underline_severity_ranges
+                .iter()
+                .any(|(range, severity)| {
+                    range == &(1..4) && *severity == lsp::DiagnosticSeverity::WARNING
+                })
+        );
+        let error = line
+            .point_diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.severity == lsp::DiagnosticSeverity::ERROR)
+            .expect("error point diagnostic should be retained");
+        let point_spans = line.point_diagnostic_spans(error, state.position_map.em_advance);
+        let Some((point_start_x, point_end_x)) = point_spans.first().copied() else {
+            assert!(false, "error point diagnostic should have a painted span");
+            return;
+        };
+        let point_start = line.x_for_index(0);
+        let point_end = point_start + state.position_map.em_advance;
+        let range_start = line.x_for_index(1);
+        let range_end = line.x_for_index(4);
+        assert!(point_start < range_end && range_start < point_end);
+        let exclusions = line.diagnostic_underline_exclusions(state.position_map.em_advance);
+        assert!(exclusions.iter().any(|(range, span)| {
+            range == &(1..4)
+                && span.start == range_start.max(point_start_x)
+                && span.end == range_end.min(point_end_x)
+        }));
     }
 
     #[gpui::test]

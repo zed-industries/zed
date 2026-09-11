@@ -5,7 +5,7 @@ use crate::{
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
-use std::sync::Arc;
+use std::{cmp::Ordering, ops::Range, sync::Arc};
 
 /// Pre-computed glyph data for efficient painting without per-glyph cache lookups.
 ///
@@ -89,6 +89,28 @@ impl ShapedLine {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
+        self.paint_with_underline_exclusions(
+            origin,
+            line_height,
+            align,
+            align_width,
+            &[],
+            window,
+            cx,
+        )
+    }
+
+    /// Paint the line while excluding physical spans from matching underline runs.
+    pub fn paint_with_underline_exclusions(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        align: TextAlign,
+        align_width: Option<Pixels>,
+        underline_exclusions: &[(Range<usize>, Range<Pixels>)],
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
         paint_line(
             origin,
             &self.layout,
@@ -97,11 +119,10 @@ impl ShapedLine {
             align_width,
             &self.decoration_runs,
             &[],
+            underline_exclusions,
             window,
             cx,
-        )?;
-
-        Ok(())
+        )
     }
 
     /// Paint the background of the line to the window.
@@ -228,6 +249,7 @@ impl LineLayout {
             align_width,
             decoration_runs,
             &[],
+            &[],
             window,
             cx,
         )
@@ -303,6 +325,7 @@ impl WrappedLine {
             align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
+            &[],
             window,
             cx,
         )?;
@@ -341,6 +364,67 @@ impl WrappedLine {
     }
 }
 
+fn underline_visible_spans(
+    start_x: Pixels,
+    end_x: Pixels,
+    underline_range: &Range<usize>,
+    underline_exclusions: &[(Range<usize>, Range<Pixels>)],
+) -> Vec<(Pixels, Pixels)> {
+    let mut visible_spans = Vec::new();
+    let mut start_x = start_x;
+    for (excluded_range, excluded_span) in underline_exclusions {
+        if excluded_range.end <= underline_range.start
+            || underline_range.end <= excluded_range.start
+            || excluded_span.end <= start_x
+            || end_x <= excluded_span.start
+        {
+            continue;
+        }
+        if start_x < excluded_span.start {
+            visible_spans.push((start_x, excluded_span.start.min(end_x)));
+        }
+        start_x = start_x.max(excluded_span.end);
+    }
+    if start_x < end_x {
+        visible_spans.push((start_x, end_x));
+    }
+    visible_spans
+}
+
+fn sorted_underline_exclusions(
+    underline_exclusions: &[(Range<usize>, Range<Pixels>)],
+) -> Vec<(Range<usize>, Range<Pixels>)> {
+    let mut sorted_exclusions = underline_exclusions.to_vec();
+    sorted_exclusions.sort_by(
+        |(_, left), (_, right)| match left.start.partial_cmp(&right.start) {
+            Some(ordering) => ordering,
+            None => Ordering::Equal,
+        },
+    );
+    sorted_exclusions
+}
+
+fn paint_underline_with_exclusions(
+    origin: Point<Pixels>,
+    end_x: Pixels,
+    underline_style: &UnderlineStyle,
+    underline_range: &Range<usize>,
+    underline_exclusions: &[(Range<usize>, Range<Pixels>)],
+    window: &mut Window,
+) {
+    if underline_exclusions.is_empty() {
+        window.paint_underline(origin, end_x - origin.x, underline_style);
+        return;
+    }
+
+    let sorted_exclusions = sorted_underline_exclusions(underline_exclusions);
+    for (start_x, end_x) in
+        underline_visible_spans(origin.x, end_x, underline_range, &sorted_exclusions)
+    {
+        window.paint_underline(point(start_x, origin.y), end_x - start_x, underline_style);
+    }
+}
+
 fn paint_line(
     origin: Point<Pixels>,
     layout: &LineLayout,
@@ -349,6 +433,7 @@ fn paint_line(
     align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
+    underline_exclusions: &[(Range<usize>, Range<Pixels>)],
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
@@ -367,7 +452,7 @@ fn paint_line(
         let mut wraps = wrap_boundaries.iter().peekable();
         let mut run_end = 0;
         let mut color = black();
-        let mut current_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
+        let mut current_underline: Option<(Point<Pixels>, UnderlineStyle, Range<usize>)> = None;
         let mut current_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
         let text_system = cx.text_system().clone();
         let mut glyph_origin = point(
@@ -395,14 +480,19 @@ fn paint_line(
 
                 if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                     wraps.next();
-                    if let Some((underline_origin, underline_style)) = current_underline.as_mut() {
+                    if let Some((underline_origin, underline_style, underline_range)) =
+                        current_underline.as_mut()
+                    {
                         if glyph_origin.x == underline_origin.x {
                             underline_origin.x -= max_glyph_size.width.half();
                         };
-                        window.paint_underline(
+                        paint_underline_with_exclusions(
                             *underline_origin,
-                            glyph_origin.x - underline_origin.x,
+                            glyph_origin.x,
                             underline_style,
+                            underline_range,
+                            underline_exclusions,
+                            window,
                         );
                         if glyph.index < run_end {
                             underline_origin.x = origin.x;
@@ -442,7 +532,8 @@ fn paint_line(
                 }
                 prev_glyph_position = glyph.position;
 
-                let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
+                let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle, Range<usize>)> =
+                    None;
                 let mut finished_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
                 if glyph.index >= run_end {
                     let mut style_run = decoration_runs.next();
@@ -457,10 +548,14 @@ fn paint_line(
                     }
 
                     if let Some(style_run) = style_run {
-                        if let Some((_, underline_style)) = &mut current_underline
-                            && style_run.underline.as_ref() != Some(underline_style)
+                        let style_run_start = run_end;
+                        if let Some((_, underline_style, underline_range)) = &mut current_underline
                         {
-                            finished_underline = current_underline.take();
+                            if style_run.underline.as_ref() != Some(underline_style) {
+                                finished_underline = current_underline.take();
+                            } else {
+                                underline_range.end = style_run_start + style_run.len as usize;
+                            }
                         }
                         if let Some(run_underline) = style_run.underline.as_ref() {
                             current_underline.get_or_insert((
@@ -470,6 +565,7 @@ fn paint_line(
                                     thickness: run_underline.thickness,
                                     wavy: run_underline.wavy,
                                 },
+                                style_run_start..style_run_start + style_run.len as usize,
                             ));
                         }
                         if let Some((_, strikethrough_style)) = &mut current_strikethrough
@@ -500,14 +596,19 @@ fn paint_line(
                     }
                 }
 
-                if let Some((mut underline_origin, underline_style)) = finished_underline {
+                if let Some((mut underline_origin, underline_style, underline_range)) =
+                    finished_underline
+                {
                     if underline_origin.x == glyph_origin.x {
                         underline_origin.x -= max_glyph_size.width.half();
                     };
-                    window.paint_underline(
+                    paint_underline_with_exclusions(
                         underline_origin,
-                        glyph_origin.x - underline_origin.x,
+                        glyph_origin.x,
                         &underline_style,
+                        &underline_range,
+                        underline_exclusions,
+                        window,
                     );
                 }
 
@@ -559,14 +660,19 @@ fn paint_line(
             last_line_end_x -= glyph.position.x;
         }
 
-        if let Some((mut underline_start, underline_style)) = current_underline.take() {
+        if let Some((mut underline_start, underline_style, underline_range)) =
+            current_underline.take()
+        {
             if last_line_end_x == underline_start.x {
                 underline_start.x -= max_glyph_size.width.half()
             };
-            window.paint_underline(
+            paint_underline_with_exclusions(
                 underline_start,
-                last_line_end_x - underline_start.x,
+                last_line_end_x,
                 &underline_style,
+                &underline_range,
+                underline_exclusions,
+                window,
             );
         }
 
@@ -795,6 +901,15 @@ mod tests {
             text: SharedString::new(text),
             decoration_runs: SmallVec::from(decorations.to_vec()),
         }
+    }
+
+    #[test]
+    fn test_underline_visible_spans_handle_overlapping_exclusions() {
+        let exclusions =
+            sorted_underline_exclusions(&[(0..10, px(6.0)..px(8.0)), (0..10, px(2.0)..px(7.0))]);
+        let visible_spans = underline_visible_spans(px(0.0), px(10.0), &(0..10), &exclusions);
+
+        assert_eq!(visible_spans, vec![(px(0.0), px(2.0)), (px(8.0), px(10.0))]);
     }
 
     #[test]
