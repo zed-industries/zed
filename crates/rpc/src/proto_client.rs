@@ -361,7 +361,7 @@ impl AnyProtoClient {
         let request_id = LspRequestId(envelope.payload.lsp_request_id);
         let mut response_senders = self.0.request_ids.lock();
         if let Some(tx) = response_senders.remove(&request_id) {
-            let responses = envelope.payload.responses.drain(..).collect::<Vec<_>>();
+            let responses = std::mem::take(&mut envelope.payload.responses);
             tx.send(Ok(Some(proto::TypedEnvelope {
                 sender_id: envelope.sender_id,
                 original_sender_id: envelope.original_sender_id,
