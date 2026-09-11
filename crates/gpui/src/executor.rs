@@ -1,4 +1,4 @@
-use crate::{App, PlatformDispatcher, PlatformScheduler};
+use crate::{ActivityGuard, App, PlatformDispatcher, PlatformScheduler};
 #[cfg(not(target_family = "wasm"))]
 use futures::channel::mpsc;
 use futures::prelude::*;
@@ -91,25 +91,11 @@ impl BackgroundExecutor {
         self.inner.clone()
     }
 
-    /// Spawn a closure on a fresh session pinned to its own [`SchedulerLocalExecutor`].
-    /// The closure runs on a new OS thread under the platform scheduler, or on
-    /// the test scheduler's loop in tests.
+    /// Prevents App Nap-style throttling while the returned guard is held.
     ///
-    /// Prefer this over [`Self::spawn`] for futures whose polls need more stack
-    /// than shared background threads guarantee. Dedicated threads get the
-    /// standard library's default 2 MiB, while `spawn` polls futures on
-    /// whatever threads the platform dispatcher provides — on macOS those are
-    /// GCD workers whose stacks are fixed at 512 KiB by the kernel (see `PTH_DEFAULT_STACKSIZE` in
-    /// <https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/kern/kern_internal.h#L154>),
-    /// the tightest background-stack budget of any platform.
-    #[track_caller]
-    pub fn spawn_dedicated<F, Fut>(&self, f: F) -> Task<Fut::Output>
-    where
-        F: FnOnce(SchedulerLocalExecutor) -> Fut + Send + 'static,
-        Fut: Future + 'static,
-        Fut::Output: Send + Sync + 'static,
-    {
-        self.inner.spawn_dedicated(f)
+    /// This does not prevent the system from entering idle sleep.
+    pub fn prevent_app_nap(&self, reason: &str) -> ActivityGuard {
+        self.dispatcher.prevent_app_nap(reason)
     }
 
     /// Enqueues the given future to be run to completion on a background thread.

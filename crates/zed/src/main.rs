@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod reliability;
+mod watcher_debug;
 mod zed;
 
 // Ensure the binary name stays in sync with APP_NAME so that the paths used
@@ -429,7 +430,7 @@ fn main() {
         log::info!("Using git binary path: {:?}", git_binary_path);
     }
 
-    let fs = Arc::new(RealFs::new(git_binary_path, app.background_executor()));
+    let fs = RealFs::new(git_binary_path, app.background_executor());
     let (user_keymap_file_rx, user_keymap_watcher) = watch_config_file(
         &app.background_executor(),
         fs.clone(),
@@ -650,6 +651,7 @@ fn main() {
         });
         AppState::set_global(app_state.clone(), cx);
 
+        watcher_debug::init(app_state.clone(), cx);
         auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
         auto_update_ui::init(cx);
@@ -762,6 +764,7 @@ fn main() {
         encoding_selector::init(cx);
         language_selector::init(cx);
         line_ending_selector::init(cx);
+        lsp_command_selector::init(cx);
         toolchain_selector::init(cx);
         theme_selector::init(cx);
         settings_profile_selector::init(cx);

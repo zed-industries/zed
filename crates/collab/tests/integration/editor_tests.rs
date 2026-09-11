@@ -45,7 +45,7 @@ use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
 use settings::{
     DocumentFoldingRanges, DocumentSymbols, InlayHintSettingsContent, InlineBlameSettings,
-    SemanticTokens, SettingsStore,
+    SemanticTokens, Settings as _, SettingsStore,
 };
 use std::{
     collections::BTreeSet,
@@ -1604,6 +1604,209 @@ async fn test_remote_dynamic_call_hierarchy_followups_use_prepared_server(
 
     assert_eq!(incoming_request_count.load(atomic::Ordering::SeqCst), 1);
     assert_eq!(outgoing_request_count.load(atomic::Ordering::SeqCst), 1);
+}
+
+#[gpui::test]
+async fn test_remote_dynamic_document_highlight_registration_refreshes_guest_editor(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    cx_b.update(editor::init);
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    client_a.language_registry().add(rust_lang());
+    let mut fake_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities::default(),
+            initializer: Some(Box::new({
+                let request_count = request_count.clone();
+                move |fake_server| {
+                    let request_count = request_count.clone();
+                    fake_server
+                        .set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>(
+                            move |_, _| {
+                                request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                                async move {
+                                    Ok(Some(vec![lsp::DocumentHighlight {
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 0),
+                                            lsp::Position::new(0, 2),
+                                        ),
+                                        kind: Some(lsp::DocumentHighlightKind::READ),
+                                    }]))
+                                }
+                            },
+                        );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities::default(),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(path!("/dir"), json!({ "one.rs": "fn one() {}" }))
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("one.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    let debounce = Duration::from_millis(cx_b.update(|_, cx| {
+        editor::EditorSettings::get_global(cx)
+            .lsp_highlight_debounce
+            .0
+    }));
+    cx_a.executor().advance_clock(debounce);
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected no document highlight request before the capability is registered",
+    );
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "rust-document-highlight".to_string(),
+                    method: "textDocument/documentHighlight".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "file" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx_a.executor().advance_clock(debounce);
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected the guest editor to request document highlights after the host registration",
+    );
+    assert!(editor_b.read_with(cx_b, |editor, _| {
+        editor.has_background_highlights(editor::HighlightKey::DocumentHighlightRead)
+    }));
+
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "rust-document-highlight".to_string(),
+                    method: "textDocument/documentHighlight".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx_a.executor().advance_clock(debounce);
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected no document highlight request after the host unregistration",
+    );
+    assert!(
+        !editor_b.read_with(cx_b, |editor, _| {
+            editor.has_background_highlights(editor::HighlightKey::DocumentHighlightRead)
+        }),
+        "expected the guest editor to clear stale document highlights after the host unregistration",
+    );
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "rust-document-highlight".to_string(),
+                    method: "textDocument/documentHighlight".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "file" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx_a.executor().advance_clock(debounce);
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    assert_eq!(request_count.load(atomic::Ordering::SeqCst), 2);
+    assert!(editor_b.read_with(cx_b, |editor, _| {
+        editor.has_background_highlights(editor::HighlightKey::DocumentHighlightRead)
+    }));
+
+    let server_id = fake_server.server.server_id();
+    let buffer_a = project_a
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer(path!("/dir/one.rs"), cx)
+        })
+        .await
+        .unwrap();
+    project_a.update(cx_a, |project, cx| {
+        project.stop_language_servers_for_buffers(vec![buffer_a], HashSet::default(), cx);
+    });
+    cx_a.executor().advance_clock(debounce);
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    assert_eq!(
+        project_b.read_with(cx_b, |project, cx| {
+            project
+                .language_server_statuses(cx)
+                .map(|(server_id, _)| server_id)
+                .collect::<Vec<_>>()
+        }),
+        Vec::<lsp::LanguageServerId>::new(),
+        "expected the guest to drop the stopped server {server_id}",
+    );
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        2,
+        "expected no document highlight request after the host stopped the server",
+    );
+    assert!(
+        !editor_b.read_with(cx_b, |editor, _| {
+            editor.has_background_highlights(editor::HighlightKey::DocumentHighlightRead)
+        }),
+        "expected the guest editor to clear stale document highlights after the host stopped the server",
+    );
 }
 
 #[gpui::test]

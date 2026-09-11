@@ -1163,7 +1163,7 @@ impl KeymapEditor {
                         Tooltip::with_meta(
                             "View conflicts",
                             Some(&ToggleConflictFilter),
-                            "Use alt+click to show all conflicts",
+                            concat!("Use ", ui::alt_key_name!(), "+click to show all conflicts"),
                             cx,
                         )
                     })
@@ -1193,11 +1193,15 @@ impl KeymapEditor {
                     }))
             } else {
                 base_button_style(index, IconName::Info)
-                    .tooltip(|_window, cx|  {
+                    .tooltip(|_window, cx| {
                         Tooltip::with_meta(
                             "Show matching keybinds",
                             Some(&ShowMatchingKeybinds),
-                            "This binding is overridden by other bindings.\nUse alt+click to edit this binding",
+                            concat!(
+                                "This binding is overridden by other bindings.\nUse ",
+                                ui::alt_key_name!(),
+                                "+click to edit this binding"
+                            ),
                             cx,
                         )
                     })

@@ -4,7 +4,7 @@ use crate::{
     PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TextInputConfiguration,
     TextInputStateChange, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowParams,
+    WindowControlArea, WindowInsets, WindowParams,
 };
 use collections::HashMap;
 use gpui_util::ResultExt as _;
@@ -36,6 +36,12 @@ pub(crate) struct TestWindowState {
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
+    visual_viewport: Option<Bounds<Pixels>>,
+    visual_viewport_callback: Option<Box<dyn FnMut()>>,
+    insets: WindowInsets,
+    insets_callback: Option<Box<dyn FnMut(WindowInsets)>>,
+    virtual_keyboard_requests: usize,
+    virtual_keyboard_dismissals: usize,
     moved_callback: Option<Box<dyn FnMut()>>,
     appearance_change_callback: Option<Box<dyn FnMut()>>,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -46,6 +52,7 @@ pub(crate) struct TestWindowState {
     text_input_configurations: Vec<TextInputConfiguration>,
     text_input_state_changes: Vec<TextInputStateChange>,
     is_fullscreen: bool,
+    scale_factor: f32,
     appearance: WindowAppearance,
     external_drag_files: Vec<(PathBuf, bool)>,
     start_external_drag_result: bool,
@@ -100,6 +107,12 @@ impl TestWindow {
             active_status_change_callback: None,
             hover_status_change_callback: None,
             resize_callback: None,
+            visual_viewport: None,
+            visual_viewport_callback: None,
+            insets: WindowInsets::default(),
+            insets_callback: None,
+            virtual_keyboard_requests: 0,
+            virtual_keyboard_dismissals: 0,
             moved_callback: None,
             appearance_change_callback: None,
             request_frame_callback: None,
@@ -110,6 +123,8 @@ impl TestWindow {
             text_input_configurations: Vec::new(),
             text_input_state_changes: Vec::new(),
             is_fullscreen: false,
+            // Preserve the test platform's historical 2x default.
+            scale_factor: 2.0,
             appearance: WindowAppearance::Light,
             external_drag_files: Vec::new(),
             start_external_drag_result: false,
@@ -138,6 +153,38 @@ impl TestWindow {
         self.0.lock().frame_scheduled
     }
 
+    pub fn simulate_visual_viewport_change(&self, bounds: Bounds<Pixels>) {
+        let callback = {
+            let mut state = self.0.lock();
+            state.visual_viewport = Some(bounds);
+            state.visual_viewport_callback.take()
+        };
+        if let Some(mut callback) = callback {
+            callback();
+            self.0.lock().visual_viewport_callback = Some(callback);
+        }
+    }
+
+    pub fn simulate_insets_change(&self, insets: WindowInsets) {
+        let callback = {
+            let mut state = self.0.lock();
+            state.insets = insets.clone();
+            state.insets_callback.take()
+        };
+        if let Some(mut callback) = callback {
+            callback(insets);
+            self.0.lock().insets_callback = Some(callback);
+        }
+    }
+
+    pub fn virtual_keyboard_requests(&self) -> usize {
+        self.0.lock().virtual_keyboard_requests
+    }
+
+    pub fn virtual_keyboard_dismissals(&self) -> usize {
+        self.0.lock().virtual_keyboard_dismissals
+    }
+
     /// Every [`TextInputConfiguration`] forwarded to this window, in order.
     pub fn text_input_configurations(&self) -> Vec<TextInputConfiguration> {
         self.0.lock().text_input_configurations.clone()
@@ -158,6 +205,16 @@ impl TestWindow {
         drop(lock);
         callback(size, scale_factor);
         self.0.lock().resize_callback = Some(callback);
+    }
+
+    /// Simulates a display scale change through the resize callback, preserving logical bounds.
+    pub fn simulate_scale_factor_change(&mut self, scale_factor: f32) {
+        let size = {
+            let mut lock = self.0.lock();
+            lock.scale_factor = scale_factor;
+            lock.bounds.size
+        };
+        self.simulate_resize(size);
     }
 
     pub(crate) fn simulate_active_status_change(&self, active: bool) {
@@ -219,6 +276,33 @@ impl TestWindow {
 }
 
 impl PlatformWindow for TestWindow {
+    fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
+        let state = self.0.lock();
+        state
+            .visual_viewport
+            .unwrap_or_else(|| Bounds::new(Point::default(), state.bounds.size))
+    }
+
+    fn on_visual_viewport_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().visual_viewport_callback = Some(callback);
+    }
+
+    fn insets(&self) -> WindowInsets {
+        self.0.lock().insets.clone()
+    }
+
+    fn on_insets_changed(&self, callback: Box<dyn FnMut(WindowInsets)>) {
+        self.0.lock().insets_callback = Some(callback);
+    }
+
+    fn show_soft_keyboard(&self) {
+        self.0.lock().virtual_keyboard_requests += 1;
+    }
+
+    fn hide_soft_keyboard(&self) {
+        self.0.lock().virtual_keyboard_dismissals += 1;
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.lock().bounds
     }
@@ -241,7 +325,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn scale_factor(&self) -> f32 {
-        2.0
+        self.0.lock().scale_factor
     }
 
     fn appearance(&self) -> WindowAppearance {
