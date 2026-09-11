@@ -476,7 +476,8 @@ impl AutoUpdater {
 
         let check_type = self.update_check_type;
         self.pending_poll.take();
-        self.status = AutoUpdateStatus::Idle;
+        // Passing through `Idle` would read as a completed check.
+        self.status = AutoUpdateStatus::Checking;
         self.poll(check_type, cx);
     }
 
