@@ -1,5 +1,6 @@
 use std::{
     cell::{OnceCell, RefCell},
+    collections::HashMap,
     future::Future,
     rc::Rc,
     sync::{
@@ -69,6 +70,44 @@ const DEFAULT_FPS: u64 = 120;
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 
+const RETAINED_SLOW_INTERVALS: usize = 16;
+
+/// Bounded attribution for a slow renderer loop or presentation interval.
+#[derive(Clone, Debug)]
+struct SlowInterval {
+    /// Wall time between the interval's boundaries.
+    duration: Duration,
+    /// Union of individually timestamped work, including draws and presentation.
+    recorded_busy: Duration,
+    /// Folded polls have no individual spans; this total is not added to `recorded_busy`.
+    folded_poll_work: Duration,
+    /// Number of recorded draws ending in this interval.
+    draws: u64,
+    /// Longest individually timestamped work intersecting the interval.
+    longest_work: Duration,
+    /// Retains source identity without formatting strings while collecting events.
+    longest_event: Option<ForegroundEvent>,
+    /// Journal loss prevents treating the attribution as complete.
+    incomplete: bool,
+}
+
+impl SlowInterval {
+    fn longest_work_description(&self) -> String {
+        match self.longest_event {
+            Some(ForegroundEvent::TaskPoll(timing)) => {
+                format!("task poll at {}", timing.location)
+            }
+            Some(ForegroundEvent::Action(timing)) => format!("action {}", timing.name),
+            Some(ForegroundEvent::Input(timing)) => format!("input {}", timing.kind),
+            Some(ForegroundEvent::Draw(timing)) => format!("draw for {:?}", timing.window_id),
+            Some(ForegroundEvent::Present(timing)) => {
+                format!("present for {:?}", timing.window_id)
+            }
+            Some(ForegroundEvent::SmallPolls(_)) | None => "unattributed".into(),
+        }
+    }
+}
+
 /// Aggregate statistics for total foreground executor work observed during a
 /// measured interval, returned by [`BenchReport::foreground_work`].
 #[derive(Clone, Copy, Debug)]
@@ -109,8 +148,110 @@ impl Default for BenchReport {
 }
 
 impl BenchReport {
+    fn record_trace(&self, events: TracedEvents) {
+        self.record_frame_timings(events.frame_events.iter());
+        self.record_foreground_events(events.foreground_events());
+        let mut snapshot = self.frame_snapshot.borrow_mut();
+        snapshot
+            .whole_loop
+            .histogram
+            .add(&events.loops.histogram.histogram)
+            .expect("compatible histograms");
+        snapshot.whole_loop.total_nanos += events.loops.histogram.total_nanos;
+        snapshot
+            .draws_per_loop
+            .add(&events.loops.draws)
+            .expect("compatible histograms");
+        let lost: u64 = events
+            .journal_entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ForegroundJournalEntry::Discontinuity { lost } => Some(*lost),
+                _ => None,
+            })
+            .sum();
+        snapshot.lost_journal_entries += lost;
+        let work: Vec<_> = events
+            .journal_entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ForegroundJournalEntry::Event(event) => Some(*event),
+                ForegroundJournalEntry::Boundary(
+                    crate::profiler::journal::IntervalBoundary::Presented(frame),
+                ) => Some(ForegroundEvent::Present(frame.presentation)),
+                _ => None,
+            })
+            .collect();
+        for &(start, end) in &events.loops.slowest {
+            if end.duration_since(start).as_nanos() > self.frame_budget_nanos {
+                snapshot
+                    .slow_loops
+                    .push(attribute_interval(&work, start, end, lost > 0));
+            }
+        }
+        snapshot
+            .slow_loops
+            .sort_by_key(|interval| std::cmp::Reverse(interval.duration));
+        snapshot.slow_loops.truncate(RETAINED_SLOW_INTERVALS);
+        // Presentation cadence is per window and never crosses setup/teardown.
+        // Animation-only intervals omit non-animation frames.
+        let mut last_present = HashMap::new();
+        let mut candidates = Vec::with_capacity(RETAINED_SLOW_INTERVALS + 1);
+        let mut generation = 0;
+        for entry in &events.journal_entries {
+            let timing = match entry {
+                ForegroundJournalEntry::Event(ForegroundEvent::Present(timing)) => timing,
+                ForegroundJournalEntry::Boundary(
+                    crate::profiler::journal::IntervalBoundary::Presented(frame),
+                ) => &frame.presentation,
+                ForegroundJournalEntry::Discontinuity { .. } => {
+                    generation += 1;
+                    continue;
+                }
+                _ => continue,
+            };
+            if let Some((start, previous_generation)) =
+                last_present.insert(timing.window_id, (timing.present_end, generation))
+            {
+                let duration = timing.present_end.duration_since(start);
+                let incomplete = previous_generation != generation;
+                if !incomplete {
+                    snapshot
+                        .presentation_cadence
+                        .record(duration.as_nanos() as u64)
+                        .ok();
+                }
+                if duration.as_nanos() > self.frame_budget_nanos {
+                    candidates.push((start, timing.present_end, incomplete));
+                    candidates.sort_by_key(|(start, end, _)| {
+                        std::cmp::Reverse(end.duration_since(*start))
+                    });
+                    candidates.truncate(RETAINED_SLOW_INTERVALS);
+                }
+            }
+        }
+        for (start, end, incomplete) in candidates {
+            // An enclosing span can complete after the presentation. A later
+            // journal gap may have lost it even when cadence itself is intact.
+            snapshot.slow_intervals.push(attribute_interval(
+                &work,
+                start,
+                end,
+                incomplete || lost > 0,
+            ));
+        }
+        snapshot
+            .slow_intervals
+            .sort_by_key(|interval| std::cmp::Reverse(interval.duration));
+        snapshot.slow_intervals.truncate(RETAINED_SLOW_INTERVALS);
+    }
+
     /// Creates a report whose per-frame budget is one frame at `fps` when
     /// counting frame budget overruns.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `fps` is zero or yields a frame budget below one nanosecond.
     pub fn with_fps(fps: u64) -> Self {
         assert!(fps > 0, "frame rate must be greater than zero");
         Self::with_frame_budget_nanos(NANOS_PER_SECOND / fps as u128)
@@ -118,7 +259,15 @@ impl BenchReport {
 
     /// Creates a report that treats `frame_budget_nanos` as the per-frame budget
     /// when counting frame budget overruns.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `frame_budget_nanos` is zero.
     pub fn with_frame_budget_nanos(frame_budget_nanos: u128) -> Self {
+        assert!(
+            frame_budget_nanos > 0,
+            "frame budget must be at least one nanosecond"
+        );
         Self {
             frame_snapshot: Rc::new(RefCell::new(WindowFrameSnapshot::new())),
             frame_budget_nanos,
@@ -244,7 +393,49 @@ impl BenchReport {
         eprintln!("  note: includes Criterion warmup/calibration");
         self.print_histogram("window dirty-to-draw", &frame_snapshot.dirty_to_draw);
         self.print_histogram("window draw", &frame_snapshot.draw);
-        self.print_histogram("window present interval", &frame_snapshot.present_interval);
+        self.print_histogram(
+            "animation presentation interval",
+            &frame_snapshot.present_interval,
+        );
+        self.print_histogram("renderer whole loop", &frame_snapshot.whole_loop.histogram);
+        self.print_histogram(
+            "presentation cadence (all presentations)",
+            &frame_snapshot.presentation_cadence,
+        );
+        if !frame_snapshot.draws_per_loop.is_empty() {
+            eprintln!(
+                "  draws per renderer loop: mean {:.2}, max {}",
+                frame_snapshot.draws_per_loop.mean(),
+                frame_snapshot.draws_per_loop.max()
+            );
+        }
+        if frame_snapshot.lost_journal_entries > 0 {
+            eprintln!(
+                "  incomplete journal diagnostics: {} lost entries; affected cadence samples excluded",
+                frame_snapshot.lost_journal_entries
+            );
+        }
+        for (label, intervals) in [
+            ("renderer loop", &frame_snapshot.slow_loops),
+            ("presentation", &frame_snapshot.slow_intervals),
+        ] {
+            for interval in intervals {
+                eprintln!(
+                    "  slow {label}: {} wall, {} recorded span union, {} folded polls (not added), {} draws; longest {} {}{}",
+                    format_duration(interval.duration),
+                    format_duration(interval.recorded_busy),
+                    format_duration(interval.folded_poll_work),
+                    interval.draws,
+                    interval.longest_work_description(),
+                    format_duration(interval.longest_work),
+                    if interval.incomplete {
+                        " [incomplete journal]"
+                    } else {
+                        ""
+                    }
+                );
+            }
+        }
         if !frame_snapshot.invalidations_per_frame.is_empty() {
             eprintln!(
                 "  invalidations per frame: mean {:.2}, max {}",
@@ -314,6 +505,12 @@ impl BenchReport {
 }
 
 struct WindowFrameSnapshot {
+    whole_loop: DurationHistogram,
+    draws_per_loop: Histogram<u64>,
+    presentation_cadence: Histogram<u64>,
+    slow_loops: Vec<SlowInterval>,
+    slow_intervals: Vec<SlowInterval>,
+    lost_journal_entries: u64,
     dirty_to_draw: Histogram<u64>,
     draw: Histogram<u64>,
     present_interval: Histogram<u64>,
@@ -324,6 +521,12 @@ struct WindowFrameSnapshot {
 impl WindowFrameSnapshot {
     fn new() -> Self {
         Self {
+            whole_loop: DurationHistogram::new(),
+            draws_per_loop: Histogram::new(3).expect("valid precision"),
+            presentation_cadence: Histogram::new(3).expect("valid precision"),
+            slow_loops: Vec::new(),
+            slow_intervals: Vec::new(),
+            lost_journal_entries: 0,
             dirty_to_draw: Histogram::new(3).expect("3 significant digits is valid"),
             draw: Histogram::new(3).expect("3 significant digits is valid"),
             present_interval: Histogram::new(3).expect("3 significant digits is valid"),
@@ -334,6 +537,10 @@ impl WindowFrameSnapshot {
 
     fn is_empty(&self) -> bool {
         self.dirty_to_draw.is_empty()
+            && self.whole_loop.histogram.is_empty()
+            && self.presentation_cadence.is_empty()
+            && self.slow_intervals.is_empty()
+            && self.lost_journal_entries == 0
             && self.draw.is_empty()
             && self.present_interval.is_empty()
             && self.foreground_work.histogram.is_empty()
@@ -368,6 +575,99 @@ fn format_duration(duration: Duration) -> String {
     format!("{:.3}ms", duration.as_secs_f64() * 1000.)
 }
 
+/// Aggregates every loop, retaining only the slowest spans for later attribution.
+struct LoopTimings {
+    histogram: DurationHistogram,
+    draws: Histogram<u64>,
+    slowest: Vec<(scheduler::Instant, scheduler::Instant)>,
+}
+
+impl LoopTimings {
+    fn new() -> Self {
+        Self {
+            histogram: DurationHistogram::new(),
+            draws: Histogram::new(3).expect("valid precision"),
+            slowest: Vec::with_capacity(RETAINED_SLOW_INTERVALS),
+        }
+    }
+
+    fn record(&mut self, start: scheduler::Instant, end: scheduler::Instant, draws_before: u64) {
+        let duration = end.duration_since(start);
+        self.histogram.record(duration);
+        self.draws
+            .record(profiler::journal::benchmark_draw_count() - draws_before)
+            .ok();
+        let index = self
+            .slowest
+            .partition_point(|&(start, end)| end.duration_since(start) >= duration);
+        if index < RETAINED_SLOW_INTERVALS {
+            if self.slowest.len() == RETAINED_SLOW_INTERVALS {
+                self.slowest.pop();
+            }
+            self.slowest.insert(index, (start, end));
+        }
+    }
+}
+
+fn attribute_interval(
+    events: &[ForegroundEvent],
+    start: scheduler::Instant,
+    end: scheduler::Instant,
+    incomplete: bool,
+) -> SlowInterval {
+    use crate::profiler::journal::{FrameSnapshot, IntervalBoundary};
+    let mut snapshot = FrameSnapshot {
+        interval_start: start,
+        boundary: IntervalBoundary::Idle { ended_at: end },
+        events: Vec::new(),
+        small_polls: Vec::new(),
+        dropped_events: 0,
+        journal_discontinuous: incomplete,
+    };
+    let mut result = SlowInterval {
+        duration: end.duration_since(start),
+        recorded_busy: Duration::ZERO,
+        folded_poll_work: Duration::ZERO,
+        draws: 0,
+        longest_work: Duration::ZERO,
+        longest_event: None,
+        incomplete,
+    };
+    for event in events {
+        let overlap_start = event.start_time().max(start);
+        let overlap_end = event.end_time().min(end);
+        if overlap_end <= overlap_start {
+            continue;
+        }
+        match event {
+            ForegroundEvent::SmallPolls(flush) => {
+                // Folded polls can enclose nested work, so never add this
+                // estimate to the individually timestamped span union.
+                result.folded_poll_work += flush.summary.total.mul_f64(
+                    overlap_end
+                        .duration_since(overlap_start)
+                        .div_duration_f64(flush.until.duration_since(flush.since)),
+                );
+                continue;
+            }
+            ForegroundEvent::Draw(_) => {
+                if event.end_time() <= end {
+                    result.draws += 1;
+                }
+            }
+            _ => {}
+        }
+        let duration = overlap_end.duration_since(overlap_start);
+        if duration > result.longest_work {
+            result.longest_work = duration;
+            result.longest_event = Some(*event);
+        }
+        snapshot.events.push(*event);
+    }
+    result.recorded_busy = snapshot.occupancy();
+    result
+}
+
 /// Enables profiler tracing for a measurement and collects its frame events
 /// and foreground journal entries.
 ///
@@ -380,6 +680,7 @@ fn format_duration(duration: Duration) -> String {
 /// setup) is excluded from what [`Self::finish`] returns: a collector only
 /// observes entries recorded after its creation.
 struct TraceScope {
+    loops: LoopTimings,
     collector: FrameTimingCollector,
     journal_collector: ForegroundJournalCollector,
     _trace_guard: profiler::TraceGuard,
@@ -389,6 +690,7 @@ impl TraceScope {
     fn start(journal_collector: ForegroundJournalCollector) -> Self {
         let trace_guard = profiler::trace_scope();
         Self {
+            loops: LoopTimings::new(),
             collector: FrameTimingCollector::new(),
             journal_collector,
             _trace_guard: trace_guard,
@@ -397,6 +699,7 @@ impl TraceScope {
 
     fn finish(mut self) -> TracedEvents {
         TracedEvents {
+            loops: self.loops,
             frame_events: self.collector.collect_unseen(),
             journal_entries: self.journal_collector.collect_unseen().entries,
         }
@@ -405,6 +708,7 @@ impl TraceScope {
 
 /// Events observed during one [`TraceScope`].
 struct TracedEvents {
+    loops: LoopTimings,
     frame_events: Vec<FrameEvent>,
     journal_entries: Vec<ForegroundJournalEntry>,
 }
@@ -426,6 +730,28 @@ struct MeasuredTaskInput<Input> {
     trace_scope: Option<TraceScope>,
 }
 
+/// Keeps effect delivery synchronous while leaving drawing to the platform frame callback.
+struct RendererScope {
+    app: Rc<AppCell>,
+    previous: bool,
+}
+
+impl RendererScope {
+    fn start(app: &Rc<AppCell>) -> Self {
+        let previous = std::mem::replace(&mut app.borrow_mut().defer_draw_until_frame, true);
+        Self {
+            app: app.clone(),
+            previous,
+        }
+    }
+}
+
+impl Drop for RendererScope {
+    fn drop(&mut self) {
+        self.app.borrow_mut().defer_draw_until_frame = self.previous;
+    }
+}
+
 struct MeasuredTaskOutput<Output> {
     trace_scope: Option<TraceScope>,
     report: BenchReport,
@@ -439,9 +765,7 @@ impl<Output> Drop for MeasuredTaskOutput<Output> {
             .take()
             .expect("measured task output should retain its trace scope");
         let events = trace_scope.finish();
-        self.report.record_frame_timings(events.frame_events.iter());
-        self.report
-            .record_foreground_events(events.foreground_events());
+        self.report.record_trace(events);
     }
 }
 
@@ -640,9 +964,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let mut benchmark = || benchmark(self);
         bencher.iter(&mut benchmark);
         let events = collector.finish();
-        self.report.record_frame_timings(events.frame_events.iter());
-        self.report
-            .record_foreground_events(events.foreground_events());
+        self.report.record_trace(events);
         self.replace_bencher(bencher);
     }
 
@@ -726,9 +1048,15 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// Measures frame latency after updating a GPUI entity in its current window.
     ///
     /// Each iteration runs `update` against the entity in its current window. In
-    /// bench builds, flushing the update's effects synchronously draws dirty
-    /// windows. The entity should be part of the window's render tree, such as the
+    /// renderer measurements, effects flush without drawing until the platform
+    /// frame callback. The entity should be part of the window's render tree, such as the
     /// root view or a child of it.
+    ///
+    /// Each iteration first pumps at most the initial ready task count, yielding
+    /// to input and a frame when the report's frame budget is exhausted. At least
+    /// one ready task runs even if the budget is already exhausted. This is
+    /// unpaced: the budget limits ready work, not the whole loop, and cannot
+    /// preempt a task poll.
     ///
     /// Frame events are collected through the GPUI frame profiler
     /// ([`crate::profiler::record_frame_event`]), which is enabled for the
@@ -741,59 +1069,55 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         V: 'static + Render,
     {
         let bencher = self.take_bencher("bench_renderer");
-        let window_id = self
-            .with_window(view.entity_id(), |window, _| {
-                window.window_handle().window_id()
-            })
+        let handle = self
+            .with_window(view.entity_id(), |window, _| window.window_handle())
             .expect("cannot benchmark renderer for entity without a current window");
 
         let dispatcher = self.background_executor.dispatcher().clone();
-        let collector = TraceScope::start(self.foreground_journal_collector());
+        let mut collector = TraceScope::start(self.foreground_journal_collector());
+        let _renderer_scope = RendererScope::start(&self.app);
 
         let mut benchmark = || {
+            let draws_before = profiler::journal::benchmark_draw_count();
+            let loop_start = scheduler::Instant::now();
+            let turn_start = Instant::now();
             // Work already queued at frame start delays the frame in
             // production too, so run it inside the measured interval.
             dispatcher
                 .as_threaded()
                 .expect("validated in BenchAppContext::build")
-                .run_ready_main_tasks();
+                .run_ready_main_tasks_while(|ran_any| {
+                    !ran_any || turn_start.elapsed().as_nanos() < self.report.frame_budget_nanos
+                });
             self.with_window(view.entity_id(), |window, cx| {
                 view.update(cx, |view, cx| update(view, window, cx));
             })
             .expect("cannot benchmark renderer for entity without a current window");
-            // Submit the frame drawn by the update's effect flush, mirroring
-            // production where every drawn frame is presented. With a headless
-            // renderer this includes scene submission to the GPU.
-            self.with_window(view.entity_id(), |window, _| {
-                window.present_if_needed();
-            })
-            .expect("cannot benchmark renderer for entity without a current window");
+            self.request_frame(handle);
+            collector
+                .loops
+                .record(loop_start, scheduler::Instant::now(), draws_before);
         };
         bencher.iter(&mut benchmark);
 
         let events = collector.finish();
-        self.report
-            .record_frame_timings(events.frame_events.iter().filter(|event| match event {
-                FrameEvent::Draw(timing) => timing.window_id == window_id,
-                FrameEvent::Present(timing) => timing.window_id == window_id,
-            }));
-        // Foreground work isn't attributed to a window, so unlike frame
-        // timings above it isn't filtered by `window_id`. A benchmark app
-        // hosts one window at a time, so this cannot pick up unrelated
-        // windows' work.
-        self.report
-            .record_foreground_events(events.foreground_events());
+        self.report.record_trace(events);
         self.replace_bencher(bencher);
     }
 
     /// Measures finite rendering sessions with fresh, untimed setup for each iteration.
     ///
-    /// `setup` returns session state, its window, and a shared stop flag. Each
-    /// Criterion iteration pumps one batch of ready foreground tasks per frame,
-    /// then calls `input` with a zero-based logical frame number unless stopped.
-    /// Dirty windows are drawn and the session window is presented before checking
-    /// the flag again, including when a foreground task stopped the session.
-    /// Frames are unpaced; the thread yields between them without sleeping.
+    /// `setup` returns session state, its window, and a shared stop flag.
+    /// Loop turns pump at most the initial ready foreground task count, then call
+    /// `input` with a zero-based turn number unless stopped. Between polls, the
+    /// stop flag and session deadline are checked; after at least one poll, the
+    /// report's frame budget yields remaining work to input and a frame. This
+    /// snapshots a count, not task identities. It is an unpaced benchmark policy,
+    /// not OS event-loop emulation or a bound on input, draw, or whole-loop time.
+    /// Once stopped, only scheduled platform frame callbacks run until the window
+    /// is clean and its final changes have been submitted for presentation.
+    /// Pending animation callbacks alone do not delay completion.
+    /// Turns run without pacing or explicit OS-thread yields. A clean turn need not draw.
     ///
     /// Store `true` with release ordering to stop. Stopping does not imply success:
     /// validate the workload in `Input::drop` or retained fixture state afterward.
@@ -803,8 +1127,8 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     ///
     /// # Panics
     ///
-    /// Panics if the window is removed or the stop flag remains unset for `timeout`.
-    /// The deadline is checked between frames and cannot preempt a blocking task
+    /// Panics if the window is removed or stopping and final presentation exceed `timeout`.
+    /// The deadline is checked between polls and frames and cannot preempt a blocking task
     /// poll, input callback, draw, or present.
     pub fn bench_renderer_session<Input>(
         &mut self,
@@ -830,34 +1154,66 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             },
             |measured_input| {
                 let (state, window, stopped) = &mut measured_input.input;
+                let _renderer_scope = RendererScope::start(&benchmark_context.app);
                 let started = Instant::now();
-                let mut frame = 0;
-                loop {
-                    dispatcher
-                        .as_threaded()
-                        .expect("validated in BenchAppContext::build")
-                        .run_ready_main_tasks();
-                    benchmark_context
-                        .update_window(*window, |_, window, cx| {
-                            if !stopped.load(Ordering::Acquire) {
-                                input(state, frame, window, cx);
-                            }
-                        })
-                        .expect("renderer session window must remain open");
-                    // Present in a separate update, after effects from both
-                    // foreground tasks and input have flushed the final draw.
-                    benchmark_context
-                        .update_window(*window, |_, window, _| window.present_if_needed())
-                        .expect("renderer session window must remain open");
-                    if stopped.load(Ordering::Acquire) {
-                        break;
-                    }
+                let check_deadline = || {
                     assert!(
                         started.elapsed() < timeout,
-                        "renderer session did not stop within {timeout:?}"
+                        "renderer session did not stop within {timeout:?} with final changes presented"
                     );
-                    frame += 1;
-                    std::thread::yield_now();
+                };
+                let mut frame = 0;
+                loop {
+                    check_deadline();
+                    let draws_before = profiler::journal::benchmark_draw_count();
+                    let loop_start = scheduler::Instant::now();
+                    let turn_start = Instant::now();
+                    if !stopped.load(Ordering::Acquire) {
+                        dispatcher
+                            .as_threaded()
+                            .expect("validated in BenchAppContext::build")
+                            .run_ready_main_tasks_while(|ran_any| {
+                                check_deadline();
+                                !stopped.load(Ordering::Acquire)
+                                    && (!ran_any
+                                        || turn_start.elapsed().as_nanos()
+                                            < report.frame_budget_nanos)
+                            });
+                        check_deadline();
+                        benchmark_context
+                            .update_window(*window, |_, window, cx| {
+                                if !stopped.load(Ordering::Acquire) {
+                                    input(state, frame, window, cx);
+                                }
+                            })
+                            .expect("renderer session window must remain open");
+                    }
+                    check_deadline();
+                    benchmark_context.request_frame(*window);
+                    check_deadline();
+                    let finished = stopped.load(Ordering::Acquire) && {
+                        // A scheduled callback can return early under throttling.
+                        // Read without an update, which would flush unrelated effects.
+                        let app = benchmark_context.app.borrow();
+                        let window = app
+                            .windows
+                            .get(window.window_id())
+                            .and_then(Option::as_deref)
+                            .expect("renderer session window must remain open");
+                        !window.invalidator.is_dirty() && !window.needs_present.get()
+                    };
+                    if !finished {
+                        frame += 1;
+                    }
+                    measured_input
+                        .trace_scope
+                        .as_mut()
+                        .expect("active measurement")
+                        .loops
+                        .record(loop_start, scheduler::Instant::now(), draws_before);
+                    if finished {
+                        break;
+                    }
                 }
                 MeasuredTaskOutput {
                     trace_scope: measured_input.trace_scope.take(),
@@ -870,7 +1226,28 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         self.replace_bencher(bencher);
     }
 
-    /// Adds a window with an empty root view for benchmark setup.
+    fn request_frame(&mut self, handle: AnyWindowHandle) -> bool {
+        let platform_window = {
+            let mut app = self.app.borrow_mut();
+            let window = app
+                .windows
+                .get_mut(handle.window_id())
+                .and_then(Option::as_deref_mut)
+                .expect("renderer window must remain open");
+            window
+                .platform_window
+                .as_test()
+                .expect("benchmark platform window")
+                .clone()
+        };
+        // The production callback borrows App itself and may rearm its frame request.
+        platform_window.simulate_scheduled_frame()
+    }
+
+    /// Adds an active window with an empty root view for benchmark setup.
+    ///
+    /// Activation is settled before returning so renderer measurements exercise
+    /// foreground animation rather than the inactive-window frame throttle.
     pub fn add_empty_window(&mut self) -> BenchWindowContext<'a, 'measurement> {
         let bounds = {
             let app = self.app.borrow();
@@ -888,6 +1265,10 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                 )
                 .expect("failed to open benchmark window")
                 .into();
+            // An active renderer workload must not inherit the platform
+            // callback's inactive-window animation throttle.
+            app.update_window(window, |_, window, _| window.activate_window())
+                .expect("new benchmark window must remain open");
             window
         };
 
@@ -1218,6 +1599,522 @@ mod tests {
     use crate::profiler::journal::install_test_foreground_journal;
 
     #[test]
+    #[should_panic(expected = "frame budget must be at least one nanosecond")]
+    fn report_rejects_zero_frame_budget() {
+        BenchReport::with_frame_budget_nanos(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "frame budget must be at least one nanosecond")]
+    fn report_rejects_subnanosecond_frame_rate() {
+        BenchReport::with_fps(1_000_000_001);
+    }
+
+    #[test]
+    fn loop_counts_survive_journal_wrap_and_tracing_sessions() {
+        let (journal, _guard) = install_test_foreground_journal(8, 2);
+        let start = scheduler::Instant::now();
+        let draw = profiler::FrameTiming {
+            window_id: crate::WindowId::from(1),
+            dirty_at: Some(start),
+            invalidations: 1,
+            draw_start: start,
+            draw_end: start + Duration::from_millis(1),
+        };
+        for _ in 0..2 {
+            let mut trace = TraceScope::start(journal.collector());
+            let before = profiler::journal::benchmark_draw_count();
+            for _ in 0..256 {
+                profiler::journal::record_draw(draw);
+            }
+            trace
+                .loops
+                .record(start, start + Duration::from_millis(20), before);
+            let report = BenchReport::default();
+            report.record_trace(trace.finish());
+            let snapshot = report.frame_snapshot.borrow();
+            assert_eq!(snapshot.whole_loop.histogram.len(), 1);
+            assert_eq!(snapshot.whole_loop.total_nanos, 20_000_000);
+            assert_eq!(snapshot.draws_per_loop.min(), 256);
+            assert_eq!(snapshot.draws_per_loop.max(), 256);
+            assert!(snapshot.lost_journal_entries > 0);
+            assert_eq!(snapshot.slow_loops.len(), 1);
+            assert!(snapshot.slow_loops[0].incomplete);
+        }
+    }
+
+    #[test]
+    fn first_slow_loop_has_attribution_without_presentation_cadence() {
+        let start = scheduler::Instant::now();
+        let location = std::panic::Location::caller();
+        for lost in [false, true] {
+            let mut loops = LoopTimings::new();
+            loops.record(
+                start,
+                start + Duration::from_millis(12),
+                profiler::journal::benchmark_draw_count(),
+            );
+            let mut journal_entries = vec![
+                ForegroundJournalEntry::Event(ForegroundEvent::Draw(profiler::FrameTiming {
+                    window_id: crate::WindowId::from(1),
+                    dirty_at: Some(start),
+                    invalidations: 1,
+                    draw_start: start + Duration::from_millis(8),
+                    draw_end: start + Duration::from_millis(10),
+                })),
+                ForegroundJournalEntry::Event(ForegroundEvent::TaskPoll(profiler::TaskTiming {
+                    location,
+                    spawned: scheduler::SpawnTime(start),
+                    start,
+                    end: profiler::YieldTime(start + Duration::from_millis(11)),
+                })),
+                ForegroundJournalEntry::Event(ForegroundEvent::Present(profiler::PresentTiming {
+                    window_id: crate::WindowId::from(1),
+                    present_start: start + Duration::from_millis(11),
+                    present_end: start + Duration::from_millis(12),
+                    animation_interval: None,
+                })),
+            ];
+            if lost {
+                journal_entries.push(ForegroundJournalEntry::Discontinuity { lost: 1 });
+            }
+            let report = BenchReport::default();
+            report.record_trace(TracedEvents {
+                loops,
+                frame_events: Vec::new(),
+                journal_entries,
+            });
+            let snapshot = report.frame_snapshot.borrow();
+            assert!(snapshot.presentation_cadence.is_empty());
+            assert!(snapshot.slow_intervals.is_empty());
+            assert_eq!(snapshot.slow_loops.len(), 1);
+            let interval = &snapshot.slow_loops[0];
+            assert_eq!(interval.duration, Duration::from_millis(12));
+            assert_eq!(interval.recorded_busy, Duration::from_millis(12));
+            assert_eq!(interval.draws, 1);
+            assert_eq!(interval.longest_work, Duration::from_millis(11));
+            assert_eq!(
+                interval.longest_work_description(),
+                format!("task poll at {location}")
+            );
+            assert_eq!(interval.incomplete, lost);
+        }
+    }
+
+    #[test]
+    fn slow_loop_retention_is_bounded_across_traces_without_losing_histogram_samples() {
+        let start = scheduler::Instant::now();
+        let report = BenchReport::default();
+        for batch in 0..3 {
+            let mut loops = LoopTimings::new();
+            let capacity = loops.slowest.capacity();
+            for milliseconds in (1..=100).rev() {
+                let milliseconds = if batch == 1 {
+                    101 - milliseconds
+                } else {
+                    milliseconds
+                };
+                loops.record(
+                    start,
+                    start + Duration::from_millis(batch * 100 + milliseconds),
+                    profiler::journal::benchmark_draw_count(),
+                );
+                assert!(loops.slowest.len() <= RETAINED_SLOW_INTERVALS);
+                assert_eq!(loops.slowest.capacity(), capacity);
+            }
+            assert_eq!(loops.histogram.histogram.len(), 100);
+            assert_eq!(loops.draws.len(), 100);
+            report.record_trace(TracedEvents {
+                loops,
+                frame_events: Vec::new(),
+                journal_entries: Vec::new(),
+            });
+        }
+        let snapshot = report.frame_snapshot.borrow();
+        assert_eq!(snapshot.whole_loop.histogram.len(), 300);
+        assert_eq!(snapshot.draws_per_loop.len(), 300);
+        assert_eq!(snapshot.whole_loop.total_nanos, 45_150_000_000);
+        assert_eq!(
+            snapshot
+                .slow_loops
+                .iter()
+                .map(|interval| interval.duration)
+                .collect::<Vec<_>>(),
+            (285..=300)
+                .rev()
+                .map(Duration::from_millis)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn interval_attribution_unions_nested_and_late_completed_work() {
+        use profiler::journal::{InputTiming, PollSummary, SmallPollFlush};
+        let start = scheduler::Instant::now();
+        let input = |from, until| {
+            ForegroundEvent::Input(InputTiming {
+                kind: "test",
+                start: start + Duration::from_millis(from),
+                end: start + Duration::from_millis(until),
+                caused_invalidation: false,
+            })
+        };
+        // The enclosing event completes after this presentation boundary and is
+        // therefore recorded later. Attribution must still clip it to this interval.
+        let location = std::panic::Location::caller();
+        let events = [
+            input(3, 5),
+            ForegroundEvent::TaskPoll(profiler::TaskTiming {
+                location,
+                spawned: scheduler::SpawnTime(start),
+                start: start + Duration::from_millis(1),
+                end: profiler::YieldTime(start + Duration::from_millis(25)),
+            }),
+            ForegroundEvent::SmallPolls(SmallPollFlush {
+                summary: PollSummary {
+                    count: 2,
+                    total: Duration::from_millis(1),
+                },
+                since: start + Duration::from_millis(3),
+                until: start + Duration::from_millis(5),
+            }),
+        ];
+        let attribution =
+            attribute_interval(&events, start, start + Duration::from_millis(20), false);
+        assert_eq!(attribution.recorded_busy, Duration::from_millis(19));
+        assert_eq!(attribution.folded_poll_work, Duration::from_millis(1));
+        assert_eq!(attribution.longest_work, Duration::from_millis(19));
+        assert_eq!(
+            attribution.longest_work_description(),
+            format!("task poll at {location}")
+        );
+        assert!(!attribution.incomplete);
+        assert!(
+            attribute_interval(&events, start, start + Duration::from_millis(20), true).incomplete
+        );
+    }
+
+    #[test]
+    fn presentation_reporting_uses_non_animation_frames_and_marks_loss() {
+        let start = scheduler::Instant::now();
+        let presentation = |milliseconds| {
+            ForegroundJournalEntry::Event(ForegroundEvent::Present(profiler::PresentTiming {
+                window_id: crate::WindowId::from(1),
+                present_start: start + Duration::from_millis(milliseconds),
+                present_end: start + Duration::from_millis(milliseconds),
+                animation_interval: None,
+            }))
+        };
+        for lost in [false, true] {
+            let mut entries = vec![presentation(0), presentation(20)];
+            if lost {
+                entries.insert(1, ForegroundJournalEntry::Discontinuity { lost: 3 });
+            }
+            let report = BenchReport::default();
+            report.record_trace(TracedEvents {
+                loops: LoopTimings::new(),
+                frame_events: Vec::new(),
+                journal_entries: entries,
+            });
+            let snapshot = report.frame_snapshot.borrow();
+            assert_eq!(snapshot.presentation_cadence.len(), u64::from(!lost));
+            assert!(
+                snapshot.whole_loop.histogram.is_empty(),
+                "frames alone do not turn compute work into renderer loops"
+            );
+            assert!(snapshot.slow_loops.is_empty());
+            assert_eq!(snapshot.slow_intervals.len(), 1);
+            assert_eq!(
+                snapshot.slow_intervals[0].duration,
+                Duration::from_millis(20)
+            );
+            assert_eq!(snapshot.slow_intervals[0].incomplete, lost);
+        }
+    }
+
+    #[test]
+    fn renderer_scope_coalesces_effects_and_preserves_synchronous_callers() {
+        use std::cell::Cell;
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let mut criterion = criterion::Criterion::default().without_plots();
+        criterion = criterion
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("renderer_effects_contract", |bencher| {
+            let mut cx = BenchAppContext::new(platform.clone(), None, bencher);
+            let mut window = cx.add_empty_window();
+            let handle = window.window_handle();
+            let state = cx.new(|_| ());
+            let notifications = Rc::new(Cell::new(0));
+            let subscription = cx.update(|cx| {
+                cx.observe(&state, {
+                    let notifications = notifications.clone();
+                    move |_, _| notifications.set(notifications.get() + 1)
+                })
+            });
+            let events = Rc::new(Cell::new(0));
+            let emitter = cx.new(|_| BenchEmitter);
+            let event_subscription = cx.update(|cx| {
+                cx.subscribe(&emitter, {
+                    let events = events.clone();
+                    move |_, _, _| events.set(events.get() + 1)
+                })
+            });
+            let trace = TraceScope::start(cx.foreground_journal_collector());
+            let before = profiler::journal::benchmark_draw_count();
+            {
+                let _scope = RendererScope::start(&cx.app);
+                for _ in 0..3 {
+                    window.update(|window, cx| {
+                        state.update(cx, |_, cx| cx.notify());
+                        emitter.update(cx, |_, cx| cx.emit(()));
+                        window.refresh();
+                    });
+                }
+                assert_eq!(notifications.get(), 3);
+                assert_eq!(events.get(), 3);
+                assert_eq!(profiler::journal::benchmark_draw_count(), before);
+                assert!(cx.request_frame(handle));
+                assert_eq!(profiler::journal::benchmark_draw_count(), before + 1);
+                window.update(|window, _| assert!(!window.needs_present.get()));
+                let callbacks = Rc::new(Cell::new(0));
+                window.update(|window, _| {
+                    window.on_next_frame({
+                        let callbacks = callbacks.clone();
+                        move |window, _| {
+                            callbacks.set(callbacks.get() + 1);
+                            window.refresh();
+                            window.on_next_frame(move |window, _| {
+                                callbacks.set(callbacks.get() + 1);
+                                window.refresh();
+                            });
+                        }
+                    })
+                });
+                assert!(cx.request_frame(handle));
+                assert_eq!(callbacks.get(), 1);
+                assert!(cx.request_frame(handle));
+                assert_eq!(callbacks.get(), 2);
+                assert_eq!(profiler::journal::benchmark_draw_count(), before + 3);
+                let special_draws_before = profiler::journal::benchmark_draw_count();
+                let special_start = scheduler::Instant::now();
+                window.update(|window, cx| {
+                    window.refresh();
+                    window.dispatch_event(
+                        crate::PlatformInput::ModifiersChanged(Default::default()),
+                        cx,
+                    );
+                    assert_eq!(
+                        profiler::journal::benchmark_draw_count(),
+                        special_draws_before + 1,
+                        "key dispatch still needs a current dispatch tree"
+                    );
+                    window.refresh();
+                });
+                cx.request_frame(handle);
+                let mut timings = LoopTimings::new();
+                timings.record(
+                    special_start,
+                    scheduler::Instant::now(),
+                    special_draws_before,
+                );
+                assert_eq!(
+                    timings.draws.max(),
+                    2,
+                    "count special input draws as well as the scheduled draw"
+                );
+            }
+            window.update(|window, _| window.refresh());
+            assert_eq!(profiler::journal::benchmark_draw_count(), before + 6);
+            let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _scope = RendererScope::start(&cx.app);
+                panic!("scope restoration");
+            }));
+            assert!(unwind.is_err());
+            assert!(!cx.read(|cx| cx.defer_draw_until_frame));
+            drop(trace);
+            drop(subscription);
+            drop(event_subscription);
+            let view = window.update(|window, cx| window.replace_root(cx, |_, _| Empty));
+            cx.bench_renderer(view, |_, window, _| {
+                window.refresh();
+                window.refresh();
+            });
+            assert_eq!(cx.report.frame_snapshot.borrow().draws_per_loop.max(), 1);
+            assert!(cx.report.frame_snapshot.borrow().whole_loop.histogram.len() > 0);
+            window.update(|window, _| window.remove_window());
+            cx.teardown();
+        });
+    }
+
+    #[test]
+    fn renderer_session_keeps_up_with_input_generated_work() {
+        use std::cell::Cell;
+
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        // Isolate the count bound from machine speed; the tiny-budget test below
+        // separately exercises yielding to frames.
+        let report = BenchReport::with_frame_budget_nanos(Duration::from_secs(5).as_nanos());
+        let mut criterion = criterion::Criterion::default()
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("renderer_input_work", |bencher| {
+            let mut cx = BenchAppContext::new_with_platform_and_report(
+                platform.clone(),
+                None,
+                bencher,
+                report.clone(),
+            );
+            cx.bench_renderer_session(
+                Duration::from_secs(5),
+                |cx| {
+                    let mut window = cx.add_empty_window();
+                    let handle = window.window_handle();
+                    let stopped = Arc::new(AtomicBool::new(false));
+                    let completed = Rc::new(Cell::new(0));
+                    let teardown = OnDrop({
+                        let completed = completed.clone();
+                        move || {
+                            assert_eq!(
+                                completed.get(),
+                                65,
+                                "stop must leave the other ready tasks unpolled"
+                            );
+                            window.update(|window, _| {
+                                assert!(!window.invalidator.is_dirty());
+                                assert!(!window.needs_present.get());
+                                window.remove_window();
+                            });
+                        }
+                    });
+                    (
+                        (Vec::new(), completed, stopped.clone(), teardown),
+                        handle,
+                        stopped,
+                    )
+                },
+                |(tasks, completed, stopped, _), turn, window, cx| {
+                    assert!(turn <= 16, "stop must skip the final input");
+                    assert_eq!(
+                        completed.get(),
+                        turn * 4,
+                        "each input's ready work must finish before the next input"
+                    );
+                    window.refresh();
+                    tasks.clear();
+                    for _ in 0..4 {
+                        tasks.push(cx.spawn({
+                            let completed = completed.clone();
+                            let stopped = stopped.clone();
+                            let handle = window.window_handle();
+                            async move |cx| {
+                                completed.set(completed.get() + 1);
+                                if turn == 16 {
+                                    cx.update_window(handle, |_, window, _| window.refresh())
+                                        .expect("open window");
+                                    stopped.store(true, Ordering::Release);
+                                }
+                            }
+                        }));
+                    }
+                },
+            );
+            assert_eq!(report.frame_snapshot.borrow().draws_per_loop.max(), 1);
+            cx.teardown();
+        });
+    }
+
+    #[test]
+    fn renderer_session_gives_frames_progress_with_a_task_backlog() {
+        use std::cell::Cell;
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let report = BenchReport::with_frame_budget_nanos(1);
+        let mut criterion = criterion::Criterion::default()
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("renderer_task_backlog", |bencher| {
+            let mut cx = BenchAppContext::new_with_platform_and_report(
+                platform.clone(),
+                None,
+                bencher,
+                report.clone(),
+            );
+            cx.bench_renderer_session(
+                Duration::from_secs(5),
+                |cx| {
+                    let mut window = cx.add_empty_window();
+                    let handle = window.window_handle();
+                    let stopped = Arc::new(AtomicBool::new(false));
+                    let polls = Rc::new(Cell::new(0));
+                    let tasks: Vec<_> = (0..8)
+                        .map(|_| {
+                            cx.update(|cx| {
+                                cx.spawn({
+                                    let polls = polls.clone();
+                                    async move |cx| {
+                                        polls.set(polls.get() + 1);
+                                        for _ in 0..3 {
+                                            cx.update_window(handle, |_, window, _| {
+                                                window.refresh()
+                                            })
+                                            .expect("open window");
+                                        }
+                                        let start = Instant::now();
+                                        while start.elapsed() < Duration::from_millis(2) {
+                                            std::hint::spin_loop();
+                                        }
+                                    }
+                                })
+                            })
+                        })
+                        .collect();
+                    let loops_before = report.frame_snapshot.borrow().whole_loop.histogram.len();
+                    let teardown = OnDrop({
+                        let report = report.clone();
+                        move || {
+                            assert_eq!(
+                                polls.get(),
+                                3,
+                                "do not drain the backlog before input and frames"
+                            );
+                            let snapshot = report.frame_snapshot.borrow();
+                            assert_eq!(snapshot.whole_loop.histogram.len() - loops_before, 3);
+                            assert_eq!(
+                                snapshot.draws_per_loop.max(),
+                                1,
+                                "coalesce each task's updates with input"
+                            );
+                            assert!(
+                                snapshot.whole_loop.total_nanos
+                                    >= snapshot.whole_loop.histogram.len() * 2_000_000
+                            );
+                            drop(snapshot);
+                            window.update(|window, _| {
+                                assert!(!window.needs_present.get());
+                                window.remove_window();
+                            });
+                        }
+                    });
+                    ((tasks, teardown, stopped.clone()), handle, stopped)
+                },
+                |(_, _, stopped), turn, window, _| {
+                    window.refresh();
+                    if turn == 2 {
+                        stopped.store(true, Ordering::Release);
+                    }
+                },
+            );
+            assert!(report.foreground_work().expect("task polls").max >= Duration::from_millis(2));
+            cx.teardown();
+        });
+    }
+
+    #[test]
     fn renderer_session_presents_task_completion_and_restarts_outside_tracing() {
         use futures::StreamExt;
         use std::cell::Cell;
@@ -1277,8 +2174,8 @@ mod tests {
                             });
                             assert_eq!(
                                 report.frame_snapshot.borrow().draw.len() - draws_before,
-                                6,
-                                "collect the three input and three task draws, not setup"
+                                4,
+                                "coalesce task and input invalidations into frame callbacks, excluding setup"
                             );
                             // A teardown draw must not enter the next session's report.
                             window.update(|window, _| window.refresh());
@@ -1303,6 +2200,98 @@ mod tests {
     }
 
     #[test]
+    fn renderer_session_presents_stopped_inactive_window_without_draining_work() {
+        use std::cell::Cell;
+
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let mut criterion = criterion::Criterion::default()
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("renderer_session_inactive_stop", |bencher| {
+            let mut cx = BenchAppContext::new(platform.clone(), None, bencher);
+            cx.bench_renderer_session(
+                Duration::from_secs(5),
+                |cx| {
+                    let mut window = cx.add_empty_window();
+                    let handle = window.window_handle();
+                    let _scope = RendererScope::start(&cx.app);
+                    window.update(|window, _| window.refresh());
+                    assert!(cx.request_frame(handle));
+                    let presented = Instant::now();
+                    let platform_window = window.update(|window, _| {
+                        assert!(!window.invalidator.is_dirty());
+                        assert!(!window.needs_present.get());
+                        window.platform_window.as_test().unwrap().clone()
+                    });
+                    platform_window.simulate_active_status_change(false);
+                    let stopped = Arc::new(AtomicBool::new(false));
+                    let callbacks = Rc::new(Cell::new(0));
+                    let task_ran = Rc::new(Cell::new(false));
+                    let draws_before = profiler::journal::benchmark_draw_count();
+                    let teardown = OnDrop({
+                        let callbacks = callbacks.clone();
+                        let task_ran = task_ran.clone();
+                        move || {
+                            assert!(!task_ran.get(), "stopped sessions must not pump tasks");
+                            assert_eq!(callbacks.get(), 1);
+                            assert_eq!(
+                                profiler::journal::benchmark_draw_count(),
+                                draws_before + 1,
+                                "the final refresh must draw despite throttling"
+                            );
+                            window.update(|window, _| {
+                                assert!(!window.is_window_active());
+                                assert!(!window.invalidator.is_dirty());
+                                assert!(!window.needs_present.get());
+                                assert_eq!(window.next_frame_callbacks.borrow().len(), 1);
+                                window.remove_window();
+                            });
+                        }
+                    });
+                    (
+                        (
+                            stopped.clone(),
+                            callbacks,
+                            task_ran,
+                            None,
+                            presented,
+                            teardown,
+                        ),
+                        handle,
+                        stopped,
+                    )
+                },
+                |(stopped, callbacks, task_ran, task, presented, _), turn, window, cx| {
+                    assert_eq!(turn, 0, "no input may run after stop");
+                    assert!(!window.is_window_active());
+                    window.refresh();
+                    window.on_next_frame({
+                        let callbacks = callbacks.clone();
+                        move |window, _| {
+                            callbacks.set(callbacks.get() + 1);
+                            window.on_next_frame(|_, _| {
+                                panic!("future animation must not delay completion");
+                            });
+                        }
+                    });
+                    *task = Some(cx.foreground_executor().spawn({
+                        let task_ran = task_ran.clone();
+                        async move { task_ran.set(true) }
+                    }));
+                    assert!(
+                        presented.elapsed() < Duration::from_micros(33_333),
+                        "stop must occur before the inactive throttle interval"
+                    );
+                    stopped.store(true, Ordering::Release);
+                },
+            );
+            cx.teardown();
+        });
+    }
+
+    #[test]
     #[should_panic(expected = "renderer session did not stop within")]
     fn renderer_session_bounds_an_unset_stop_flag() {
         let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
@@ -1318,6 +2307,74 @@ mod tests {
                 |_, _, window, _| window.refresh(),
             );
         });
+    }
+
+    #[test]
+    fn renderer_session_rejects_overlong_stopping_callbacks() {
+        use std::cell::Cell;
+
+        for stop_in_frame in [false, true] {
+            let callback_ran = Rc::new(Cell::new(false));
+            let session_dropped = Rc::new(Cell::new(false));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+                let mut criterion = criterion::Criterion::default().without_plots();
+                criterion.bench_function("renderer_session_overlong_stop", |bencher| {
+                    let mut cx = BenchAppContext::new(platform.clone(), None, bencher);
+                    cx.bench_renderer_session(
+                        Duration::from_secs(1),
+                        |cx| {
+                            assert!(
+                                !callback_ran.get(),
+                                "overlong stopping callback must not complete successfully"
+                            );
+                            let mut window = cx.add_empty_window();
+                            let handle = window.window_handle();
+                            let stopped = Arc::new(AtomicBool::new(false));
+                            let teardown = OnDrop({
+                                let session_dropped = session_dropped.clone();
+                                move || {
+                                    window.update(|window, _| window.remove_window());
+                                    session_dropped.set(true);
+                                }
+                            });
+                            ((stopped.clone(), teardown), handle, stopped)
+                        },
+                        |(stopped, _), turn, window, _| {
+                            assert_eq!(turn, 0);
+                            let stop = {
+                                let callback_ran = callback_ran.clone();
+                                let stopped = stopped.clone();
+                                move || {
+                                    callback_ran.set(true);
+                                    // Setup is untimed; only this final callback exceeds the deadline.
+                                    std::thread::sleep(Duration::from_millis(1100));
+                                    stopped.store(true, Ordering::Release);
+                                }
+                            };
+                            if stop_in_frame {
+                                window.on_next_frame(move |_, _| stop());
+                            } else {
+                                stop();
+                            }
+                        },
+                    );
+                    panic!("overlong stopping callback must not complete successfully");
+                });
+            }));
+            assert!(callback_ran.get(), "must reach the final stopping callback");
+            assert!(session_dropped.get(), "timeout must drop session state");
+            let panic = result.expect_err("overlong session must panic");
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .expect("timeout panic must have a message");
+            assert!(
+                message.contains("renderer session did not stop within"),
+                "unexpected panic: {message}"
+            );
+        }
     }
 
     #[test]
@@ -1396,7 +2453,13 @@ mod tests {
                         .send(())
                         .expect("pending receiver");
                     window.refresh();
-                    stopped.store(true, Ordering::Release);
+                    window.on_next_frame({
+                        let stopped = stopped.clone();
+                        move |window, _| {
+                            window.refresh();
+                            stopped.store(true, Ordering::Release);
+                        }
+                    });
                 },
             );
             cx.teardown();
@@ -1560,6 +2623,10 @@ mod tests {
             "task runner should preserve non-Send foreground output"
         );
     }
+
+    struct BenchEmitter;
+
+    impl crate::EventEmitter<()> for BenchEmitter {}
 
     struct OnDrop<F: FnMut()>(F);
 

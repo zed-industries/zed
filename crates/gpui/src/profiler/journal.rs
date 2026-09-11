@@ -381,6 +381,8 @@ impl ForegroundRunnableCounter {
 
 struct ForegroundJournalWriter {
     foreground_runnables: ForegroundRunnableCounter,
+    #[cfg(feature = "bench-support")]
+    draw_count: u64,
     publisher: JournalPublisher,
     turn_depth: usize,
     pending_frames: HashMap<WindowId, Instant>,
@@ -392,6 +394,8 @@ impl ForegroundJournalWriter {
     fn new(foreground_runnables: ForegroundRunnableCounter, publisher: JournalPublisher) -> Self {
         Self {
             foreground_runnables,
+            #[cfg(feature = "bench-support")]
+            draw_count: 0,
             publisher,
             turn_depth: 0,
             pending_frames: HashMap::new(),
@@ -654,7 +658,21 @@ pub(crate) fn record_input(timing: InputTiming) {
 }
 
 pub(crate) fn record_draw(timing: FrameTiming) {
-    with_journal(|journal| journal.record_event(ForegroundEvent::Draw(timing)));
+    with_journal(|journal| {
+        #[cfg(feature = "bench-support")]
+        {
+            journal.draw_count += 1;
+        }
+        journal.record_event(ForegroundEvent::Draw(timing));
+    });
+}
+
+/// Counts this foreground thread's draws without retaining per-loop journal entries.
+#[cfg(feature = "bench-support")]
+pub(crate) fn benchmark_draw_count() -> u64 {
+    let mut count = 0;
+    with_journal(|journal| count = journal.draw_count);
+    count
 }
 
 pub(crate) fn record_present(timing: PresentTiming, frame: Option<FrameTiming>) {

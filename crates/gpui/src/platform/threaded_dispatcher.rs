@@ -296,8 +296,11 @@ impl ThreadedDispatcher {
     /// readiness between them: a task that perpetually re-queues itself (like
     /// an idle-time sweep) would otherwise keep [`Self::drain_main_queue`]
     /// looping past the completion the caller is waiting for.
-    #[cfg(any(test, feature = "bench-support"))]
-    fn run_one_main_task(&self) -> bool {
+    pub(crate) fn run_one_main_task(&self) -> bool {
+        assert!(
+            self.is_main_thread(),
+            "main tasks must run on the main thread"
+        );
         let runnable = self.main_receiver.lock().try_pop();
         match runnable {
             Ok(Some(runnable)) => {
@@ -312,11 +315,22 @@ impl ThreadedDispatcher {
         }
     }
 
-    /// Runs the main-thread tasks that were queued when the call began,
-    /// returning whether any ran. Tasks dispatched while running (e.g. a task
-    /// re-queuing itself after yielding) are left for the next call, as on
-    /// the platform run loops.
+    /// Runs up to the initial queue length of main-thread tasks.
+    ///
+    /// Returns whether any ran. This snapshots the count, not task identities:
+    /// newly dispatched higher-priority tasks can overtake the original tasks.
     pub fn run_ready_main_tasks(&self) -> bool {
+        self.run_ready_main_tasks_while(|_| true)
+    }
+
+    /// Runs a count-bounded ready turn, checking `should_continue` before every poll.
+    ///
+    /// The predicate receives whether any task has run in this turn. Neither
+    /// the count bound nor the predicate can preempt an individual task poll.
+    pub(crate) fn run_ready_main_tasks_while(
+        &self,
+        mut should_continue: impl FnMut(bool) -> bool,
+    ) -> bool {
         assert!(
             self.is_main_thread(),
             "run_ready_main_tasks must be called on the threaded dispatcher's main thread"
@@ -324,18 +338,10 @@ impl ThreadedDispatcher {
         let pending = self.main_receiver.lock().len();
         let mut ran_any = false;
         for _ in 0..pending {
-            let runnable = self.main_receiver.lock().try_pop();
-            match runnable {
-                Ok(Some(runnable)) => {
-                    let location = runnable.metadata().location;
-                    let spawned = runnable.metadata().spawned;
-                    profiler::update_running_task(spawned, location);
-                    runnable.run();
-                    profiler::save_task_timing();
-                    ran_any = true;
-                }
-                Ok(None) | Err(_) => break,
+            if !should_continue(ran_any) || !self.run_one_main_task() {
+                break;
             }
+            ran_any = true;
         }
         ran_any
     }
@@ -667,6 +673,34 @@ mod tests {
         assert_eq!(iterations.load(Ordering::SeqCst), 1);
         assert!(dispatcher.run_ready_main_tasks());
         assert_eq!(iterations.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn ready_turn_checks_stop_between_polls() {
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
+        let foreground = ForegroundExecutor::new(dispatcher.clone());
+        let stopped = Arc::new(AtomicBool::new(false));
+        let polls = Arc::new(AtomicUsize::new(0));
+        let tasks: Vec<_> = (0..4)
+            .map(|_| {
+                foreground.spawn({
+                    let stopped = stopped.clone();
+                    let polls = polls.clone();
+                    async move {
+                        polls.fetch_add(1, Ordering::SeqCst);
+                        stopped.store(true, Ordering::Release);
+                    }
+                })
+            })
+            .collect();
+
+        assert!(!dispatcher.run_ready_main_tasks_while(|_| false));
+        assert_eq!(polls.load(Ordering::SeqCst), 0);
+        assert!(dispatcher.run_ready_main_tasks_while(|_| !stopped.load(Ordering::Acquire)));
+        assert_eq!(polls.load(Ordering::SeqCst), 1);
+        assert!(dispatcher.main_queue_has_work());
+        dispatcher.run_ready_main_tasks();
+        assert_eq!(polls.load(Ordering::SeqCst), tasks.len());
     }
 
     #[test]
