@@ -281,6 +281,7 @@ pub(crate) fn request_prediction_with_zeta(
                                 prompt,
                                 max_tokens,
                                 stop_tokens,
+                                None,
                                 open_ai_compatible_api_key.clone(),
                                 &http_client,
                             )
@@ -312,6 +313,7 @@ pub(crate) fn request_prediction_with_zeta(
                                     .iter()
                                     .map(|token| token.to_string())
                                     .collect(),
+                                None,
                                 open_ai_compatible_api_key.clone(),
                                 &http_client,
                             )
