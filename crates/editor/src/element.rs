@@ -38,7 +38,7 @@ use crate::{
     },
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage};
 use gpui::{
@@ -47,7 +47,7 @@ use gpui::{
     Element, ElementInputHandler, Entity, Focusable as _, Font, FontId, FontWeight,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollHandle, ShapedLine, SharedString, Size,
+    ParentElement, Pixels, ScaledPixels, ScrollHandle, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, StyledText, TaskExt, TextAlign, TextRun,
     TextStyleRefinement, UnderlineStyle, WeakEntity, Window, div, fill, outline, pattern_slash,
     point, px, quad, relative, size, solid_background, transparent_black, underline_y_offset,
@@ -163,6 +163,105 @@ struct PointDiagnostic {
     column: u32,
     underline: UnderlineStyle,
     severity: lsp::DiagnosticSeverity,
+}
+
+struct DiagnosticUnderline {
+    origin: gpui::Point<Pixels>,
+    width: Pixels,
+    style: UnderlineStyle,
+    bounds: Bounds<ScaledPixels>,
+    span: Range<ScaledPixels>,
+    severity: lsp::DiagnosticSeverity,
+    is_point: bool,
+}
+
+impl DiagnosticUnderline {
+    fn point(
+        diagnostic: &PointDiagnostic,
+        origin: gpui::Point<Pixels>,
+        width: Pixels,
+        window: &Window,
+    ) -> Self {
+        let bounds = window.underline_bounds(origin, width, &diagnostic.underline);
+        Self {
+            origin,
+            width,
+            style: diagnostic.underline,
+            bounds,
+            span: bounds.left()..bounds.right(),
+            severity: diagnostic.severity,
+            is_point: true,
+        }
+    }
+
+    fn paint(&self, span: Range<ScaledPixels>, window: &mut Window) {
+        window.paint_underline_with_exclusions(
+            self.origin,
+            self.width,
+            &self.style,
+            &[
+                self.bounds.left()..span.start,
+                span.end..self.bounds.right(),
+            ],
+        );
+    }
+
+    fn paint_all(underlines: &[Self], window: &mut Window) {
+        if underlines.is_empty() {
+            return;
+        }
+        let mask = window.content_mask().bounds;
+        let scale = window.scale_factor();
+        let left = ScaledPixels((f32::from(mask.left()) * scale).floor());
+        let top = ScaledPixels((f32::from(mask.top()) * scale).floor());
+        let right = ScaledPixels((f32::from(mask.right()) * scale).ceil()).max(left);
+        let bottom = ScaledPixels((f32::from(mask.bottom()) * scale).ceil()).max(top);
+        let mask = Bounds::from_corners(point(left, top), point(right, bottom));
+        let mut events = SmallVec::<[_; 8]>::new();
+        for (index, underline) in underlines.iter().enumerate() {
+            let bounds = underline.bounds.intersect(&mask);
+            let start = underline.span.start.max(bounds.left());
+            let end = underline.span.end.min(bounds.right());
+            if !bounds.is_empty() && start < end {
+                events.push((start, true, index));
+                events.push((end, false, index));
+            }
+        }
+        events.sort_unstable();
+
+        let mut active = BTreeSet::new();
+        let mut previous = None;
+        let mut visible: Option<(usize, Range<ScaledPixels>)> = None;
+        for (position, is_start, index) in events {
+            if let Some(start) = previous
+                && start < position
+                && let Some(&(_, _, winner)) = active.first()
+            {
+                if let Some((current, span)) = visible.as_mut()
+                    && *current == winner
+                    && span.end == start
+                {
+                    span.end = position;
+                } else {
+                    if let Some((current, span)) = visible.take() {
+                        underlines[current].paint(span, window);
+                    }
+                    visible = Some((winner, start..position));
+                }
+            }
+            let underline = &underlines[index];
+            let key = (underline.severity, underline.is_point, index);
+            if is_start {
+                active.insert(key);
+            } else {
+                active.remove(&key);
+            }
+            previous = Some(position);
+        }
+        if let Some((winner, span)) = visible {
+            underlines[winner].paint(span, window);
+        }
+    }
 }
 
 impl SelectionLayout {
@@ -3197,11 +3296,11 @@ impl EditorElement {
                         &[run],
                         None,
                     );
-                    let rendered_len = line.len();
+
                     LineWithInvisibles {
                         width: line.width,
                         len: line.len,
-                        fragments: smallvec![LineFragment::Text { rendered_len, line }],
+                        fragments: smallvec![LineFragment::Text(line)],
                         invisibles: Vec::new(),
                         diagnostic_underline_severity_ranges: Vec::new(),
                         point_diagnostics: Vec::new(),
@@ -3240,6 +3339,7 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
+        content_width: Pixels,
         window: &mut Window,
         cx: &mut App,
     ) -> SmallVec<[AnyElement; 1]> {
@@ -3252,6 +3352,8 @@ impl EditorElement {
                 scroll_pixel_position,
                 row,
                 content_origin,
+                self.style.text.text_align,
+                content_width,
                 &mut line_elements,
                 window,
                 cx,
@@ -7329,10 +7431,7 @@ pub(crate) struct LineWithInvisibles {
 }
 
 enum LineFragment {
-    Text {
-        line: ShapedLine,
-        rendered_len: usize,
-    },
+    Text(ShapedLine),
     Element {
         id: ChunkRendererId,
         element: Option<AnyElement>,
@@ -7344,7 +7443,7 @@ enum LineFragment {
 impl fmt::Debug for LineFragment {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            LineFragment::Text { line, .. } => f.debug_tuple("Text").field(line).finish(),
+            LineFragment::Text(line) => f.debug_tuple("Text").field(line).finish(),
             LineFragment::Element { size, len, .. } => f
                 .debug_struct("Element")
                 .field("size", size)
@@ -7421,11 +7520,8 @@ impl LineWithInvisibles {
                     );
                     width += shaped_line.width;
                     len += shaped_line.len;
-                    let rendered_len = shaped_line.len();
-                    fragments.push(LineFragment::Text {
-                        line: shaped_line,
-                        rendered_len,
-                    });
+
+                    fragments.push(LineFragment::Text(shaped_line));
                     line.clear();
                     styles.clear();
                 }
@@ -7461,12 +7557,6 @@ impl LineWithInvisibles {
                             cx,
                         );
 
-                        if let Some(severity) = highlighted_chunk.diagnostic_underline_severity {
-                            diagnostic_underline_severity_ranges.push((
-                                line_byte_offset..line_byte_offset + highlighted_chunk.text.len(),
-                                severity,
-                            ));
-                        }
                         width += size.width;
                         len += highlighted_chunk.text.len();
                         line_byte_offset += highlighted_chunk.text.len();
@@ -7492,7 +7582,7 @@ impl LineWithInvisibles {
                             underline: text_style.underline,
                             strikethrough: text_style.strikethrough,
                         };
-                        let rendered_len = x.len();
+
                         let line_layout = window
                             .text_system()
                             .shape_line(x, font_size, &[run], None)
@@ -7507,10 +7597,7 @@ impl LineWithInvisibles {
                         width += line_layout.width;
                         len += highlighted_chunk.text.len();
                         line_byte_offset += highlighted_chunk.text.len();
-                        fragments.push(LineFragment::Text {
-                            line: line_layout,
-                            rendered_len,
-                        })
+                        fragments.push(LineFragment::Text(line_layout))
                     }
                 }
             } else {
@@ -7530,11 +7617,8 @@ impl LineWithInvisibles {
                         );
                         width += shaped_line.width;
                         len += shaped_line.len;
-                        let rendered_len = shaped_line.len();
-                        fragments.push(LineFragment::Text {
-                            line: shaped_line,
-                            rendered_len,
-                        });
+
+                        fragments.push(LineFragment::Text(shaped_line));
                         layouts.push(Self {
                             width: mem::take(&mut width),
                             len: mem::take(&mut len),
@@ -7639,16 +7723,6 @@ impl LineWithInvisibles {
     }
 
     fn add_point_diagnostic(&mut self, point_diagnostic: PointDiagnostic) {
-        let column = point_diagnostic.column as usize;
-        if self
-            .diagnostic_underline_severity_ranges
-            .iter()
-            .filter(|(range, _)| range.contains(&column))
-            .any(|(_, severity)| *severity <= point_diagnostic.severity)
-        {
-            return;
-        }
-
         if let Some(existing) = self
             .point_diagnostics
             .iter_mut()
@@ -7745,6 +7819,8 @@ impl LineWithInvisibles {
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         row: DisplayRow,
         content_origin: gpui::Point<Pixels>,
+        text_align: TextAlign,
+        content_width: Pixels,
         line_elements: &mut SmallVec<[AnyElement; 1]>,
         window: &mut Window,
         cx: &mut App,
@@ -7755,6 +7831,8 @@ impl LineWithInvisibles {
             scroll_pixel_position,
             content_origin,
             line_y,
+            text_align,
+            content_width,
             line_elements,
             window,
             cx,
@@ -7767,15 +7845,21 @@ impl LineWithInvisibles {
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
         line_y: Pixels,
+        text_align: TextAlign,
+        content_width: Pixels,
         line_elements: &mut SmallVec<[AnyElement; 1]>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let mut fragment_origin =
-            content_origin + gpui::point(Pixels::from(-scroll_pixel_position.x), line_y);
+        let mut fragment_origin = content_origin
+            + point(
+                self.alignment_offset(text_align, content_width)
+                    - Pixels::from(scroll_pixel_position.x),
+                line_y,
+            );
         for fragment in &mut self.fragments {
             match fragment {
-                LineFragment::Text { line, .. } => {
+                LineFragment::Text(line) => {
                     fragment_origin.x += line.width;
                 }
                 LineFragment::Element { element, size, .. } => {
@@ -7831,56 +7915,188 @@ impl LineWithInvisibles {
     ) {
         let line_height = layout.position_map.line_height;
         let mut fragment_origin = content_origin
-            + gpui::point(
-                Pixels::from(-layout.position_map.scroll_pixel_position.x),
+            + point(
+                self.alignment_offset(layout.text_align, layout.content_width)
+                    - Pixels::from(layout.position_map.scroll_pixel_position.x),
                 line_y,
             );
-
-        let alignment_offset = self.alignment_offset(layout.text_align, layout.content_width);
-        let scroll_x = Pixels::from(layout.position_map.scroll_pixel_position.x);
-        let line_origin_x = content_origin.x + alignment_offset - scroll_x;
-        let exclusions = self.diagnostic_underline_exclusions(layout.position_map.em_advance);
+        let mut points = self
+            .point_diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.column as usize <= self.len)
+            .collect::<SmallVec<[_; 4]>>();
+        points.sort_unstable_by_key(|diagnostic| diagnostic.column);
+        let has_points = !points.is_empty();
+        let mut points = points.into_iter().peekable();
+        let mut underlines = SmallVec::<[DiagnosticUnderline; 4]>::new();
+        let mut diagnostic_ranges = self.diagnostic_underline_severity_ranges.iter().peekable();
         let mut fragment_start = 0;
+        let mut end_underline_offset = layout.point_diagnostic_underline_offset;
+
         for fragment in &self.fragments {
-            match fragment {
-                LineFragment::Text { line, rendered_len } => {
-                    let fragment_end = fragment_start + line.len();
-                    let fragment_exclusions = exclusions
-                        .iter()
-                        .filter_map(|(range, span)| {
-                            let start = range.start.max(fragment_start);
-                            let end = range.end.min(fragment_end);
-                            (start < end).then(|| {
-                                let target_range = if *rendered_len == line.len() {
-                                    start - fragment_start..end - fragment_start
+            let (fragment_len, fragment_width, line) = match fragment {
+                LineFragment::Text(line) => {
+                    if has_points {
+                        let mut glyphs = line.runs.iter().flat_map(|run| &run.glyphs).peekable();
+                        line.paint_with_underline_handler(
+                            fragment_origin,
+                            line_height,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                            |range, origin, width, style, window| {
+                                let bounds = window.underline_bounds(origin, width, style);
+                                if bounds.is_empty() {
+                                    return;
+                                }
+                                let source_range = if line.text.len() == line.len() {
+                                    fragment_start + range.start..fragment_start + range.end
                                 } else {
-                                    0..*rendered_len
+                                    fragment_start..fragment_start + line.len()
                                 };
-                                (
-                                    target_range,
-                                    line_origin_x + span.start..line_origin_x + span.end,
-                                )
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    line.paint_with_underline_exclusions(
-                        fragment_origin,
-                        line_height,
-                        layout.text_align,
-                        Some(layout.content_width),
-                        &fragment_exclusions,
-                        window,
-                        cx,
-                    )
-                    .log_err();
-                    fragment_origin.x += line.width;
-                    fragment_start = fragment_end;
+                                if source_range.is_empty() {
+                                    window.paint_underline(origin, width, style);
+                                    return;
+                                }
+                                let mut start = source_range.start;
+                                let mut span_start = bounds.left();
+                                while start < source_range.end {
+                                    while diagnostic_ranges
+                                        .peek()
+                                        .is_some_and(|(range, _)| range.end <= start)
+                                    {
+                                        diagnostic_ranges.next();
+                                    }
+                                    let (end, severity) = match diagnostic_ranges.peek().copied() {
+                                        Some((range, severity)) if range.start <= start => {
+                                            (range.end.min(source_range.end), Some(*severity))
+                                        }
+                                        Some((range, _)) => {
+                                            (range.start.min(source_range.end), None)
+                                        }
+                                        None => (source_range.end, None),
+                                    };
+                                    let span_end = if end == source_range.end {
+                                        bounds.right()
+                                    } else {
+                                        let index = end - fragment_start;
+                                        while glyphs.peek().is_some_and(|glyph| glyph.index < index)
+                                        {
+                                            glyphs.next();
+                                        }
+                                        let x = fragment_origin.x
+                                            + glyphs
+                                                .peek()
+                                                .map_or(line.width, |glyph| glyph.position.x);
+                                        window
+                                            .underline_bounds(
+                                                point(x, origin.y),
+                                                Pixels::ZERO,
+                                                style,
+                                            )
+                                            .left()
+                                            .clamp(span_start, bounds.right())
+                                    };
+                                    if span_start < span_end {
+                                        if let Some(severity) = severity {
+                                            underlines.push(DiagnosticUnderline {
+                                                origin,
+                                                width,
+                                                style: *style,
+                                                bounds,
+                                                span: span_start..span_end,
+                                                severity,
+                                                is_point: false,
+                                            });
+                                        } else {
+                                            window.paint_underline_with_exclusions(
+                                                origin,
+                                                width,
+                                                style,
+                                                &[
+                                                    bounds.left()..span_start,
+                                                    span_end..bounds.right(),
+                                                ],
+                                            );
+                                        }
+                                    }
+                                    start = end;
+                                    span_start = span_end;
+                                }
+                            },
+                        )
+                        .log_err();
+                    } else {
+                        line.paint(
+                            fragment_origin,
+                            line_height,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        )
+                        .log_err();
+                    }
+                    (line.len(), line.width, Some(line))
                 }
-                LineFragment::Element { size, len, .. } => {
-                    fragment_origin.x += size.width;
-                    fragment_start += len;
+                LineFragment::Element { size, len, .. } => (*len, size.width, None),
+            };
+            let fragment_end = fragment_start + fragment_len;
+            if has_points {
+                let mut glyphs = line
+                    .into_iter()
+                    .flat_map(|line| &line.runs)
+                    .flat_map(|run| &run.glyphs)
+                    .peekable();
+                let has_glyphs = glyphs.peek().is_some();
+                let underline_offset = line
+                    .filter(|_| has_glyphs)
+                    .map_or(layout.point_diagnostic_underline_offset, |line| {
+                        underline_y_offset(line_height, line.ascent, line.descent)
+                    });
+                if fragment_len > 0 || fragment_width != Pixels::ZERO || has_glyphs {
+                    end_underline_offset = underline_offset;
+                }
+                while points
+                    .peek()
+                    .is_some_and(|diagnostic| (diagnostic.column as usize) < fragment_end)
+                {
+                    let Some(diagnostic) = points.next() else {
+                        break;
+                    };
+                    let index = diagnostic.column as usize - fragment_start;
+                    let x = if let Some(line) = line {
+                        let index = if line.text.len() == line.len() {
+                            index
+                        } else {
+                            0
+                        };
+                        while glyphs.peek().is_some_and(|glyph| glyph.index < index) {
+                            glyphs.next();
+                        }
+                        glyphs.peek().map_or(line.width, |glyph| glyph.position.x)
+                    } else {
+                        Pixels::ZERO
+                    };
+                    underlines.push(DiagnosticUnderline::point(
+                        diagnostic,
+                        fragment_origin + point(x, underline_offset),
+                        layout.position_map.em_advance,
+                        window,
+                    ));
                 }
             }
+            fragment_origin.x += fragment_width;
+            fragment_start = fragment_end;
+        }
+        for diagnostic in points {
+            underlines.push(DiagnosticUnderline::point(
+                diagnostic,
+                fragment_origin + point(Pixels::ZERO, end_underline_offset),
+                layout.position_map.em_advance,
+                window,
+            ));
         }
 
         self.draw_invisibles(
@@ -7894,99 +8110,7 @@ impl LineWithInvisibles {
             window,
             cx,
         );
-        self.draw_point_diagnostics(layout, content_origin, line_y, window);
-    }
-
-    fn point_diagnostic_spans(
-        &self,
-        diagnostic: &PointDiagnostic,
-        em_advance: Pixels,
-    ) -> Vec<(Pixels, Pixels)> {
-        let start_x = self.x_for_index(diagnostic.column as usize);
-        let end_x = start_x + em_advance;
-        let mut spans = vec![(start_x, end_x)];
-
-        let mut subtract_span = |range_start_x, range_end_x| {
-            let mut next_spans = Vec::new();
-            for (span_start, span_end) in spans.drain(..) {
-                if span_end <= range_start_x || range_end_x <= span_start {
-                    next_spans.push((span_start, span_end));
-                } else {
-                    if span_start < range_start_x {
-                        next_spans.push((span_start, range_start_x));
-                    }
-                    if range_end_x < span_end {
-                        next_spans.push((range_end_x, span_end));
-                    }
-                }
-            }
-            spans = next_spans;
-        };
-
-        for (range, severity) in &self.diagnostic_underline_severity_ranges {
-            if *severity <= diagnostic.severity {
-                subtract_span(self.x_for_index(range.start), self.x_for_index(range.end));
-            }
-        }
-        for other in &self.point_diagnostics {
-            let owns_overlap = other.severity < diagnostic.severity
-                || (other.severity == diagnostic.severity && other.column < diagnostic.column);
-            if owns_overlap {
-                let start_x = self.x_for_index(other.column as usize);
-                subtract_span(start_x, start_x + em_advance);
-            }
-        }
-
-        spans
-    }
-
-    fn diagnostic_underline_exclusions(
-        &self,
-        em_advance: Pixels,
-    ) -> Vec<(Range<usize>, Range<Pixels>)> {
-        let mut exclusions = Vec::new();
-        for (range, severity) in &self.diagnostic_underline_severity_ranges {
-            for point_diagnostic in &self.point_diagnostics {
-                if point_diagnostic.severity >= *severity {
-                    continue;
-                }
-                for (point_start, point_end) in
-                    self.point_diagnostic_spans(point_diagnostic, em_advance)
-                {
-                    let range_start = self.x_for_index(range.start);
-                    let range_end = self.x_for_index(range.end);
-                    let start = point_start.max(range_start);
-                    let end = point_end.min(range_end);
-                    if start < end {
-                        exclusions.push((range.clone(), start..end));
-                    }
-                }
-            }
-        }
-        exclusions
-    }
-
-    fn draw_point_diagnostics(
-        &self,
-        layout: &EditorLayout,
-        content_origin: gpui::Point<Pixels>,
-        line_y: Pixels,
-        window: &mut Window,
-    ) {
-        let alignment_offset = self.alignment_offset(layout.text_align, layout.content_width);
-        let scroll_x = Pixels::from(layout.position_map.scroll_pixel_position.x);
-        for diagnostic in &self.point_diagnostics {
-            for (span_start, span_end) in
-                self.point_diagnostic_spans(diagnostic, layout.position_map.em_advance)
-            {
-                let origin = content_origin
-                    + point(
-                        span_start + alignment_offset - scroll_x,
-                        line_y + layout.point_diagnostic_underline_offset,
-                    );
-                window.paint_underline(origin, span_end - span_start, &diagnostic.underline);
-            }
-        }
+        DiagnosticUnderline::paint_all(&underlines, window);
     }
 
     fn draw_background(
@@ -8001,19 +8125,20 @@ impl LineWithInvisibles {
         let line_y = line_height * (row.as_f64() - layout.position_map.scroll_position.y) as f32;
 
         let mut fragment_origin = content_origin
-            + gpui::point(
-                Pixels::from(-layout.position_map.scroll_pixel_position.x),
+            + point(
+                self.alignment_offset(layout.text_align, layout.content_width)
+                    - Pixels::from(layout.position_map.scroll_pixel_position.x),
                 line_y,
             );
 
         for fragment in &self.fragments {
             match fragment {
-                LineFragment::Text { line, .. } => {
+                LineFragment::Text(line) => {
                     line.paint_background(
                         fragment_origin,
                         line_height,
-                        layout.text_align,
-                        Some(layout.content_width),
+                        TextAlign::Left,
+                        None,
                         window,
                         cx,
                     )
@@ -8039,6 +8164,12 @@ impl LineWithInvisibles {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let line_origin = content_origin
+            + point(
+                self.alignment_offset(layout.text_align, layout.content_width)
+                    - Pixels::from(layout.position_map.scroll_pixel_position.x),
+                line_y,
+            );
         let extract_whitespace_info = |invisible: &Invisible| {
             let (token_offset, token_end_offset, invisible_symbol) = match invisible {
                 Invisible::Tab {
@@ -8059,16 +8190,8 @@ impl LineWithInvisibles {
             // Center the marker inside the actual glyph's width so it lines up with
             // proportional fonts instead of assuming a monospace `em_width` cell.
             let glyph_width = (self.x_for_index(token_end_offset) - token_x).max(Pixels::ZERO);
-            let x_offset: ScrollPixelOffset = token_x.into();
-            let invisible_offset: ScrollPixelOffset =
-                ((glyph_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0).into();
-            let origin = content_origin
-                + gpui::point(
-                    Pixels::from(
-                        x_offset + invisible_offset - layout.position_map.scroll_pixel_position.x,
-                    ),
-                    line_y,
-                );
+            let invisible_offset = (glyph_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0;
+            let origin = line_origin + point(token_x + invisible_offset, Pixels::ZERO);
 
             (
                 [token_offset, token_end_offset],
@@ -8158,9 +8281,7 @@ impl LineWithInvisibles {
 
         for fragment in &self.fragments {
             match fragment {
-                LineFragment::Text {
-                    line: shaped_line, ..
-                } => {
+                LineFragment::Text(shaped_line) => {
                     let fragment_end_index = fragment_start_index + shaped_line.len;
                     if index < fragment_end_index {
                         return fragment_start_x
@@ -8189,9 +8310,7 @@ impl LineWithInvisibles {
 
         for fragment in &self.fragments {
             match fragment {
-                LineFragment::Text {
-                    line: shaped_line, ..
-                } => {
+                LineFragment::Text(shaped_line) => {
                     let fragment_end_x = fragment_start_x + shaped_line.width;
                     if x < fragment_end_x {
                         return Some(
@@ -8220,9 +8339,7 @@ impl LineWithInvisibles {
 
         for fragment in &self.fragments {
             match fragment {
-                LineFragment::Text {
-                    line: shaped_line, ..
-                } => {
+                LineFragment::Text(shaped_line) => {
                     let fragment_end_index = fragment_start_index + shaped_line.len;
                     if index < fragment_end_index {
                         return shaped_line.font_id_for_index(index - fragment_start_index);
@@ -9462,6 +9579,7 @@ impl Element for EditorElement {
                         scroll_position,
                         scroll_pixel_position,
                         content_origin,
+                        text_hitbox.size.width,
                         window,
                         cx,
                     );
@@ -11284,15 +11402,19 @@ mod tests {
         editor_tests::{init_test, update_test_language_settings},
     };
     use buffer_diff::BufferDiff;
-    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, font};
+    use gpui::{
+        Render, TestAppContext, Underline, UpdateGlobal, VisualTestContext, WindowHandle, font,
+    };
     use language::{
         Buffer, Capability, Diagnostic, DiagnosticEntry, DiagnosticSet, SelectionGoal,
         language_settings, tree_sitter_python,
     };
     use log::info;
+    use lsp::DiagnosticSeverity;
     use multi_buffer::PathKey;
     use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
+    use text::PointUtf16;
     use util::test::sample_text;
 
     enum PrimaryNavigationOverlay {}
@@ -11547,41 +11669,24 @@ mod tests {
     fn test_point_diagnostic_stays_in_edited_excerpt(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        let (buffer, multi_buffer) = cx.update(|cx| {
-            let buffer = cx.new(|cx| Buffer::local("lead\n\nhidden\nsafe", cx));
-            let multi_buffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
-            multi_buffer.update(cx, |multi_buffer, cx| {
-                multi_buffer.set_excerpts_for_path(
-                    PathKey::for_buffer(&buffer, cx),
-                    buffer.clone(),
-                    vec![
-                        Point::new(0, 0)..Point::new(1, 0),
-                        Point::new(3, 0)..Point::new(3, 4),
-                    ],
-                    0,
-                    cx,
-                );
-            });
-            (buffer, multi_buffer)
-        });
-
-        buffer.update(cx, |buffer, cx| {
-            let point = text::PointUtf16::new(1, 0);
-            buffer.update_diagnostics(
-                lsp::LanguageServerId(0),
-                DiagnosticSet::new(
-                    [DiagnosticEntry::new(
-                        point..point,
-                        Diagnostic {
-                            severity: lsp::DiagnosticSeverity::ERROR,
-                            underline: true,
-                            ..Default::default()
-                        },
-                    )],
-                    &buffer.snapshot(),
-                ),
+        let point = Point::new(1, 0);
+        let diagnostic_point = PointUtf16::new(1, 0);
+        let buffer = point_diagnostic_buffer(
+            "lead\n\nhidden\nsafe",
+            [(diagnostic_point..diagnostic_point, ERROR)],
+            cx,
+        );
+        let multi_buffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        multi_buffer.update(cx, |multi_buffer, cx| {
+            multi_buffer.set_excerpts_for_path(
+                PathKey::for_buffer(&buffer, cx),
+                buffer.clone(),
+                vec![Point::zero()..point, Point::new(3, 0)..Point::new(3, 4)],
+                0,
                 cx,
             );
+        });
+        buffer.update(cx, |buffer, cx| {
             let snapshot = buffer.snapshot();
             buffer.edit(
                 [(snapshot.anchor_before(5)..snapshot.anchor_after(6), "")],
@@ -11592,402 +11697,222 @@ mod tests {
 
         let snapshot = cx.update(|cx| multi_buffer.read(cx).snapshot(cx));
         let excerpts = snapshot.excerpts().collect::<Vec<_>>();
-        let first_range = snapshot
-            .anchor_in_excerpt(excerpts[0].context.start)
-            .unwrap()
-            .to_point(&snapshot)
-            ..snapshot
-                .anchor_in_excerpt(excerpts[0].context.end)
-                .unwrap()
-                .to_point(&snapshot);
-        let second_range = snapshot
-            .anchor_in_excerpt(excerpts[1].context.start)
-            .unwrap()
-            .to_point(&snapshot)
-            ..snapshot
-                .anchor_in_excerpt(excerpts[1].context.end)
-                .unwrap()
-                .to_point(&snapshot);
-        let first_diagnostics = EditorElement::point_diagnostics_in_range(&snapshot, first_range);
-        let second_diagnostics = EditorElement::point_diagnostics_in_range(&snapshot, second_range);
-        assert_eq!(first_diagnostics.len(), 1);
-        assert_eq!(first_diagnostics[0].0, Point::new(1, 0));
-        assert!(second_diagnostics.is_empty());
+        let points_by_excerpt = excerpts
+            .iter()
+            .map(|excerpt| {
+                let start = snapshot
+                    .anchor_in_excerpt(excerpt.context.start)
+                    .expect("excerpt start")
+                    .to_point(&snapshot);
+                let end = snapshot
+                    .anchor_in_excerpt(excerpt.context.end)
+                    .expect("excerpt end")
+                    .to_point(&snapshot);
+                EditorElement::point_diagnostics_in_range(&snapshot, start..end)
+                    .into_iter()
+                    .map(|(point, _)| point)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(points_by_excerpt, vec![vec![point], Vec::new()]);
     }
 
     #[gpui::test]
-    fn test_point_diagnostic_without_glyph_has_render_layout(cx: &mut TestAppContext) {
+    fn test_point_diagnostic_painted_without_glyph_or_at_edited_eof(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        for (text, point) in [
-            ("\nx", text::PointUtf16::new(0, 0)),
-            ("x\n", text::PointUtf16::new(1, 0)),
-            ("", text::PointUtf16::new(0, 0)),
+        for (text, point, deletion, expected_row, expected_pixels) in [
+            ("\nx", PointUtf16::new(0, 0), None, 0, 0..16),
+            ("x\n", PointUtf16::new(1, 0), None, 1, 0..16),
+            ("", PointUtf16::new(0, 0), None, 0, 0..16),
+            ("x\n", PointUtf16::new(1, 0), Some(1..2), 0, 16..32),
         ] {
-            let buffer = cx.new(|cx| Buffer::local(text, cx));
-            buffer.update(cx, |buffer, cx| {
-                let snapshot = buffer.snapshot();
-                let diagnostics = DiagnosticSet::new(
-                    [
-                        DiagnosticEntry::new(
-                            point..point,
-                            Diagnostic {
-                                severity: lsp::DiagnosticSeverity::WARNING,
-                                underline: true,
-                                ..Default::default()
-                            },
-                        ),
-                        DiagnosticEntry::new(
-                            point..point,
-                            Diagnostic {
-                                severity: lsp::DiagnosticSeverity::ERROR,
-                                underline: true,
-                                ..Default::default()
-                            },
-                        ),
-                    ],
-                    &snapshot,
+            for clip_at_line_ends in [false, true] {
+                let buffer = point_diagnostic_buffer(
+                    text,
+                    [(point..point, WARNING), (point..point, ERROR)],
+                    cx,
                 );
-                buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
-            });
-
-            let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-            let window = cx.add_window(|window, cx| {
-                Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
-            });
-            let cx = &mut VisualTestContext::from_window(*window, cx);
-            let Ok(editor) = window.root(cx) else {
-                assert!(false, "editor window should have a root view");
-                return;
-            };
-            let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
-
-            let (_, state) = cx.draw(Default::default(), size(px(500.), px(200.)), |_, _| {
-                EditorElement::new(&editor, style.clone())
-            });
-
-            let Some(line) = state.position_map.line_layouts.get(point.row as usize) else {
-                assert!(false, "point diagnostic row should have a line layout");
-                return;
-            };
-            assert_eq!(line.point_diagnostics.len(), 1, "buffer text: {text:?}");
-            let Some(diagnostic) = line.point_diagnostics.first() else {
-                assert!(false, "point diagnostic should have a render layout");
-                return;
-            };
-            assert_eq!(diagnostic.column, point.column);
-            assert_eq!(diagnostic.underline.color, Some(style.status.error));
+                if let Some(deletion) = deletion.clone() {
+                    buffer.update(cx, |buffer, cx| buffer.edit([(deletion, "")], None, cx));
+                }
+                let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                let (window, editor) = point_diagnostic_editor(multi_buffer, cx);
+                editor.update(cx, |editor, cx| {
+                    editor.set_clip_at_line_ends(clip_at_line_ends, cx);
+                });
+                assert_painted_point_diagnostics(
+                    window,
+                    &[(expected_row, expected_pixels.clone(), ERROR)],
+                    cx,
+                );
+            }
         }
     }
 
     #[gpui::test]
-    fn test_point_diagnostic_respects_ranged_diagnostic_severity(cx: &mut TestAppContext) {
+    fn test_point_diagnostic_painted_monospace_severity(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        let buffer = cx.new(|cx| Buffer::local("\nabc", cx));
-        buffer.update(cx, |buffer, cx| {
-            let snapshot = buffer.snapshot();
-            let diagnostics = DiagnosticSet::new(
-                [
-                    DiagnosticEntry::new(
-                        text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 0),
-                        Diagnostic {
-                            severity: lsp::DiagnosticSeverity::WARNING,
-                            underline: true,
-                            ..Default::default()
-                        },
-                    ),
-                    DiagnosticEntry::new(
-                        text::PointUtf16::new(1, 0)..text::PointUtf16::new(1, 3),
-                        Diagnostic {
-                            severity: lsp::DiagnosticSeverity::ERROR,
-                            underline: true,
-                            ..Default::default()
-                        },
-                    ),
-                ],
-                &snapshot,
-            );
-            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
-            buffer.edit([(0..1, "")], None, cx);
-        });
-
-        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let window = cx.add_window(|window, cx| {
-            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
-        });
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-        let Ok(editor) = window.root(cx) else {
-            assert!(false, "editor window should have a root view");
-            return;
-        };
-        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
-
-        let (_, state) = cx.draw(Default::default(), size(px(500.), px(200.)), |_, _| {
-            EditorElement::new(&editor, style.clone())
-        });
-        let Some(line) = state.position_map.line_layouts.first() else {
-            assert!(false, "diagnostic row should have a line layout");
-            return;
-        };
-        assert!(line.point_diagnostics.is_empty());
-    }
-
-    #[gpui::test]
-    fn test_point_diagnostic_painted_span_overlaps_ranged_diagnostic(cx: &mut TestAppContext) {
-        init_test(cx, |_| {});
-
-        let buffer = cx.new(|cx| Buffer::local("\niabc", cx));
-        buffer.update(cx, |buffer, cx| {
-            let snapshot = buffer.snapshot();
-            let diagnostics = DiagnosticSet::new(
-                [
-                    DiagnosticEntry::new(
-                        text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 0),
-                        Diagnostic {
-                            severity: lsp::DiagnosticSeverity::WARNING,
-                            underline: true,
-                            ..Default::default()
-                        },
-                    ),
-                    DiagnosticEntry::new(
-                        text::PointUtf16::new(1, 1)..text::PointUtf16::new(1, 4),
-                        Diagnostic {
-                            severity: lsp::DiagnosticSeverity::ERROR,
-                            underline: true,
-                            ..Default::default()
-                        },
-                    ),
-                ],
-                &snapshot,
-            );
-            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
-            buffer.edit([(0..1, "")], None, cx);
-        });
-
-        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let window = cx.add_window(|window, cx| {
-            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
-        });
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-        let Ok(editor) = window.root(cx) else {
-            assert!(false, "editor window should have a root view");
-            return;
-        };
-        let mut style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
-        style.text.font_family = ".ZedSans".into();
-        let expected_offset = Cell::new(None);
-        let (_, state) = cx.draw(Default::default(), size(px(500.), px(200.)), |window, _| {
-            let font_id = window.text_system().resolve_font(&style.text.font());
-            let font_size = style.text.font_size.to_pixels(window.rem_size());
-            let line_height = style.text.line_height_in_pixels(window.rem_size());
-            let descent = window.text_system().descent(font_id, font_size);
-            expected_offset.set(Some(underline_y_offset(
-                line_height,
-                window.text_system().ascent(font_id, font_size),
-                descent.abs(),
-            )));
-            EditorElement::new(&editor, style.clone())
-        });
-
-        let line = &state.position_map.line_layouts[0];
-        assert!(
-            line.diagnostic_underline_severity_ranges
-                .iter()
-                .any(|(range, severity)| {
-                    range == &(1..4) && *severity == lsp::DiagnosticSeverity::ERROR
-                })
-        );
-        assert!(
-            line.point_diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.severity == lsp::DiagnosticSeverity::WARNING)
-        );
-        let point_start = line.x_for_index(0);
-        let point_end = point_start + state.position_map.em_advance;
-        let ranged_start = line.x_for_index(1);
-        let ranged_end = line.x_for_index(4);
-        assert!(point_start < ranged_end && ranged_start < point_end);
-        let warning = line
-            .point_diagnostics
-            .iter()
-            .find(|diagnostic| diagnostic.severity == lsp::DiagnosticSeverity::WARNING)
-            .expect("warning point diagnostic should be retained");
-        let spans = line.point_diagnostic_spans(warning, state.position_map.em_advance);
-        assert!(
-            spans
-                .iter()
-                .all(|(start, end)| *end <= ranged_start || ranged_end <= *start)
-        );
-        assert!(
-            spans
-                .iter()
-                .any(|(start, end)| { *start == point_start && *end == ranged_start })
-        );
-        let Some(expected_offset) = expected_offset.take() else {
-            assert!(
-                false,
-                "point diagnostic metric expectation was not calculated"
-            );
-            return;
-        };
-        assert_eq!(state.point_diagnostic_underline_offset, expected_offset);
-    }
-
-    #[gpui::test]
-    fn test_stronger_point_clips_weaker_ranged_diagnostic(cx: &mut TestAppContext) {
-        init_test(cx, |_| {});
-
-        let buffer = cx.new(|cx| Buffer::local("\niabc", cx));
-        buffer.update(cx, |buffer, cx| {
-            let snapshot = buffer.snapshot();
-            buffer.update_diagnostics(
-                lsp::LanguageServerId(0),
-                DiagnosticSet::new(
+        for (point_severity, other_severity) in [(WARNING, ERROR), (ERROR, WARNING), (ERROR, ERROR)]
+        {
+            for other_range in [0..1, 0..4, 1..4, 1..1] {
+                let buffer = point_diagnostic_buffer(
+                    "\niabc",
                     [
-                        DiagnosticEntry::new(
-                            text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 0),
-                            Diagnostic {
-                                severity: lsp::DiagnosticSeverity::ERROR,
-                                underline: true,
-                                ..Default::default()
-                            },
-                        ),
-                        DiagnosticEntry::new(
-                            text::PointUtf16::new(1, 1)..text::PointUtf16::new(1, 4),
-                            Diagnostic {
-                                severity: lsp::DiagnosticSeverity::WARNING,
-                                underline: true,
-                                ..Default::default()
-                            },
+                        (PointUtf16::new(0, 0)..PointUtf16::new(0, 0), point_severity),
+                        (
+                            PointUtf16::new(1, other_range.start)
+                                ..PointUtf16::new(1, other_range.end),
+                            other_severity,
                         ),
                     ],
-                    &snapshot,
-                ),
-                cx,
-            );
-            buffer.edit([(0..1, "")], None, cx);
-        });
+                    cx,
+                );
+                buffer.update(cx, |buffer, cx| buffer.edit([(0..1, "")], None, cx));
+                let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                let (window, editor) = point_diagnostic_editor(multi_buffer, cx);
 
-        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let window = cx.add_window(|window, cx| {
-            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
-        });
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-        let Ok(editor) = window.root(cx) else {
-            assert!(false, "editor window should have a root view");
-            return;
-        };
-        let mut style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
-        style.text.font_family = ".ZedSans".into();
-        let (_, state) = cx.draw(Default::default(), size(px(500.), px(200.)), |_, _| {
-            EditorElement::new(&editor, style.clone())
-        });
-
-        let line = &state.position_map.line_layouts[0];
-        assert!(
-            line.diagnostic_underline_severity_ranges
-                .iter()
-                .any(|(range, severity)| {
-                    range == &(1..4) && *severity == lsp::DiagnosticSeverity::WARNING
-                })
-        );
-        let error = line
-            .point_diagnostics
-            .iter()
-            .find(|diagnostic| diagnostic.severity == lsp::DiagnosticSeverity::ERROR)
-            .expect("error point diagnostic should be retained");
-        let point_spans = line.point_diagnostic_spans(error, state.position_map.em_advance);
-        let Some((point_start_x, point_end_x)) = point_spans.first().copied() else {
-            assert!(false, "error point diagnostic should have a painted span");
-            return;
-        };
-        let point_start = line.x_for_index(0);
-        let point_end = point_start + state.position_map.em_advance;
-        let range_start = line.x_for_index(1);
-        let range_end = line.x_for_index(4);
-        assert!(point_start < range_end && range_start < point_end);
-        let exclusions = line.diagnostic_underline_exclusions(state.position_map.em_advance);
-        assert!(exclusions.iter().any(|(range, span)| {
-            range == &(1..4)
-                && span.start == range_start.max(point_start_x)
-                && span.end == range_end.min(point_end_x)
-        }));
+                for offset_content in [false, true] {
+                    editor.update(cx, |editor, cx| {
+                        editor.set_offset_content(offset_content, cx)
+                    });
+                    for (
+                        scale,
+                        point_width,
+                        range_width,
+                        full_range_width,
+                        gutter_origins,
+                        root_origins,
+                    ) in [
+                        (1., 8, 23, 31, (4, 11), [0, 0, 0, 1, 3]),
+                        (1.25, 10, 29, 39, (4, 14), [0, 0, 1, 1, 4]),
+                        (1.5, 12, 35, 47, (5, 17), [0, 0, 1, 1, 5]),
+                        (2., 16, 47, 62, (7, 23), [0, 0, 1, 2, 6]),
+                        (3., 23, 70, 94, (11, 34), [0, 1, 1, 2, 10]),
+                    ] {
+                        cx.simulate_window_scale_factor_change(window.into(), scale);
+                        for (offset, root_start) in
+                            [0., 0.2, 0.5, 0.8, 3.25].into_iter().zip(root_origins)
+                        {
+                            window.root(cx).expect("test view").update(cx, |view, cx| {
+                                view.x_offset = px(offset);
+                                cx.notify();
+                            });
+                            let (point_start, next_start) = if offset_content {
+                                (root_start + gutter_origins.0, root_start + gutter_origins.1)
+                            } else {
+                                (root_start, root_start + point_width)
+                            };
+                            let point_pixels = point_start..point_start + point_width;
+                            let other_pixels = match (other_range.start, other_range.end) {
+                                (0, 1) => point_pixels.clone(),
+                                (0, 4) => point_start..point_start + full_range_width,
+                                (1, 1) => next_start..next_start + point_width,
+                                (1, 4) => next_start..next_start + range_width,
+                                _ => unreachable!(),
+                            };
+                            let expected = (point_start..other_pixels.end.max(point_pixels.end))
+                                .filter_map(|x| {
+                                    let severity = match (
+                                        point_pixels.contains(&x),
+                                        other_pixels.contains(&x),
+                                    ) {
+                                        (true, true) => point_severity.min(other_severity),
+                                        (true, false) => point_severity,
+                                        (false, true) => other_severity,
+                                        (false, false) => return None,
+                                    };
+                                    Some((0, x..x + 1, severity))
+                                })
+                                .collect::<Vec<_>>();
+                            assert_painted_point_diagnostics(window, &expected, cx);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[gpui::test]
-    fn test_point_diagnostics_with_retained_edit_can_overlap(cx: &mut TestAppContext) {
-        init_test(cx, |_| {});
+    fn test_point_diagnostic_painted_tabs_multibyte_and_replacements(cx: &mut TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.tab_size = NonZeroU32::new(4);
+            settings.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+        });
 
-        let buffer = cx.new(|cx| Buffer::local("\niabc", cx));
-        buffer.update(cx, |buffer, cx| {
-            let snapshot = buffer.snapshot();
-            buffer.update_diagnostics(
-                lsp::LanguageServerId(0),
-                DiagnosticSet::new(
+        for (text, range, ranged_pixels) in [
+            ("\n\tabc", 0..1, 2..64),
+            ("\néabc", 1..4, 18..65),
+            ("\n😀abc", 2..5, 33..80),
+            ("\n\u{00a0}abc", 1..4, 18..65),
+            ("\na\u{00a0}bc", 1..3, 33..49),
+        ] {
+            for (point_severity, ranged_severity) in
+                [(WARNING, ERROR), (ERROR, WARNING), (ERROR, ERROR)]
+            {
+                let buffer = point_diagnostic_buffer(
+                    text,
                     [
-                        DiagnosticEntry::new(
-                            text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 0),
-                            Diagnostic {
-                                severity: lsp::DiagnosticSeverity::ERROR,
-                                underline: true,
-                                ..Default::default()
-                            },
-                        ),
-                        DiagnosticEntry::new(
-                            text::PointUtf16::new(1, 1)..text::PointUtf16::new(1, 1),
-                            Diagnostic {
-                                severity: lsp::DiagnosticSeverity::ERROR,
-                                underline: true,
-                                ..Default::default()
-                            },
+                        (PointUtf16::new(0, 0)..PointUtf16::new(0, 0), point_severity),
+                        (
+                            PointUtf16::new(1, range.start)..PointUtf16::new(1, range.end),
+                            ranged_severity,
                         ),
                     ],
-                    &snapshot,
-                ),
-                cx,
+                    cx,
+                );
+                buffer.update(cx, |buffer, cx| buffer.edit([(0..1, "")], None, cx));
+                let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                let (window, _) = point_diagnostic_editor(multi_buffer, cx);
+                window.root(cx).expect("test view").update(cx, |view, cx| {
+                    view.x_offset = px(0.8);
+                    cx.notify();
+                });
+                let expected = (2..ranged_pixels.end)
+                    .filter_map(|x| {
+                        let severity = match (x < 18, ranged_pixels.contains(&x)) {
+                            (true, true) => point_severity.min(ranged_severity),
+                            (true, false) => point_severity,
+                            (false, true) => ranged_severity,
+                            (false, false) => return None,
+                        };
+                        Some((0, x..x + 1, severity))
+                    })
+                    .collect::<Vec<_>>();
+                assert_painted_point_diagnostics(window, &expected, cx);
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostic_ignores_non_diagnostic_replacement_underline(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        for (point_severity, ranged_severity) in [
+            (None, ERROR),
+            (Some(WARNING), ERROR),
+            (Some(ERROR), WARNING),
+            (Some(ERROR), ERROR),
+        ] {
+            let diagnostics = iter::once((
+                PointUtf16::new(1, 0)..PointUtf16::new(1, 1),
+                ranged_severity,
+            ))
+            .chain(
+                point_severity
+                    .map(|severity| (PointUtf16::new(0, 0)..PointUtf16::new(0, 0), severity)),
             );
-            buffer.edit([(0..1, "")], None, cx);
-        });
-
-        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let window = cx.add_window(|window, cx| {
-            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
-        });
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-        let Ok(editor) = window.root(cx) else {
-            assert!(false, "editor window should have a root view");
-            return;
-        };
-        let mut style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
-        style.text.font_family = ".ZedSans".into();
-        let (_, state) = cx.draw(Default::default(), size(px(500.), px(200.)), |_, _| {
-            EditorElement::new(&editor, style.clone())
-        });
-        let line = &state.position_map.line_layouts[0];
-        assert_eq!(line.point_diagnostics.len(), 2);
-        assert_eq!(line.point_diagnostics[0].column, 0);
-        assert_eq!(line.point_diagnostics[1].column, 1);
-        let first_start = line.x_for_index(0);
-        let second_start = line.x_for_index(1);
-        assert!(first_start < second_start + state.position_map.em_advance);
-        assert!(second_start < first_start + state.position_map.em_advance);
-
-        let first_spans =
-            line.point_diagnostic_spans(&line.point_diagnostics[0], state.position_map.em_advance);
-        let second_spans =
-            line.point_diagnostic_spans(&line.point_diagnostics[1], state.position_map.em_advance);
-        assert_eq!(
-            first_spans,
-            vec![(first_start, first_start + state.position_map.em_advance)]
-        );
-        assert_eq!(
-            second_spans,
-            vec![(
-                first_start + state.position_map.em_advance,
-                second_start + state.position_map.em_advance,
-            )]
-        );
+            let buffer = point_diagnostic_buffer("\n\u{00a0}abc", diagnostics, cx);
+            buffer.update(cx, |buffer, cx| buffer.edit([(0..1, "")], None, cx));
+            let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let (window, _) = point_diagnostic_editor(multi_buffer, cx);
+            let expected = point_severity
+                .map(|severity| (0, 0..16, severity))
+                .into_iter()
+                .collect::<Vec<_>>();
+            assert_painted_point_diagnostics(window, &expected, cx);
+        }
     }
 
     #[gpui::test]
@@ -11995,37 +11920,18 @@ mod tests {
         init_test(cx, |_| {});
 
         for (text, base_text, point, expected_display_row) in [
-            ("", "two\n", Point::new(0, 0), 1),
-            ("\nthree\n", "one\n\nthree\n", Point::new(0, 0), 1),
-            ("one\n\nthree\n", "one\ntwo\n\nthree\n", Point::new(1, 0), 2),
-            ("one\n", "one\ntwo\n", Point::new(1, 0), 2),
+            ("", "two\n", PointUtf16::new(0, 0), 1),
+            ("\nthree\n", "one\n\nthree\n", PointUtf16::new(0, 0), 1),
+            (
+                "one\n\nthree\n",
+                "one\ntwo\n\nthree\n",
+                PointUtf16::new(1, 0),
+                2,
+            ),
+            ("one\n", "one\ntwo\n", PointUtf16::new(1, 0), 2),
         ] {
-            let buffer = cx.new(|cx| Buffer::local(text, cx));
-            buffer.update(cx, |buffer, cx| {
-                let point = text::PointUtf16::new(point.row, point.column);
-                let diagnostics = DiagnosticSet::new(
-                    [
-                        DiagnosticEntry::new(
-                            point..point,
-                            Diagnostic {
-                                severity: lsp::DiagnosticSeverity::WARNING,
-                                underline: true,
-                                ..Default::default()
-                            },
-                        ),
-                        DiagnosticEntry::new(
-                            point..point,
-                            Diagnostic {
-                                severity: lsp::DiagnosticSeverity::ERROR,
-                                underline: true,
-                                ..Default::default()
-                            },
-                        ),
-                    ],
-                    &buffer.snapshot(),
-                );
-                buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
-            });
+            let buffer =
+                point_diagnostic_buffer(text, [(point..point, WARNING), (point..point, ERROR)], cx);
 
             let diff = cx.new(|cx| {
                 BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx)
@@ -12038,7 +11944,7 @@ mod tests {
             cx.run_until_parked();
 
             let snapshot = cx.update(|cx| multi_buffer.read(cx).snapshot(cx));
-            let expected_point = Point::new(expected_display_row as u32, 0);
+            let expected_point = Point::new(expected_display_row, 0);
             let deleted_region_start = snapshot
                 .diff_hunks_in_range(Point::zero()..snapshot.max_point())
                 .find(|hunk| hunk.status.kind == DiffHunkStatusKind::Deleted)
@@ -12050,59 +11956,17 @@ mod tests {
                     query_start..snapshot.max_point(),
                 );
                 assert_eq!(
-                    point_diagnostics.len(),
-                    2,
-                    "text: {text:?}, base: {base_text:?}, query start: {query_start:?}, points: {:?}",
                     point_diagnostics
                         .iter()
-                        .map(|(point, _)| point)
-                        .collect::<Vec<_>>()
-                );
-                assert!(
-                    point_diagnostics
-                        .iter()
-                        .all(|(point, _)| *point == expected_point),
-                    "text: {text:?}, base: {base_text:?}, query start: {query_start:?}, points: {:?}",
-                    point_diagnostics
-                        .iter()
-                        .map(|(point, _)| point)
-                        .collect::<Vec<_>>()
+                        .map(|(point, _)| *point)
+                        .collect::<Vec<_>>(),
+                    vec![expected_point; 2],
+                    "text: {text:?}, base: {base_text:?}, query start: {query_start:?}",
                 );
             }
 
-            let window = cx.add_window(|window, cx| {
-                let mut editor = Editor::new(EditorMode::full(), multi_buffer, None, window, cx);
-                editor.set_read_only(true);
-                editor
-            });
-            let cx = &mut VisualTestContext::from_window(*window, cx);
-            let Ok(editor) = window.root(cx) else {
-                assert!(false, "editor window should have a root view");
-                return;
-            };
-            let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
-
-            let (_, state) = cx.draw(Default::default(), size(px(500.), px(300.)), |_, _| {
-                EditorElement::new(&editor, style.clone())
-            });
-            let point_diagnostic_rows = state
-                .position_map
-                .line_layouts
-                .iter()
-                .enumerate()
-                .filter_map(|(row, line)| (!line.point_diagnostics.is_empty()).then_some(row))
-                .collect::<Vec<_>>();
-            assert_eq!(point_diagnostic_rows, vec![expected_display_row]);
-            let Some(diagnostic) = state
-                .position_map
-                .line_layouts
-                .get(expected_display_row)
-                .and_then(|line| line.point_diagnostics.first())
-            else {
-                assert!(false, "point diagnostic should be on its live row");
-                return;
-            };
-            assert_eq!(diagnostic.underline.color, Some(style.status.error));
+            let (window, _) = point_diagnostic_editor(multi_buffer, cx);
+            assert_painted_point_diagnostics(window, &[(expected_display_row, 0..16, ERROR)], cx);
         }
     }
 
@@ -12110,39 +11974,18 @@ mod tests {
     fn test_point_diagnostics_exclude_collapsed_and_clipped_ranges(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        let collapsed_buffer = cx.new(|cx| Buffer::local("bad ok", cx));
-        collapsed_buffer.update(cx, |buffer, cx| {
-            let diagnostics = DiagnosticSet::new(
-                [DiagnosticEntry::new(
-                    text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 3),
-                    Diagnostic::default(),
-                )],
-                &buffer.snapshot(),
-            );
-            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
-            buffer.edit([(0..4, "")], None, cx);
-        });
-        let collapsed_multi_buffer = cx.new(|cx| MultiBuffer::singleton(collapsed_buffer, cx));
-        let snapshot = cx.update(|cx| collapsed_multi_buffer.read(cx).snapshot(cx));
-        assert!(
-            EditorElement::point_diagnostics_in_range(
-                &snapshot,
-                Point::zero()..snapshot.max_point(),
-            )
-            .is_empty()
+        let collapsed_buffer = point_diagnostic_buffer(
+            "bad ok",
+            [(PointUtf16::new(0, 0)..PointUtf16::new(0, 3), ERROR)],
+            cx,
         );
-
-        let clipped_buffer = cx.new(|cx| Buffer::local("bad\ngood\n", cx));
-        clipped_buffer.update(cx, |buffer, cx| {
-            let diagnostics = DiagnosticSet::new(
-                [DiagnosticEntry::new(
-                    text::PointUtf16::new(0, 0)..text::PointUtf16::new(1, 0),
-                    Diagnostic::default(),
-                )],
-                &buffer.snapshot(),
-            );
-            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
-        });
+        collapsed_buffer.update(cx, |buffer, cx| buffer.edit([(0..4, "")], None, cx));
+        let collapsed_multi_buffer = cx.new(|cx| MultiBuffer::singleton(collapsed_buffer, cx));
+        let clipped_buffer = point_diagnostic_buffer(
+            "bad\ngood\n",
+            [(PointUtf16::new(0, 0)..PointUtf16::new(1, 0), ERROR)],
+            cx,
+        );
         let clipped_multi_buffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
         clipped_multi_buffer.update(cx, |multi_buffer, cx| {
             multi_buffer.set_excerpt_ranges_for_path(
@@ -12155,14 +11998,19 @@ mod tests {
                 cx,
             );
         });
-        let snapshot = cx.update(|cx| clipped_multi_buffer.read(cx).snapshot(cx));
-        assert!(
-            EditorElement::point_diagnostics_in_range(
-                &snapshot,
-                Point::zero()..snapshot.max_point(),
-            )
-            .is_empty()
-        );
+        for multi_buffer in [collapsed_multi_buffer, clipped_multi_buffer] {
+            let snapshot = cx.update(|cx| multi_buffer.read(cx).snapshot(cx));
+            assert_eq!(
+                EditorElement::point_diagnostics_in_range(
+                    &snapshot,
+                    Point::zero()..snapshot.max_point(),
+                )
+                .len(),
+                0,
+            );
+            let (window, _) = point_diagnostic_editor(multi_buffer, cx);
+            assert_painted_point_diagnostics(window, &[], cx);
+        }
     }
 
     #[gpui::test]
@@ -12176,107 +12024,28 @@ mod tests {
             });
         });
 
-        let diagnostic_point = text::PointUtf16::new(1, 0);
-        let buffer = cx.new(|cx| Buffer::local("fn f() {\n\n}\n", cx));
-        buffer.update(cx, |buffer, cx| {
-            let diagnostics = DiagnosticSet::new(
-                [DiagnosticEntry::new(
-                    diagnostic_point..diagnostic_point,
-                    Diagnostic {
-                        severity: lsp::DiagnosticSeverity::ERROR,
-                        underline: true,
-                        ..Default::default()
-                    },
-                )],
-                &buffer.snapshot(),
-            );
-            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
-        });
-
+        let diagnostic_point = PointUtf16::new(1, 0);
+        let buffer = point_diagnostic_buffer(
+            "fn f() {\n\n}\n",
+            [(diagnostic_point..diagnostic_point, ERROR)],
+            cx,
+        );
         let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let window = cx.add_window(|window, cx| {
-            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
-        });
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-        let Ok(editor) = window.root(cx) else {
-            assert!(false, "editor window should have a root view");
-            return;
-        };
-        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
-        editor.update_in(cx, |editor, window, cx| {
+        let (window, editor) = point_diagnostic_editor(multi_buffer, cx);
+        assert_painted_point_diagnostics(window, &[(1, 0..16, ERROR)], cx);
+        let visual_cx = &mut VisualTestContext::from_window(*window, cx);
+        editor.update_in(visual_cx, |editor, window, cx| {
             editor.display_map.update(cx, |display_map, _| {
                 display_map.fold_placeholder = FoldPlaceholder::test();
             });
             editor.fold_ranges(vec![Point::new(0, 8)..Point::new(2, 0)], false, window, cx);
         });
 
-        let (_, state) = cx.draw(Default::default(), size(px(500.), px(200.)), |_, _| {
-            EditorElement::new(&editor, style.clone())
-        });
-        assert!(
-            state
-                .position_map
-                .line_layouts
-                .iter()
-                .all(|line| line.point_diagnostics.is_empty())
-        );
+        assert_painted_point_diagnostics(window, &[], &mut visual_cx.cx);
     }
 
     #[gpui::test]
-    fn test_point_diagnostic_at_eof_ignores_line_end_clipping(cx: &mut TestAppContext) {
-        init_test(cx, |_| {});
-
-        let diagnostic_point = text::PointUtf16::new(1, 0);
-        let buffer = cx.new(|cx| Buffer::local("x\n", cx));
-        buffer.update(cx, |buffer, cx| {
-            let diagnostics = DiagnosticSet::new(
-                [DiagnosticEntry::new(
-                    diagnostic_point..diagnostic_point,
-                    Diagnostic {
-                        severity: lsp::DiagnosticSeverity::ERROR,
-                        underline: true,
-                        ..Default::default()
-                    },
-                )],
-                &buffer.snapshot(),
-            );
-            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
-            buffer.edit([(1..2, "")], None, cx);
-        });
-
-        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let window = cx.add_window(|window, cx| {
-            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
-        });
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-        let Ok(editor) = window.root(cx) else {
-            assert!(false, "editor window should have a root view");
-            return;
-        };
-        let style = cx.update(|_, cx| {
-            editor.update(cx, |editor, cx| {
-                editor.set_clip_at_line_ends(true, cx);
-                editor.style(cx).clone()
-            })
-        });
-
-        let (_, state) = cx.draw(Default::default(), size(px(500.), px(200.)), |_, _| {
-            EditorElement::new(&editor, style.clone())
-        });
-        let Some(line) = state.position_map.line_layouts.first() else {
-            assert!(false, "EOF diagnostic row should have a line layout");
-            return;
-        };
-        assert_eq!(line.point_diagnostics.len(), 1);
-        let Some(diagnostic) = line.point_diagnostics.first() else {
-            assert!(false, "EOF point diagnostic should have a render layout");
-            return;
-        };
-        assert_eq!(diagnostic.column, 1);
-    }
-
-    #[gpui::test]
-    async fn test_point_diagnostic_has_sticky_header_render_layout(cx: &mut TestAppContext) {
+    async fn test_point_diagnostic_painted_in_sticky_header(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
         cx.update(|cx| {
             settings::SettingsStore::update_global(cx, |store, cx| {
@@ -12289,21 +12058,10 @@ mod tests {
             });
         });
 
-        let diagnostic_point = text::PointUtf16::new(0, 0);
-        let buffer = cx.new(|cx| Buffer::local("", cx).with_language(languages::rust_lang(), cx));
+        let diagnostic_point = PointUtf16::new(0, 0);
+        let buffer = point_diagnostic_buffer("", [(diagnostic_point..diagnostic_point, ERROR)], cx);
         buffer.update(cx, |buffer, cx| {
-            let diagnostics = DiagnosticSet::new(
-                [DiagnosticEntry::new(
-                    diagnostic_point..diagnostic_point,
-                    Diagnostic {
-                        severity: lsp::DiagnosticSeverity::ERROR,
-                        underline: true,
-                        ..Default::default()
-                    },
-                )],
-                &buffer.snapshot(),
-            );
-            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
+            buffer.set_language(Some(languages::rust_lang()), cx);
             buffer.edit(
                 [(
                     0..0,
@@ -12320,81 +12078,45 @@ mod tests {
             );
 
             let snapshot = buffer.snapshot();
-            let mut diagnostics = snapshot.diagnostics_in_range::<_, text::PointUtf16>(
-                text::PointUtf16::new(0, 0)..snapshot.max_point_utf16(),
-                false,
+            assert_eq!(
+                snapshot
+                    .diagnostics_in_range::<_, Point>(Point::zero()..snapshot.max_point(), false)
+                    .map(|diagnostic| diagnostic.range)
+                    .collect::<Vec<_>>(),
+                vec![Point::zero()..Point::zero()],
             );
-            let diagnostic = diagnostics.next();
-            assert!(
-                diagnostic.is_some(),
-                "the retained point diagnostic should remain in the buffer"
-            );
-            if let Some(diagnostic) = diagnostic {
-                assert_eq!(diagnostic.range, diagnostic_point..diagnostic_point);
-            }
-            assert!(diagnostics.next().is_none());
         });
 
         let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let window = cx.add_window(|window, cx| {
-            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
-        });
+        let (window, editor) = point_diagnostic_editor(multi_buffer, cx);
+        cx.simulate_window_resize(window.into(), size(px(500.), px(50.)));
         let cx = &mut VisualTestContext::from_window(*window, cx);
-        let Ok(editor) = window.root(cx) else {
-            assert!(false, "editor window should have a root view");
-            return;
-        };
-        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
-        let viewport_size = size(px(500.), px(50.));
-
         cx.cx.run_until_parked();
-        cx.update(|window, cx| {
-            editor.update(cx, |editor, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                editor.refresh_sticky_headers(&snapshot.display_snapshot, cx);
-            });
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            editor.refresh_sticky_headers(&snapshot.display_snapshot, cx);
         });
         cx.cx.run_until_parked();
-
-        cx.draw(Default::default(), viewport_size, |_, _| {
-            EditorElement::new(&editor, style.clone())
-        });
-        cx.update(|window, cx| {
-            editor.update(cx, |editor, cx| {
-                editor.scroll(point(0., 1.), window, cx);
-            });
+        assert_painted_point_diagnostics(window, &[(0, 0..16, ERROR)], &mut cx.cx);
+        editor.update_in(cx, |editor, window, cx| {
+            editor.scroll(point(0., 1.), window, cx)
         });
         cx.cx.run_until_parked();
-        cx.update(|window, cx| {
-            editor.update(cx, |editor, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                assert!(
-                    !EditorElement::sticky_headers(editor, &snapshot).is_empty(),
-                    "scroll position: {:?}",
-                    snapshot.scroll_position()
-                );
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(EditorElement::sticky_headers(editor, &snapshot).len(), 1);
+        });
+        assert_painted_point_diagnostics(window, &[(0, 0..16, ERROR)], &mut cx.cx);
+        cx.update(|_, cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.sticky_scroll = Some(settings::StickyScrollContent {
+                        enabled: Some(false),
+                    });
+                });
             });
         });
-        let (_, state) = cx.draw(Default::default(), viewport_size, |_, _| {
-            EditorElement::new(&editor, style.clone())
-        });
-
-        assert!(
-            state.sticky_headers.is_some(),
-            "the function should produce a sticky header after scrolling"
-        );
-        if let Some(sticky_headers) = &state.sticky_headers {
-            assert_eq!(sticky_headers.lines.len(), 1);
-            for line in &sticky_headers.lines {
-                assert_eq!(line.line.point_diagnostics.len(), 1);
-                let Some(diagnostic) = line.line.point_diagnostics.first() else {
-                    assert!(false, "sticky point diagnostic should have a render layout");
-                    return;
-                };
-                assert_eq!(diagnostic.column, 0);
-                assert_eq!(diagnostic.underline.color, Some(style.status.error));
-            }
-        }
+        assert_painted_point_diagnostics(window, &[], &mut cx.cx);
     }
 
     #[gpui::test]
@@ -13966,5 +13688,277 @@ mod tests {
             ),
             px(0.0),
         );
+    }
+
+    #[test]
+    fn test_point_diagnostic_admission_preserves_covered_column() {
+        let mut line = LineWithInvisibles {
+            fragments: SmallVec::new(),
+            invisibles: Vec::new(),
+            diagnostic_underline_severity_ranges: vec![(0..1, ERROR)],
+            point_diagnostics: Vec::new(),
+            len: 1,
+            width: px(3.25),
+            font_size: px(13.),
+        };
+        let underline = point_diagnostic_test_style(WARNING);
+        line.add_point_diagnostic(PointDiagnostic {
+            column: 0,
+            underline,
+            severity: WARNING,
+        });
+        assert_eq!(line.point_diagnostics.len(), 1);
+        let point = line.point_diagnostics.first().expect("admitted point");
+        assert_eq!((point.column, point.severity), (0, WARNING));
+        assert_eq!(point.underline, underline);
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostic_paint_all_ownership_and_phase(cx: &mut TestAppContext) {
+        let device_bounds = |span: &Range<i32>| {
+            Bounds::from_corners(point(span.start as f32, 8.), point(span.end as f32, 14.))
+                .map(ScaledPixels)
+        };
+        let clipped =
+            |underline: &Underline| underline.bounds.intersect(&underline.content_mask.bounds);
+        for (inputs, expected) in [
+            (
+                vec![(0., 11.349, WARNING, true), (0., 3.25, ERROR, false)],
+                vec![(0..6, 0..6, ERROR), (6..23, 0..23, WARNING)],
+            ),
+            (
+                vec![(0., 11.349, ERROR, true), (0., 3.25, WARNING, false)],
+                vec![(0..23, 0..23, ERROR)],
+            ),
+            (
+                vec![
+                    (2.888_183_8, 10.829_102, ERROR, true),
+                    (2.888_183_8, 20.959_962, WARNING, false),
+                ],
+                vec![(6..28, 6..28, ERROR), (28..48, 6..48, WARNING)],
+            ),
+            (
+                vec![
+                    (0., 3., WARNING, true),
+                    (3., 2., ERROR, false),
+                    (7., 2., WARNING, false),
+                ],
+                vec![
+                    (0..6, 0..6, WARNING),
+                    (6..10, 6..10, ERROR),
+                    (14..18, 14..18, WARNING),
+                ],
+            ),
+            (
+                vec![
+                    (0., 12., WARNING, true),
+                    (2., 8., WARNING, false),
+                    (4., 4., ERROR, true),
+                ],
+                vec![
+                    (0..4, 0..24, WARNING),
+                    (4..8, 4..20, WARNING),
+                    (8..16, 8..16, ERROR),
+                    (16..20, 4..20, WARNING),
+                    (20..24, 0..24, WARNING),
+                ],
+            ),
+            (
+                vec![(-2., 42., WARNING, true), (-1., 3., ERROR, false)],
+                vec![(0..4, -2..4, ERROR), (4..64, -4..80, WARNING)],
+            ),
+        ] {
+            for reversed in [false, true] {
+                let mut inputs = inputs.clone();
+                if reversed {
+                    inputs.reverse();
+                }
+                let window = cx.open_window(size(px(32.), px(16.)), |_, _| {
+                    PointDiagnosticPaintTestView(inputs)
+                });
+                cx.simulate_window_scale_factor_change(window.into(), 2.);
+                let mut painted = cx
+                    .update_window(window.into(), |_, window, cx| {
+                        window.draw(cx).clear(cx);
+                        window.painted_underlines()
+                    })
+                    .expect("completed diagnostic canvas");
+                painted.sort_by_key(|underline| clipped(underline).left());
+                assert_eq!(painted.len(), expected.len());
+                for (underline, (visible, original, severity)) in painted.iter().zip(&expected) {
+                    let style = point_diagnostic_test_style(*severity);
+                    assert_eq!(clipped(underline), device_bounds(visible));
+                    assert_eq!(underline.bounds, device_bounds(original));
+                    assert_eq!(Some(underline.color), style.color);
+                    assert_eq!(underline.thickness, ScaledPixels(2.));
+                    assert_eq!(underline.wavy, true.into());
+                }
+            }
+        }
+    }
+
+    const ERROR: DiagnosticSeverity = DiagnosticSeverity::ERROR;
+    const WARNING: DiagnosticSeverity = DiagnosticSeverity::WARNING;
+
+    struct PointDiagnosticPaintTestView(Vec<(f32, f32, DiagnosticSeverity, bool)>);
+
+    impl Render for PointDiagnosticPaintTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let inputs = self.0.clone();
+            gpui::canvas(
+                |_, _, _| {},
+                move |_, _, window, _| {
+                    let underlines = inputs
+                        .into_iter()
+                        .map(|(x, width, severity, is_point)| {
+                            let diagnostic = PointDiagnostic {
+                                column: 0,
+                                underline: point_diagnostic_test_style(severity),
+                                severity,
+                            };
+                            let mut underline = DiagnosticUnderline::point(
+                                &diagnostic,
+                                point(px(x), px(4.)),
+                                px(width),
+                                window,
+                            );
+                            underline.is_point = is_point;
+                            underline
+                        })
+                        .collect::<Vec<_>>();
+                    DiagnosticUnderline::paint_all(&underlines, window);
+                },
+            )
+            .size_full()
+        }
+    }
+
+    fn point_diagnostic_test_style(severity: DiagnosticSeverity) -> UnderlineStyle {
+        let hue = if severity == ERROR { 0. } else { 0.15 };
+        UnderlineStyle {
+            thickness: px(1.),
+            color: Some(gpui::hsla(hue, 1., 0.5, 1.)),
+            wavy: true,
+        }
+    }
+
+    struct PointDiagnosticTestView {
+        editor: Entity<Editor>,
+        style: EditorStyle,
+        x_offset: Pixels,
+    }
+
+    impl Render for PointDiagnosticTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .pl(self.x_offset)
+                .child(EditorElement::new(&self.editor, self.style.clone()))
+        }
+    }
+
+    fn point_diagnostic_buffer(
+        text: &str,
+        diagnostics: impl IntoIterator<Item = (Range<PointUtf16>, DiagnosticSeverity)>,
+        cx: &mut impl AppContext,
+    ) -> Entity<Buffer> {
+        cx.new(|cx| {
+            let mut buffer = Buffer::local(text, cx);
+            let diagnostics = DiagnosticSet::new(
+                diagnostics.into_iter().map(|(range, severity)| {
+                    DiagnosticEntry::new(
+                        range,
+                        Diagnostic {
+                            severity,
+                            underline: true,
+                            ..Diagnostic::default()
+                        },
+                    )
+                }),
+                &buffer.snapshot(),
+            );
+            buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
+            buffer
+        })
+    }
+
+    fn point_diagnostic_editor(
+        buffer: Entity<MultiBuffer>,
+        cx: &mut TestAppContext,
+    ) -> (WindowHandle<PointDiagnosticTestView>, Entity<Editor>) {
+        let window = cx.open_window(size(px(500.), px(200.)), |window, cx| {
+            let editor = cx.new(|cx| {
+                let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+                editor.show_gutter = false;
+                editor.offset_content = false;
+                editor.set_read_only(true);
+                editor
+            });
+            let mut style = editor.update(cx, |editor, cx| editor.style(cx).clone());
+            style.text.font_size = px(13.).into();
+            style.text.line_height = px(26.).into();
+            PointDiagnosticTestView {
+                editor,
+                style,
+                x_offset: Pixels::ZERO,
+            }
+        });
+        let editor = window
+            .read_with(cx, |view, _| view.editor.clone())
+            .expect("test editor");
+        (window, editor)
+    }
+
+    #[track_caller]
+    fn assert_painted_point_diagnostics(
+        window: WindowHandle<PointDiagnosticTestView>,
+        expected: &[(u32, Range<i32>, DiagnosticSeverity)],
+        cx: &mut TestAppContext,
+    ) {
+        let (error, warning, x_offset) = window
+            .read_with(cx, |view, _| {
+                (
+                    view.style.status.error,
+                    view.style.status.warning,
+                    view.x_offset,
+                )
+            })
+            .expect("diagnostic colors");
+        let (underlines, scale) = cx
+            .update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                (window.painted_underlines(), window.scale_factor())
+            })
+            .expect("completed diagnostic scene");
+        let mut actual = Vec::new();
+        for underline in underlines {
+            let severity = if underline.color == error {
+                ERROR
+            } else if underline.color == warning {
+                WARNING
+            } else {
+                continue;
+            };
+            let bounds = underline.bounds.intersect(&underline.content_mask.bounds);
+            if bounds.is_empty() {
+                continue;
+            }
+            assert_eq!(
+                [bounds.left().0.fract(), bounds.right().0.fract()],
+                [0., 0.]
+            );
+            let row = (bounds.top().0 / (26. * scale)).floor() as u32;
+            actual.extend(
+                (bounds.left().0 as i32..bounds.right().0 as i32).map(|x| (row, x, severity)),
+            );
+        }
+        let mut expected = expected
+            .iter()
+            .flat_map(|(row, range, severity)| range.clone().map(|x| (*row, x, *severity)))
+            .collect::<Vec<_>>();
+        actual.sort_by_key(|(row, x, _)| (*row, *x));
+        expected.sort_by_key(|(row, x, _)| (*row, *x));
+
+        assert_eq!(actual, expected, "scale: {scale}, x offset: {x_offset:?}");
     }
 }

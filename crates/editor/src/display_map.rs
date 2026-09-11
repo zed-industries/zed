@@ -1470,7 +1470,7 @@ impl<'a> HighlightedChunk<'a> {
                 return Some(HighlightedChunk {
                     text: invisible_text,
                     style: Some(invisible_style),
-                    diagnostic_underline_severity,
+                    diagnostic_underline_severity: None,
                     is_tab: false,
                     is_inlay,
                     replacement: match replacement(ch) {
