@@ -1991,7 +1991,7 @@ mod tests {
             &[MigrationType::Json(
                 migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
             )],
-            indoc! {r#"{ }"#},
+            r#"{ }"#,
             None,
         );
 
@@ -2110,7 +2110,7 @@ mod tests {
             &[MigrationType::Json(
                 migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
             )],
-            indoc! {r#"{ }"#},
+            r#"{ }"#,
             None,
         );
 
@@ -2195,7 +2195,7 @@ mod tests {
             &[MigrationType::Json(
                 migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
             )],
-            indoc! {r#"{ }"#},
+            r#"{ }"#,
             None,
         );
 
@@ -2506,7 +2506,7 @@ mod tests {
             &[MigrationType::Json(
                 migrations::m_2025_01_27::make_auto_indent_an_enum,
             )],
-            indoc! {r#"{ }"#},
+            r#"{ }"#,
             None,
         );
 
@@ -2584,7 +2584,7 @@ mod tests {
             &[MigrationType::Json(
                 migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
             )],
-            indoc! {r#"{ }"#},
+            r#"{ }"#,
             None,
         );
 
@@ -2796,7 +2796,7 @@ mod tests {
             &[MigrationType::Json(
                 migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
             )],
-            indoc! {r#"{ }"#},
+            r#"{ }"#,
             None,
         );
 
@@ -3019,7 +3019,7 @@ mod tests {
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
-            indoc! {r#"{ }"#},
+            r#"{ }"#,
             None,
         );
 
@@ -4919,7 +4919,7 @@ mod tests {
         );
 
         // No title_bar key — should be unchanged
-        assert_migrate_settings(indoc! {r#"{ "theme": "One Dark" }"#}, None);
+        assert_migrate_settings(r#"{ "theme": "One Dark" }"#, None);
 
         // title_bar without show_branch_icon — should be unchanged
         assert_migrate_settings(
@@ -4983,7 +4983,7 @@ mod tests {
         );
 
         // no gutter key — no change
-        assert_migrate_settings(indoc! {r#"{ "theme": "One Dark" }"#}, None);
+        assert_migrate_settings(r#"{ "theme": "One Dark" }"#, None);
     }
 
     #[test]
