@@ -609,6 +609,56 @@ impl LanguageModel for OpenAiLanguageModel {
         self.model.max_output_tokens()
     }
 
+    fn count_input_tokens(
+        &self,
+        mut request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        if !self.model.uses_responses_api() {
+            return async { Ok(None) }.boxed();
+        }
+        normalize_open_ai_response_thinking_effort(&mut request, &self.model);
+        let request = into_open_ai_response(
+            request,
+            self.model.id(),
+            self.model.supports_parallel_tool_calls(),
+            self.model.supports_prompt_cache_key(),
+            self.max_output_tokens(),
+            default_thinking_reasoning_effort(&self.model),
+            self.model
+                .supported_reasoning_efforts()
+                .contains(&open_ai::ReasoningEffort::None),
+            &OPEN_AI_PROVIDER_ID,
+        );
+        let http_client = self.http_client.clone();
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = OpenAiLanguageModelProvider::api_url(cx);
+            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+        self.request_limiter
+            .run(async move {
+                let request = request?.into_count_tokens_request();
+                let api_key = api_key.ok_or(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                })?;
+                open_ai::responses::count_input_tokens(
+                    http_client.as_ref(),
+                    PROVIDER_NAME.0.as_str(),
+                    &api_url,
+                    &api_key,
+                    request,
+                    &extra_headers,
+                )
+                .await
+                .map(Some)
+                .map_err(Into::into)
+            })
+            .boxed()
+    }
+
     fn stream_completion(
         &self,
         mut request: LanguageModelRequest,

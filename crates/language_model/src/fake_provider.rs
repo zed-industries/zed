@@ -9,6 +9,7 @@ use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream, st
 use gpui::{App, AsyncApp, Entity, Task};
 use http_client::Result;
 use parking_lot::Mutex;
+use std::collections::VecDeque;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
@@ -121,6 +122,8 @@ pub struct FakeLanguageModel {
     supports_server_side_compaction: AtomicBool,
     max_token_count: AtomicU64,
     max_output_tokens: AtomicU64,
+    input_token_counts: Mutex<VecDeque<u64>>,
+    input_token_count_requests: Mutex<Vec<LanguageModelRequest>>,
 }
 
 impl Default for FakeLanguageModel {
@@ -139,6 +142,8 @@ impl Default for FakeLanguageModel {
             supports_server_side_compaction: AtomicBool::new(false),
             max_token_count: AtomicU64::new(1_000_000),
             max_output_tokens: AtomicU64::new(0),
+            input_token_counts: Mutex::new(VecDeque::new()),
+            input_token_count_requests: Mutex::new(Vec::new()),
         }
     }
 }
@@ -194,6 +199,14 @@ impl FakeLanguageModel {
     pub fn set_max_output_tokens(&self, count: Option<u64>) {
         self.max_output_tokens
             .store(count.unwrap_or_default(), SeqCst);
+    }
+
+    pub fn queue_input_token_count(&self, count: u64) {
+        self.input_token_counts.lock().push_back(count);
+    }
+
+    pub fn input_token_count_requests(&self) -> Vec<LanguageModelRequest> {
+        self.input_token_count_requests.lock().clone()
     }
 
     pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
@@ -336,6 +349,24 @@ impl LanguageModel for FakeLanguageModel {
         } else {
             Some(max_output_tokens)
         }
+    }
+
+    fn count_input_tokens(
+        &self,
+        request: LanguageModelRequest,
+        _: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        if self.forbid_requests.load(SeqCst) {
+            return async {
+                Err(LanguageModelCompletionError::Other(anyhow!(
+                    "requests are forbidden"
+                )))
+            }
+            .boxed();
+        }
+        self.input_token_count_requests.lock().push(request);
+        let count = self.input_token_counts.lock().pop_front();
+        async move { Ok(count) }.boxed()
     }
 
     fn stream_completion(

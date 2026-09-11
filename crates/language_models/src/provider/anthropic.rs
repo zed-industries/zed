@@ -890,6 +890,51 @@ impl LanguageModel for AnthropicModel {
         Some(self.model.max_output_tokens)
     }
 
+    fn count_input_tokens(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<Option<u64>, LanguageModelCompletionError>> {
+        let request_id = self.model.request_id(!request.tools.is_empty()).to_string();
+        let request = into_anthropic(
+            request,
+            request_id,
+            self.model.default_temperature,
+            self.model.max_output_tokens,
+            self.model.mode.clone(),
+            AnthropicPromptCacheMode::Automatic,
+            &PROVIDER_ID,
+        );
+        let http_client = self.http_client.clone();
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = AnthropicLanguageModelProvider::api_url(cx);
+            let extra_headers = AnthropicLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+        let beta_headers = self.model.beta_headers();
+        self.request_limiter
+            .run(async move {
+                let request = request?.into_count_tokens_request();
+                let api_key = api_key.ok_or(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                })?;
+                anthropic::count_input_tokens(
+                    http_client.as_ref(),
+                    &api_url,
+                    &api_key,
+                    request,
+                    beta_headers,
+                    &extra_headers,
+                )
+                .await
+                .map(Some)
+                .map_err(Into::into)
+            })
+            .boxed()
+    }
+
     fn stream_completion(
         &self,
         request: LanguageModelRequest,

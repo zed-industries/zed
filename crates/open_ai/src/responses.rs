@@ -50,6 +50,18 @@ pub struct Request {
 }
 
 impl Request {
+    pub fn into_count_tokens_request(self) -> CountTokensRequest {
+        CountTokensRequest {
+            model: self.model,
+            instructions: self.instructions,
+            input: self.input,
+            tools: self.tools,
+            tool_choice: self.tool_choice,
+            parallel_tool_calls: self.parallel_tool_calls,
+            reasoning: self.reasoning,
+        }
+    }
+
     pub fn into_compact_request(self) -> CompactRequest {
         CompactRequest {
             model: self.model,
@@ -59,6 +71,23 @@ impl Request {
             service_tier: self.service_tier,
         }
     }
+}
+
+/// Structured input for counting, including images and tool definitions.
+#[derive(Serialize, Debug)]
+pub struct CountTokensRequest {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    pub input: ResponseInput,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolDefinition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningConfig>,
 }
 
 #[derive(Serialize, Debug)]
@@ -737,9 +766,56 @@ pub async fn compact_response(
     request: CompactRequest,
     extra_headers: &CustomHeaders,
 ) -> Result<CompactedResponse, RequestError> {
+    send_response_request(
+        client,
+        provider_name,
+        api_url,
+        api_key,
+        "/responses/compact",
+        request,
+        extra_headers,
+    )
+    .await
+}
+
+/// Counts structured input, including images and tools, without generating output.
+pub async fn count_input_tokens(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    request: CountTokensRequest,
+    extra_headers: &CustomHeaders,
+) -> Result<u64, RequestError> {
+    #[derive(Deserialize)]
+    struct CountTokensResponse {
+        input_tokens: u64,
+    }
+    let response: CountTokensResponse = send_response_request(
+        client,
+        provider_name,
+        api_url,
+        api_key,
+        "/responses/input_tokens",
+        request,
+        extra_headers,
+    )
+    .await?;
+    Ok(response.input_tokens)
+}
+
+async fn send_response_request<T: serde::de::DeserializeOwned>(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    route: &str,
+    request: impl Serialize,
+    extra_headers: &CustomHeaders,
+) -> Result<T, RequestError> {
     let request = HttpRequest::builder()
         .method(Method::POST)
-        .uri(format!("{api_url}/responses/compact"))
+        .uri(format!("{api_url}{route}"))
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()))
         .extra_headers(extra_headers)
@@ -987,6 +1063,111 @@ mod tests {
     use language_model_core::OPEN_AI_PROVIDER_ID;
     use serde_json::json;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn count_input_tokens_preserves_structured_input_without_generation_fields() {
+        let input = json!([{
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "Describe this"},
+                {"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U=", "detail": "auto"}
+            ]
+        }]);
+        let mut request = response_test_request();
+        request.input =
+            ResponseInput::new(input.as_array().expect("input array").clone(), Vec::new());
+        request.instructions = Some("Be precise".into());
+        request.max_output_tokens = Some(1234);
+        request.service_tier = Some(ServiceTier::Priority);
+        request.prompt_cache_key = Some("thread-id".into());
+        request.store = Some(false);
+        let generation = serde_json::to_value(&request).expect("generation request");
+        assert_eq!(generation["stream"], true);
+        assert_eq!(generation["max_output_tokens"], 1234);
+        assert_eq!(generation["service_tier"], "priority");
+
+        let client = FakeHttpClient::create(move |mut request| {
+            let input = input.clone();
+            async move {
+                assert_eq!(request.method(), Method::POST);
+                assert_eq!(
+                    request.uri(),
+                    "https://api.openai.com/v1/responses/input_tokens"
+                );
+                assert!(
+                    request
+                        .headers()
+                        .get("Authorization")
+                        .is_some_and(|value| value == "Bearer test-key")
+                );
+                assert_eq!(request.headers()["Content-Type"], "application/json");
+                let mut body = String::new();
+                request.body_mut().read_to_string(&mut body).await?;
+                assert_eq!(
+                    serde_json::from_str::<Value>(&body)?,
+                    json!({
+                        "model": "gpt-5.4",
+                        "instructions": "Be precise",
+                        "input": input
+                    })
+                );
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(
+                        r#"{"object":"response.input_tokens","input_tokens":321}"#,
+                    ))?)
+            }
+        });
+        let count = block_on(count_input_tokens(
+            client.as_ref(),
+            "OpenAI",
+            "https://api.openai.com/v1",
+            " test-key ",
+            request.into_count_tokens_request(),
+            &CustomHeaders::default(),
+        ))
+        .expect("count succeeds");
+        assert_eq!(count, 321);
+    }
+
+    #[test]
+    fn count_input_tokens_preserves_transport_errors() {
+        let client = FakeHttpClient::create(|_| async {
+            Ok(http_client::Response::builder().status(401).body(AsyncBody::from(
+                r#"{"error":{"message":"Invalid API key","type":"invalid_request_error","code":"invalid_api_key"}}"#
+            ))?)
+        });
+        let error = block_on(count_input_tokens(
+            client.as_ref(),
+            "OpenAI",
+            "https://api.openai.com/v1",
+            "test-key",
+            response_test_request().into_count_tokens_request(),
+            &CustomHeaders::default(),
+        ))
+        .expect_err("authentication fails");
+        assert!(
+            matches!(error, RequestError::HttpResponseError { status_code, .. } if status_code.as_u16() == 401)
+        );
+
+        let client = FakeHttpClient::create(|_| async {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(AsyncBody::from("{}"))?)
+        });
+        assert!(
+            block_on(count_input_tokens(
+                client.as_ref(),
+                "OpenAI",
+                "https://api.openai.com/v1",
+                "test-key",
+                response_test_request().into_count_tokens_request(),
+                &CustomHeaders::default(),
+            ))
+            .is_err()
+        );
+    }
 
     #[test]
     fn compact_response_posts_supported_request_fields() {
