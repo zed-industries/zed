@@ -196,6 +196,8 @@ pub enum Model {
     KimiK2_5,
 
     // -- DeepSeek models --
+    #[serde(rename = "deepseek-v4.1-flash")]
+    DeepSeekV4_1Flash,
     #[serde(rename = "deepseek-v4-pro")]
     DeepSeekV4Pro,
     #[serde(rename = "deepseek-v4-flash-vision-exp")]
@@ -222,8 +224,6 @@ pub enum Model {
     Hy3,
     #[serde(rename = "longcat-2.0")]
     LongCat2_0,
-    #[serde(rename = "omen-alpha")]
-    OmenAlpha,
 
     // -- Custom model --
     #[serde(rename = "custom")]
@@ -278,12 +278,12 @@ impl Model {
             | Self::Qwen3_8Flash
             | Self::Qwen3_7Max
             | Self::Qwen3_7Plus
+            | Self::DeepSeekV4_1Flash
             | Self::MimoV2_5Pro
             | Self::MimoV2_5
             | Self::Hy4Preview
             | Self::Hy3
-            | Self::LongCat2_0
-            | Self::OmenAlpha => &[OpenCodeSubscription::Go],
+            | Self::LongCat2_0 => &[OpenCodeSubscription::Go],
 
             // Deprecated on Go (per models.dev); still offered on Zen
             Self::Qwen3_5Plus | Self::Grok4_5 | Self::Glm5 | Self::KimiK2_5 | Self::MiniMaxM2_5 => {
@@ -379,6 +379,7 @@ impl Model {
             Self::KimiK2_5 => "kimi-k2.5",
 
             // -- DeepSeek models --
+            Self::DeepSeekV4_1Flash => "deepseek-v4.1-flash",
             Self::DeepSeekV4Pro => "deepseek-v4-pro",
             Self::DeepSeekV4FlashVisionExp => "deepseek-v4-flash-vision-exp",
             Self::DeepSeekV4Flash => "deepseek-v4-flash",
@@ -394,7 +395,6 @@ impl Model {
             Self::Hy4Preview => "hy4-preview",
             Self::Hy3 => "hy3",
             Self::LongCat2_0 => "longcat-2.0",
-            Self::OmenAlpha => "omen-alpha",
 
             // -- Custom model --
             Self::Custom { name, .. } => name,
@@ -482,6 +482,7 @@ impl Model {
             Self::KimiK2_5 => "Kimi K2.5",
 
             // -- DeepSeek models --
+            Self::DeepSeekV4_1Flash => "DeepSeek V4.1 Flash",
             Self::DeepSeekV4Pro => "DeepSeek V4 Pro",
             Self::DeepSeekV4FlashVisionExp => "DeepSeek V4 Flash Vision (Exp)",
             Self::DeepSeekV4Flash => "DeepSeek V4 Flash",
@@ -497,7 +498,6 @@ impl Model {
             Self::Hy4Preview => "Hy4 (Preview)",
             Self::Hy3 => "Hy3",
             Self::LongCat2_0 => "LongCat 2.0",
-            Self::OmenAlpha => "Omen Alpha",
 
             // -- Custom model --
             Self::Custom {
@@ -576,6 +576,7 @@ impl Model {
             | Self::KimiK2_7Code
             | Self::KimiK2_6
             | Self::KimiK2_5
+            | Self::DeepSeekV4_1Flash
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4FlashVisionExp
             | Self::DeepSeekV4Flash
@@ -583,8 +584,7 @@ impl Model {
             | Self::MimoV2_5
             | Self::Hy4Preview
             | Self::Hy3
-            | Self::LongCat2_0
-            | Self::OmenAlpha => ApiProtocol::OpenAiChat,
+            | Self::LongCat2_0 => ApiProtocol::OpenAiChat,
 
             // Protocol used by subscription type
             Self::Qwen3_6Plus => {
@@ -623,11 +623,11 @@ impl Model {
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4FlashVisionExp
             | Self::DeepSeekV4Flash
+            | Self::DeepSeekV4_1Flash
             | Self::MiniMaxM2_5
             | Self::MimoV2_5Pro
             | Self::MimoV2_5
-            | Self::LongCat2_0
-            | Self::OmenAlpha => true,
+            | Self::LongCat2_0 => true,
 
             Self::MiniMaxM3 | Self::MiniMaxM2_7 => subscription == OpenCodeSubscription::Zen,
 
@@ -726,9 +726,10 @@ impl Model {
             Self::KimiK2_7Code | Self::KimiK2_6 | Self::KimiK2_5 => 262_144,
 
             // DeepSeek models
-            Self::DeepSeekV4Pro | Self::DeepSeekV4FlashVisionExp | Self::DeepSeekV4Flash => {
-                1_000_000
-            }
+            Self::DeepSeekV4_1Flash
+            | Self::DeepSeekV4Pro
+            | Self::DeepSeekV4FlashVisionExp
+            | Self::DeepSeekV4Flash => 1_000_000,
 
             // Minimax Group models
             Self::MiniMaxM3 => {
@@ -746,7 +747,6 @@ impl Model {
             Self::Hy4Preview => 1_024_000,
             Self::Hy3 => 256_000,
             Self::LongCat2_0 => 1_000_000,
-            Self::OmenAlpha => 500_000,
 
             // Custom model
             Self::Custom { max_tokens, .. } => *max_tokens,
@@ -831,9 +831,10 @@ impl Model {
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
 
             // DeepSeek models
-            Self::DeepSeekV4Pro | Self::DeepSeekV4FlashVisionExp | Self::DeepSeekV4Flash => {
-                Some(384_000)
-            }
+            Self::DeepSeekV4_1Flash
+            | Self::DeepSeekV4Pro
+            | Self::DeepSeekV4FlashVisionExp
+            | Self::DeepSeekV4Flash => Some(384_000),
 
             // Minimax Group models
             Self::MiniMaxM3 => {
@@ -857,7 +858,6 @@ impl Model {
             Self::Hy3 => Some(128_000),
             Self::Hy4Preview => Some(64_000),
             Self::LongCat2_0 => Some(131_072),
-            Self::OmenAlpha => Some(128_000),
 
             // Custom model
             Self::Custom {
@@ -930,9 +930,9 @@ impl Model {
             | Self::KimiK2_6
             | Self::KimiK2_5
             | Self::DeepSeekV4FlashVisionExp
+            | Self::DeepSeekV4_1Flash
             | Self::MiniMaxM3
-            | Self::MimoV2_5
-            | Self::OmenAlpha => true,
+            | Self::MimoV2_5 => true,
 
             // Models without image support
             Self::Gpt5_3Spark
@@ -1148,6 +1148,11 @@ impl Model {
             Self::KimiK3 => Some(vec![ReasoningEffort::Max]),
 
             // DeepSeek models
+            Self::DeepSeekV4_1Flash => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::High,
+                ReasoningEffort::Max,
+            ]),
             Self::DeepSeekV4Pro => Some(vec![ReasoningEffort::Max, ReasoningEffort::High]),
             Self::DeepSeekV4FlashVisionExp | Self::DeepSeekV4Flash => Some(vec![
                 ReasoningEffort::Low,
@@ -1177,8 +1182,6 @@ impl Model {
                 ReasoningEffort::High,
             ]),
             Self::Hy4Preview => Some(vec![ReasoningEffort::None, ReasoningEffort::High]),
-
-            Self::OmenAlpha => Some(vec![ReasoningEffort::Low, ReasoningEffort::High]),
 
             // Custom model
             Self::Custom {
