@@ -143,6 +143,7 @@ pub struct AmazonBedrockSettings {
     pub custom_headers: CustomHeaders,
     pub region: Option<String>,
     pub endpoint: Option<String>,
+    pub mantle_endpoint: Option<String>,
     pub profile_name: Option<String>,
     pub role_arn: Option<String>,
     pub authentication_method: Option<BedrockAuthMethod>,
@@ -279,6 +280,22 @@ const MANTLE_SUPPORTED_REGIONS: &[&str] = &[
 
 fn mantle_endpoint_url(region: &str) -> String {
     format!("https://bedrock-mantle.{region}.api.aws/openai/v1")
+}
+
+fn resolve_mantle_endpoint(configured: Option<&str>, region: &str) -> String {
+    configured
+        .filter(|endpoint| !endpoint.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| mantle_endpoint_url(region))
+}
+
+/// Which of the two independent Bedrock endpoint settings the user has set.
+/// Used to explain a Mantle authorization failure that comes from Mantle
+/// requests still going to AWS while `endpoint_url` redirects only Converse.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MantleEndpointConfig {
+    mantle_endpoint_is_set: bool,
+    converse_endpoint_is_set: bool,
 }
 
 /// Auth resolved for one request, shared by the Converse and Mantle APIs.
@@ -1236,7 +1253,35 @@ fn mantle_supported_effort_levels(model: &MantleModel) -> Vec<LanguageModelEffor
 /// Special-cases Mantle authorization failures with a message that points at
 /// the separate `bedrock-mantle` IAM policy namespace instead of regular
 /// `bedrock-runtime` permissions.
-fn map_mantle_error(model: &MantleModel, error: RequestError) -> LanguageModelCompletionError {
+fn map_mantle_error(
+    model: &MantleModel,
+    endpoint_config: MantleEndpointConfig,
+    error: RequestError,
+) -> LanguageModelCompletionError {
+    if let RequestError::HttpResponseError { status_code, .. } = &error
+        && *status_code == http_client::http::StatusCode::UNAUTHORIZED
+        && endpoint_config.converse_endpoint_is_set
+        && !endpoint_config.mantle_endpoint_is_set
+    {
+        // Without this the credential a gateway issued gets sent to real AWS and
+        // the generic 401 copy tells the user to update a key that was never the
+        // problem.
+        return LanguageModelCompletionError::from_provider_response(
+            PROVIDER_NAME,
+            Some(http_client::http::StatusCode::UNAUTHORIZED),
+            None,
+            format!(
+                "{} is a Mantle-only model, and Mantle requests go to AWS directly: \
+                 `endpoint_url` redirects only the Converse API. Set `mantle_endpoint_url` \
+                 to point Mantle requests at your endpoint too, or pick a model that Zed \
+                 calls over the Converse API.",
+                model.display_name()
+            ),
+            None,
+            ProviderErrorCategory::InvalidRequest,
+        );
+    }
+
     if let RequestError::HttpResponseError { status_code, .. } = &error
         && *status_code == http_client::http::StatusCode::FORBIDDEN
     {
@@ -1855,8 +1900,24 @@ impl BedrockLanguageModelProvider {
     {
         let http_client = self.plain_http_client.clone();
         let model = config.clone();
-        let region = cx.read_entity(&self.state, |state, _cx| state.get_region());
-        let url = format!("{}/{}", mantle_endpoint_url(&region), endpoint);
+        let (region, mantle_endpoint, converse_endpoint) =
+            cx.read_entity(&self.state, |state, _cx| {
+                let (mantle_endpoint, converse_endpoint) =
+                    state.settings.as_ref().map_or((None, None), |settings| {
+                        (settings.mantle_endpoint.clone(), settings.endpoint.clone())
+                    });
+                (state.get_region(), mantle_endpoint, converse_endpoint)
+            });
+        let endpoint_config = MantleEndpointConfig {
+            mantle_endpoint_is_set: mantle_endpoint
+                .as_ref()
+                .is_some_and(|endpoint| !endpoint.is_empty()),
+            converse_endpoint_is_set: converse_endpoint
+                .as_ref()
+                .is_some_and(|endpoint| !endpoint.is_empty()),
+        };
+        let mantle_endpoint = resolve_mantle_endpoint(mantle_endpoint.as_deref(), &region);
+        let url = format!("{mantle_endpoint}/{endpoint}");
         let extra_headers = cx.read_entity(&self.state, |_, cx| {
             AllLanguageModelSettings::get_global(cx)
                 .bedrock
@@ -1881,7 +1942,7 @@ impl BedrockLanguageModelProvider {
                 parse_stream_line,
             )
             .await
-            .map_err(|err| map_mantle_error(&model, err))
+            .map_err(|err| map_mantle_error(&model, endpoint_config, err))
         });
 
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -4231,6 +4292,76 @@ mod tests {
             mantle_endpoint_url("us-west-2"),
             "https://bedrock-mantle.us-west-2.api.aws/openai/v1"
         );
+    }
+
+    #[test]
+    fn test_mantle_endpoint_setting_overrides_aws_default() {
+        assert_eq!(
+            resolve_mantle_endpoint(Some("https://gateway.example.com/openai/v1"), "us-east-1"),
+            "https://gateway.example.com/openai/v1"
+        );
+        assert_eq!(
+            resolve_mantle_endpoint(None, "us-west-2"),
+            mantle_endpoint_url("us-west-2")
+        );
+        assert_eq!(
+            resolve_mantle_endpoint(Some(""), "us-west-2"),
+            mantle_endpoint_url("us-west-2")
+        );
+    }
+
+    fn mantle_request_error(status_code: http_client::http::StatusCode) -> RequestError {
+        RequestError::HttpResponseError {
+            provider: PROVIDER_NAME.0.to_string(),
+            status_code,
+            body: String::new(),
+            headers: Box::default(),
+        }
+    }
+
+    #[test]
+    fn test_mantle_unauthorized_points_at_the_mantle_endpoint_setting() {
+        let error = map_mantle_error(
+            &MantleModel::Gpt5_5,
+            MantleEndpointConfig {
+                mantle_endpoint_is_set: false,
+                converse_endpoint_is_set: true,
+            },
+            mantle_request_error(http_client::http::StatusCode::UNAUTHORIZED),
+        );
+
+        let LanguageModelCompletionError::ProviderRejection {
+            category, message, ..
+        } = error
+        else {
+            panic!("expected a provider rejection, got {error:?}");
+        };
+        assert_eq!(category, ProviderErrorCategory::InvalidRequest);
+        assert!(message.contains("mantle_endpoint_url"), "{message}");
+    }
+
+    #[test]
+    fn test_mantle_unauthorized_is_unchanged_without_a_converse_endpoint() {
+        for endpoint_config in [
+            MantleEndpointConfig {
+                mantle_endpoint_is_set: false,
+                converse_endpoint_is_set: false,
+            },
+            MantleEndpointConfig {
+                mantle_endpoint_is_set: true,
+                converse_endpoint_is_set: true,
+            },
+        ] {
+            let error = map_mantle_error(
+                &MantleModel::Gpt5_5,
+                endpoint_config,
+                mantle_request_error(http_client::http::StatusCode::UNAUTHORIZED),
+            );
+            assert!(
+                !format!("{error:?}").contains("mantle_endpoint_url"),
+                "{endpoint_config:?} should not be explained by the Mantle endpoint setting"
+            );
+        }
     }
 
     #[test]
