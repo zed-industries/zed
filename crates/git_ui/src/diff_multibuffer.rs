@@ -851,6 +851,53 @@ impl DiffMultibuffer {
         }
         result
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn buffer_id_for_path(&self, path: &str, cx: &App) -> language::BufferId {
+        let multibuffer = self
+            .editor()
+            .read(cx)
+            .rhs_editor()
+            .read(cx)
+            .buffer()
+            .clone();
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+        snapshot
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .find(|buffer_id| {
+                multibuffer
+                    .read(cx)
+                    .buffer(*buffer_id)
+                    .and_then(|buffer| buffer.read(cx).file().cloned())
+                    .is_some_and(|file| file.path().as_unix_str() == path)
+            })
+            .unwrap_or_else(|| panic!("no excerpt found for path {path}"))
+    }
+
+    /// Returns whether the excerpt for the given (worktree-relative) file path is
+    /// currently folded. Panics if no excerpt for that path exists.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_buffer_folded_for_path(&self, path: &str, cx: &App) -> bool {
+        let buffer_id = self.buffer_id_for_path(path, cx);
+        self.editor()
+            .read(cx)
+            .rhs_editor()
+            .read(cx)
+            .is_buffer_folded(buffer_id, cx)
+    }
+
+    /// Unfolds the excerpt for the given (worktree-relative) file path. Panics if no
+    /// excerpt for that path exists.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn unfold_buffer_for_path(&self, path: &str, cx: &mut App) {
+        let buffer_id = self.buffer_id_for_path(path, cx);
+        self.editor().update(cx, |editor, cx| {
+            editor.rhs_editor().update(cx, |editor, cx| {
+                editor.unfold_buffer(buffer_id, cx);
+            });
+        });
+    }
 }
 
 impl EventEmitter<EditorEvent> for DiffMultibuffer {}

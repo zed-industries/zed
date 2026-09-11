@@ -1526,3 +1526,204 @@ fn stash_matches_index(sha: &str, stash_index: usize, repo: &Repository) -> bool
         .map(|entry| entry.oid.to_string() == sha)
         .unwrap_or(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git::repository::{CommitFile, RepoPath};
+    use gpui::TestAppContext;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::{path, rel_path::rel_path};
+    use workspace::MultiWorkspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    fn is_buffer_folded_for_path(commit_view: &Entity<CommitView>, path: &str, cx: &App) -> bool {
+        let view = commit_view.read(cx);
+        let buffer_id = view
+            .multibuffer
+            .read(cx)
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .find(|buffer_id| {
+                view.multibuffer
+                    .read(cx)
+                    .buffer(*buffer_id)
+                    .and_then(|buffer| buffer.read(cx).file().cloned())
+                    .is_some_and(|file| file.path().as_unix_str() == path)
+            })
+            .unwrap_or_else(|| panic!("no excerpt found for path {path}"));
+        view.editor
+            .read(cx)
+            .rhs_editor()
+            .read(cx)
+            .is_buffer_folded(buffer_id, cx)
+    }
+
+    #[gpui::test]
+    async fn test_multibuffer_default_folded(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.multibuffer_default_folded = Some(true);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "one.rs": "one\n",
+                "two.rs": "two\n",
+            }),
+        )
+        .await;
+
+        let commit_sha = "1".repeat(40);
+        fs.set_commit_diff_for_repo(
+            path!("/project/.git").as_ref(),
+            commit_sha.clone(),
+            vec![
+                CommitFile {
+                    path: RepoPath::from_rel_path(rel_path("one.rs")),
+                    old_content: Some(b"one\n".to_vec()),
+                    new_content: Some(b"one changed\n".to_vec()),
+                    is_binary: false,
+                },
+                CommitFile {
+                    path: RepoPath::from_rel_path(rel_path("two.rs")),
+                    old_content: Some(b"two\n".to_vec()),
+                    new_content: Some(b"two changed\n".to_vec()),
+                    is_binary: false,
+                },
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let repo = project
+            .read_with(cx, |project, cx| project.active_repository(cx))
+            .unwrap();
+
+        cx.update(|window, cx| {
+            CommitView::open(
+                commit_sha,
+                repo.downgrade(),
+                workspace.downgrade(),
+                None,
+                None,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let commit_view = workspace.read_with(cx, |workspace, cx| {
+            workspace.active_item_as::<CommitView>(cx).unwrap()
+        });
+
+        cx.update(|_, cx| {
+            assert!(
+                is_buffer_folded_for_path(&commit_view, "one.rs", cx),
+                "one.rs should start folded"
+            );
+            assert!(
+                is_buffer_folded_for_path(&commit_view, "two.rs", cx),
+                "two.rs should start folded"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_binary_files_fold_without_default_folded_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // multibuffer_default_folded is left at its default (false).
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "one.rs": "one\n",
+                "image.png": "binary\n",
+            }),
+        )
+        .await;
+
+        let commit_sha = "1".repeat(40);
+        fs.set_commit_diff_for_repo(
+            path!("/project/.git").as_ref(),
+            commit_sha.clone(),
+            vec![
+                CommitFile {
+                    path: RepoPath::from_rel_path(rel_path("one.rs")),
+                    old_content: Some(b"one\n".to_vec()),
+                    new_content: Some(b"one changed\n".to_vec()),
+                    is_binary: false,
+                },
+                CommitFile {
+                    path: RepoPath::from_rel_path(rel_path("image.png")),
+                    old_content: Some(b"binary\n".to_vec()),
+                    new_content: Some(b"binary changed\n".to_vec()),
+                    is_binary: true,
+                },
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let repo = project
+            .read_with(cx, |project, cx| project.active_repository(cx))
+            .unwrap();
+
+        cx.update(|window, cx| {
+            CommitView::open(
+                commit_sha,
+                repo.downgrade(),
+                workspace.downgrade(),
+                None,
+                None,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let commit_view = workspace.read_with(cx, |workspace, cx| {
+            workspace.active_item_as::<CommitView>(cx).unwrap()
+        });
+
+        cx.update(|_, cx| {
+            assert!(
+                !is_buffer_folded_for_path(&commit_view, "one.rs", cx),
+                "text files must stay expanded when multibuffer_default_folded is off"
+            );
+            assert!(
+                is_buffer_folded_for_path(&commit_view, "image.png", cx),
+                "binary files should still fold regardless of the setting"
+            );
+        });
+    }
+}

@@ -81,6 +81,7 @@ pub struct FakeGitRepositoryState {
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
     pub stash_entries: GitStash,
     pub commit_template: Option<GitCommitTemplate>,
+    pub commits: HashMap<String, git::repository::CommitDiff>,
 }
 
 impl FakeGitRepositoryState {
@@ -108,6 +109,7 @@ impl FakeGitRepositoryState {
             commit_history: Vec::new(),
             stash_entries: Default::default(),
             commit_template: None,
+            commits: Default::default(),
         }
     }
 }
@@ -179,17 +181,18 @@ impl GitRepository for FakeGitRepository {
 
     fn load_commit(
         &self,
-        _commit: String,
+        commit: String,
         _ignore_shallow_boundary: bool,
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::CommitDiff>> {
-        async {
-            Ok(git::repository::CommitDiff {
-                files: Vec::new(),
-                is_shallow_boundary: false,
-            })
-        }
-        .boxed()
+        self.with_state_async(false, move |state| {
+            Ok(state.commits.get(&commit).cloned().unwrap_or_else(|| {
+                git::repository::CommitDiff {
+                    files: Vec::new(),
+                    is_shallow_boundary: false,
+                }
+            }))
+        })
     }
 
     fn set_index_text(

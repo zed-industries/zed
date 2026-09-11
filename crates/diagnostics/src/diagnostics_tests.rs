@@ -333,6 +333,174 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_diagnostics_multibuffer_default_folded(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.multibuffer_default_folded = Some(true);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/test"),
+        json!({
+            "a.rs": "fn a() {}\n",
+            "b.rs": "fn b() {}\n",
+        }),
+    )
+    .await;
+
+    let language_server_id = LanguageServerId(0);
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+
+    let buffer_a = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/test/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_a_id = buffer_a.read_with(cx, |buffer, _| buffer.remote_id());
+
+    // Diagnostics for `a.rs` exist before the view is even opened.
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .update_diagnostics(
+                language_server_id,
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Uri::from_file_path(path!("/test/a.rs")).unwrap(),
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: lsp::DiagnosticMessage::from("error in a"),
+                        ..Default::default()
+                    }],
+                    version: None,
+                },
+                None,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
+            .unwrap();
+    });
+
+    let diagnostics = window.build_entity(cx, |window, cx| {
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+    });
+    let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
+
+    diagnostics
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .await;
+
+    // `a.rs` is newly added to the multibuffer, so it should start folded.
+    editor.update(cx, |editor, cx| {
+        assert!(
+            editor.is_buffer_folded(buffer_a_id, cx),
+            "a.rs should start folded when multibuffer_default_folded is enabled"
+        );
+    });
+
+    // The user expands it manually.
+    editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_a_id, cx);
+        assert!(!editor.is_buffer_folded(buffer_a_id, cx));
+    });
+
+    // A second file's diagnostics arrive, appearing in the multibuffer for the first time.
+    let buffer_b = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/test/b.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_b_id = buffer_b.read_with(cx, |buffer, _| buffer.remote_id());
+
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .update_diagnostics(
+                language_server_id,
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Uri::from_file_path(path!("/test/b.rs")).unwrap(),
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: lsp::DiagnosticMessage::from("error in b"),
+                        ..Default::default()
+                    }],
+                    version: None,
+                },
+                None,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
+            .unwrap();
+    });
+
+    diagnostics
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .await;
+
+    editor.update(cx, |editor, cx| {
+        assert!(
+            editor.is_buffer_folded(buffer_b_id, cx),
+            "b.rs is newly added, so it should start folded"
+        );
+        assert!(
+            !editor.is_buffer_folded(buffer_a_id, cx),
+            "a.rs was already present and manually unfolded, so a diagnostics update for a \
+             different file must not re-fold it"
+        );
+    });
+
+    // An update to `a.rs`'s own diagnostics must not re-fold it either, since it isn't a
+    // new insertion into the multibuffer.
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .update_diagnostics(
+                language_server_id,
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Uri::from_file_path(path!("/test/a.rs")).unwrap(),
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
+                        severity: Some(lsp::DiagnosticSeverity::WARNING),
+                        message: lsp::DiagnosticMessage::from("a different error in a"),
+                        ..Default::default()
+                    }],
+                    version: None,
+                },
+                None,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
+            .unwrap();
+    });
+
+    diagnostics
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .await;
+
+    editor.update(cx, |editor, cx| {
+        assert!(
+            !editor.is_buffer_folded(buffer_a_id, cx),
+            "updating diagnostics for an already-present file must not re-fold it"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
     init_test(cx);
 

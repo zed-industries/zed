@@ -2428,6 +2428,24 @@ impl FakeFs {
         .unwrap();
     }
 
+    pub fn set_commit_diff_for_repo(
+        &self,
+        dot_git: &Path,
+        commit_sha: impl Into<String>,
+        files: Vec<git::repository::CommitFile>,
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.commits.insert(
+                commit_sha.into(),
+                git::repository::CommitDiff {
+                    files,
+                    is_shallow_boundary: false,
+                },
+            );
+        })
+        .unwrap();
+    }
+
     pub fn set_merge_base_content_for_repo(
         &self,
         dot_git: &Path,
