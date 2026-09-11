@@ -63,19 +63,18 @@ impl std::fmt::Display for MaxOutputTokensError {
 
 impl std::error::Error for MaxOutputTokensError {}
 
-/// Key used in ACP ToolCall meta to store the tool's programmatic name.
-/// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
+/// Legacy ACP metadata key used before tool calls had a dedicated name field.
 pub const TOOL_NAME_META_KEY: &str = "tool_name";
 
-/// Helper to extract tool name from ACP meta
+/// Extracts a tool name from the legacy ACP metadata field.
 pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
     meta.as_ref()
-        .and_then(|m| m.get(TOOL_NAME_META_KEY))
-        .and_then(|v| v.as_str())
-        .map(|s| SharedString::from(s.to_owned()))
+        .and_then(|meta| meta.get(TOOL_NAME_META_KEY))
+        .and_then(|value| value.as_str())
+        .map(|name| SharedString::from(name.to_owned()))
 }
 
-/// Helper to create meta with tool name
+/// Creates ACP metadata containing the legacy tool-name field.
 pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
     acp::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
 }
@@ -916,7 +915,10 @@ impl ToolCall {
             .as_ref()
             .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
 
-        let tool_name = tool_name_from_meta(&tool_call.meta);
+        let tool_name = tool_call
+            .name
+            .map(SharedString::from)
+            .or_else(|| tool_name_from_meta(&tool_call.meta));
 
         let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
         let sandbox_authorization_details =
@@ -964,6 +966,7 @@ impl ToolCall {
             kind,
             status,
             title,
+            name,
             content,
             locations,
             raw_input,
@@ -977,6 +980,14 @@ impl ToolCall {
 
         if let Some(status) = status {
             self.update_acp_status(status);
+        }
+
+        if let Some(tool_name) = name.map(SharedString::from) {
+            self.tool_name = Some(tool_name);
+        } else if self.tool_name.is_none() {
+            // Legacy metadata only fills a missing name so it cannot replace a
+            // first-class name received earlier.
+            self.tool_name = tool_name_from_meta(&meta);
         }
 
         if let Some(subagent_session_info) = subagent_session_info_from_meta(&meta) {
@@ -6443,6 +6454,148 @@ mod tests {
                     ..
                 })
             ));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_name_precedence_and_updates(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("failed to create ACP thread");
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("tool-call", "Tool call")
+                            .name("first_class")
+                            .meta(meta_with_tool_name("legacy")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to create first-class named tool call");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(AgentThreadEntry::ToolCall(tool_call)) = thread.entries.last() else {
+                unreachable!("tool call update must create a tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("first_class"));
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("legacy-tool-call", "Legacy tool call")
+                            .meta(meta_with_tool_name("legacy")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to create legacy named tool call");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(AgentThreadEntry::ToolCall(tool_call)) = thread.entries.last() else {
+                unreachable!("tool call update must create a tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("legacy"));
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(
+                        acp::ToolCallUpdate::new("tool-call", acp::ToolCallUpdateFields::new())
+                            .meta(meta_with_tool_name("legacy_update")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to apply stale legacy tool-call name update");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(tool_call) = thread.entries.iter().find_map(|entry| match entry {
+                AgentThreadEntry::ToolCall(tool_call)
+                    if tool_call.id == acp::ToolCallId::new("tool-call") =>
+                {
+                    Some(tool_call)
+                }
+                _ => None,
+            }) else {
+                unreachable!("tool call update must create a tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("first_class"));
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(
+                        acp::ToolCallUpdate::new(
+                            "legacy-tool-call",
+                            acp::ToolCallUpdateFields::new().name("first_class_update"),
+                        )
+                        .meta(meta_with_tool_name("ignored_legacy_update")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to apply first-class tool-call name update");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(tool_call) = thread.entries.iter().find_map(|entry| match entry {
+                AgentThreadEntry::ToolCall(tool_call)
+                    if tool_call.id == acp::ToolCallId::new("legacy-tool-call") =>
+                {
+                    Some(tool_call)
+                }
+                _ => None,
+            }) else {
+                unreachable!("tool call update must create a tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("first_class_update"));
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(acp::ToolCall::new(
+                        "late-legacy-tool-call",
+                        "Late legacy tool call",
+                    )),
+                    cx,
+                )
+            })
+            .expect("failed to create unnamed tool call");
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(
+                        acp::ToolCallUpdate::new(
+                            "late-legacy-tool-call",
+                            acp::ToolCallUpdateFields::new(),
+                        )
+                        .meta(meta_with_tool_name("late_legacy")),
+                    ),
+                    cx,
+                )
+            })
+            .expect("failed to apply late legacy tool-call name");
+
+        thread.read_with(cx, |thread, _| {
+            let Some(AgentThreadEntry::ToolCall(tool_call)) = thread.entries.last() else {
+                unreachable!("tool call update must preserve the tool call entry");
+            };
+            assert_eq!(tool_call.tool_name.as_deref(), Some("late_legacy"));
         });
     }
 

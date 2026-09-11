@@ -4137,6 +4137,126 @@ mod internal_tests {
     }
 
     #[gpui::test]
+    async fn test_native_tool_names_survive_reused_ids_and_reload(cx: &mut TestAppContext) {
+        use language_model::{LanguageModelToolUse, LanguageModelToolUseInput};
+
+        init_test(cx);
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let fs = project.read_with(cx, |project, _| project.fs().clone());
+        fs.write(Path::new("/a/file.txt"), b"retained file contents")
+            .await
+            .expect("test file should be written");
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.clear();
+            agent_settings::AgentSettings::override_global(settings, cx);
+            thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        });
+
+        for tool_name in ["read_file", "unavailable_tool"] {
+            let prompt_task = cx.update(|cx| {
+                acp_thread::AgentSessionClientUserMessageIds::prompt(
+                    connection.as_ref(),
+                    ClientUserMessageId::new(),
+                    acp::PromptRequest::new(session_id.clone(), vec!["use a tool".into()]),
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+            let request = model
+                .pending_completions()
+                .pop()
+                .expect("user prompt should reach the model");
+            let input = json!({"path": "a/file.txt"});
+            model.send_completion_stream_event(
+                &request,
+                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id: "reused_id".into(),
+                    name: tool_name.into(),
+                    raw_input: input.to_string(),
+                    input: LanguageModelToolUseInput::Json(input),
+                    is_input_complete: true,
+                    thought_signature: None,
+                }),
+            );
+            model.end_completion_stream(&request);
+            cx.run_until_parked();
+            let request = model
+                .pending_completions()
+                .pop()
+                .expect("tool result should reach the model");
+            assert_eq!(request.intent, Some(CompletionIntent::ToolResults));
+            model.send_completion_stream_text_chunk(&request, "done");
+            model.end_completion_stream(&request);
+            cx.run_until_parked();
+            prompt_task.await.expect("native tool turn should complete");
+        }
+
+        let tool_names = |thread: &AcpThread| {
+            thread
+                .entries()
+                .iter()
+                .filter_map(|entry| match entry {
+                    acp_thread::AgentThreadEntry::ToolCall(tool_call) => Some((
+                        tool_call.id.clone(),
+                        tool_call.tool_name.clone(),
+                        std::mem::discriminant(&tool_call.status),
+                    )),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let live_tool_names = acp_thread.read_with(cx, |thread, _| tool_names(thread));
+        let [
+            (read_file_id, read_file_name, read_file_status),
+            (unavailable_id, unavailable_name, unavailable_status),
+        ] = live_tool_names.as_slice()
+        else {
+            panic!("native turns should produce two distinct ACP tool calls");
+        };
+        assert_ne!(read_file_id, unavailable_id);
+        assert_eq!(read_file_name.as_deref(), Some("read_file"));
+        assert_eq!(
+            *read_file_status,
+            std::mem::discriminant(&acp_thread::ToolCallStatus::Completed)
+        );
+        assert_eq!(unavailable_name.as_deref(), Some("unavailable_tool"));
+        assert_eq!(
+            *unavailable_status,
+            std::mem::discriminant(&acp_thread::ToolCallStatus::Failed)
+        );
+
+        drop(thread);
+        drop(acp_thread);
+        release_dropped_entities(cx);
+        agent.read_with(cx, |agent, _| {
+            assert!(!agent.sessions.contains_key(&session_id));
+        });
+
+        let restored = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    session_id,
+                    project,
+                    PathList::new(&[Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("native tool session should reload");
+        cx.run_until_parked();
+        assert_eq!(
+            restored.read_with(cx, |thread, _| tool_names(thread)),
+            live_tool_names
+        );
+    }
+
+    #[gpui::test]
     async fn test_threads_flushed_to_database_on_app_quit(cx: &mut TestAppContext) {
         init_test(cx);
 
