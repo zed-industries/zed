@@ -30,6 +30,8 @@ While you can easily edit files in a multibuffer, navigating directly to the sou
 
 Additionally, if you prefer to use the mouse and would like to double-click on an excerpt to open it, you can enable this functionality with the setting: `"double_click_in_multibuffer": "open"`.
 
+If you'd rather start with every file collapsed and expand only the ones you need, enable `"multibuffer_default_folded": true`.
+
 ## Project search
 
 To start a search run the {#action pane::DeploySearch} command (`cmd-shift-f` on macOS, `ctrl-shift-f` on Windows/Linux, or `g/` in Vim mode). After the search has completed, the results will be shown in a new multibuffer. There will be one excerpt for each matching line across the whole project.

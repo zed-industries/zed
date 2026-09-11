@@ -1840,6 +1840,16 @@ Positive `integer` values
 
 Positive `integer` value between 1 and 32. Values outside of this range will be clamped to this range.
 
+## Multibuffer Default Folded
+
+- Description: Whether to fold all files in multibuffer by default.
+- Setting: `multibuffer_default_folded`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Extend Comment On Newline
 
 - Description: Whether to start a new line with a comment when a previous line is a comment as well.
