@@ -2,8 +2,11 @@ use std::{
     cell::{OnceCell, RefCell},
     future::Future,
     rc::Rc,
-    sync::Arc,
-    time::Duration,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use anyhow::{Result, anyhow};
@@ -783,6 +786,90 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         self.replace_bencher(bencher);
     }
 
+    /// Measures finite rendering sessions with fresh, untimed setup for each iteration.
+    ///
+    /// `setup` returns session state, its window, and a shared stop flag. Each
+    /// Criterion iteration pumps one batch of ready foreground tasks per frame,
+    /// then calls `input` with a zero-based logical frame number unless stopped.
+    /// Dirty windows are drawn and the session window is presented before checking
+    /// the flag again, including when a foreground task stopped the session.
+    /// Frames are unpaced; the thread yields between them without sleeping.
+    ///
+    /// Store `true` with release ordering to stop. Stopping does not imply success:
+    /// validate the workload in `Input::drop` or retained fixture state afterward.
+    /// Setup, session state destruction, and report aggregation are outside both
+    /// timing and tracing. Own outstanding tasks in `Input` so dropping it cancels
+    /// them; do not detach session work that could leak into subsequent iterations.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the window is removed or the stop flag remains unset for `timeout`.
+    /// The deadline is checked between frames and cannot preempt a blocking task
+    /// poll, input callback, draw, or present.
+    pub fn bench_renderer_session<Input>(
+        &mut self,
+        timeout: Duration,
+        mut setup: impl FnMut(&mut Self) -> (Input, AnyWindowHandle, Arc<AtomicBool>),
+        mut input: impl FnMut(&mut Input, u64, &mut Window, &mut App),
+    ) {
+        let bencher = self.take_bencher("bench_renderer_session");
+        let mut setup_context = self.clone();
+        let mut benchmark_context = self.clone();
+        let dispatcher = self.background_executor.dispatcher().clone();
+        let report = self.report.clone();
+
+        bencher.iter_batched_ref(
+            || {
+                setup_context.settle();
+                MeasuredTaskInput {
+                    input: setup(&mut setup_context),
+                    trace_scope: Some(TraceScope::start(
+                        setup_context.foreground_journal_collector(),
+                    )),
+                }
+            },
+            |measured_input| {
+                let (state, window, stopped) = &mut measured_input.input;
+                let started = Instant::now();
+                let mut frame = 0;
+                loop {
+                    dispatcher
+                        .as_threaded()
+                        .expect("validated in BenchAppContext::build")
+                        .run_ready_main_tasks();
+                    benchmark_context
+                        .update_window(*window, |_, window, cx| {
+                            if !stopped.load(Ordering::Acquire) {
+                                input(state, frame, window, cx);
+                            }
+                        })
+                        .expect("renderer session window must remain open");
+                    // Present in a separate update, after effects from both
+                    // foreground tasks and input have flushed the final draw.
+                    benchmark_context
+                        .update_window(*window, |_, window, _| window.present_if_needed())
+                        .expect("renderer session window must remain open");
+                    if stopped.load(Ordering::Acquire) {
+                        break;
+                    }
+                    assert!(
+                        started.elapsed() < timeout,
+                        "renderer session did not stop within {timeout:?}"
+                    );
+                    frame += 1;
+                    std::thread::yield_now();
+                }
+                MeasuredTaskOutput {
+                    trace_scope: measured_input.trace_scope.take(),
+                    report: report.clone(),
+                    _output: (),
+                }
+            },
+            criterion::BatchSize::PerIteration,
+        );
+        self.replace_bencher(bencher);
+    }
+
     /// Adds a window with an empty root view for benchmark setup.
     pub fn add_empty_window(&mut self) -> BenchWindowContext<'a, 'measurement> {
         let bounds = {
@@ -1131,6 +1218,199 @@ mod tests {
     use crate::profiler::journal::install_test_foreground_journal;
 
     #[test]
+    fn renderer_session_presents_task_completion_and_restarts_outside_tracing() {
+        use futures::StreamExt;
+        use std::cell::Cell;
+
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let report = BenchReport::default();
+        let sessions = Rc::new(Cell::new(0));
+        let mut criterion = criterion::Criterion::default()
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("renderer_session_restarts", |bencher| {
+            let mut cx = BenchAppContext::new_with_platform_and_report(
+                platform.clone(),
+                None,
+                bencher,
+                report.clone(),
+            );
+            cx.bench_renderer_session(
+                Duration::from_secs(5),
+                |cx| {
+                    let draws_before = report.frame_snapshot.borrow().draw.len();
+                    let mut window = cx.add_empty_window();
+                    let handle = window.window_handle();
+                    window.update(|window, _| window.present_if_needed());
+                    let stopped = Arc::new(AtomicBool::new(false));
+                    let (sender, mut receiver) = futures::channel::mpsc::unbounded();
+                    let task = cx.update(|cx| {
+                        cx.spawn({
+                            let stopped = stopped.clone();
+                            async move |cx| {
+                                for _ in 0..3 {
+                                    receiver
+                                        .next()
+                                        .await
+                                        .expect("input must advance each frame");
+                                    cx.update_window(handle, |_, window, _| window.refresh())
+                                        .expect("session window must remain open");
+                                }
+                                stopped.store(true, Ordering::Release);
+                            }
+                        })
+                    });
+                    let callbacks = Rc::new(Cell::new(0));
+                    let teardown = OnDrop({
+                        let callbacks = callbacks.clone();
+                        let sessions = sessions.clone();
+                        let report = report.clone();
+                        move || {
+                            assert_eq!(callbacks.get(), 3, "stop must skip the final input");
+                            window.update(|window, _| {
+                                assert!(
+                                    !window.needs_present.get(),
+                                    "the task's final dirty frame must be presented"
+                                );
+                            });
+                            assert_eq!(
+                                report.frame_snapshot.borrow().draw.len() - draws_before,
+                                6,
+                                "collect the three input and three task draws, not setup"
+                            );
+                            // A teardown draw must not enter the next session's report.
+                            window.update(|window, _| window.refresh());
+                            window.update(|window, _| window.remove_window());
+                            sessions.set(sessions.get() + 1);
+                        }
+                    });
+                    ((sender, callbacks, task, teardown), handle, stopped)
+                },
+                |(sender, callbacks, _, _), frame, window, _| {
+                    assert_eq!(frame, callbacks.get());
+                    callbacks.set(frame + 1);
+                    window.refresh();
+                    sender
+                        .unbounded_send(())
+                        .expect("session task must be alive");
+                },
+            );
+            cx.teardown();
+        });
+        assert!(sessions.get() > 1, "Criterion must create fresh sessions");
+    }
+
+    #[test]
+    #[should_panic(expected = "renderer session did not stop within")]
+    fn renderer_session_bounds_an_unset_stop_flag() {
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let mut criterion = criterion::Criterion::default().without_plots();
+        criterion.bench_function("renderer_session_timeout", |bencher| {
+            let mut cx = BenchAppContext::new(platform.clone(), None, bencher);
+            cx.bench_renderer_session(
+                Duration::ZERO,
+                |cx| {
+                    let window = cx.add_empty_window();
+                    ((), window.window_handle(), Arc::new(AtomicBool::new(false)))
+                },
+                |_, _, window, _| window.refresh(),
+            );
+        });
+    }
+
+    #[test]
+    fn renderer_session_presents_input_stop_and_cancels_pending_owned_work() {
+        use std::cell::Cell;
+
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let report = BenchReport::default();
+        let sessions = Rc::new(Cell::new(0));
+        let cancelled = Rc::new(Cell::new(0));
+        let resumed = Rc::new(Cell::new(0));
+        let mut criterion = criterion::Criterion::default()
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("renderer_session_input_stop", |bencher| {
+            let mut cx = BenchAppContext::new_with_platform_and_report(
+                platform.clone(),
+                None,
+                bencher,
+                report.clone(),
+            );
+            cx.bench_renderer_session(
+                Duration::from_secs(5),
+                |cx| {
+                    assert_eq!(cancelled.get(), sessions.get());
+                    assert_eq!(resumed.get(), 0, "previous session work must not resume");
+                    let draws_before = report.frame_snapshot.borrow().draw.len();
+                    let mut window = cx.add_empty_window();
+                    let handle = window.window_handle();
+                    window.update(|window, _| window.present_if_needed());
+                    let stopped = Arc::new(AtomicBool::new(false));
+                    let started = Rc::new(Cell::new(false));
+                    let (sender, receiver) = futures::channel::oneshot::channel();
+                    let task = cx.foreground_executor().spawn({
+                        let started = started.clone();
+                        let cancelled = cancelled.clone();
+                        let resumed = resumed.clone();
+                        async move {
+                            let _on_drop = OnDrop(|| cancelled.set(cancelled.get() + 1));
+                            started.set(true);
+                            receiver.await.expect("input must wake the pending task");
+                            resumed.set(resumed.get() + 1);
+                        }
+                    });
+                    let teardown = OnDrop({
+                        let report = report.clone();
+                        let sessions = sessions.clone();
+                        move || {
+                            window.update(|window, _| {
+                                assert!(
+                                    !window.needs_present.get(),
+                                    "input's final dirty frame must be presented"
+                                );
+                            });
+                            assert_eq!(report.frame_snapshot.borrow().draw.len() - draws_before, 1);
+                            window.update(|window, _| window.remove_window());
+                            sessions.set(sessions.get() + 1);
+                        }
+                    });
+                    (
+                        (Some(sender), started, stopped.clone(), task, teardown),
+                        handle,
+                        stopped,
+                    )
+                },
+                |(sender, started, stopped, _, _), frame, window, _| {
+                    assert_eq!(frame, 0, "stopping input must not be called again");
+                    assert!(started.get(), "the owned task must already be pending");
+                    // Make the unfinished task runnable: without cancellation it
+                    // would resume when the next session's setup settles work.
+                    sender
+                        .take()
+                        .expect("only one input")
+                        .send(())
+                        .expect("pending receiver");
+                    window.refresh();
+                    stopped.store(true, Ordering::Release);
+                },
+            );
+            cx.teardown();
+        });
+        assert!(sessions.get() > 1);
+        assert_eq!(cancelled.get(), sessions.get());
+        assert_eq!(
+            resumed.get(),
+            0,
+            "no cancelled task may resume, including the last"
+        );
+    }
+
+    #[test]
     fn foreground_work_reports_long_task_without_window_draw() {
         let (journal, _journal_guard) = install_test_foreground_journal(1024, 64);
         let dispatcher = Arc::new(ThreadedDispatcher::new());
@@ -1279,5 +1559,13 @@ mod tests {
             Rc::ptr_eq(&output, &expected_output),
             "task runner should preserve non-Send foreground output"
         );
+    }
+
+    struct OnDrop<F: FnMut()>(F);
+
+    impl<F: FnMut()> Drop for OnDrop<F> {
+        fn drop(&mut self) {
+            (self.0)();
+        }
     }
 }
