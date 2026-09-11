@@ -1017,6 +1017,10 @@ async fn test_realfs_watcher_diagnostics(executor: BackgroundExecutor, cx: &mut 
     let fs = RealFs::new(None, executor.clone());
     let directory = TempDir::new().unwrap();
     let root = std::fs::canonicalize(directory.path()).unwrap();
+    // Windows canonicalization adds a verbatim prefix that watcher paths omit.
+    let root = util::paths::SanitizedPath::new(&root)
+        .as_path()
+        .to_path_buf();
     let recording = fs.record_watcher_diagnostics().unwrap();
     let (mut events, watcher) = fs.watch(&root, Duration::from_millis(10)).await;
     let file = root.join("watcher-diagnostics.txt");
@@ -1025,7 +1029,9 @@ async fn test_realfs_watcher_diagnostics(executor: BackgroundExecutor, cx: &mut 
         watcher_delivered_event(&mut events, &executor, Duration::from_secs(5), &|path| {
             path == file
         })
-        .await
+        .await,
+        "no watcher event matched {file:?}: {:#?}",
+        recording.snapshot()
     );
     let snapshot = recording.snapshot();
     assert!(
