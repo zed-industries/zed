@@ -31,7 +31,6 @@ use project::{
 use settings::{DiffViewStyle, Settings};
 use std::{
     any::{Any, TypeId},
-    collections::HashSet,
     path::PathBuf,
     sync::Arc,
 };
@@ -342,7 +341,6 @@ impl CommitView {
         let project_clone = project.clone();
 
         let load_diff_task = cx.spawn_in(window, async move |this, cx| {
-            let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
             for file in commit_diff.files {
@@ -404,10 +402,6 @@ impl CommitView {
                         worktree_status: StatusCode::Unmodified,
                     }),
                 );
-
-                if is_binary {
-                    binary_buffer_ids.insert(buffer_id);
-                }
 
                 let buffer_diff = if is_binary {
                     cx.update(|_, cx| {
@@ -474,16 +468,19 @@ impl CommitView {
                         yield_now().await;
                     }
                 }
+
+                this.update(cx, |this, cx| {
+                    if is_binary || EditorSettings::get_global(cx).multibuffer_default_folded {
+                        this.editor.update(cx, |editor, cx| {
+                            editor.rhs_editor().update(cx, |editor, cx| {
+                                editor.fold_buffer(buffer_id, cx);
+                            });
+                        });
+                    }
+                })?;
             }
 
             this.update(cx, |this, cx| {
-                let buffer_ids_to_fold = if EditorSettings::get_global(cx).multibuffer_default_folded
-                {
-                    file_statuses.keys().copied().collect()
-                } else {
-                    binary_buffer_ids
-                };
-
                 let commit_view = cx.weak_entity();
                 this.editor.update(cx, |editor, cx| {
                     editor.rhs_editor().update(cx, |editor, _cx| {
@@ -493,13 +490,6 @@ impl CommitView {
                         });
                     });
                 });
-                if !buffer_ids_to_fold.is_empty() {
-                    this.editor.update(cx, |editor, cx| {
-                        editor.rhs_editor().update(cx, |editor, cx| {
-                            editor.fold_buffers(buffer_ids_to_fold, cx);
-                        });
-                    });
-                }
             })?;
 
             anyhow::Ok(())
