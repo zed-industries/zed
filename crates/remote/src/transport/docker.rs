@@ -326,14 +326,8 @@ impl DockerExecConnection {
             paths::remote_server_dir_relative().join(RelPath::from_unix_str(&binary_name).unwrap());
 
         let binary_exists_on_server = self
-            .run_docker_exec(
-                &dst_path.display(self.path_style()),
-                Some(&remote_dir_for_server),
-                &Default::default(),
-                &["version"],
-            )
-            .await
-            .is_ok();
+            .server_binary_runs(&dst_path, remote_dir_for_server)
+            .await;
         #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
         if let Some(remote_server_path) = super::build_remote_server_from_source(
             &remote_platform,
@@ -366,6 +360,29 @@ impl DockerExecConnection {
 
         if binary_exists_on_server {
             return Ok(dst_path.into());
+        }
+
+        match self
+            .copy_server_binary_from_host(
+                &binary_name,
+                &dst_path,
+                remote_dir_for_server,
+                delegate,
+                cx,
+            )
+            .await
+        {
+            Ok(())
+                if self
+                    .server_binary_runs(&dst_path, remote_dir_for_server)
+                    .await =>
+            {
+                return Ok(dst_path.into());
+            }
+            Ok(()) => log::warn!(
+                "the server binary copied from the daemon's machine does not run in the container"
+            ),
+            Err(error) => log::info!("not reusing the daemon machine's server binary: {error:#}"),
         }
 
         let wanted_version = cx.update(|cx| match release_channel {
@@ -443,6 +460,134 @@ impl DockerExecConnection {
 
     async fn docker_user_home_dir(&self) -> Result<String> {
         self.run_docker_exec_delimited("echo $HOME").await
+    }
+
+    /// Whether the container already has a server binary that runs. This is
+    /// also the acceptance test for a binary that was just put there, because
+    /// a file of the right name is not evidence that it can execute.
+    async fn server_binary_runs(&self, dst_path: &RelPath, remote_dir_for_server: &str) -> bool {
+        self.run_docker_exec(
+            &dst_path.display(self.path_style()),
+            Some(remote_dir_for_server),
+            &Default::default(),
+            &["version"],
+        )
+        .await
+        .is_ok()
+    }
+
+    /// The command that copies the daemon machine's own server binary into the
+    /// container. `docker cp` resolves its source path on the machine running
+    /// the daemon, which is where that binary lives, so the copy never travels
+    /// through this one. `$HOME` is left for that machine's shell to expand
+    /// because its home directory is not otherwise known here.
+    fn copy_from_host_command(
+        &self,
+        host: &Arc<dyn RemoteConnection>,
+        binary_name: &str,
+        container_binary_path: &str,
+    ) -> Result<CommandTemplate> {
+        anyhow::ensure!(
+            !binary_name.contains(['"', '$', '`', '\\']),
+            "server binary name {binary_name:?} is not safe to interpolate into a shell command"
+        );
+        let shell_kind = ShellKind::Posix;
+        let destination = shell_kind
+            .try_quote(&format!(
+                "{}:{}",
+                self.connection_options.container_id, container_binary_path
+            ))
+            .context("shell quoting")?
+            .to_string();
+        let source = paths::remote_server_dir_relative()
+            .join(RelPath::from_unix_str(binary_name)?)
+            .display(PathStyle::Unix)
+            .to_string();
+        let script = format!("{} cp \"$HOME/{source}\" {destination}", self.docker_cli());
+
+        host.build_command(
+            Some("sh".to_string()),
+            &["-c".to_string(), script],
+            &Default::default(),
+            None,
+            None,
+            Interactive::No,
+        )
+    }
+
+    /// A container that has no server binary cannot always get one: a Dev
+    /// build has no release to download and, outside a debug build, no way to
+    /// compile one, so losing the container's home directory used to end the
+    /// connection permanently. The machine running the daemon is not in that
+    /// position - Zed installed a binary of the same channel and version in
+    /// its home directory when it connected there - so borrow that one.
+    async fn copy_server_binary_from_host(
+        &self,
+        binary_name: &str,
+        dst_path: &RelPath,
+        remote_dir_for_server: &str,
+        delegate: &Arc<dyn RemoteClientDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let host = self.host.as_ref().context(
+            "the daemon runs on this machine, which has no server binary for the container",
+        )?;
+        let platform = self.remote_platform.context("no container platform")?;
+        let host_platform = host.remote_platform();
+        anyhow::ensure!(
+            host_platform.os == platform.os && host_platform.arch == platform.arch,
+            "the daemon's machine is {}-{} but the container is {}-{}",
+            host_platform.os,
+            host_platform.arch,
+            platform.os,
+            platform.arch
+        );
+
+        delegate.set_status(Some("Copying remote development server into container"), cx);
+
+        let parent = dst_path
+            .parent()
+            .context("server binary has no directory")?;
+        self.run_docker_exec(
+            "mkdir",
+            Some(remote_dir_for_server),
+            &Default::default(),
+            &["-p", parent.display(self.path_style()).as_ref()],
+        )
+        .await?;
+
+        let container_binary_path = format!(
+            "{}/{}",
+            remote_dir_for_server.trim_end_matches('/'),
+            dst_path.display(self.path_style())
+        );
+        let command = self.copy_from_host_command(host, binary_name, &container_binary_path)?;
+        let output = command.output().await?;
+        anyhow::ensure!(
+            output.status.success(),
+            "failed to copy the server binary from the daemon's machine: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let remote_user = ShellKind::Posix
+            .try_quote(&self.connection_options.remote_user)
+            .context("shell quoting")?
+            .to_string();
+        self.run_docker_command(
+            "exec",
+            &[
+                self.connection_options.container_id.as_str(),
+                "sh",
+                "-c",
+                &format!("chown {remote_user}:{remote_user} \"$1\" && chmod 755 \"$1\""),
+                "zed-copy",
+                &container_binary_path,
+            ],
+        )
+        .await
+        .context("preparing the copied server binary")?;
+
+        Ok(())
     }
 
     async fn extract_server_binary(
@@ -1383,6 +1528,43 @@ mod tests {
             .expect("building a non-interactive command should succeed");
         assert_eq!(batch.args.first().map(String::as_str), Some("-T"));
         assert!(batch.args.contains(&"-i".to_string()));
+    }
+
+    /// The source path is the daemon machine's, so `$HOME` has to reach that
+    /// machine's shell unquoted while the destination stays quoted.
+    #[gpui::test]
+    async fn the_hosts_server_binary_is_copied_in_from_the_daemons_machine(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let connection = local_connection(docker_options());
+        let host = mock_host(cx, server_cx).await;
+        let host: Arc<dyn RemoteConnection> = host;
+
+        let command = connection
+            .copy_from_host_command(
+                &host,
+                "zed-remote-server-dev-build",
+                "/home/anth/.zed_server/zed-remote-server-dev-build",
+            )
+            .expect("building the copy command should succeed");
+        let script = command
+            .args
+            .last()
+            .expect("the copy command should end in a script");
+
+        assert_eq!(
+            script,
+            "docker cp \"$HOME/.zed_server/zed-remote-server-dev-build\" \
+             container-123:/home/anth/.zed_server/zed-remote-server-dev-build"
+        );
+
+        assert!(
+            connection
+                .copy_from_host_command(&host, "zed\"; rm -rf /", "/home/anth/zed")
+                .is_err(),
+            "a binary name that could break out of the script should be refused"
+        );
     }
 
     /// The container's ports are not published on the daemon's machine, but
