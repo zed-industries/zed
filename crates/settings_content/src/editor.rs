@@ -146,6 +146,11 @@ pub struct EditorSettingsContent {
     /// Default: 2
     pub excerpt_context_lines: Option<u32>,
 
+    /// Whether to fold all files in multibuffer by default
+    ///
+    /// Default: false
+    pub multibuffer_default_folded: Option<bool>,
+
     /// Whether to enable middle-click paste on Linux
     ///
     /// Default: true
