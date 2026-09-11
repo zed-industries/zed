@@ -643,6 +643,8 @@ const GO_TABLE_TEST_CASE_NAME_TASK_VARIABLE: VariableName =
 const GO_SUITE_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("GO_SUITE_NAME"));
 
+const GO_TEST_BUILD_TAGS_STR: &str = "GO_TEST_BUILD_TAGS";
+
 impl ContextProvider for GoContextProvider {
     fn build_context(
         &self,
@@ -727,7 +729,11 @@ impl ContextProvider for GoContextProvider {
         )))
     }
 
-    fn associated_tasks(&self, _: Option<Entity<Buffer>>, _: &App) -> Task<Option<TaskTemplates>> {
+    fn associated_tasks(
+        &self,
+        buffer: Option<Entity<Buffer>>,
+        cx: &App,
+    ) -> Task<Option<TaskTemplates>> {
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
             None
         } else {
@@ -735,7 +741,27 @@ impl ContextProvider for GoContextProvider {
         };
         let module_cwd = Some(GO_MODULE_ROOT_TASK_VARIABLE.template_value());
 
-        Task::ready(Some(TaskTemplates(vec![
+        let settings = LanguageSettings::resolve(
+            buffer.map(|buffer| buffer.read(cx)),
+            Some(&LanguageName::new("Go")),
+            cx,
+        );
+        // Tags only — the user supplies tag names via `GO_TEST_BUILD_TAGS`, we build the `-tags=` flag.
+        let build_tags_arg = settings
+            .tasks
+            .variables
+            .get(GO_TEST_BUILD_TAGS_STR)
+            .map(|tags| {
+                let normalized = tags
+                    .split(|c: char| c.is_whitespace() || c == ',')
+                    .filter(|tag| !tag.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("-tags={normalized}")
+            })
+            .filter(|arg| arg != "-tags=");
+
+        let mut templates = vec![
             TaskTemplate {
                 label: format!(
                     "go test {} -v -run Test{}/{}",
@@ -909,7 +935,19 @@ impl ContextProvider for GoContextProvider {
                 cwd: module_cwd,
                 ..TaskTemplate::default()
             },
-        ])))
+        ];
+
+        if let Some(build_tags_arg) = build_tags_arg {
+            for template in &mut templates {
+                if template.command == "go"
+                    && template.args.first().map(String::as_str) == Some("test")
+                {
+                    template.args.insert(1, build_tags_arg.clone());
+                }
+            }
+        }
+
+        Task::ready(Some(TaskTemplates(templates)))
     }
 
     fn runnable_resolver(&self) -> Option<Arc<dyn RunnableResolver>> {
@@ -2136,5 +2174,80 @@ mod tests {
         let input_with_double_quotes = r#"`test with "double quotes"`"#;
         let result = extract_subtest_name(input_with_double_quotes);
         assert_eq!(result, Some(r#"test_with_\"double_quotes\""#.to_string()));
+    }
+
+    fn set_go_task_variables(cx: &mut gpui::App, variables: &[(&str, &str)]) {
+        use gpui::BorrowAppContext;
+        use settings::{LanguageSettingsContent, LanguageTaskSettingsContent, SettingsStore};
+
+        let variables: collections::HashMap<String, String> = variables
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect();
+        let test_settings = SettingsStore::test(cx);
+        cx.set_global(test_settings);
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.project.all_languages.languages.0.insert(
+                    "Go".into(),
+                    LanguageSettingsContent {
+                        tasks: Some(LanguageTaskSettingsContent {
+                            variables: Some(variables),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_go_build_tags_injected_into_test_tasks(cx: &mut TestAppContext) {
+        let templates = cx
+            .update(|cx| {
+                set_go_task_variables(cx, &[(GO_TEST_BUILD_TAGS_STR, "integration e2e")]);
+                GoContextProvider.associated_tasks(None, cx)
+            })
+            .await
+            .unwrap();
+
+        for template in &templates.0 {
+            let is_go_test = template.command == "go"
+                && template.args.first().map(String::as_str) == Some("test");
+            if is_go_test {
+                assert_eq!(
+                    template.args.get(1).map(String::as_str),
+                    Some("-tags=integration,e2e"),
+                    "expected build tags right after `test` for task {:?}",
+                    template.label
+                );
+            } else {
+                assert!(
+                    !template.args.iter().any(|arg| arg.starts_with("-tags=")),
+                    "non-test task should not receive build tags: {:?}",
+                    template.label
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_go_build_tags_blank_value_not_injected(cx: &mut TestAppContext) {
+        let templates = cx
+            .update(|cx| {
+                set_go_task_variables(cx, &[(GO_TEST_BUILD_TAGS_STR, " , ")]);
+                GoContextProvider.associated_tasks(None, cx)
+            })
+            .await
+            .unwrap();
+
+        for template in &templates.0 {
+            assert!(
+                !template.args.iter().any(|arg| arg.starts_with("-tags=")),
+                "blank build tags should add no flag: {:?}",
+                template.label
+            );
+        }
     }
 }
