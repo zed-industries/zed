@@ -130,6 +130,7 @@ impl WebWindowInner {
             self.register_drop(),
             self.register_key_down(),
             self.register_key_up(),
+            self.register_text_input(),
             self.register_paste(),
             self.register_composition_start(),
             self.register_composition_update(),
@@ -460,6 +461,28 @@ impl WebWindowInner {
                 if !result.propagate {
                     event.prevent_default();
                 }
+            }
+        })
+    }
+
+    fn register_text_input(self: &Rc<Self>) -> EventListenerHandle {
+        let this = Rc::clone(self);
+        self.listen_input("input", move |event: JsValue| {
+            let event: web_sys::InputEvent = event.unchecked_into();
+            if this.is_composing.get() || event.is_composing() || event.input_type() != "insertText"
+            {
+                return;
+            }
+
+            // Emoji pickers and other text services can insert without a keydown.
+            // Keyboard and paste handlers prevent default insertion, while the
+            // composition handlers commit marked text and clear the DOM input.
+            let text = this.input_element.value();
+            this.input_element.set_value("");
+            if !text.is_empty() {
+                this.with_input_handler(|handler| {
+                    handler.replace_text_in_range(None, &text);
+                });
             }
         })
     }
