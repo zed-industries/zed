@@ -78,6 +78,29 @@ pub use app_menu::*;
 pub use keyboard::*;
 pub use keystroke::*;
 
+/// Whether the platform is presenting a window's frames.
+///
+/// This is about presentation, not the window's shown/hidden state: a shown
+/// window that is fully covered by other windows, minimized, on another
+/// Space or virtual desktop, or on a display that is asleep is `Hidden`. A
+/// window only partly covered by other windows is `Visible`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowVisibility {
+    /// At least part of the window is being presented; frames drawn for it
+    /// will be shown.
+    Visible,
+    /// No part of the window is being presented. The platform will not
+    /// request frames for it until it becomes visible again.
+    Hidden,
+}
+
+impl WindowVisibility {
+    /// Whether frames drawn for the window will be shown.
+    pub fn is_visible(self) -> bool {
+        self == Self::Visible
+    }
+}
+
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub(crate) use test::*;
 
@@ -883,6 +906,13 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Requests that the operating system draw attention to this window.
     fn request_attention(&self) {}
     fn is_active(&self) -> bool;
+    // TODO(visibility): the default claims "visible", which is wrong for any
+    // backend that hasn't been wired up yet and hides that fact from callers.
+    // Once the Linux and Windows backends report visibility, make this and
+    // `on_visibility_change` required so a backend cannot silently opt out.
+    fn visibility(&self) -> WindowVisibility {
+        WindowVisibility::Visible
+    }
     fn is_hovered(&self) -> bool;
     fn background_appearance(&self) -> WindowBackgroundAppearance;
     fn set_title(&mut self, title: &str);
@@ -897,6 +927,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
+    fn on_visibility_change(&self, _callback: Box<dyn FnMut(WindowVisibility)>) {}
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
