@@ -1,4 +1,3 @@
-use crate::wasm_host::wit::since_v0_6_0::slash_command::SlashCommandOutputSection;
 use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat, SymbolKind};
 use crate::wasm_host::{
     WasmState,
@@ -6,6 +5,7 @@ use crate::wasm_host::{
 };
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
+use ::task::ZedDebugConfig;
 use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -26,7 +26,6 @@ use std::{
     str::FromStr,
     sync::{Arc, OnceLock},
 };
-use task::{SpawnInTerminal, ZedDebugConfig};
 use url::Url;
 use util::{
     archive::extract_zip, fs::make_file_executable, maybe, paths::PathStyle, rel_path::RelPath,
@@ -111,6 +110,7 @@ impl TryFrom<dap::StartDebuggingRequestArguments> for extension::StartDebuggingR
         })
     }
 }
+
 impl From<dap::IpAddress> for IpAddr {
     fn from(value: dap::IpAddress) -> Self {
         match value {
@@ -167,7 +167,7 @@ impl From<dap::TcpArgumentsTemplate> for extension::TcpArgumentsTemplate {
     }
 }
 
-impl TryFrom<extension::DebugTaskDefinition> for DebugTaskDefinition {
+impl TryFrom<extension::DebugTaskDefinition> for self::dap::DebugTaskDefinition {
     type Error = anyhow::Error;
     fn try_from(value: extension::DebugTaskDefinition) -> Result<Self, Self::Error> {
         Ok(Self {
@@ -179,26 +179,130 @@ impl TryFrom<extension::DebugTaskDefinition> for DebugTaskDefinition {
     }
 }
 
-impl From<task::DebugRequest> for DebugRequest {
-    fn from(value: task::DebugRequest) -> Self {
-        match value {
-            task::DebugRequest::Launch(launch_request) => Self::Launch(launch_request.into()),
-            task::DebugRequest::Attach(attach_request) => Self::Attach(attach_request.into()),
+impl TryFrom<self::dap::DebugAdapterBinary> for extension::DebugAdapterBinary {
+    type Error = anyhow::Error;
+    fn try_from(value: self::dap::DebugAdapterBinary) -> Result<Self, Self::Error> {
+        Ok(Self {
+            command: value.command,
+            arguments: value.arguments,
+            envs: value.envs.into_iter().collect(),
+            cwd: value.cwd.map(PathBuf::from),
+            connection: value.connection.map(Into::into),
+            request_args: value.request_args.try_into()?,
+        })
+    }
+}
+
+impl From<ZedDebugConfig> for self::dap::DebugConfig {
+    fn from(value: ZedDebugConfig) -> Self {
+        Self {
+            label: value.label.to_string(),
+            adapter: value.adapter.to_string(),
+            request: value.request.into(),
+            stop_on_entry: value.stop_on_entry,
         }
     }
 }
 
-impl From<DebugRequest> for task::DebugRequest {
-    fn from(value: DebugRequest) -> Self {
-        match value {
-            DebugRequest::Launch(launch_request) => Self::Launch(launch_request.into()),
-            DebugRequest::Attach(attach_request) => Self::Attach(attach_request.into()),
+impl From<self::task::TaskDefinition> for ::task::TaskTemplate {
+    fn from(value: self::task::TaskDefinition) -> Self {
+        Self {
+            label: value.label,
+            command: value.command,
+            args: value.args,
+            env: value.env.into_iter().collect(),
+            cwd: value.cwd,
+            use_new_terminal: value.use_new_terminal.unwrap_or_default(),
+            allow_concurrent_runs: value.allow_concurrent_runs.unwrap_or_default(),
+            reveal: value.reveal.map(Into::into).unwrap_or_default(),
+            reveal_target: value.reveal_target.map(Into::into).unwrap_or_default(),
+            hide: value.hide.map(Into::into).unwrap_or_default(),
+            shell: value.shell.map(Into::into).unwrap_or_default(),
+            show_summary: value.show_summary.unwrap_or(true),
+            show_command: value.show_command.unwrap_or(true),
+            tags: value.tags,
+            save: Default::default(),
+            hooks: Default::default(),
         }
     }
 }
 
-impl From<task::LaunchRequest> for LaunchRequest {
-    fn from(value: task::LaunchRequest) -> Self {
+impl From<extension::TaskContextLocation> for self::task::TaskContextLocation {
+    fn from(value: extension::TaskContextLocation) -> Self {
+        Self {
+            worktree_id: value.worktree_id,
+            file_path: value.file_path,
+            range: self::common::Range {
+                start: value.range.start as u32,
+                end: value.range.end as u32,
+            },
+        }
+    }
+}
+
+impl From<extension::TaskContextFile> for self::task::TaskContextFile {
+    fn from(value: extension::TaskContextFile) -> Self {
+        Self {
+            worktree_id: value.worktree_id,
+            path: value.path,
+        }
+    }
+}
+
+impl From<self::task::RevealStrategy> for ::task::RevealStrategy {
+    fn from(value: self::task::RevealStrategy) -> Self {
+        match value {
+            self::task::RevealStrategy::Always => Self::Always,
+            self::task::RevealStrategy::NoFocus => Self::NoFocus,
+            self::task::RevealStrategy::Never => Self::Never,
+        }
+    }
+}
+
+impl From<self::task::RevealTarget> for ::task::RevealTarget {
+    fn from(value: self::task::RevealTarget) -> Self {
+        match value {
+            self::task::RevealTarget::Center => Self::Center,
+            self::task::RevealTarget::Dock => Self::Dock,
+        }
+    }
+}
+
+impl From<self::task::HideStrategy> for ::task::HideStrategy {
+    fn from(value: self::task::HideStrategy) -> Self {
+        match value {
+            self::task::HideStrategy::Never => Self::Never,
+            self::task::HideStrategy::Always => Self::Always,
+            self::task::HideStrategy::OnSuccess => Self::OnSuccess,
+        }
+    }
+}
+
+impl From<self::task::Shell> for ::task::Shell {
+    fn from(value: self::task::Shell) -> Self {
+        match value {
+            self::task::Shell::System => Self::System,
+            self::task::Shell::Program(p) => Self::Program(p),
+            self::task::Shell::WithArguments(s) => Self::WithArguments {
+                program: s.program,
+                args: s.args,
+                title_override: s.title_override,
+            },
+        }
+    }
+}
+
+impl From<::task::DebugRequest> for self::dap::DebugRequest {
+    fn from(value: ::task::DebugRequest) -> Self {
+        match value {
+            ::task::DebugRequest::Launch(launch) => Self::Launch(launch.into()),
+            ::task::DebugRequest::Attach(attach) => Self::Attach(attach.into()),
+        }
+    }
+}
+
+impl From<::task::LaunchRequest> for self::dap::LaunchRequest {
+    fn from(value: ::task::LaunchRequest) -> Self {
         Self {
             program: value.program,
             cwd: value.cwd.map(|p| p.to_string_lossy().into_owned()),
@@ -208,53 +312,39 @@ impl From<task::LaunchRequest> for LaunchRequest {
     }
 }
 
-impl From<task::AttachRequest> for AttachRequest {
-    fn from(value: task::AttachRequest) -> Self {
-        Self {
-            process_id: value.process_id,
-        }
-    }
-}
-
-impl From<LaunchRequest> for task::LaunchRequest {
-    fn from(value: LaunchRequest) -> Self {
+impl From<self::dap::LaunchRequest> for ::task::LaunchRequest {
+    fn from(value: self::dap::LaunchRequest) -> Self {
         Self {
             program: value.program,
-            cwd: value.cwd.map(|p| p.into()),
+            cwd: value.cwd.map(PathBuf::from),
             args: value.args,
             env: value.envs.into_iter().collect(),
         }
     }
 }
-impl From<AttachRequest> for task::AttachRequest {
-    fn from(value: AttachRequest) -> Self {
+
+impl From<::task::AttachRequest> for self::dap::AttachRequest {
+    fn from(value: ::task::AttachRequest) -> Self {
         Self {
             process_id: value.process_id,
         }
     }
 }
 
-impl From<ZedDebugConfig> for DebugConfig {
-    fn from(value: ZedDebugConfig) -> Self {
+impl From<self::dap::AttachRequest> for ::task::AttachRequest {
+    fn from(value: self::dap::AttachRequest) -> Self {
         Self {
-            label: value.label.into(),
-            adapter: value.adapter.into(),
-            request: value.request.into(),
-            stop_on_entry: value.stop_on_entry,
+            process_id: value.process_id,
         }
     }
 }
-impl TryFrom<DebugAdapterBinary> for extension::DebugAdapterBinary {
-    type Error = anyhow::Error;
-    fn try_from(value: DebugAdapterBinary) -> Result<Self, Self::Error> {
-        Ok(Self {
-            command: value.command,
-            arguments: value.arguments,
-            envs: value.envs.into_iter().collect(),
-            cwd: value.cwd.map(|s| s.into()),
-            connection: value.connection.map(Into::into),
-            request_args: value.request_args.try_into()?,
-        })
+
+impl From<self::dap::DebugRequest> for ::task::DebugRequest {
+    fn from(value: self::dap::DebugRequest) -> Self {
+        match value {
+            self::dap::DebugRequest::Launch(launch) => Self::Launch(launch.into()),
+            self::dap::DebugRequest::Attach(attach) => Self::Attach(attach.into()),
+        }
     }
 }
 
@@ -273,30 +363,42 @@ impl From<dap::BuildTaskDefinition> for extension::BuildTaskDefinition {
 impl From<extension::BuildTaskDefinition> for dap::BuildTaskDefinition {
     fn from(value: extension::BuildTaskDefinition) -> Self {
         match value {
-            extension::BuildTaskDefinition::ByName(name) => Self::ByName(name.into()),
+            extension::BuildTaskDefinition::ByName(name) => Self::ByName(name.to_string()),
             extension::BuildTaskDefinition::Template {
                 task_template,
                 locator_name,
             } => Self::Template(dap::BuildTaskDefinitionTemplatePayload {
                 template: task_template.into(),
-                locator_name: locator_name.map(String::from),
+                locator_name: locator_name.map(|s| s.as_ref().to_string()),
             }),
         }
     }
 }
-impl From<BuildTaskTemplate> for extension::BuildTaskTemplate {
-    fn from(value: BuildTaskTemplate) -> Self {
+
+impl From<self::dap::BuildTaskTemplate> for extension::BuildTaskTemplate {
+    fn from(value: self::dap::BuildTaskTemplate) -> Self {
         Self {
             label: value.label,
             command: value.command,
             args: value.args,
             env: value.env.into_iter().collect(),
             cwd: value.cwd,
-            ..Default::default()
+            use_new_terminal: Default::default(),
+            allow_concurrent_runs: Default::default(),
+            reveal: Default::default(),
+            reveal_target: Default::default(),
+            hide: Default::default(),
+            tags: Default::default(),
+            shell: Default::default(),
+            show_summary: true,
+            show_command: true,
+            save: Default::default(),
+            hooks: Default::default(),
         }
     }
 }
-impl From<extension::BuildTaskTemplate> for BuildTaskTemplate {
+
+impl From<extension::BuildTaskTemplate> for self::dap::BuildTaskTemplate {
     fn from(value: extension::BuildTaskTemplate) -> Self {
         Self {
             label: value.label,
@@ -308,10 +410,10 @@ impl From<extension::BuildTaskTemplate> for BuildTaskTemplate {
     }
 }
 
-impl TryFrom<DebugScenario> for extension::DebugScenario {
+impl TryFrom<self::dap::DebugScenario> for extension::DebugScenario {
     type Error = anyhow::Error;
 
-    fn try_from(value: DebugScenario) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: self::dap::DebugScenario) -> std::result::Result<Self, Self::Error> {
         Ok(Self {
             adapter: value.adapter.into(),
             label: value.label.into(),
@@ -322,11 +424,11 @@ impl TryFrom<DebugScenario> for extension::DebugScenario {
     }
 }
 
-impl From<extension::DebugScenario> for DebugScenario {
+impl From<extension::DebugScenario> for self::dap::DebugScenario {
     fn from(value: extension::DebugScenario) -> Self {
         Self {
-            adapter: value.adapter.into(),
-            label: value.label.into(),
+            adapter: value.adapter.to_string(),
+            label: value.label.to_string(),
             build: value.build.map(Into::into),
             config: value.config.to_string(),
             tcp_connection: value.tcp_connection.map(Into::into),
@@ -334,10 +436,10 @@ impl From<extension::DebugScenario> for DebugScenario {
     }
 }
 
-impl TryFrom<SpawnInTerminal> for ResolvedTask {
+impl TryFrom<::task::SpawnInTerminal> for self::dap::ResolvedTask {
     type Error = anyhow::Error;
 
-    fn try_from(value: SpawnInTerminal) -> Result<Self, Self::Error> {
+    fn try_from(value: ::task::SpawnInTerminal) -> Result<Self, Self::Error> {
         Ok(Self {
             label: value.label,
             command: value.command.context("missing command")?,
@@ -351,6 +453,21 @@ impl TryFrom<SpawnInTerminal> for ResolvedTask {
                     s.into_owned()
                 }
             }),
+        })
+    }
+}
+
+impl TryFrom<self::dap::ResolvedTask> for ::task::SpawnInTerminal {
+    type Error = anyhow::Error;
+
+    fn try_from(value: self::dap::ResolvedTask) -> Result<Self, Self::Error> {
+        Ok(Self {
+            label: value.label.clone(),
+            command: Some(value.command),
+            args: value.args,
+            env: value.env.into_iter().collect(),
+            cwd: value.cwd.map(PathBuf::from),
+            ..Default::default()
         })
     }
 }
@@ -502,8 +619,8 @@ impl From<extension::SlashCommand> for SlashCommand {
     }
 }
 
-impl From<SlashCommandOutput> for extension::SlashCommandOutput {
-    fn from(value: SlashCommandOutput) -> Self {
+impl From<self::slash_command::SlashCommandOutput> for extension::SlashCommandOutput {
+    fn from(value: self::slash_command::SlashCommandOutput) -> Self {
         Self {
             text: value.text,
             sections: value.sections.into_iter().map(Into::into).collect(),
@@ -511,10 +628,10 @@ impl From<SlashCommandOutput> for extension::SlashCommandOutput {
     }
 }
 
-impl From<SlashCommandOutputSection> for extension::SlashCommandOutputSection {
-    fn from(value: SlashCommandOutputSection) -> Self {
+impl From<self::slash_command::SlashCommandOutputSection> for extension::SlashCommandOutputSection {
+    fn from(value: self::slash_command::SlashCommandOutputSection) -> Self {
         Self {
-            range: value.range.start as usize..value.range.end as usize,
+            range: value.range.into(),
             label: value.label,
         }
     }
@@ -925,14 +1042,16 @@ impl slash_command::Host for WasmState {}
 #[async_trait]
 impl context_server::Host for WasmState {}
 
-impl dap::Host for WasmState {
+impl self::zed::extension::task::Host for WasmState {}
+
+impl self::zed::extension::dap::Host for WasmState {
     async fn resolve_tcp_template(
         &mut self,
         template: dap::TcpArgumentsTemplate,
     ) -> wasmtime::Result<Result<dap::TcpArguments, String>> {
         maybe!(async {
             let (host, port, timeout) =
-                ::dap::configure_tcp_connection(task::TcpArgumentsTemplate {
+                ::dap::configure_tcp_connection(::task::TcpArgumentsTemplate {
                     port: template.port,
                     host: template.host.map(Into::into),
                     timeout: template.timeout,
