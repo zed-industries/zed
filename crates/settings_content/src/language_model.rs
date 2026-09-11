@@ -245,6 +245,10 @@ pub struct OpenCodeSettingsContent {
     pub show_zen_models: Option<bool>,
     /// Whether to show OpenCode Go models. Defaults to true.
     pub show_go_models: Option<bool>,
+    /// Whether to fetch newly released OpenCode models from the models.dev registry,
+    /// so they show up without a Zed release. Bundled models take precedence over
+    /// registry models, and user-defined models over both. Defaults to true.
+    pub fetch_registry_models: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
