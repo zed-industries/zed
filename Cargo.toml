@@ -523,6 +523,7 @@ aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 any_vec = "0.14"
 anyhow = "1.0.86"
+arc-swap = "1.9.0"
 ashpd = { version = "0.13", default-features = false, features = [
     "async-io",
     "inhibit",
@@ -698,8 +699,15 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSApplication",
     "NSButton",
     "NSControl",
+    "NSDraggingItem",
     "NSGraphics",
+    "NSImage",
+    "NSOpenPanel",
+    "NSPanel",
+    "NSPasteboard",
     "NSResponder",
+    "NSSavePanel",
+    "NSScreen",
     "NSView",
     "NSWindow",
     "NSWorkspace",
@@ -732,6 +740,12 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "objc2-core-foundation",
     "std",
 ] }
+objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = [
+    "block2",
+    "objc2-core-graphics",
+    "SCShareableContent",
+    "std"
+] }
 objc2-user-notifications = "0.3"
 open = "5.0.0"
 ordered-float = "5"
@@ -742,13 +756,13 @@ partial-json-fixer = "0.5.3"
 pathfinder_geometry = "0.5"
 pciid-parser = "0.8.0"
 percent-encoding = "2.3.2"
-pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "bb8e04607b96a3865d6aa4bb2a5a5a82ce05b5f0" }
-pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "bb8e04607b96a3865d6aa4bb2a5a5a82ce05b5f0" }
-pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "bb8e04607b96a3865d6aa4bb2a5a5a82ce05b5f0" }
-pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "bb8e04607b96a3865d6aa4bb2a5a5a82ce05b5f0" }
-pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "bb8e04607b96a3865d6aa4bb2a5a5a82ce05b5f0" }
-pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "bb8e04607b96a3865d6aa4bb2a5a5a82ce05b5f0" }
-pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "bb8e04607b96a3865d6aa4bb2a5a5a82ce05b5f0" }
+pet = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+pet-conda = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+pet-core = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+pet-fs = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+pet-poetry = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+pet-reporter = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+pet-virtualenv = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
 piper = "0.2"
 portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
