@@ -1,6 +1,7 @@
 //! Component Preview Example
 //!
 //! Run with: `cargo run -p component_preview --example component_preview"`
+use assets::Assets;
 use fs::RealFs;
 use gpui::{AppContext as _, Bounds, KeyBinding, WindowBounds, WindowOptions, actions, size};
 
@@ -16,20 +17,28 @@ use workspace::{AppState, Workspace, WorkspaceStore};
 
 use component_preview::{ComponentPreview, init};
 
-actions!(zed, [Quit]);
+actions!(component_preview, [Quit]);
 
 fn quit(_: &Quit, cx: &mut App) {
     cx.quit();
 }
 
 fn main() {
-    gpui_platform::application().run(|cx| {
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Warn)
+        .init();
+
+    gpui_platform::application().with_assets(Assets).run(|cx| {
         component::init();
 
         cx.on_action(quit);
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         let version = release_channel::AppVersion::load(env!("CARGO_PKG_VERSION"), None, None);
         release_channel::init(version, cx);
+        cx.set_global(db::AppDatabase::new());
+        Assets
+            .load_fonts(cx)
+            .expect("Failed to load embedded fonts");
 
         let http_client =
             ReqwestClient::user_agent("component_preview").expect("Failed to create HTTP client");
@@ -39,7 +48,7 @@ fn main() {
         <dyn fs::Fs>::set_global(fs.clone(), cx);
 
         settings::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
 
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         let client = Client::production(cx);
@@ -48,7 +57,10 @@ fn main() {
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
         let session_id = uuid::Uuid::new_v4().to_string();
-        let session = cx.foreground_executor().block_on(Session::new(session_id));
+        let kvp = db::kvp::KeyValueStore::global(cx);
+        let session = cx
+            .foreground_executor()
+            .block_on(Session::new(session_id, kvp));
         let session = cx.new(|cx| AppSession::new(session, cx));
         let node_runtime = NodeRuntime::unavailable();
 
@@ -62,9 +74,10 @@ fn main() {
             node_runtime,
             session,
         });
-        AppState::set_global(Arc::downgrade(&app_state), cx);
+        AppState::set_global(app_state.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
+        editor::init(cx);
         init(app_state.clone(), cx);
 
         let size = size(px(1200.), px(800.));
@@ -78,7 +91,7 @@ fn main() {
             {
                 move |window, cx| {
                     let app_state = app_state;
-                    theme::setup_ui_font(window, cx);
+                    theme_settings::setup_ui_font(window, cx);
 
                     let project = Project::local(
                         app_state.client.clone(),

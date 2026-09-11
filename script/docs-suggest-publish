@@ -131,14 +131,14 @@ if [[ "$DRY_RUN" == "true" ]]; then
     echo "Would auto-apply suggestions to docs via Droid and create a draft PR."
     echo "Model: $MODEL"
     echo ""
-    
+
     # Show each suggestion file
     for file in $(echo "$MANIFEST" | jq -r '.suggestions[].file'); do
         echo "--- $file ---"
         git show "origin/$SUGGESTIONS_BRANCH:$file" 2>/dev/null || echo "(file not found)"
         echo ""
     done
-    
+
     echo -e "${YELLOW}=== END DRY RUN ===${NC}"
     echo ""
     echo "Run without --dry-run to create the PR."
@@ -213,7 +213,7 @@ fi
 FLAGGED_PRS=()
 FLAGS_FILE="$REPO_ROOT/crates/feature_flags/src/flags.rs"
 if [[ -f "$FLAGS_FILE" ]]; then
-    # Extract feature flag struct names (e.g. SubagentsFeatureFlag, GitGraphFeatureFlag)
+    # Extract feature flag struct names (e.g. SubagentsFeatureFlag)
     FLAG_NAMES=$(grep -oE 'pub struct \w+FeatureFlag' "$FLAGS_FILE" | awk '{print $3}')
     if [[ -n "$FLAG_NAMES" ]]; then
         FLAG_PATTERN=$(echo "$FLAG_NAMES" | tr '\n' '|' | sed 's/|$//')
@@ -538,10 +538,10 @@ echo -e "${GREEN}PR created:${NC} $PR_URL"
 if [[ "$KEEP_QUEUE" != "true" ]]; then
     echo ""
     echo "Resetting suggestions queue..."
-    
+
     git checkout --orphan "${SUGGESTIONS_BRANCH}-reset"
     git rm -rf . > /dev/null 2>&1 || true
-    
+
     cat > README.md << 'EOF'
 # Documentation Suggestions Queue
 
@@ -562,19 +562,19 @@ run `script/docs-suggest-publish` to create a documentation PR from these sugges
 3. At preview release, suggestions are collected into a docs PR
 4. After docs PR is created, this branch is reset
 EOF
-    
+
     mkdir -p suggestions
     echo '{"suggestions":[]}' > manifest.json
     git add README.md suggestions manifest.json
     git commit -m "Reset documentation suggestions queue
 
 Previous suggestions published in: $PR_URL"
-    
+
     # Force push required: replacing the orphan suggestions branch with a clean slate
     git push -f origin "${SUGGESTIONS_BRANCH}-reset:$SUGGESTIONS_BRANCH"
     git checkout "$ORIGINAL_BRANCH"
     git branch -D "${SUGGESTIONS_BRANCH}-reset"
-    
+
     echo "Suggestions queue reset."
 else
     git checkout "$ORIGINAL_BRANCH"

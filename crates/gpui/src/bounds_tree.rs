@@ -3,6 +3,7 @@ use std::{
     cmp,
     fmt::Debug,
     ops::{Add, Sub},
+    ptr::NonNull,
 };
 
 /// Maximum children per internal node (R-tree style branching factor).
@@ -30,7 +31,7 @@ where
     /// Reusable stack for tree traversal during insertion.
     insert_path: Vec<usize>,
     /// Reusable stack for search operations.
-    search_stack: Vec<usize>,
+    search_stack: Vec<NonNull<Node<U>>>,
 }
 
 /// A node in the bounds tree.
@@ -150,12 +151,14 @@ where
 
         // Slow path: search the tree
         self.search_stack.clear();
-        self.search_stack.push(root_idx);
+        self.search_stack.push(NonNull::from(&self.nodes[root_idx]));
 
         let mut max_found = 0u32;
 
-        while let Some(node_idx) = self.search_stack.pop() {
-            let node = &self.nodes[node_idx];
+        while let Some(node) = self.search_stack.pop() {
+            // SAFETY: `node` is guaranteed to be valid as the `nodes` stack is unmodified in this function
+            // and the `search_stack` only contains pointers from this function call.
+            let node = unsafe { node.as_ref() };
 
             // Pruning: skip if this subtree can't improve our result
             if node.max_order <= max_found {
@@ -174,11 +177,14 @@ where
                 NodeKind::Internal { children } => {
                     // Children are maintained with highest max_order at the end.
                     // Push in forward order to highest (last) is popped first.
-                    for &child_idx in children.as_slice() {
-                        if self.nodes[child_idx].max_order > max_found {
-                            self.search_stack.push(child_idx);
-                        }
-                    }
+                    self.search_stack.extend(
+                        children
+                            .as_slice()
+                            .iter()
+                            .map(|&child_idx| &self.nodes[child_idx])
+                            .filter(|node| node.max_order > max_found)
+                            .map(NonNull::from),
+                    );
                 }
             }
         }

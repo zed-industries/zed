@@ -15,6 +15,7 @@ test-support = []
 path = "src/paths.rs"
 
 [dependencies]
+const_format.workspace = true
 dirs.workspace = true
 ignore.workspace = true
 util.workspace = true

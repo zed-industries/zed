@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::{
-    CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity,
-    ScrollbarSettingsContent, ShowIndentGuides, serialize_optional_f32_with_two_decimal_places,
+    CenteredPaddingSettings, CommandAliasTarget, DelayMs, DockPosition, DockSide, InactiveOpacity,
+    ShowIndentGuides, ShowScrollbar, serialize_optional_f32_with_two_decimal_places,
 };
 
 #[with_fallible_options]
@@ -49,6 +49,15 @@ pub struct WorkspaceSettingsContent {
     /// Values: empty_tab, last_workspace, last_session, launchpad
     /// Default: last_session
     pub restore_on_startup: Option<RestoreOnStartupBehavior>,
+    /// The default behavior when opening paths from the CLI without
+    /// an explicit `-e` or `-n` flag.
+    ///
+    /// Default: existing_window
+    pub cli_default_open_behavior: Option<CliDefaultOpenBehavior>,
+    /// The default behavior when opening projects from the UI.
+    ///
+    /// Default: existing_window
+    pub default_open_behavior: Option<DefaultOpenBehavior>,
     /// Whether to attempt to restore previous file's state when opening it again.
     /// The state is stored per pane.
     /// When disabled, defaults are applied instead of the state restoration.
@@ -58,6 +67,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub restore_on_file_reopen: Option<bool>,
+    /// Whether to reveal an already open file in an existing pane instead of opening it in the active pane.
+    ///
+    /// Default: false
+    pub reveal_if_open: Option<bool>,
     /// The size of the workspace split drop targets on the outer edges.
     /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.
     ///
@@ -68,6 +81,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: auto ("on" on macOS, "off" otherwise)
     pub when_closing_with_no_tabs: Option<CloseWindowWhenNoItems>,
+    /// Whether to optimize Zed's interface for assistive technology such as
+    /// screen readers.
+    ///
+    /// Default: false
+    pub accessible_mode: Option<bool>,
     /// Whether to use the system provided dialogs for Open and Save As.
     /// When set to false, Zed will use the built-in keyboard-first pickers.
     ///
@@ -83,14 +101,18 @@ pub struct WorkspaceSettingsContent {
     /// Aliases for the command palette. When you type a key in this map,
     /// it will be assumed to equal the value.
     ///
-    /// Default: true
+    /// Default: {}
     #[serde(default)]
-    pub command_aliases: HashMap<String, String>,
+    pub command_aliases: HashMap<String, CommandAliasTarget>,
     /// Maximum open tabs in a pane. Will not close an unsaved
     /// tab. Set to `None` for unlimited tabs.
     ///
     /// Default: none
     pub max_tabs: Option<NonZeroUsize>,
+    /// What to show when opening a new window.
+    /// Values: empty_tab, launchpad
+    /// Default: launchpad
+    pub on_new_window: Option<OnNewWindow>,
     /// What to do when the last window is closed
     ///
     /// Default: auto (nothing on macOS, "app quit" otherwise)
@@ -107,21 +129,49 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub use_system_window_tabs: Option<bool>,
+    /// Which fullscreen mode the `zed::ToggleFullScreen` action enters (macOS only).
+    ///
+    /// Default: native
+    pub fullscreen_mode: Option<FullscreenMode>,
     /// Whether to show padding for zoomed panels.
     /// When enabled, zoomed bottom panels will have some top padding,
     /// while zoomed left/right panels will have padding to the right/left (respectively).
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
-    /// Whether toggling a panel (e.g. with its keyboard shortcut) also closes
-    /// the panel when it is already focused, instead of just moving focus back
-    /// to the editor.
+    /// Whether invoking a panel's `ToggleFocus` action while the panel is
+    /// already focused closes the panel, instead of just moving focus back
+    /// to the editor. This only applies to a panel's focus-toggle action, not
+    /// to its regular visibility-toggle action.
     ///
     /// Default: false
     pub close_panel_on_toggle: Option<bool>,
-    /// What draws window decorations/titlebar, the client application (Zed) or display server
+    /// Window title template.
+    ///
+    /// Available variables are `${projectName}`, `${fileName}`,
+    /// `${filePath}`, `${relativePath}`, `${fileStem}`, `${remoteName}`,
+    /// `${remoteHost}`, `${appName}`, `${branch}`,
+    /// and `${separator}`.
+    /// `${separator}` is omitted when adjacent variables are empty,
+    /// but literal text is preserved.
+    /// The collaboration indicator, when present, is appended after the
+    /// rendered template.
+    /// If the template renders to nothing, the default template is used instead.
+    ///
+    /// Default: `${projectName}${separator}${fileName}`
+    pub window_title_format: Option<String>,
+    /// String substituted for `${separator}` in the window title format.
+    /// Include any surrounding whitespace in the value.
+    ///
+    /// Default: ` — `
+    pub window_title_separator: Option<String>,
+    /// Controls whether Zed or the window manager or compositor draws window decorations on Linux.
+    ///
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
+    /// Whether the focused panel follows the mouse location
+    /// Default: false
+    pub focus_follows_mouse: Option<FocusFollowsMouse>,
 }
 
 #[with_fallible_options]
@@ -282,8 +332,7 @@ pub struct ActivePaneModifiers {
     /// The border is drawn inset.
     ///
     /// Default: `0.0`
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub border_size: Option<f32>,
+    pub border_size: Option<crate::PixelSetting>,
     /// Opacity of inactive panels.
     /// When set to 1.0, the inactive panes have the same opacity as the active one.
     /// If set to 0, the inactive panes content will not be visible at all.
@@ -334,11 +383,38 @@ pub enum BottomDockLayout {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+pub enum FullscreenMode {
+    /// Use macOS's native fullscreen, which moves the window into its own
+    /// Mission Control space.
+    #[default]
+    Native,
+    /// Resize the window to cover the entire screen, including the menu bar and,
+    /// on notched displays, the area around the notch.
+    Simple,
+}
+
+/// Configures what draws Zed's window decorations on Linux.
+/// This setting has no effect on other platforms.
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum WindowDecorations {
-    /// Zed draws its own window decorations/titlebar (client-side decoration)
+    /// Zed draws its own window decorations/titlebar (client-side decoration).
     #[default]
     Client,
-    /// Show system's window titlebar (server-side decoration; not supported by GNOME Wayland)
+    /// The window manager or compositor draws the server-side window
+    /// decorations (not supported by GNOME Wayland).
     Server,
 }
 
@@ -374,6 +450,56 @@ impl CloseWindowWhenNoItems {
             CloseWindowWhenNoItems::KeepWindowOpen => false,
         }
     }
+}
+
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CliDefaultOpenBehavior {
+    /// Open directories as a new workspace in the current Zed window's sidebar.
+    #[default]
+    #[strum(serialize = "Add to Existing Window")]
+    ExistingWindow,
+    /// Open paths in a new window unless they are subpaths of an existing project.
+    #[strum(serialize = "Open a New Window")]
+    NewWindow,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultOpenBehavior {
+    /// Open projects in the current Zed window.
+    #[default]
+    #[strum(serialize = "Add to Existing Window")]
+    ExistingWindow,
+    /// Open projects in a new window.
+    #[strum(serialize = "Open a New Window")]
+    NewWindow,
 }
 
 #[derive(
@@ -434,6 +560,10 @@ pub struct StatusBarSettingsContent {
     /// Default: true
     #[serde(rename = "experimental.show")]
     pub show: Option<bool>,
+    /// Whether to show the name of the active file in the status bar.
+    ///
+    /// Default: false
+    pub show_active_file: Option<bool>,
     /// Whether to display the active language button in the status bar.
     ///
     /// Default: true
@@ -450,6 +580,12 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: non_utf8
     pub active_encoding_button: Option<EncodingDisplayOptions>,
+    /// Whether to show an indicator with a countdown while timed multi-stroke input is pending.
+    /// Hovering the indicator pauses the timeout.
+    /// Its binding preview popover is disabled when the which-key popup is enabled.
+    ///
+    /// Default: true
+    pub pending_keystrokes_indicator: Option<bool>,
 }
 
 #[derive(
@@ -585,6 +721,29 @@ pub struct CenteredLayoutSettings {
     JsonSchema,
     MergeFrom,
     PartialEq,
+    Eq,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OnNewWindow {
+    /// Show an empty untitled buffer when opening a new window
+    EmptyTab,
+    /// Show the launchpad with recent projects when opening a new window
+    #[default]
+    Launchpad,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
     Debug,
     strum::VariantArray,
     strum::VariantNames,
@@ -663,12 +822,13 @@ pub struct ProjectPanelSettingsContent {
     /// Customize default width (in pixels) taken by project panel
     ///
     /// Default: 240
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
+    pub default_width: Option<crate::PixelSetting>,
     /// The position of project panel
     ///
-    /// Default: left
+    /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockSide>,
+    // TODO
+    pub title_tooltip_delay: Option<ProjectPanelTitleTooltipDelay>,
     /// Spacing between worktree entries in the project panel.
     ///
     /// Default: comfortable
@@ -677,10 +837,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub file_icons: Option<bool>,
-    /// Whether to show folder icons or chevrons for directories in the project panel.
+    /// What to show for directories in the project panel.
     ///
-    /// Default: true
-    pub folder_icons: Option<bool>,
+    /// Default: icon
+    pub folder_indicator: Option<FolderIndicator>,
     /// Whether to show the git status in the project panel.
     ///
     /// Default: true
@@ -688,8 +848,7 @@ pub struct ProjectPanelSettingsContent {
     /// Amount of indentation (in pixels) for nested items.
     ///
     /// Default: 20
-    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
-    pub indent_size: Option<f32>,
+    pub indent_size: Option<crate::PixelSetting>,
     /// Whether to reveal it in the project panel automatically,
     /// when a corresponding project entry becomes active.
     /// Gitignored entries are never auto revealed.
@@ -710,7 +869,7 @@ pub struct ProjectPanelSettingsContent {
     /// Default: true
     pub starts_open: Option<bool>,
     /// Scrollbar-related settings
-    pub scrollbar: Option<ScrollbarSettingsContent>,
+    pub scrollbar: Option<ProjectPanelScrollbarSettingsContent>,
     /// Which files containing diagnostic errors/warnings to mark in the project panel.
     ///
     /// Default: all
@@ -739,10 +898,45 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: directories_first
     pub sort_mode: Option<ProjectPanelSortMode>,
+    /// Whether to sort file and folder names case-sensitively in the project panel.
+    /// This works in combination with `sort_mode`. `sort_mode` controls how files and
+    /// directories are grouped, while this setting controls how names are compared.
+    ///
+    /// Default: default
+    pub sort_order: Option<ProjectPanelSortOrder>,
     /// Whether to show error and warning count badges next to file names in the project panel.
     ///
-    /// Default: true
+    /// Default: false
     pub diagnostic_badges: Option<bool>,
+    /// Whether to show a git status indicator next to file names in the project panel.
+    ///
+    /// Default: false
+    pub git_status_indicator: Option<bool>,
+}
+
+/// Controls the width of the git diff hunk indicators in the gutter.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPanelTitleTooltipDelay {
+    /// Default is 1500ms.
+    #[default]
+    Default,
+    /// A custom offset in milliseconds for the tooltip show delay.
+    Custom(crate::DelayMs),
+    /// Disables the tooltip
+    Disabled,
 }
 
 #[derive(
@@ -783,6 +977,41 @@ pub enum ProjectPanelEntrySpacing {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+pub enum FolderIndicator {
+    /// Show a folder icon.
+    #[default]
+    Icon,
+    /// Show a disclosure chevron.
+    Chevron,
+    /// Show a disclosure chevron followed by a folder icon.
+    Both,
+}
+
+impl FolderIndicator {
+    pub fn shows_chevron(self) -> bool {
+        matches!(self, Self::Chevron | Self::Both)
+    }
+
+    pub fn shows_icon(self) -> bool {
+        matches!(self, Self::Icon | Self::Both)
+    }
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum ProjectPanelSortMode {
     /// Show directories first, then files
     #[default]
@@ -791,6 +1020,75 @@ pub enum ProjectPanelSortMode {
     Mixed,
     /// Show files first, then directories
     FilesFirst,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPanelSortOrder {
+    /// Case-insensitive natural sort with lowercase preferred in ties.
+    /// Numbers in file names are compared by value (e.g., `file2` before `file10`).
+    #[default]
+    Default,
+    /// Uppercase names are grouped before lowercase names, with case-insensitive
+    /// natural sort within each group. Dot-prefixed names sort before both groups.
+    Upper,
+    /// Lowercase names are grouped before uppercase names, with case-insensitive
+    /// natural sort within each group. Dot-prefixed names sort before both groups.
+    Lower,
+    /// Pure Unicode codepoint comparison. No case folding, no natural number sorting.
+    /// Uppercase ASCII sorts before lowercase. Accented characters sort after ASCII.
+    Unicode,
+}
+
+impl From<ProjectPanelSortMode> for util::paths::SortMode {
+    fn from(mode: ProjectPanelSortMode) -> Self {
+        match mode {
+            ProjectPanelSortMode::DirectoriesFirst => Self::DirectoriesFirst,
+            ProjectPanelSortMode::Mixed => Self::Mixed,
+            ProjectPanelSortMode::FilesFirst => Self::FilesFirst,
+        }
+    }
+}
+
+impl From<ProjectPanelSortOrder> for util::paths::SortOrder {
+    fn from(order: ProjectPanelSortOrder) -> Self {
+        match order {
+            ProjectPanelSortOrder::Default => Self::Default,
+            ProjectPanelSortOrder::Upper => Self::Upper,
+            ProjectPanelSortOrder::Lower => Self::Lower,
+            ProjectPanelSortOrder::Unicode => Self::Unicode,
+        }
+    }
+}
+
+#[with_fallible_options]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+)]
+pub struct ProjectPanelScrollbarSettingsContent {
+    /// When to show the scrollbar in the project panel.
+    ///
+    /// Default: inherits editor scrollbar settings
+    pub show: Option<ShowScrollbar>,
+    /// Whether to allow horizontal scrolling in the project panel.
+    /// When false, the view is locked to the leftmost position and
+    /// long file names are clipped.
+    ///
+    /// Default: true
+    pub horizontal_scroll: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -902,4 +1200,11 @@ impl DocumentSymbols {
     pub fn lsp_enabled(&self) -> bool {
         self == &Self::On
     }
+}
+
+#[with_fallible_options]
+#[derive(Copy, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct FocusFollowsMouse {
+    pub enabled: Option<bool>,
+    pub debounce_ms: Option<u64>,
 }

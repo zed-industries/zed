@@ -4,7 +4,7 @@
 
 use std::{any::TypeId, rc::Rc};
 
-use collections::HashSet;
+use collections::{HashSet, TypeIdHashSet};
 use derive_more::{Deref, DerefMut};
 use gpui::{Action, App, BorrowAppContext, Global, Task, WeakEntity};
 use workspace::Workspace;
@@ -18,10 +18,10 @@ pub fn init(cx: &mut App) {
 #[derive(Default)]
 pub struct CommandPaletteFilter {
     hidden_namespaces: HashSet<&'static str>,
-    hidden_action_types: HashSet<TypeId>,
+    hidden_action_types: TypeIdHashSet,
     /// Actions that have explicitly been shown. These should be shown even if
     /// they are in a hidden namespace.
-    shown_action_types: HashSet<TypeId>,
+    shown_action_types: TypeIdHashSet,
 }
 
 #[derive(Deref, DerefMut, Default)]

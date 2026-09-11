@@ -1,15 +1,102 @@
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::{Arc, LazyLock},
+};
 
+use anyhow::Context as _;
 use collections::HashMap;
-use editor::Editor;
-use gpui::{App, AppContext as _, Context, Entity, Task, Window};
+use editor::{Editor, MultiBufferOffset, ToPoint as _};
+use gpui::{App, AppContext as _, Context, Entity, Task, TaskExt, Window};
 use project::{Location, TaskContexts, TaskSourceKind, Worktree};
 use task::{RevealTarget, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName};
+use tree_sitter::{Query, StreamingIterator as _};
 use workspace::Workspace;
 
 mod modal;
 
 pub use modal::{Rerun, ShowAttachModal, Spawn, TaskOverrides, TasksModal};
+
+/// Inserts `new_task` (pretty-printed JSON object text) at the end of the top-level JSON
+/// array in the editor's buffer, creating the array if the buffer has none, and moves the
+/// cursor to the inserted task. The edit is left unsaved so callers decide whether to persist it.
+pub fn insert_task_json_into_editor(
+    editor: &mut Editor,
+    new_task: String,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> anyhow::Result<()> {
+    static LAST_ITEM_QUERY: LazyLock<Query> = LazyLock::new(|| {
+        Query::new(
+            &tree_sitter_json::LANGUAGE.into(),
+            "(document (array (object) @object))", // TODO: use "." anchor to only match last object
+        )
+        .expect("Failed to create LAST_ITEM_QUERY")
+    });
+    static EMPTY_ARRAY_QUERY: LazyLock<Query> = LazyLock::new(|| {
+        Query::new(
+            &tree_sitter_json::LANGUAGE.into(),
+            "(document (array) @array)",
+        )
+        .expect("Failed to create EMPTY_ARRAY_QUERY")
+    });
+
+    let content = editor.text(cx);
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_json::LANGUAGE.into())?;
+    let mut cursor = tree_sitter::QueryCursor::new();
+    let syntax_tree = parser
+        .parse(&content, None)
+        .context("could not parse tasks file")?;
+    let mut matches = cursor.matches(
+        &LAST_ITEM_QUERY,
+        syntax_tree.root_node(),
+        content.as_bytes(),
+    );
+
+    let mut last_offset = None;
+    while let Some(mat) = matches.next() {
+        if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end) {
+            last_offset = Some(MultiBufferOffset(pos))
+        }
+    }
+    let mut edits = Vec::new();
+    let mut cursor_position = MultiBufferOffset(0);
+
+    if let Some(pos) = last_offset {
+        edits.push((pos..pos, format!(",\n{new_task}")));
+        cursor_position = pos + ",\n  ".len();
+    } else {
+        let mut matches = cursor.matches(
+            &EMPTY_ARRAY_QUERY,
+            syntax_tree.root_node(),
+            content.as_bytes(),
+        );
+
+        if let Some(mat) = matches.next() {
+            if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end - 1) {
+                edits.push((
+                    MultiBufferOffset(pos)..MultiBufferOffset(pos),
+                    format!("\n{new_task}\n"),
+                ));
+                cursor_position = MultiBufferOffset(pos) + "\n  ".len();
+            }
+        } else {
+            edits.push((
+                MultiBufferOffset(0)..MultiBufferOffset(0),
+                format!("[\n{}\n]", new_task),
+            ));
+            cursor_position = MultiBufferOffset("[\n  ".len());
+        }
+    }
+    editor.transact(window, cx, |editor, window, cx| {
+        editor.edit(edits, cx);
+        let snapshot = editor.buffer().read(cx).read(cx);
+        let point = cursor_position.to_point(&snapshot);
+        drop(snapshot);
+        editor.go_to_singleton_buffer_point(point, window, cx);
+    });
+    Ok(())
+}
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -204,19 +291,19 @@ where
                 else {
                     return Task::ready(Vec::new());
                 };
-                let (file, language) = task_contexts
+                let (language, buffer) = task_contexts
                     .location()
                     .map(|location| {
-                        let buffer = location.buffer.read(cx);
+                        let buffer = location.buffer.clone();
                         (
-                            buffer.file().cloned(),
-                            buffer.language_at(location.range.start),
+                            buffer.read(cx).language_at(location.range.start),
+                            Some(buffer),
                         )
                     })
                     .unwrap_or_default();
                 task_inventory
                     .read(cx)
-                    .list_tasks(file, language, task_contexts.worktree(), cx)
+                    .list_tasks(buffer, language, task_contexts.worktree(), cx)
             })?
             .await;
 
@@ -316,16 +403,16 @@ pub fn task_contexts(
 
     let lsp_task_sources = active_editor
         .as_ref()
-        .map(|active_editor| active_editor.update(cx, |editor, cx| editor.lsp_task_sources(cx)))
+        .map(|active_editor| {
+            active_editor.update(cx, |editor, cx| editor.lsp_task_sources(false, false, cx))
+        })
         .unwrap_or_default();
 
-    let latest_selection = active_editor.as_ref().map(|active_editor| {
-        active_editor
-            .read(cx)
-            .selections
-            .newest_anchor()
-            .head()
-            .text_anchor
+    let latest_selection = active_editor.as_ref().and_then(|active_editor| {
+        let snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
+        snapshot
+            .anchor_to_buffer_anchor(active_editor.read(cx).selections.newest_anchor().head())
+            .map(|(anchor, _)| anchor)
     });
 
     let mut worktree_abs_paths = workspace
@@ -434,10 +521,15 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let (worktree_store, git_store) = project.read_with(cx, |project, _| {
+            (project.worktree_store(), project.git_store().clone())
+        });
         let rust_language = Arc::new(
             Language::new(
-                LanguageConfig::default(),
+                LanguageConfig {
+                    name: "Rust".into(),
+                    ..Default::default()
+                },
                 Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_outline_query(
@@ -448,12 +540,16 @@ mod tests {
             .unwrap()
             .with_context_provider(Some(Arc::new(BasicContextProvider::new(
                 worktree_store.clone(),
+                git_store.clone(),
             )))),
         );
 
         let typescript_language = Arc::new(
             Language::new(
-                LanguageConfig::default(),
+                LanguageConfig {
+                    name: "TypeScript".into(),
+                    ..Default::default()
+                },
                 Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
             )
             .with_outline_query(
@@ -468,6 +564,7 @@ mod tests {
             .unwrap()
             .with_context_provider(Some(Arc::new(BasicContextProvider::new(
                 worktree_store.clone(),
+                git_store.clone(),
             )))),
         );
 
@@ -532,6 +629,7 @@ mod tests {
                     (VariableName::WorktreeRoot, path!("/dir").into()),
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "1".into()),
+                    (VariableName::Language, "Rust".into()),
                 ]),
                 project_env: HashMap::default(),
             }
@@ -566,6 +664,7 @@ mod tests {
                     (VariableName::Column, "15".into()),
                     (VariableName::SelectedText, "is_i".into()),
                     (VariableName::Symbol, "this_is_a_rust_file".into()),
+                    (VariableName::Language, "Rust".into()),
                 ]),
                 project_env: HashMap::default(),
             }
@@ -594,6 +693,7 @@ mod tests {
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "1".into()),
                     (VariableName::Symbol, "this_is_a_test".into()),
+                    (VariableName::Language, "TypeScript".into()),
                 ]),
                 project_env: HashMap::default(),
             }

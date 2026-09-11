@@ -1,0 +1,10 @@
+**/jobs
+**/*.egg-info
+**/__pycache__
+**/.venv
+**/.pytest_cache
+**/.ruff_cache
+uv.lock
+
+# Experiment artifacts, that do not need to be committed
+experiments/*

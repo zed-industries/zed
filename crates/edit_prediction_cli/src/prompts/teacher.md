@@ -350,6 +350,7 @@ def calculate_square_perimeter(side):
 {{cursor_excerpt}}
 
 
+{{diagnostics}}
 
 
 -----

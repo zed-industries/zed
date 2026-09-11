@@ -13,7 +13,7 @@ use super::{KernelSession, RunningKernel};
 use anyhow::Result;
 use jupyter_websocket_client::{
     JupyterWebSocket, JupyterWebSocketReader, JupyterWebSocketWriter, KernelLaunchRequest,
-    KernelSpecsResponse, RemoteServer,
+    KernelSpecsResponse, ProtocolMode, RemoteServer,
 };
 use std::{fmt::Debug, sync::Arc};
 
@@ -173,8 +173,10 @@ impl RemoteRunningKernel {
 
             let (ws_stream, _response) = response?;
 
-            let kernel_socket = JupyterWebSocket { inner: ws_stream };
-
+            let kernel_socket = JupyterWebSocket {
+                inner: ws_stream,
+                protocol_mode: ProtocolMode::Json,
+            };
             let (mut w, mut r): (JupyterWebSocketWriter, JupyterWebSocketReader) =
                 kernel_socket.split();
 

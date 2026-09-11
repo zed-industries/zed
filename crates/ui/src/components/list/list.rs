@@ -99,44 +99,41 @@ impl Component for List {
         ComponentScope::Layout
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "A container component for displaying a collection of list items with optional header and empty state.",
-        )
+    fn description() -> &'static str {
+        "A container component for displaying a collection of list items \
+        with optional header and empty state."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![example_group_with_title(
-                    "Basic Lists",
-                    vec![
-                        single_example(
-                            "Simple List",
-                            List::new()
-                                .child(ListItem::new("item1").child(Label::new("Item 1")))
-                                .child(ListItem::new("item2").child(Label::new("Item 2")))
-                                .child(ListItem::new("item3").child(Label::new("Item 3")))
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "With Header",
-                            List::new()
-                                .header(ListHeader::new("Section Header"))
-                                .child(ListItem::new("item1").child(Label::new("Item 1")))
-                                .child(ListItem::new("item2").child(Label::new("Item 2")))
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Empty List",
-                            List::new()
-                                .empty_message("No items to display")
-                                .into_any_element(),
-                        ),
-                    ],
-                )])
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![example_group_with_title(
+                "Basic Lists",
+                vec![
+                    single_example(
+                        "Simple List",
+                        List::new()
+                            .child(ListItem::new("item1").child(Label::new("Item 1")))
+                            .child(ListItem::new("item2").child(Label::new("Item 2")))
+                            .child(ListItem::new("item3").child(Label::new("Item 3")))
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "With Header",
+                        List::new()
+                            .header(ListHeader::new("Section Header"))
+                            .child(ListItem::new("item1").child(Label::new("Item 1")))
+                            .child(ListItem::new("item2").child(Label::new("Item 2")))
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Empty List",
+                        List::new()
+                            .empty_message("No items to display")
+                            .into_any_element(),
+                    ),
+                ],
+            )])
+            .into_any_element()
     }
 }

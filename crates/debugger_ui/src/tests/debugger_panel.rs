@@ -1,3 +1,4 @@
+#![expect(clippy::result_large_err)]
 use crate::{
     persistence::DebuggerPaneItem,
     tests::{start_debug_session, start_debug_session_with},
@@ -27,7 +28,7 @@ use std::{
     path::Path,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 use terminal_view::terminal_panel::TerminalPanel;
@@ -891,6 +892,142 @@ async fn test_shutdown_parent_session_if_all_children_are_shutdown(
 }
 
 #[gpui::test]
+async fn test_continue_response_updates_thread_statuses(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let session = start_debug_session(&workspace, cx, |client| {
+        client.on_request::<Continue, _>(move |_, args| {
+            assert_eq!(args.single_thread, None);
+            Ok(dap::ContinueResponse {
+                all_threads_continued: None,
+            })
+        });
+    })
+    .unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Breakpoint,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: Some(true),
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+    cx.run_until_parked();
+
+    session.update(cx, |session, cx| {
+        assert_eq!(session.thread_status(ThreadId(1)), ThreadStatus::Stopped);
+        assert_eq!(session.thread_status(ThreadId(2)), ThreadStatus::Stopped);
+        session.continue_program(ThreadId(1), cx);
+    });
+    cx.run_until_parked();
+
+    session.update(cx, |session, _| {
+        assert_eq!(session.thread_status(ThreadId(1)), ThreadStatus::Running);
+        assert_eq!(session.thread_status(ThreadId(2)), ThreadStatus::Running);
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Breakpoint,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: Some(true),
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+    cx.run_until_parked();
+
+    cx.dispatch_action(ContinueThread);
+    cx.run_until_parked();
+
+    session.update(cx, |session, _| {
+        assert_eq!(session.thread_status(ThreadId(1)), ThreadStatus::Stopped);
+        assert_eq!(session.thread_status(ThreadId(2)), ThreadStatus::Stopped);
+    });
+}
+
+#[gpui::test]
+async fn test_continue_thread_action_only_resumes_selected_thread(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let continue_requested = Arc::new(AtomicBool::new(false));
+
+    let session = start_debug_session(&workspace, cx, {
+        let continue_requested = continue_requested.clone();
+        move |client| {
+            client.on_request::<dap::requests::Initialize, _>(move |_, _| {
+                Ok(dap::Capabilities {
+                    supports_single_thread_execution_requests: Some(true),
+                    ..Default::default()
+                })
+            });
+            client.on_request::<Continue, _>({
+                let continue_requested = continue_requested.clone();
+                move |_, args| {
+                    assert_eq!(args.single_thread, Some(true));
+                    continue_requested.store(true, Ordering::SeqCst);
+                    Ok(dap::ContinueResponse {
+                        all_threads_continued: Some(false),
+                    })
+                }
+            });
+        }
+    })
+    .unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Breakpoint,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: Some(true),
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+    cx.run_until_parked();
+
+    cx.dispatch_action(ContinueThread);
+    cx.run_until_parked();
+
+    assert!(continue_requested.load(Ordering::SeqCst));
+    session.update(cx, |session, _| {
+        assert_eq!(session.thread_status(ThreadId(1)), ThreadStatus::Running);
+        assert_eq!(session.thread_status(ThreadId(2)), ThreadStatus::Stopped);
+    });
+}
+
+#[gpui::test]
 async fn test_debug_panel_item_thread_status_reset_on_failure(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
@@ -1034,14 +1171,14 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
 
     for operation in &[
         "step_over",
-        "continue_thread",
+        "continue_program",
         "step_back",
         "step_in",
         "step_out",
     ] {
         running_state.update(cx, |running_state, cx| match *operation {
             "step_over" => running_state.step_over(cx),
-            "continue_thread" => running_state.continue_thread(cx),
+            "continue_program" => running_state.continue_program(cx),
             "step_back" => running_state.step_back(cx),
             "step_in" => running_state.step_in(cx),
             "step_out" => running_state.step_out(cx),
@@ -1055,7 +1192,7 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
                     .thread_status(cx)
                     .expect("There should be an active thread selected"),
                 match *operation {
-                    "continue_thread" => ThreadStatus::Running,
+                    "continue_program" => ThreadStatus::Running,
                     _ => ThreadStatus::Stepping,
                 },
                 "Thread status was not set to correct intermediate state after {} request",
@@ -1078,7 +1215,7 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
             // update state to running, so we can test it actually changes the status back to stopped
             running_state
                 .session()
-                .update(cx, |session, cx| session.continue_thread(thread_id, cx));
+                .update(cx, |session, cx| session.continue_program(thread_id, cx));
         });
     }
 }
@@ -1228,6 +1365,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
             editor.save(
                 SaveOptions {
                     format: true,
+                    force_format: false,
                     autosave: false,
                 },
                 project.clone(),
@@ -1598,7 +1736,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     cx.run_until_parked();
 
     main_editor.update_in(cx, |editor, window, cx| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert_eq!(
             active_debug_lines.len(),
@@ -1614,8 +1752,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         assert_eq!(point.row, 1);
     });
 
-    second_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    second_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1673,7 +1811,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     cx.run_until_parked();
 
     second_editor.update_in(cx, |editor, window, cx| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert_eq!(
             active_debug_lines.len(),
@@ -1689,8 +1827,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         assert_eq!(point.row, 2);
     });
 
-    main_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    main_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1712,8 +1850,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
     cx.run_until_parked();
 
-    second_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    second_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1721,8 +1859,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         );
     });
 
-    main_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    main_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1739,8 +1877,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
     shutdown_session.await.unwrap();
 
-    main_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    main_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1748,8 +1886,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         );
     });
 
-    second_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    second_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1960,7 +2098,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let active = pane_a.read(cx).active_item().unwrap();
             let editor = active.to_any_view().downcast::<Editor>().unwrap();
-            let path = editor.read(cx).project_path(cx).unwrap();
+            let path = editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 path.path.file_name().unwrap(),
                 "second.rs",
@@ -1974,7 +2112,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let active = pane_b.read(cx).active_item().unwrap();
             let editor = active.to_any_view().downcast::<Editor>().unwrap();
-            let path = editor.read(cx).project_path(cx).unwrap();
+            let path = editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 path.path.file_name().unwrap(),
                 "main.rs",
@@ -2054,7 +2192,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_a_active = pane_a.read(cx).active_item().unwrap();
             let pane_a_editor = pane_a_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_a_path = pane_a_editor.read(cx).project_path(cx).unwrap();
+            let pane_a_path = pane_a_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_a_path.path.file_name().unwrap(),
                 "second.rs",
@@ -2074,7 +2212,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
                     if let Some(editor) = item.to_any_view().downcast::<Editor>().ok() {
                         total_active_debug_lines += editor
                             .read(cx)
-                            .highlighted_rows::<ActiveDebugLine>()
+                            .highlighted_rows::<ActiveDebugLine>(cx)
                             .count();
                     }
                 }
@@ -2094,7 +2232,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
 
             let active_debug_lines: Vec<_> = pane_b_editor
                 .read(cx)
-                .highlighted_rows::<ActiveDebugLine>()
+                .highlighted_rows::<ActiveDebugLine>(cx)
                 .collect();
 
             assert_eq!(
@@ -2159,7 +2297,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_b_active = pane_b.read(cx).active_item().unwrap();
             let pane_b_editor = pane_b_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_b_path = pane_b_editor.read(cx).project_path(cx).unwrap();
+            let pane_b_path = pane_b_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_b_path.path.file_name().unwrap(),
                 "second.rs",
@@ -2168,7 +2306,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
 
             let active_debug_lines: Vec<_> = pane_b_editor
                 .read(cx)
-                .highlighted_rows::<ActiveDebugLine>()
+                .highlighted_rows::<ActiveDebugLine>(cx)
                 .collect();
 
             assert_eq!(
@@ -2188,7 +2326,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
                     if let Some(editor) = item.to_any_view().downcast::<Editor>().ok() {
                         total_active_debug_lines += editor
                             .read(cx)
-                            .highlighted_rows::<ActiveDebugLine>()
+                            .highlighted_rows::<ActiveDebugLine>(cx)
                             .count();
                     }
                 }
@@ -2230,7 +2368,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_c_active = pane_c.read(cx).active_item().unwrap();
             let pane_c_editor = pane_c_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_c_path = pane_c_editor.read(cx).project_path(cx).unwrap();
+            let pane_c_path = pane_c_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_c_path.path.file_name().unwrap(),
                 "second.rs",
@@ -2292,7 +2430,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_c_active = pane_c.read(cx).active_item().unwrap();
             let pane_c_editor = pane_c_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_c_path = pane_c_editor.read(cx).project_path(cx).unwrap();
+            let pane_c_path = pane_c_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_c_path.path.file_name().unwrap(),
                 "main.rs",
@@ -2302,7 +2440,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
 
             let active_debug_lines: Vec<_> = pane_c_editor
                 .read(cx)
-                .highlighted_rows::<ActiveDebugLine>()
+                .highlighted_rows::<ActiveDebugLine>(cx)
                 .collect();
 
             assert_eq!(
@@ -2322,7 +2460,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
                     if let Some(editor) = item.to_any_view().downcast::<Editor>().ok() {
                         total_active_debug_lines += editor
                             .read(cx)
-                            .highlighted_rows::<ActiveDebugLine>()
+                            .highlighted_rows::<ActiveDebugLine>(cx)
                             .count();
                     }
                 }
@@ -2479,5 +2617,77 @@ async fn test_adapter_shutdown_with_child_sessions_on_app_quit(
     assert!(
         child_disconnect_called.load(Ordering::SeqCst),
         "Child session should have received disconnect request"
+    );
+}
+
+#[gpui::test]
+async fn test_restart_request_is_not_sent_more_than_once_until_response(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let session = start_debug_session(&workspace, cx, move |client| {
+        client.on_request::<dap::requests::Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_restart_request: Some(true),
+                ..Default::default()
+            })
+        });
+    })
+    .unwrap();
+
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    let restart_count = Arc::new(AtomicUsize::new(0));
+
+    client.on_request::<dap::requests::Restart, _>({
+        let restart_count = restart_count.clone();
+        move |_, _| {
+            restart_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    });
+
+    // This works because the restart request sender is on the foreground thread
+    // so it will start running after the gpui update stack is cleared
+    session.update(cx, |session, cx| {
+        session.restart(None, cx);
+        session.restart(None, cx);
+        session.restart(None, cx);
+    });
+
+    cx.run_until_parked();
+
+    assert_eq!(
+        restart_count.load(Ordering::SeqCst),
+        1,
+        "Only one restart request should be sent while a restart is in-flight"
+    );
+
+    session.update(cx, |session, cx| {
+        session.restart(None, cx);
+    });
+
+    cx.run_until_parked();
+
+    assert_eq!(
+        restart_count.load(Ordering::SeqCst),
+        2,
+        "A second restart should be allowed after the first one completes"
     );
 }

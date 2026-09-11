@@ -1,3 +1,4 @@
+#![expect(clippy::result_large_err)]
 use std::iter::zip;
 
 use crate::{

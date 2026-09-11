@@ -182,7 +182,7 @@ impl Patch {
             }
 
             if in_header {
-                patch.header.push_str(format!("{}\n", &line).as_ref());
+                patch.header.push_str(format!("{line}\n").as_ref());
                 continue;
             }
 
@@ -338,7 +338,7 @@ impl ToString for Hunk {
             .iter()
             .map(|line| line.to_string() + "\n")
             .collect::<Vec<String>>()
-            .join("");
+            .concat();
         format!("{header}\n{lines}")
     }
 }
@@ -651,7 +651,7 @@ pub fn parse_order_spec(spec: &str) -> Vec<BTreeSet<usize>> {
     order
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditLocation {
     pub filename: String,
     pub source_line_number: usize,
@@ -667,8 +667,8 @@ pub enum EditType {
     Insertion,
 }
 
-pub fn locate_edited_line(patch: &Patch, mut edit_index: isize) -> Option<EditLocation> {
-    let mut edit_locations = vec![];
+pub fn edit_locations(patch: &Patch) -> Vec<EditLocation> {
+    let mut edit_locations = Vec::new();
 
     for (hunk_index, hunk) in patch.hunks.iter().enumerate() {
         let mut old_line_number = hunk.old_start;
@@ -723,6 +723,12 @@ pub fn locate_edited_line(patch: &Patch, mut edit_index: isize) -> Option<EditLo
             };
         }
     }
+
+    edit_locations
+}
+
+pub fn locate_edited_line(patch: &Patch, mut edit_index: isize) -> Option<EditLocation> {
+    let mut edit_locations = edit_locations(patch);
 
     if edit_index < 0 {
         edit_index += edit_locations.len() as isize; // take from end
@@ -845,6 +851,8 @@ mod tests {
             -zinc
         "};
         let patch = Patch::parse_unified_diff(patch_str);
+        let locations = edit_locations(&patch);
+        assert_eq!(locations.len(), 4);
 
         assert_eq!(
             locate_edited_line(&patch, 0), // -blue
@@ -954,7 +962,7 @@ mod tests {
             remove_edits(&mut patch, vec![0]);
 
             // The line numbers should be adjusted in the subsequent hunks
-            println!("{}", &patch.to_string());
+            println!("{}", patch.to_string());
             assert_eq!(patch.hunks[0].header_string(), "@@ -2,6 +2,7 @@");
             assert_eq!(patch.hunks[1].header_string(), "@@ -9,6 +10,7 @@ gray");
             assert_eq!(patch.hunks[2].header_string(), "@@ -16,4 +18,3 @@ red");
@@ -1147,7 +1155,7 @@ mod tests {
             apply_edits(&mut patch, vec![1]);
 
             // The line numbers should be adjusted in the subsequent hunks
-            println!("{}", &patch.to_string());
+            println!("{}", patch.to_string());
             assert_eq!(patch.hunks[0].header_string(), "@@ -1,7 +1,6 @@");
             assert_eq!(patch.hunks[1].header_string(), "@@ -10,6 +9,7 @@ gray");
             assert_eq!(patch.hunks[2].header_string(), "@@ -17,4 +17,3 @@ red");

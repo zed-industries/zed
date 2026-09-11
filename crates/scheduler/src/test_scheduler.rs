@@ -1,6 +1,6 @@
 use crate::{
-    BackgroundExecutor, Clock, ForegroundExecutor, Priority, RunnableMeta, Scheduler, SessionId,
-    TestClock, Timer,
+    BackgroundExecutor, Clock, Instant, LocalExecutor, Priority, RunnableMeta, Scheduler,
+    SessionId, Task, TestClock, Timer,
 };
 use async_task::Runnable;
 use backtrace::{Backtrace, BacktraceFrame};
@@ -10,6 +10,7 @@ use rand::{
     distr::{StandardUniform, uniform::SampleRange, uniform::SampleUniform},
     prelude::*,
 };
+use std::any::Any;
 use std::{
     any::type_name_of_val,
     collections::{BTreeMap, HashSet, VecDeque},
@@ -18,15 +19,14 @@ use std::{
     future::Future,
     mem,
     ops::RangeInclusive,
-    panic::{self, AssertUnwindSafe},
     pin::Pin,
     sync::{
-        Arc,
+        Arc, Weak,
         atomic::{AtomicBool, Ordering::SeqCst},
     },
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
     thread::{self, Thread},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 const PENDING_TRACES_VAR_NAME: &str = "PENDING_TRACES";
@@ -57,15 +57,19 @@ impl TestScheduler {
             .map(|seed| seed.parse().unwrap())
             .unwrap_or(0);
 
-        (seed..num_iterations as u64)
+        let interactive = !std::env::var("SCHEDULER_NONINTERACTIVE").is_ok();
+
+        (seed..seed + num_iterations as u64)
             .map(|seed| {
-                let mut unwind_safe_f = AssertUnwindSafe(&mut f);
-                eprintln!("Running seed: {seed}");
-                match panic::catch_unwind(move || Self::with_seed(seed, &mut *unwind_safe_f)) {
+                let mut unwind_safe_f = std::panic::AssertUnwindSafe(&mut f);
+                if interactive {
+                    eprintln!("Running seed: {seed}");
+                }
+                match std::panic::catch_unwind(move || Self::with_seed(seed, &mut *unwind_safe_f)) {
                     Ok(result) => result,
                     Err(error) => {
                         eprintln!("\x1b[31mFailing Seed: {seed}\x1b[0m");
-                        panic::resume_unwind(error);
+                        std::panic::resume_unwind(error);
                     }
                 }
             })
@@ -74,10 +78,84 @@ impl TestScheduler {
 
     fn with_seed<R>(seed: u64, f: impl AsyncFnOnce(Arc<TestScheduler>) -> R) -> R {
         let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::with_seed(seed)));
+        let output = std::cell::Cell::new(None);
         let future = f(scheduler.clone());
-        let result = scheduler.foreground().block_on(future);
+        let future = async {
+            output.set(Some(future.await));
+        };
+        let mut future = std::pin::pin!(future);
+        scheduler.block_until(None, future.as_mut(), None);
+        let result = output.take().expect("test future did not complete");
         scheduler.run(); // Ensure spawned tasks finish up before returning in tests
         result
+    }
+
+    fn block_until(
+        &self,
+        session_id: Option<SessionId>,
+        mut future: Pin<&mut dyn Future<Output = ()>>,
+        timeout: Option<Duration>,
+    ) -> bool {
+        if let Some(session_id) = session_id {
+            self.state.lock().blocked_sessions.push(session_id);
+        }
+
+        let deadline = timeout.map(|timeout| Instant::now() + timeout);
+        let awoken = Arc::new(AtomicBool::new(false));
+        let waker = Box::new(TracingWaker {
+            id: None,
+            awoken: awoken.clone(),
+            thread: self.thread.clone(),
+            state: self.state.clone(),
+        });
+        let waker = unsafe { Waker::new(Box::into_raw(waker) as *const (), &WAKER_VTABLE) };
+        let max_ticks = if timeout.is_some() {
+            self.rng
+                .lock()
+                .random_range(self.state.lock().timeout_ticks.clone())
+        } else {
+            usize::MAX
+        };
+        let mut cx = Context::from_waker(&waker);
+
+        let mut completed = false;
+        for _ in 0..max_ticks {
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(()) => {
+                    completed = true;
+                    break;
+                }
+                Poll::Pending => {}
+            }
+
+            let mut stepped = None;
+            while self.rng.lock().random() {
+                let stepped = stepped.get_or_insert(false);
+                if self.step() {
+                    *stepped = true;
+                } else {
+                    break;
+                }
+            }
+
+            let stepped = stepped.unwrap_or(true);
+            let awoken = awoken.swap(false, SeqCst);
+            if !stepped && !awoken {
+                let parking_allowed = self.state.lock().allow_parking;
+                // In deterministic mode (parking forbidden), instantly jump to the next timer.
+                // In non-deterministic mode (parking allowed), let real time pass instead.
+                let advanced_to_timer = !parking_allowed && self.advance_clock_to_next_timer();
+                if !advanced_to_timer && !self.park(deadline) {
+                    break;
+                }
+            }
+        }
+
+        if session_id.is_some() {
+            self.state.lock().blocked_sessions.pop();
+        }
+
+        completed
     }
 
     pub fn new(config: TestSchedulerConfig) -> Self {
@@ -108,7 +186,12 @@ impl TestScheduler {
     pub fn end_test(&self) {
         let mut state = self.state.lock();
         if let Some((message, backtrace)) = &state.non_determinism_error {
-            panic!("{}\n{:?}", message, backtrace)
+            if cfg!(miri) {
+                // miri cannot debug print backtraces with `miri-disable-isolation` enabled
+                panic!("{}", message)
+            } else {
+                panic!("{}\n{:?}", message, backtrace)
+            }
         }
         state.finished = true;
     }
@@ -143,18 +226,20 @@ impl TestScheduler {
         self.state.lock().is_main_thread
     }
 
-    /// Allocate a new session ID for foreground task scheduling.
-    /// This is used by GPUI's TestDispatcher to map dispatcher instances to sessions.
     pub fn allocate_session_id(&self) -> SessionId {
         let mut state = self.state.lock();
         state.next_session_id.0 += 1;
         state.next_session_id
     }
 
-    /// Create a foreground executor for this scheduler
-    pub fn foreground(self: &Arc<Self>) -> ForegroundExecutor {
+    /// Create a local executor for this scheduler.
+    pub fn foreground(self: &Arc<Self>) -> LocalExecutor {
         let session_id = self.allocate_session_id();
-        ForegroundExecutor::new(session_id, self.clone())
+        LocalExecutor::new(
+            session_id,
+            self.clone(),
+            schedule_local_dispatch(Arc::downgrade(self), session_id),
+        )
     }
 
     /// Create a background executor for this scheduler
@@ -320,10 +405,6 @@ impl TestScheduler {
         };
 
         if let Some(runnable) = runnable {
-            // Check if the executor that spawned this task was closed
-            if runnable.runnable.metadata().is_closed() {
-                return true;
-            }
             let is_foreground = runnable.session_id.is_some();
             let was_main_thread = self.state.lock().is_main_thread;
             self.state.lock().is_main_thread = is_foreground;
@@ -333,6 +414,28 @@ impl TestScheduler {
         }
 
         false
+    }
+
+    /// Drops all runnable tasks from the scheduler.
+    ///
+    /// This is used by the leak detector to ensure that all tasks have been dropped as tasks may keep entities alive otherwise.
+    /// Why do we even have tasks left when tests finish you may ask. The reason for that is simple, the scheduler itself is the executor and it retains the scheduled runnables.
+    /// A lot of tasks, including every foreground task contain an executor handle that keeps the test scheduler alive, causing a reference cycle, thus the need for this function right now.
+    pub fn drain_tasks(&self) {
+        // dropping runnables may reschedule tasks
+        // due to drop impls with executors in them
+        // so drop until we reach a fixpoint
+        loop {
+            let mut state = self.state.lock();
+            if state.runnables.is_empty() && state.timers.is_empty() {
+                break;
+            }
+            let runnables = std::mem::take(&mut state.runnables);
+            let timers = std::mem::take(&mut state.timers);
+            drop(state);
+            drop(timers);
+            drop(runnables);
+        }
     }
 
     pub fn advance_clock_to_next_timer(&self) -> bool {
@@ -440,6 +543,9 @@ impl TestScheduler {
             }
         } else if deadline.is_some() {
             false
+        } else if cfg!(miri) {
+            // miri cannot debug print backtraces with `miri-disable-isolation` enabled
+            panic!("Parking forbidden.");
         } else if self.state.lock().capture_pending_traces {
             let mut pending_traces = String::new();
             for (_, trace) in mem::take(&mut self.state.lock().pending_traces) {
@@ -487,75 +593,17 @@ impl Scheduler for TestScheduler {
     /// is provided. This is to allow testing a mix of deterministic and
     /// non-deterministic async behavior, such as when interacting with I/O in
     /// an otherwise deterministic test.
+    #[cfg(not(target_family = "wasm"))]
     fn block(
         &self,
         session_id: Option<SessionId>,
-        mut future: Pin<&mut dyn Future<Output = ()>>,
+        future: Pin<&mut dyn Future<Output = ()>>,
         timeout: Option<Duration>,
     ) -> bool {
-        if let Some(session_id) = session_id {
-            self.state.lock().blocked_sessions.push(session_id);
-        }
-
-        let deadline = timeout.map(|timeout| Instant::now() + timeout);
-        let awoken = Arc::new(AtomicBool::new(false));
-        let waker = Box::new(TracingWaker {
-            id: None,
-            awoken: awoken.clone(),
-            thread: self.thread.clone(),
-            state: self.state.clone(),
-        });
-        let waker = unsafe { Waker::new(Box::into_raw(waker) as *const (), &WAKER_VTABLE) };
-        let max_ticks = if timeout.is_some() {
-            self.rng
-                .lock()
-                .random_range(self.state.lock().timeout_ticks.clone())
-        } else {
-            usize::MAX
-        };
-        let mut cx = Context::from_waker(&waker);
-
-        let mut completed = false;
-        for _ in 0..max_ticks {
-            match future.as_mut().poll(&mut cx) {
-                Poll::Ready(()) => {
-                    completed = true;
-                    break;
-                }
-                Poll::Pending => {}
-            }
-
-            let mut stepped = None;
-            while self.rng.lock().random() {
-                let stepped = stepped.get_or_insert(false);
-                if self.step() {
-                    *stepped = true;
-                } else {
-                    break;
-                }
-            }
-
-            let stepped = stepped.unwrap_or(true);
-            let awoken = awoken.swap(false, SeqCst);
-            if !stepped && !awoken {
-                let parking_allowed = self.state.lock().allow_parking;
-                // In deterministic mode (parking forbidden), instantly jump to the next timer.
-                // In non-deterministic mode (parking allowed), let real time pass instead.
-                let advanced_to_timer = !parking_allowed && self.advance_clock_to_next_timer();
-                if !advanced_to_timer && !self.park(deadline) {
-                    break;
-                }
-            }
-        }
-
-        if session_id.is_some() {
-            self.state.lock().blocked_sessions.pop();
-        }
-
-        completed
+        self.block_until(session_id, future, timeout)
     }
 
-    fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>) {
+    fn schedule_local(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>) {
         assert_correct_thread(&self.thread, &self.state);
         let mut state = self.state.lock();
         let ix = if state.randomize_order {
@@ -630,8 +678,63 @@ impl Scheduler for TestScheduler {
         self.clock.clone()
     }
 
+    /// In the test world, dedicated work is just a fresh local session driven
+    /// by the test scheduler's run loop alongside everything else. No real
+    /// thread is spawned, so determinism under `TestScheduler::many` is
+    /// preserved.
+    fn spawn_dedicated(
+        self: Arc<Self>,
+        f: Box<
+            dyn FnOnce(
+                    LocalExecutor,
+                )
+                    -> Pin<Box<dyn Future<Output = Box<dyn Any + Send + Sync>> + 'static>>
+                + Send
+                + 'static,
+        >,
+    ) -> Task<Box<dyn Any + Send + Sync>> {
+        let session_id = self.allocate_session_id();
+        let weak_scheduler = Arc::downgrade(&self);
+        let spawner = LocalExecutor::new(
+            session_id,
+            self,
+            schedule_local_dispatch(weak_scheduler.clone(), session_id),
+        );
+        // The dedicated future sits in this scheduler's own queue until its
+        // first poll. A `LocalExecutor` holds the scheduler strongly, so
+        // capturing one here would create a reference cycle
+        // (scheduler -> queued runnable -> future -> executor -> scheduler)
+        // that leaks both if the scheduler is dropped before ever being run.
+        // Construct the executor lazily at first poll, when the runnable is
+        // already out of the queue.
+        spawner.spawn(async move {
+            let scheduler = weak_scheduler
+                .upgrade()
+                .expect("dedicated tasks are only polled by their scheduler, which is still alive when polled");
+            let executor = LocalExecutor::new(
+                session_id,
+                scheduler,
+                schedule_local_dispatch(weak_scheduler, session_id),
+            );
+            f(executor).await
+        })
+    }
+
     fn as_test(&self) -> Option<&TestScheduler> {
         Some(self)
+    }
+}
+
+/// Dispatch closure for `LocalExecutor`s backed by a `TestScheduler`. Holds
+/// the scheduler weakly so queued runnables don't keep it alive.
+fn schedule_local_dispatch(
+    scheduler: Weak<TestScheduler>,
+    session_id: SessionId,
+) -> impl Fn(Runnable<RunnableMeta>) + Send + Sync + 'static {
+    move |runnable| {
+        if let Some(scheduler) = scheduler.upgrade() {
+            scheduler.schedule_local(session_id, runnable);
+        }
     }
 }
 

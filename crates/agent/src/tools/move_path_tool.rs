@@ -1,11 +1,13 @@
 use super::tool_permissions::{
-    SensitiveSettingsKind, authorize_symlink_escapes, canonicalize_worktree_roots,
-    collect_symlink_escapes, sensitive_settings_kind,
+    authorize_symlink_escapes, canonicalize_worktree_roots, collect_symlink_escapes,
+    resolve_creatable_global_skill_descendant_path, resolve_global_skill_descendant_path,
+    resolves_to_global_skills_dir, sensitive_settings_kind,
 };
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_paths,
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    authorize_with_sensitive_settings, decide_permission_for_paths,
 };
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
@@ -21,6 +23,7 @@ use util::markdown::MarkdownInlineCode;
 /// If the source and destination directories are the same, but the filename is different, this performs a rename. Otherwise, it performs a move.
 ///
 /// This tool should be used when it's desirable to move or rename a file or directory without changing its contents at all.
+/// The only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct MovePathToolInput {
     /// The source path of the file or directory to move/rename.
@@ -62,8 +65,8 @@ impl AgentTool for MovePathTool {
 
     const NAME: &'static str = "move_path";
 
-    fn kind() -> ToolKind {
-        ToolKind::Move
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Move
     }
 
     fn initial_title(
@@ -103,7 +106,7 @@ impl AgentTool for MovePathTool {
             let input = input
                 .recv()
                 .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+                .map_err(|e| e.to_string())?;
             let paths = vec![input.source_path.clone(), input.destination_path.clone()];
             let decision = cx.update(|cx| {
                 decide_permission_for_paths(Self::NAME, &paths, AgentSettings::get_global(cx))
@@ -114,6 +117,28 @@ impl AgentTool for MovePathTool {
 
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
+
+            if resolves_to_global_skills_dir(Path::new(&input.source_path), fs.as_ref()).await
+                || resolves_to_global_skills_dir(
+                    Path::new(&input.destination_path),
+                    fs.as_ref(),
+                )
+                .await
+            {
+                return Err(
+                    "Cannot move the global agent skills directory itself. Move a skill directory or file beneath it instead."
+                        .to_string(),
+                );
+            }
+
+            let global_source_path =
+                resolve_global_skill_descendant_path(Path::new(&input.source_path), fs.as_ref())
+                    .await;
+            let global_destination_path = resolve_creatable_global_skill_descendant_path(
+                Path::new(&input.destination_path),
+                fs.as_ref(),
+            )
+            .await;
 
             let symlink_escapes: Vec<(&str, std::path::PathBuf)> =
                 project.read_with(cx, |project, cx| {
@@ -126,13 +151,18 @@ impl AgentTool for MovePathTool {
                     )
                 });
 
-            let sensitive_kind =
-                sensitive_settings_kind(Path::new(&input.source_path), fs.as_ref())
-                    .await
-                    .or(
-                        sensitive_settings_kind(Path::new(&input.destination_path), fs.as_ref())
-                            .await,
-                    );
+            let sensitive_kind = sensitive_settings_kind(
+                Path::new(&input.source_path),
+                &canonical_roots,
+                fs.as_ref(),
+            )
+            .await
+            .or(sensitive_settings_kind(
+                Path::new(&input.destination_path),
+                &canonical_roots,
+                fs.as_ref(),
+            )
+            .await);
 
             let needs_confirmation = matches!(decision, ToolPermissionDecision::Confirm)
                 || (matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some());
@@ -154,12 +184,13 @@ impl AgentTool for MovePathTool {
                         vec![input.source_path.clone(), input.destination_path.clone()],
                     );
                     let title = format!("Move {src} to {dest}");
-                    let title = match sensitive_kind {
-                        Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
-                        Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                        None => title,
-                    };
-                    event_stream.authorize(title, context, cx)
+                    authorize_with_sensitive_settings(
+                        sensitive_kind,
+                        context,
+                        &title,
+                        &event_stream,
+                        cx,
+                    )
                 }))
             } else {
                 None
@@ -167,6 +198,65 @@ impl AgentTool for MovePathTool {
 
             if let Some(authorize) = authorize {
                 authorize.await.map_err(|e| e.to_string())?;
+            }
+
+            if global_source_path.is_some() || global_destination_path.is_some() {
+                let source_path = if let Some(global_source_path) = global_source_path {
+                    global_source_path
+                } else {
+                    project.read_with(cx, |project, cx| {
+                        let project_path = project.find_project_path(&input.source_path, cx).ok_or_else(|| {
+                            format!("Source path {} was not found in the project.", input.source_path)
+                        })?;
+                        project.entry_for_path(&project_path, cx).ok_or_else(|| {
+                            format!("Source path {} was not found in the project.", input.source_path)
+                        })?;
+                        project.absolute_path(&project_path, cx).ok_or_else(|| {
+                            format!("Source path {} could not be resolved.", input.source_path)
+                        })
+                    })?
+                };
+
+                let destination_path = if let Some(global_destination_path) = global_destination_path
+                {
+                    global_destination_path
+                } else {
+                    project.read_with(cx, |project, cx| {
+                        let project_path = project.find_project_path(&input.destination_path, cx).ok_or_else(|| {
+                            format!(
+                                "Destination path {} was outside the project.",
+                                input.destination_path
+                            )
+                        })?;
+                        project.absolute_path(&project_path, cx).ok_or_else(|| {
+                            format!(
+                                "Destination path {} could not be resolved.",
+                                input.destination_path
+                            )
+                        })
+                    })?
+                };
+
+                futures::select! {
+                    result = fs.rename(
+                        &source_path,
+                        &destination_path,
+                        fs::RenameOptions {
+                            create_parents: true,
+                            ..fs::RenameOptions::default()
+                        },
+                    ).fuse() => {
+                        result.map_err(|e| format!("Moving {} to {}: {e}", input.source_path, input.destination_path))?;
+                    }
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        return Err("Move cancelled by user".to_string());
+                    }
+                }
+
+                return Ok(format!(
+                    "Moved {} to {}",
+                    input.source_path, input.destination_path
+                ));
             }
 
             let rename_task = project.update(cx, |project, cx| {
@@ -205,7 +295,6 @@ impl AgentTool for MovePathTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::TestAppContext;
     use project::{FakeFs, Project};
@@ -224,6 +313,139 @@ mod tests {
             settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             AgentSettings::override_global(settings, cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_move_path_global_skill_directory_to_project(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root/project"), json!({})).await;
+        let skill_dir = agent_skills::global_skills_dir().join("my-skill");
+        fs.insert_tree(&skill_dir, json!({ "SKILL.md": "content" }))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(MovePathTool::new(project));
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .to_string_lossy()
+            .into_owned();
+        let destination_path = path!("/root/project/my-skill").to_string();
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(MovePathToolInput {
+                    source_path: input_path,
+                    destination_path,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("agent skills"),
+            "Authorization title should mention agent skills, got: {title}",
+        );
+        assert!(
+            auth.options
+                .first_option_of_kind(acp::PermissionOptionKind::AllowAlways)
+                .is_none(),
+            "agent skills prompt must not offer an \"Always allow\" option: {:?}",
+            auth.options,
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let result = task.await;
+        assert!(result.is_ok(), "should move after approval: {result:?}");
+        assert!(!fs.is_dir(&skill_dir).await);
+        assert_eq!(
+            fs.load(path!("/root/project/my-skill/SKILL.md").as_ref())
+                .await
+                .unwrap(),
+            "content"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_move_path_project_directory_to_global_skill_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root/project"),
+            json!({ "exported-skill": { "SKILL.md": "content" } }),
+        )
+        .await;
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_dir(&skills_dir).await.unwrap();
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(MovePathTool::new(project));
+        let destination_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("exported-skill")
+            .to_string_lossy()
+            .into_owned();
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(MovePathToolInput {
+                    source_path: path!("/root/project/exported-skill").to_string(),
+                    destination_path,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("agent skills"),
+            "Authorization title should mention agent skills, got: {title}",
+        );
+        assert!(
+            auth.options
+                .first_option_of_kind(acp::PermissionOptionKind::AllowAlways)
+                .is_none(),
+            "agent skills prompt must not offer an \"Always allow\" option: {:?}",
+            auth.options,
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let result = task.await;
+        assert!(result.is_ok(), "should move after approval: {result:?}");
+        assert!(
+            !fs.is_dir(path!("/root/project/exported-skill").as_ref())
+                .await
+        );
+        assert_eq!(
+            fs.load(skills_dir.join("exported-skill").join("SKILL.md").as_ref())
+                .await
+                .unwrap(),
+            "content"
+        );
     }
 
     #[gpui::test]
@@ -273,7 +495,10 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let result = task.await;
@@ -379,13 +604,16 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Expected a single authorization prompt",
         );
@@ -451,8 +679,8 @@ mod tests {
         assert!(result.is_err(), "Tool should fail when policy denies");
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Deny policy should not emit symlink authorization prompt",
         );

@@ -219,8 +219,8 @@ impl SnippetProvider {
             .get(language)
             .cloned()
             .unwrap_or_default()
-            .into_iter()
-            .flat_map(|(_, snippets)| snippets.into_iter())
+            .into_values()
+            .flat_map(|snippets| snippets.into_iter())
             .collect();
         if LOOKUP_GLOBALS {
             if let Some(global_watcher) = cx.try_global::<GlobalSnippetWatcher>() {

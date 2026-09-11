@@ -15,7 +15,7 @@ use crate::debugger::dap_command::{DataBreakpointContext, ReadMemory};
 use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, PageAddress};
 use anyhow::{Context as _, Result, anyhow, bail};
 use base64::Engine;
-use collections::{HashMap, HashSet, IndexMap};
+use collections::{HashMap, HashSet, IndexMap, TypeIdHashMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
 use dap::requests::{Request, RunInTerminal, StartDebugging};
@@ -38,7 +38,7 @@ use futures::{AsyncBufReadExt as _, SinkExt, StreamExt, TryStreamExt};
 use futures::{FutureExt, future::Shared};
 use gpui::{
     App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
-    Task, WeakEntity,
+    Task, TaskExt, WeakEntity,
 };
 use http_client::HttpClient;
 use node_runtime::NodeRuntime;
@@ -48,11 +48,10 @@ use serde_json::Value;
 use smol::net::{TcpListener, TcpStream};
 use std::any::TypeId;
 use std::collections::{BTreeMap, VecDeque};
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::u64;
 use std::{
     any::Any,
     collections::hash_map::Entry,
@@ -704,7 +703,7 @@ pub struct Session {
     output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
     watchers: HashMap<SharedString, Watcher>,
     is_session_terminated: bool,
-    requests: HashMap<TypeId, HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
+    requests: TypeIdHashMap<HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     ignore_breakpoints: bool,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
@@ -876,7 +875,7 @@ impl Session {
                 watchers: HashMap::default(),
                 output_token: OutputToken(0),
                 output: circular_buffer::CircularBuffer::boxed(),
-                requests: HashMap::default(),
+                requests: Default::default(),
                 background_tasks: Vec::default(),
                 restart_task: None,
                 is_session_terminated: false,
@@ -1358,7 +1357,7 @@ impl Session {
                 cx.spawn(async move |this, cx| {
                     task.await;
                     this.update(cx, |this, cx| {
-                        this.continue_thread(active_thread_id, cx);
+                        this.continue_program(active_thread_id, cx);
                     })
                 })
                 .detach();
@@ -1527,7 +1526,8 @@ impl Session {
             }
             Events::Stopped(event) => self.handle_stopped_event(event, cx),
             Events::Continued(event) => {
-                if event.all_threads_continued.unwrap_or_default() {
+                // DAP defines an omitted `allThreadsContinued` as `true`.
+                if event.all_threads_continued.unwrap_or(true) {
                     self.active_snapshot.thread_states.continue_all_threads();
                     self.breakpoint_store.update(cx, |store, cx| {
                         store.remove_active_position(Some(self.session_id()), cx)
@@ -2142,6 +2142,38 @@ impl Session {
         }
     }
 
+    fn on_continue_response(
+        thread_id: ThreadId,
+    ) -> impl FnOnce(
+        &mut Self,
+        Result<dap::ContinueResponse>,
+        &mut Context<Self>,
+    ) -> Option<dap::ContinueResponse>
+    + 'static {
+        move |this, response, cx| match response.log_err() {
+            Some(response) => {
+                if response.all_threads_continued.unwrap_or(true) {
+                    this.active_snapshot.thread_states.continue_all_threads();
+                } else {
+                    this.active_snapshot
+                        .thread_states
+                        .continue_thread(thread_id);
+                }
+                this.breakpoint_store.update(cx, |store, cx| {
+                    store.remove_active_position(Some(this.session_id()), cx)
+                });
+                this.invalidate_generic();
+                cx.notify();
+                Some(response)
+            }
+            None => {
+                this.active_snapshot.thread_states.stop_thread(thread_id);
+                cx.notify();
+                None
+            }
+        }
+    }
+
     fn clear_active_debug_line_response(
         &mut self,
         response: Result<()>,
@@ -2187,21 +2219,27 @@ impl Session {
             self.capabilities.supports_restart_request.unwrap_or(false) && !self.is_terminated();
 
         self.restart_task = Some(cx.spawn(async move |this, cx| {
-            let _ = this.update(cx, |session, cx| {
+            this.update(cx, |session, cx| {
                 if supports_dap_restart {
-                    session
-                        .request(
-                            RestartCommand {
-                                raw: args.unwrap_or(Value::Null),
-                            },
-                            Self::fallback_to_manual_restart,
-                            cx,
-                        )
-                        .detach();
+                    session.request(
+                        RestartCommand {
+                            raw: args.unwrap_or(Value::Null),
+                        },
+                        Self::fallback_to_manual_restart,
+                        cx,
+                    )
                 } else {
                     cx.emit(SessionStateEvent::Restart);
+                    Task::ready(None)
                 }
-            });
+            })
+            .unwrap_or_else(|_| Task::ready(None))
+            .await;
+
+            this.update(cx, |session, _cx| {
+                session.restart_task = None;
+            })
+            .ok();
         }));
     }
 
@@ -2274,11 +2312,30 @@ impl Session {
         })
     }
 
+    pub fn continue_program(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        self.continue_execution(thread_id, None, cx);
+    }
+
     pub fn continue_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        if !self
+            .capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default()
+        {
+            return;
+        }
+
+        self.continue_execution(thread_id, Some(true), cx);
+    }
+
+    fn continue_execution(
+        &mut self,
+        thread_id: ThreadId,
+        single_thread: Option<bool>,
+        cx: &mut Context<Self>,
+    ) {
         self.select_historic_snapshot(None, cx);
 
-        let supports_single_thread_execution_requests =
-            self.capabilities.supports_single_thread_execution_requests;
         self.active_snapshot
             .thread_states
             .continue_thread(thread_id);
@@ -2286,10 +2343,10 @@ impl Session {
             ContinueCommand {
                 args: ContinueArguments {
                     thread_id: thread_id.0,
-                    single_thread: supports_single_thread_execution_requests,
+                    single_thread,
                 },
             },
-            Self::on_step_response::<ContinueCommand>(thread_id),
+            Self::on_continue_response(thread_id),
             cx,
         )
         .detach();
@@ -2528,8 +2585,8 @@ impl Session {
                         return
                     };
 
-                    for scope in scopes.iter() {
-                        this.variables(scope.variables_reference, cx);
+                    for scope in scopes.iter().filter(|scope| !scope.expensive) {
+                            this.variables(scope.variables_reference, cx);
                     }
 
                     let entry = this
@@ -2645,9 +2702,39 @@ impl Session {
         self.fetch(
             command,
             move |this, variables, cx| {
-                let Some(variables) = variables.log_err() else {
+                let Some(mut variables) = variables.log_err() else {
                     return;
                 };
+
+                if this.adapter.0.as_ref() == "Debugpy" {
+                    for variable in variables.iter_mut() {
+                        if variable.type_ == Some("str".into()) {
+                            // reverse Python repr() escaping
+                            let mut unescaped = String::with_capacity(variable.value.len());
+                            let mut chars = variable.value.chars();
+                            while let Some(c) = chars.next() {
+                                if c != '\\' {
+                                    unescaped.push(c);
+                                } else {
+                                    match chars.next() {
+                                        Some('\\') => unescaped.push('\\'),
+                                        Some('n') => unescaped.push('\n'),
+                                        Some('t') => unescaped.push('\t'),
+                                        Some('r') => unescaped.push('\r'),
+                                        Some('\'') => unescaped.push('\''),
+                                        Some('"') => unescaped.push('"'),
+                                        Some(c) => {
+                                            unescaped.push('\\');
+                                            unescaped.push(c);
+                                        }
+                                        None => {}
+                                    }
+                                }
+                            }
+                            variable.value = unescaped;
+                        }
+                    }
+                }
 
                 this.active_snapshot
                     .variables
@@ -2744,7 +2831,7 @@ impl Session {
                     Ok(response) => {
                         let event = dap::OutputEvent {
                             category: None,
-                            output: format!("< {}", &response.result),
+                            output: format!("< {}", response.result),
                             group: None,
                             variables_reference: Some(response.variables_reference),
                             source: None,
@@ -2865,7 +2952,7 @@ impl Session {
                 );
                 None
             } else {
-                let port = TcpTransport::unused_port(Ipv4Addr::LOCALHOST)
+                let port = TcpTransport::unused_port(IpAddr::V4(Ipv4Addr::LOCALHOST))
                     .await
                     .context("getting port for DAP")?;
                 request
@@ -3109,7 +3196,7 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
 
     async fn install_latest_version(dir: PathBuf, node: NodeRuntime) -> Result<PathBuf> {
         let temp_dir = tempfile::tempdir().context("creating temporary directory")?;
-        node.npm_install_packages(temp_dir.path(), &[(PACKAGE_NAME, "latest")])
+        node.npm_install_latest_packages(temp_dir.path(), &[PACKAGE_NAME])
             .await
             .context("installing latest companion package")?;
         let version = node

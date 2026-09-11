@@ -1,14 +1,13 @@
 pub mod running;
 
-use crate::{StackTraceView, persistence::SerializedLayout, session::running::DebugTerminal};
+use crate::{persistence::SerializedLayout, session::running::DebugTerminal};
 use dap::client::SessionId;
 use gpui::{App, Axis, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
 use project::debugger::session::Session;
-use project::worktree_store::WorktreeStore;
+
 use project::{Project, debugger::session::SessionQuirks};
 use rpc::proto;
 use running::RunningState;
-use std::cell::OnceCell;
 use ui::prelude::*;
 use workspace::{
     CollaboratorId, FollowableItem, ViewId, Workspace,
@@ -19,9 +18,6 @@ pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
     pub(crate) running_state: Entity<RunningState>,
     pub(crate) quirks: SessionQuirks,
-    stack_trace_view: OnceCell<Entity<StackTraceView>>,
-    _worktree_store: WeakEntity<WorktreeStore>,
-    workspace: WeakEntity<Workspace>,
 }
 
 impl DebugSession {
@@ -49,42 +45,15 @@ impl DebugSession {
         });
         let quirks = session.read(cx).quirks();
 
-        cx.new(|cx| Self {
+        cx.new(|_| Self {
             remote_id: None,
             running_state,
             quirks,
-            stack_trace_view: OnceCell::new(),
-            _worktree_store: project.read(cx).worktree_store().downgrade(),
-            workspace,
         })
     }
 
     pub(crate) fn session_id(&self, cx: &App) -> SessionId {
         self.running_state.read(cx).session_id()
-    }
-
-    pub(crate) fn stack_trace_view(
-        &mut self,
-        project: &Entity<Project>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> &Entity<StackTraceView> {
-        let workspace = self.workspace.clone();
-        let running_state = self.running_state.clone();
-
-        self.stack_trace_view.get_or_init(|| {
-            let stackframe_list = running_state.read(cx).stack_frame_list().clone();
-
-            cx.new(|cx| {
-                StackTraceView::new(
-                    workspace.clone(),
-                    project.clone(),
-                    stackframe_list,
-                    window,
-                    cx,
-                )
-            })
-        })
     }
 
     pub fn session(&self, cx: &App) -> Entity<Session> {

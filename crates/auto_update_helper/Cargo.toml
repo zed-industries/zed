@@ -19,13 +19,14 @@ log.workspace = true
 simplelog.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
+scopeguard = "1.2"
 windows.workspace = true
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 tempfile.workspace = true
 
-[target.'cfg(target_os = "windows")'.build-dependencies]
-winresource = "0.1"
+[build-dependencies]
+windows_resources = { path = "../windows_resources" }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-pc-windows-msvc"]

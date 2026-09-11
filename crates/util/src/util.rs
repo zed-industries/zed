@@ -1,56 +1,58 @@
-pub mod arc_cow;
+#[cfg(test)]
+extern crate self as util;
+
+#[cfg(not(target_family = "wasm"))]
 pub mod archive;
+#[cfg(not(target_family = "wasm"))]
 pub mod command;
+#[cfg(not(target_family = "wasm"))]
 pub mod fs;
-pub mod markdown;
-pub mod paths;
+#[cfg(not(target_family = "wasm"))]
 pub mod process;
+#[cfg(not(target_family = "wasm"))]
+pub mod shell;
+#[cfg(not(target_family = "wasm"))]
+pub mod shell_builder;
+#[cfg(not(target_family = "wasm"))]
+pub mod shell_env;
+
+pub mod disambiguate;
+pub mod markdown;
+pub mod path_list;
+pub mod paths;
 pub mod redact;
-pub mod rel_path;
 pub mod schemars;
 pub mod serde;
-pub mod shell;
-pub mod shell_builder;
-pub mod shell_env;
 pub mod size;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 pub mod time;
 
-use anyhow::{Context as _, Result};
-use futures::Future;
+use anyhow::Result;
 use itertools::Either;
-use paths::PathExt;
 use regex::Regex;
-use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, OnceLock};
+use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
-    env,
-    ops::{AddAssign, Range, RangeInclusive},
-    panic::Location,
-    pin::Pin,
-    task::{Context, Poll},
-    time::Instant,
+    ops::{Range, RangeInclusive},
 };
 use unicase::UniCase;
+
+pub use gpui_util::*;
+pub use path::PathExt;
+pub use path::normalize_path;
+pub use path::rel_path;
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use util_macros::{line_endings, path, uri};
 
-#[macro_export]
-macro_rules! debug_panic {
-    ( $($fmt_arg:tt)* ) => {
-        if cfg!(debug_assertions) {
-            panic!( $($fmt_arg)* );
-        } else {
-            let backtrace = std::backtrace::Backtrace::capture();
-            log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
-        }
-    };
-}
+#[cfg(not(target_family = "wasm"))]
+pub use self::shell::{
+    get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
+};
 
 #[inline]
 pub const fn is_utf8_char_boundary(u8: u8) -> bool {
@@ -63,6 +65,29 @@ pub fn truncate(s: &str, max_chars: usize) -> &str {
         None => s,
         Some((idx, _)) => &s[..idx],
     }
+}
+
+/// Parses the contents of an `os-release` file (as found at `/etc/os-release`
+/// and described by the systemd spec) into a human-readable string such as
+/// `"ubuntu 24.04"`, combining the `ID` and `VERSION_ID` fields.
+///
+/// Returns `None` if no `ID` field is present. When `VERSION_ID` is absent
+/// (e.g. on rolling releases), only the `ID` is returned.
+pub fn parse_os_release(content: &str) -> Option<String> {
+    let mut id = None;
+    let mut version_id = None;
+    for line in content.lines() {
+        match line.split_once('=') {
+            Some(("ID", value)) => id = Some(value.trim_matches('"')),
+            Some(("VERSION_ID", value)) => version_id = Some(value.trim_matches('"')),
+            _ => {}
+        }
+    }
+    let id = id?;
+    Some(match version_id {
+        Some(version) => format!("{id} {version}"),
+        None => id.to_string(),
+    })
 }
 
 /// Removes characters from the end of the string if its length is greater than `max_chars` and
@@ -174,12 +199,6 @@ fn test_truncate_lines_to_byte_limit() {
     );
 }
 
-pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
-    let prev = *value;
-    *value += T::from(1);
-    prev
-}
-
 /// Extend a sorted vector with a sorted sequence of items, maintaining the vector's sort order and
 /// enforcing a maximum length. This also de-duplicates items. Sort the items according to the given callback. Before calling this,
 /// both `vec` and `new_items` should already be sorted according to the `cmp` comparator.
@@ -201,28 +220,6 @@ where
             start_index = index;
         }
     }
-}
-
-pub fn truncate_to_bottom_n_sorted_by<T, F>(items: &mut Vec<T>, limit: usize, compare: &F)
-where
-    F: Fn(&T, &T) -> Ordering,
-{
-    if limit == 0 {
-        items.truncate(0);
-    }
-    if items.len() <= limit {
-        items.sort_by(compare);
-        return;
-    }
-    // When limit is near to items.len() it may be more efficient to sort the whole list and
-    // truncate, rather than always doing selection first as is done below. It's hard to analyze
-    // where the threshold for this should be since the quickselect style algorithm used by
-    // `select_nth_unstable_by` makes the prefix partially sorted, and so its work is not wasted -
-    // the expected number of comparisons needed by `sort_by` is less than it is for some arbitrary
-    // unsorted input.
-    items.select_nth_unstable_by(limit, compare);
-    items.truncate(limit);
-    items.sort_by(compare);
 }
 
 /// Prevents execution of the application with root privileges on Unix systems.
@@ -287,7 +284,7 @@ fn load_shell_from_passwd() -> Result<()> {
     );
 
     let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
-    let should_set_shell = env::var("SHELL").map_or(true, |shell_env| {
+    let should_set_shell = std::env::var("SHELL").map_or(true, |shell_env| {
         shell_env != shell && !std::path::Path::new(&shell_env).exists()
     });
 
@@ -296,14 +293,17 @@ fn load_shell_from_passwd() -> Result<()> {
             "updating SHELL environment variable to value from passwd entry: {:?}",
             shell,
         );
-        unsafe { env::set_var("SHELL", shell) };
+        unsafe { std::env::set_var("SHELL", shell) };
     }
 
     Ok(())
 }
 
 /// Returns a shell escaped path for the current zed executable
+#[cfg(not(target_family = "wasm"))]
 pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
+    use anyhow::Context as _;
+    use paths::PathExt;
     let mut zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
     if cfg!(target_os = "linux")
@@ -326,6 +326,7 @@ pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<S
 /// Returns a path for the zed cli executable, this function
 /// should be called from the zed executable, not zed-cli.
 pub fn get_zed_cli_path() -> Result<PathBuf> {
+    use anyhow::Context as _;
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
     let parent = zed_path
@@ -365,6 +366,8 @@ pub fn get_zed_cli_path() -> Result<PathBuf> {
 
 #[cfg(unix)]
 pub async fn load_login_shell_environment() -> Result<()> {
+    use anyhow::Context as _;
+
     load_shell_from_passwd().log_err();
 
     // If possible, we want to `cd` in the user's `$HOME` to trigger programs
@@ -383,7 +386,7 @@ pub async fn load_login_shell_environment() -> Result<()> {
         if name == "SHLVL" {
             continue;
         }
-        unsafe { env::set_var(&name, &value) };
+        unsafe { std::env::set_var(&name, &value) };
     }
 
     log::info!(
@@ -404,7 +407,7 @@ pub fn set_pre_exec_to_start_new_session(
 ) -> &mut std::process::Command {
     // safety: code in pre_exec should be signal safe.
     // https://man7.org/linux/man-pages/man7/signal-safety.7.html
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(unix)]
     unsafe {
         use std::os::unix::process::CommandExt;
         command.pre_exec(|| {
@@ -440,6 +443,9 @@ pub fn merge_json_lenient_value_into(
     }
 }
 
+/// Merges `source` into `target`: objects are merged recursively, key by key;
+/// any other colliding value in `target` — including arrays — is replaced by
+/// `source`'s value wholesale.
 pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
     use serde_json::Value;
 
@@ -453,13 +459,30 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
                 }
             }
         }
+        (source, target) => *target = source,
+    }
+}
 
-        (Value::Array(source), Value::Array(target)) => {
-            for value in source {
-                target.push(value);
+pub fn union_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
+    use serde_json::Value;
+
+    match (source, target) {
+        (Value::Object(source), Value::Object(target)) => {
+            for (key, value) in source {
+                if let Some(target) = target.get_mut(&key) {
+                    union_json_value_into(value, target);
+                } else {
+                    target.insert(key, value);
+                }
             }
         }
-
+        (Value::Array(source), Value::Array(target)) => {
+            for value in source {
+                if !target.contains(&value) {
+                    target.push(value);
+                }
+            }
+        }
         (source, target) => *target = source,
     }
 }
@@ -482,25 +505,6 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
         }
     } else if !source.is_null() {
         *target = source
-    }
-}
-
-pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
-    static ZED_MEASUREMENTS: OnceLock<bool> = OnceLock::new();
-    let zed_measurements = ZED_MEASUREMENTS.get_or_init(|| {
-        env::var("ZED_MEASUREMENTS")
-            .map(|measurements| measurements == "1" || measurements == "true")
-            .unwrap_or(false)
-    });
-
-    if *zed_measurements {
-        let start = Instant::now();
-        let result = f();
-        let elapsed = start.elapsed();
-        eprintln!("{}: {:?}", label, elapsed);
-        result
-    } else {
-        f()
     }
 }
 
@@ -570,222 +574,6 @@ pub fn wrapped_usize_outward_from(
     })
 }
 
-pub trait ResultExt<E> {
-    type Ok;
-
-    fn log_err(self) -> Option<Self::Ok>;
-    /// Assert that this result should never be an error in development or tests.
-    fn debug_assert_ok(self, reason: &str) -> Self;
-    fn warn_on_err(self) -> Option<Self::Ok>;
-    fn log_with_level(self, level: log::Level) -> Option<Self::Ok>;
-    fn anyhow(self) -> anyhow::Result<Self::Ok>
-    where
-        E: Into<anyhow::Error>;
-}
-
-impl<T, E> ResultExt<E> for Result<T, E>
-where
-    E: std::fmt::Debug,
-{
-    type Ok = T;
-
-    #[track_caller]
-    fn log_err(self) -> Option<T> {
-        self.log_with_level(log::Level::Error)
-    }
-
-    #[track_caller]
-    fn debug_assert_ok(self, reason: &str) -> Self {
-        if let Err(error) = &self {
-            debug_panic!("{reason} - {error:?}");
-        }
-        self
-    }
-
-    #[track_caller]
-    fn warn_on_err(self) -> Option<T> {
-        self.log_with_level(log::Level::Warn)
-    }
-
-    #[track_caller]
-    fn log_with_level(self, level: log::Level) -> Option<T> {
-        match self {
-            Ok(value) => Some(value),
-            Err(error) => {
-                log_error_with_caller(*Location::caller(), error, level);
-                None
-            }
-        }
-    }
-
-    fn anyhow(self) -> anyhow::Result<T>
-    where
-        E: Into<anyhow::Error>,
-    {
-        self.map_err(Into::into)
-    }
-}
-
-fn log_error_with_caller<E>(caller: core::panic::Location<'_>, error: E, level: log::Level)
-where
-    E: std::fmt::Debug,
-{
-    #[cfg(not(target_os = "windows"))]
-    let file = caller.file();
-    #[cfg(target_os = "windows")]
-    let file = caller.file().replace('\\', "/");
-    // In this codebase all crates reside in a `crates` directory,
-    // so discard the prefix up to that segment to find the crate name
-    let file = file.split_once("crates/");
-    let target = file.as_ref().and_then(|(_, s)| s.split_once("/src/"));
-
-    let module_path = target.map(|(krate, module)| {
-        if module.starts_with(krate) {
-            module.trim_end_matches(".rs").replace('/', "::")
-        } else {
-            krate.to_owned() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
-        }
-    });
-    let file = file.map(|(_, file)| format!("crates/{file}"));
-    log::logger().log(
-        &log::Record::builder()
-            .target(module_path.as_deref().unwrap_or(""))
-            .module_path(file.as_deref())
-            .args(format_args!("{:?}", error))
-            .file(Some(caller.file()))
-            .line(Some(caller.line()))
-            .level(level)
-            .build(),
-    );
-}
-
-pub fn log_err<E: std::fmt::Debug>(error: &E) {
-    log_error_with_caller(*Location::caller(), error, log::Level::Error);
-}
-
-pub trait TryFutureExt {
-    fn log_err(self) -> LogErrorFuture<Self>
-    where
-        Self: Sized;
-
-    fn log_tracked_err(self, location: core::panic::Location<'static>) -> LogErrorFuture<Self>
-    where
-        Self: Sized;
-
-    fn warn_on_err(self) -> LogErrorFuture<Self>
-    where
-        Self: Sized;
-    fn unwrap(self) -> UnwrapFuture<Self>
-    where
-        Self: Sized;
-}
-
-impl<F, T, E> TryFutureExt for F
-where
-    F: Future<Output = Result<T, E>>,
-    E: std::fmt::Debug,
-{
-    #[track_caller]
-    fn log_err(self) -> LogErrorFuture<Self>
-    where
-        Self: Sized,
-    {
-        let location = Location::caller();
-        LogErrorFuture(self, log::Level::Error, *location)
-    }
-
-    fn log_tracked_err(self, location: core::panic::Location<'static>) -> LogErrorFuture<Self>
-    where
-        Self: Sized,
-    {
-        LogErrorFuture(self, log::Level::Error, location)
-    }
-
-    #[track_caller]
-    fn warn_on_err(self) -> LogErrorFuture<Self>
-    where
-        Self: Sized,
-    {
-        let location = Location::caller();
-        LogErrorFuture(self, log::Level::Warn, *location)
-    }
-
-    fn unwrap(self) -> UnwrapFuture<Self>
-    where
-        Self: Sized,
-    {
-        UnwrapFuture(self)
-    }
-}
-
-#[must_use]
-pub struct LogErrorFuture<F>(F, log::Level, core::panic::Location<'static>);
-
-impl<F, T, E> Future for LogErrorFuture<F>
-where
-    F: Future<Output = Result<T, E>>,
-    E: std::fmt::Debug,
-{
-    type Output = Option<T>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let level = self.1;
-        let location = self.2;
-        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
-        match inner.poll(cx) {
-            Poll::Ready(output) => Poll::Ready(match output {
-                Ok(output) => Some(output),
-                Err(error) => {
-                    log_error_with_caller(location, error, level);
-                    None
-                }
-            }),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-pub struct UnwrapFuture<F>(F);
-
-impl<F, T, E> Future for UnwrapFuture<F>
-where
-    F: Future<Output = Result<T, E>>,
-    E: std::fmt::Debug,
-{
-    type Output = T;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
-        match inner.poll(cx) {
-            Poll::Ready(result) => Poll::Ready(result.unwrap()),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-pub struct Deferred<F: FnOnce()>(Option<F>);
-
-impl<F: FnOnce()> Deferred<F> {
-    /// Drop without running the deferred function.
-    pub fn abort(mut self) {
-        self.0.take();
-    }
-}
-
-impl<F: FnOnce()> Drop for Deferred<F> {
-    fn drop(&mut self) {
-        if let Some(f) = self.0.take() {
-            f()
-        }
-    }
-}
-
-/// Run the given function when the returned value is dropped (unless it's cancelled).
-#[must_use]
-pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
-    Deferred(Some(f))
-}
-
 #[cfg(any(test, feature = "test-support"))]
 mod rng {
     use rand::prelude::*;
@@ -849,20 +637,226 @@ pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
     }
 }
 
-/// Expands to an immediately-invoked function expression. Good for using the ? operator
-/// in functions which do not return an Option or Result.
+/// The checkout that produced this binary, resolved at runtime by walking up to
+/// the first ancestor that contains a `.git` entry (a directory in a normal
+/// clone, a file in a git worktree or submodule). Cargo and corgi both place
+/// built binaries under `<repo>/target/<profile>/`, so the repository root is
+/// always an ancestor of the executable.
 ///
-/// Accepts a normal block, an async block, or an async move block.
+/// Dev-only affordances use this instead of baking a build-time path into the
+/// artifact: such a path points at the wrong checkout from any other worktree
+/// and, under corgi, is rejected because artifacts must be checkout-independent
+/// to be shared across worktrees.
+///
+/// The executable's launch path is tried first, then its canonical form, then
+/// the working directory. In CI, `target/` (or the checkout root) can be a
+/// symlink onto another volume, so canonicalizing the executable alone can walk
+/// off the checkout and miss `.git`; the launch path and the test runner's cwd
+/// (a crate dir under the checkout) stay inside it.
+pub fn dev_repo_root() -> Option<&'static std::path::Path> {
+    use std::path::PathBuf;
+    static ROOT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        let exe = std::env::current_exe().ok();
+        let candidates = [
+            exe.clone(),
+            exe.and_then(|exe| exe.canonicalize().ok()),
+            std::env::current_dir().ok(),
+        ];
+        candidates.into_iter().flatten().find_map(|start| {
+            Some(
+                start
+                    .ancestors()
+                    .find(|dir| dir.join(".git").exists())?
+                    .to_path_buf(),
+            )
+        })
+    })
+    .as_deref()
+}
+
+/// Re-exports that back [`fs_embed!`] so a caller only needs to depend on `util`,
+/// not on `rust_embed` directly (the macro's dependency is an implementation
+/// detail). Hidden from the public API.
+#[doc(hidden)]
+pub mod __rust_embed {
+    pub use rust_embed::{EmbeddedFile, Filenames, Metadata, RustEmbed, utils};
+}
+
+/// Backs the dev arm of [`fs_embed!`]'s `iter`: every file under the root-relative
+/// directory that passes the same rust_embed include/exclude globs the
+/// release derive uses, so the dev and release file sets are identical. Reuses
+/// rust_embed's own matcher rather than reimplementing glob semantics.
+#[cfg(all(debug_assertions, not(feature = "debug-embed")))]
+#[doc(hidden)]
+pub fn __fs_embed_iter(
+    root_relative: &str,
+    includes: &[&str],
+    excludes: &[&str],
+) -> impl Iterator<Item = std::borrow::Cow<'static, str>> + 'static {
+    fs_embed_file_names(root_relative, includes, excludes)
+        .into_iter()
+        .map(std::borrow::Cow::Owned)
+}
+
+#[cfg(all(debug_assertions, not(feature = "debug-embed")))]
+fn fs_embed_file_names(root_relative: &str, includes: &[&str], excludes: &[&str]) -> Vec<String> {
+    let Some(root) = dev_repo_root().map(|root| root.join(root_relative)) else {
+        return Vec::new();
+    };
+    let matcher = rust_embed::utils::PathMatcher::new(includes, excludes);
+    rust_embed::utils::get_files(root.to_string_lossy().into_owned(), matcher)
+        .map(|entry| entry.rel_path)
+        .collect()
+}
+
+/// Backs the dev arm of [`fs_embed!`]'s `get`: reads a single file from the
+/// checkout, returning `None` when the include/exclude globs filter it out so
+/// `get` matches release's embedded set exactly.
+#[cfg(all(debug_assertions, not(feature = "debug-embed")))]
+#[doc(hidden)]
+pub fn __fs_embed_get(
+    root_relative: &str,
+    file_path: &str,
+    includes: &[&str],
+    excludes: &[&str],
+) -> Option<rust_embed::EmbeddedFile> {
+    let matcher = rust_embed::utils::PathMatcher::new(includes, excludes);
+    if !matcher.is_path_included(file_path) {
+        return None;
+    }
+    let root = dev_repo_root()
+        .expect("dev asset loading requires running from within the checkout")
+        .join(root_relative);
+    rust_embed::utils::read_file_from_fs(&root.join(file_path)).ok()
+}
+
+#[cfg(feature = "debug-embed")]
+#[doc(hidden)]
 #[macro_export]
-macro_rules! maybe {
-    ($block:block) => {
-        (|| $block)()
+macro_rules! __fs_embed {
+    (
+        $vis:vis struct $name:ident,
+        crate_relative = $crate_relative:literal,
+        root_relative = $root_relative:literal
+        $(, include = [$($include:literal),* $(,)?])?
+        $(, exclude = [$($exclude:literal),* $(,)?])?
+        $(,)?
+    ) => {
+        #[derive($crate::__rust_embed::RustEmbed)]
+        #[crate_path = "::util::__rust_embed"]
+        #[folder = $crate_relative]
+        $($(#[include = $include])*)?
+        $($(#[exclude = $exclude])*)?
+        $vis struct $name;
     };
-    (async $block:block) => {
-        (async || $block)()
+}
+
+#[cfg(not(feature = "debug-embed"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __fs_embed {
+    (
+        $vis:vis struct $name:ident,
+        crate_relative = $crate_relative:literal,
+        root_relative = $root_relative:literal
+        $(, include = [$($include:literal),* $(,)?])?
+        $(, exclude = [$($exclude:literal),* $(,)?])?
+        $(,)?
+    ) => {
+        // `crate_path` points the derive's generated code at util's re-export so
+        // the caller needs no direct `rust_embed` dependency.
+        #[cfg(not(debug_assertions))]
+        #[derive($crate::__rust_embed::RustEmbed)]
+        #[crate_path = "::util::__rust_embed"]
+        #[folder = $crate_relative]
+        $($(#[include = $include])*)?
+        $($(#[exclude = $exclude])*)?
+        $vis struct $name;
+
+        #[cfg(debug_assertions)]
+        $vis struct $name;
+
+        // Mirror the derive's public surface: inherent `get`/`iter` (callable
+        // without the trait in scope) plus the trait impl (for generic bounds
+        // like `util::asset_str` and `handlebars::register_embed_templates`), so
+        // the two arms are interchangeable at call sites.
+        #[cfg(debug_assertions)]
+        impl $name {
+            pub fn get(
+                file_path: &str,
+            ) -> ::core::option::Option<$crate::__rust_embed::EmbeddedFile> {
+                $crate::__fs_embed_get(
+                    $root_relative,
+                    file_path,
+                    &[$($($include),*)?],
+                    &[$($($exclude),*)?],
+                )
+            }
+
+            pub fn iter(
+            ) -> impl ::core::iter::Iterator<Item = ::std::borrow::Cow<'static, str>> + 'static
+            {
+                $crate::__fs_embed_iter(
+                    $root_relative,
+                    &[$($($include),*)?],
+                    &[$($($exclude),*)?],
+                )
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        impl $crate::__rust_embed::RustEmbed for $name {
+            fn get(
+                file_path: &str,
+            ) -> ::core::option::Option<$crate::__rust_embed::EmbeddedFile> {
+                <$name>::get(file_path)
+            }
+
+            fn iter(
+            ) -> impl ::core::iter::Iterator<Item = ::std::borrow::Cow<'static, str>> + 'static
+            {
+                $crate::__fs_embed_iter(
+                    $root_relative,
+                    &[$($($include),*)?],
+                    &[$($($exclude),*)?],
+                )
+            }
+        }
     };
-    (async move $block:block) => {
-        (async move || $block)()
+}
+
+/// A `rust_embed` asset source that embeds files in release builds. Dev builds
+/// read from the checkout at runtime unless the `debug-embed` feature is enabled,
+/// in which case they embed the files too.
+///
+/// It expands to one of these arms:
+/// * Release (`not(debug_assertions)`): `#[derive(RustEmbed)]` embedding
+///   `crate_relative` at build time, with the given `include`/`exclude` globs.
+/// * Dev with `debug-embed`: the same compile-time embedding as release.
+/// * Dev without `debug-embed`: a runtime filesystem source rooted at
+///   `root_relative`; edits appear on the next launch without a rebuild.
+///
+/// Two paths are required because the arms resolve from different bases: the
+/// derive reads `crate_relative` relative to the crate's `Cargo.toml`, while the
+/// runtime dev arm resolves `root_relative` relative to the repository root via
+/// [`dev_repo_root`]. Baking the build-time path into that arm would point at the
+/// wrong checkout from another worktree and is rejected by corgi, whose sandbox
+/// requires checkout-independent output.
+///
+/// ```ignore
+/// util::fs_embed! {
+///     pub struct Assets,
+///     crate_relative = "../../assets",
+///     root_relative = "assets",
+///     include = ["fonts/**/*", "themes/**/*", "*.md"],
+///     exclude = ["themes/src/*", "*.DS_Store"],
+/// }
+/// ```
+#[macro_export]
+macro_rules! fs_embed {
+    ($($tokens:tt)*) => {
+        $crate::__fs_embed!($($tokens)*);
     };
 }
 
@@ -952,28 +946,6 @@ impl PartialOrd for NumericPrefixWithSuffix<'_> {
     }
 }
 
-/// Capitalizes the first character of a string.
-///
-/// This function takes a string slice as input and returns a new `String` with the first character
-/// capitalized.
-///
-/// # Examples
-///
-/// ```
-/// use util::capitalize;
-///
-/// assert_eq!(capitalize("hello"), "Hello");
-/// assert_eq!(capitalize("WORLD"), "WORLD");
-/// assert_eq!(capitalize(""), "");
-/// ```
-pub fn capitalize(str: &str) -> String {
-    let mut chars = str.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
-    }
-}
-
 fn emoji_regex() -> &'static Regex {
     static EMOJI_REGEX: LazyLock<Regex> =
         LazyLock::new(|| Regex::new("(\\p{Emoji}|\u{200D})").unwrap());
@@ -1022,10 +994,6 @@ pub fn default<D: Default>() -> D {
     Default::default()
 }
 
-pub use self::shell::{
-    get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
-};
-
 #[derive(Debug)]
 pub enum ConnectionResult<O> {
     Timeout,
@@ -1049,48 +1017,75 @@ impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
     }
 }
 
-#[track_caller]
-pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
-    #[cfg(debug_assertions)]
-    if option.is_none() {
-        panic!("Unexpected None");
-    }
-    option
-}
-
-/// Normalizes a path by resolving `.` and `..` components without
-/// requiring the path to exist on disk (unlike `canonicalize`).
-pub fn normalize_path(path: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut components = path.components().peekable();
-    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
-        components.next();
-        PathBuf::from(c.as_os_str())
-    } else {
-        PathBuf::new()
-    };
-
-    for component in components {
-        match component {
-            Component::Prefix(..) => unreachable!(),
-            Component::RootDir => {
-                ret.push(component.as_os_str());
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                ret.pop();
-            }
-            Component::Normal(c) => {
-                ret.push(c);
-            }
-        }
-    }
-    ret
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_fs_embed_iter_and_get() {
+        let inherent_names: Vec<_> = FsEmbedTestAssets::iter().collect();
+        assert!(
+            inherent_names.iter().any(|name| name == "util.rs"),
+            "iter should list files matching the include globs, got {inherent_names:?}"
+        );
+        assert!(
+            !inherent_names.iter().any(|name| name.ends_with(".toml")),
+            "iter should filter files excluded by the globs, got {inherent_names:?}"
+        );
+
+        let trait_names: Vec<_> =
+            <FsEmbedTestAssets as crate::__rust_embed::RustEmbed>::iter().collect();
+        assert_eq!(inherent_names, trait_names);
+
+        let file = FsEmbedTestAssets::get("util.rs").expect("util.rs should be readable");
+        assert!(
+            std::str::from_utf8(&file.data)
+                .expect("util.rs should be utf-8")
+                .contains("fs_embed"),
+            "get should read the real file contents"
+        );
+        assert!(
+            FsEmbedTestAssets::get("Cargo.toml").is_none(),
+            "get should filter files excluded by the globs"
+        );
+    }
+
+    #[cfg(not(feature = "debug-embed"))]
+    crate::fs_embed! {
+        struct FsEmbedTestAssets,
+        crate_relative = "src",
+        root_relative = "crates/util/src",
+        include = ["*.rs"],
+        exclude = ["test/**/*"],
+    }
+
+    // A consuming workspace does not contain a git dependency's files at this
+    // repository-relative path, so `debug-embed` must not consult it.
+    #[cfg(feature = "debug-embed")]
+    crate::fs_embed! {
+        struct FsEmbedTestAssets,
+        crate_relative = "src",
+        root_relative = "this-path-must-not-be-read",
+        include = ["*.rs"],
+        exclude = ["test/**/*"],
+    }
+
+    #[test]
+    fn test_parse_os_release() {
+        let os_release =
+            "NAME=\"Ubuntu\"\nID=ubuntu\nVERSION_ID=\"24.04\"\nPRETTY_NAME=\"Ubuntu 24.04 LTS\"\n";
+        assert_eq!(
+            parse_os_release(os_release),
+            Some("ubuntu 24.04".to_string())
+        );
+
+        // VERSION_ID may be absent (e.g. rolling releases like Arch).
+        assert_eq!(parse_os_release("ID=arch\n"), Some("arch".to_string()));
+
+        // Without an ID there is nothing usable to report.
+        assert_eq!(parse_os_release("VERSION_ID=1\n"), None);
+        assert_eq!(parse_os_release(""), None);
+    }
 
     #[test]
     fn test_extend_sorted() {
@@ -1372,5 +1367,103 @@ Line 3"#
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes
         assert_eq!(result[1], (10..15, "world")); // '🦀' is 4 bytes
+    }
+
+    #[test]
+    fn test_merge_json_values() {
+        use serde_json::json;
+
+        let mut target = json!({
+            "unchanged": 1,
+            "replaced_scalar": "old",
+            "replaced_array": ["default-1", "default-2"],
+            "nulled": true,
+            "array_becomes_object": [1, 2],
+            "object_becomes_scalar": { "x": 1 },
+            "nested": {
+                "kept": true,
+                "overridden": 2,
+                "args": ["--default"],
+                "deeper": { "list": [1, 2], "other": "kept" },
+            },
+        });
+        let source = json!({
+            "replaced_scalar": "new",
+            "replaced_array": ["default-2", "user"],
+            "nulled": null,
+            "array_becomes_object": { "y": 2 },
+            "object_becomes_scalar": 3,
+            "inserted": ["brand-new"],
+            "nested": {
+                "overridden": 20,
+                "args": ["--user"],
+                "deeper": { "list": [3] },
+                "inserted": { "z": true },
+            },
+        });
+
+        merge_json_value_into(source, &mut target);
+
+        assert_eq!(
+            target,
+            json!({
+                "unchanged": 1,
+                "replaced_scalar": "new",
+                "replaced_array": ["default-2", "user"],
+                "nulled": null,
+                "array_becomes_object": { "y": 2 },
+                "object_becomes_scalar": 3,
+                "inserted": ["brand-new"],
+                "nested": {
+                    "kept": true,
+                    "overridden": 20,
+                    "args": ["--user"],
+                    "deeper": { "list": [3], "other": "kept" },
+                    "inserted": { "z": true },
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn test_union_json_values() {
+        use serde_json::json;
+
+        let mut target = json!({
+            "unchanged": 1,
+            "replaced_scalar": "old",
+            "unioned_array": ["shared", "first"],
+            "nested": {
+                "kept": true,
+                "plugins": [{ "name": "first-plugin" }],
+                "scalar": 2,
+            },
+        });
+        let source = json!({
+            "replaced_scalar": "new",
+            "unioned_array": ["shared", "second"],
+            "inserted": ["brand-new"],
+            "nested": {
+                "plugins": [{ "name": "second-plugin" }],
+                "scalar": 20,
+            },
+        });
+
+        union_json_value_into(source, &mut target);
+
+        assert_eq!(
+            target,
+            json!({
+                "unchanged": 1,
+                "replaced_scalar": "new",
+                "unioned_array": ["shared", "first", "second"],
+                "inserted": ["brand-new"],
+                "nested": {
+                    "kept": true,
+                    "plugins": [{ "name": "first-plugin" }, { "name": "second-plugin" }],
+                    "scalar": 20,
+                },
+            })
+        );
     }
 }

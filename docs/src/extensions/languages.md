@@ -44,7 +44,6 @@ TBD: Document `language_name/config.toml` keys
 - opt_into_language_servers
 - code_fence_block_name
 - scope_opt_in_language_servers
-- increase_indent_pattern, decrease_indent_pattern
 - collapsed_placeholder
 - auto_indent_on_paste, auto_indent_using_last_non_empty_line
 - overrides: `[overrides.element]`, `[overrides.string]`
@@ -52,7 +51,7 @@ TBD: Document `language_name/config.toml` keys
 
 ## Grammar
 
-Zed uses the [Tree-sitter](https://tree-sitter.github.io) parsing library to provide built-in language-specific features. There are grammars available for many languages, and you can also [develop your own grammar](https://tree-sitter.github.io/tree-sitter/creating-parsers#writing-the-grammar). A growing list of Zed features are built using pattern matching over syntax trees with Tree-sitter queries. As mentioned above, every language that is defined in an extension must specify the name of a Tree-sitter grammar that is used for parsing. These grammars are then registered separately in extensions' `extension.toml` file, like this:
+Zed uses the [Tree-sitter](https://tree-sitter.github.io) parsing library to provide built-in language-specific features. There are grammars available for many languages, and you can also [develop your own grammar](https://tree-sitter.github.io/tree-sitter/creating-parsers/3-writing-the-grammar.html). A growing list of Zed features are built using pattern matching over syntax trees with Tree-sitter queries. As mentioned above, every language that is defined in an extension must specify the name of a Tree-sitter grammar that is used for parsing. These grammars are then registered separately in extensions' `extension.toml` file, like this:
 
 ```toml
 [grammars.gleam]
@@ -143,6 +142,21 @@ This query marks strings, object keys, and numbers for highlighting. The followi
 | @variable.parameter      | Captures function/method parameters    |
 | @variant                 | Captures variants                      |
 
+#### Fallback captures
+
+A single Tree-sitter pattern can specify multiple captures on the same node to define fallback highlights.
+Zed resolves them right-to-left: It first tries the rightmost capture, and if the current theme has no style for it, falls back to the next capture to the left, and so on.
+
+For example:
+
+```scheme
+(type_identifier) @type @variable
+```
+
+Here Zed will first try to resolve `@variable` from the theme. If the theme defines a style for `@variable`, that style is used. Otherwise, Zed falls back to `@type`.
+
+This is useful when a language wants to provide a preferred highlight that not all themes may support, while still falling back to a more common capture that most themes define.
+
 ### Bracket matching
 
 The `brackets.scm` file defines matching brackets.
@@ -197,19 +211,96 @@ This query captures object keys for the outline structure.
 
 The `indents.scm` file defines indentation rules.
 
-Here's an example from an `indents.scm` file for JSON:
+#### Indenting and outdenting based on syntax
+
+| Capture  | Description                                                            |
+| -------- | ---------------------------------------------------------------------- |
+| @indent  | Defines an indentation range using the captured node                   |
+| @start   | Moves the start of an `@indent` range to the end of the captured node  |
+| @end     | Moves the end of an `@indent` range to the start of the captured node  |
+| @outdent | Ends the innermost indentation range at the start of the captured node |
+
+For example, to indent all of an `if_statement` node's contents:
 
 ```scheme
-(array "]" @end) @indent
-(object "}" @end) @indent
+(if_statement) @indent
 ```
 
-This query marks the end of arrays and objects for indentation purposes.
+The indentation range runs from the start of the node to its end.
 
-| Capture | Description                                        |
-| ------- | -------------------------------------------------- |
-| @end    | Captures closing brackets and braces               |
-| @indent | Captures entire arrays and objects for indentation |
+An HTML element includes its opening and closing tags. To indent only the
+content between them:
+
+```scheme
+(element
+  (start_tag) @start ; Begin indentation after the opening tag
+  (end_tag)? @end) @indent ; End indentation before the closing tag
+```
+
+A subsequent case label must outdent from the preceding case body so that
+sibling labels stay aligned:
+
+```scheme
+(compound_statement
+  (case_statement
+    ":" @start) ; Begin indenting the case body
+  "}" @end) @indent
+
+(compound_statement
+  (case_statement)
+  (case_statement) @outdent) ; Align subsequent case labels
+```
+
+#### Indenting and outdenting based on line patterns
+
+Use these `config.toml` options for indentation rules that match line contents
+instead of syntax nodes:
+
+| Option                     | Description                                                              |
+| -------------------------- | ------------------------------------------------------------------------ |
+| `increase_indent_pattern`  | A matching line indents the following line by one level                  |
+| `decrease_indent_pattern`  | A matching line outdents by one level without considering syntax context |
+| `decrease_indent_patterns` | A matching line aligns with an allowed earlier syntax construct          |
+
+For example, to indent after a line ending in `:`:
+
+```toml
+increase_indent_pattern = ":\\s*$"
+```
+
+For example, to outdent lines beginning with `end`:
+
+```toml
+decrease_indent_pattern = "^\\s*end\\b"
+```
+
+#### Aligning clauses with related blocks
+
+Use `decrease_indent_patterns` when a line should align with a related block
+instead of always moving left by one level. In `indents.scm`, mark the block
+start with a named `@start.<name>` capture:
+
+```scheme
+(if_statement) @start.if
+```
+
+In `config.toml`, list the capture suffix in `valid_after`:
+
+```toml
+decrease_indent_patterns = [
+  { pattern = "^\\s*else\\b", valid_after = ["if"] },
+]
+```
+
+A line beginning with `else` aligns with the most recent `@start.if` at the same
+or a lower indentation level. If Zed finds no matching block, it leaves the
+indentation unchanged.
+
+Named captures such as `@start.if` mark blocks for these rules. Unlike
+`@start`, they do not change an `@indent` range.
+
+Zed checks rules in order and stops after the first matching `pattern`. Put
+more specific patterns before overlapping general patterns.
 
 ### Code injections
 
@@ -434,6 +525,40 @@ The `semantic_tokens` setting accepts the following values:
 - `"combined"`: Use LSP semantic tokens together with tree-sitter highlighting.
 - `"full"`: Use LSP semantic tokens exclusively, replacing tree-sitter highlighting.
 
+#### Extension-Provided Semantic Token Rules
+
+Language extensions can ship default semantic token rules for their language server's custom token types. To do this, place a `semantic_token_rules.json` file in the language directory alongside `config.toml`:
+
+```
+my-extension/
+  languages/
+    my-language/
+      config.toml
+      highlights.scm
+      semantic_token_rules.json
+```
+
+The file uses the same format as the `semantic_token_rules` array in user settings — a JSON array of rule objects:
+
+```json
+[
+  {
+    "token_type": "lifetime",
+    "style": ["lifetime"]
+  },
+  {
+    "token_type": "builtinType",
+    "style": ["type"]
+  },
+  {
+    "token_type": "selfKeyword",
+    "style": ["variable.special"]
+  }
+]
+```
+
+This is useful when a language server reports custom (non-standard) semantic token types that aren't covered by Zed's built-in default rules. Extension-provided rules act as sensible defaults for that language — users can always override them via `semantic_token_rules` in their settings file, and built-in default rules are only used when neither user nor extension rules match.
+
 #### Customizing Semantic Token Styles
 
 Zed supports customizing the styles used for semantic tokens. You can define rules in your settings file, which customize how semantic tokens get mapped to styles in your theme.
@@ -463,7 +588,13 @@ Zed supports customizing the styles used for semantic tokens. You can define rul
 }
 ```
 
-All rules that match a given `token_type` and `token_modifiers` are applied. Earlier rules take precedence. If no rules match, the token is not highlighted. User-defined rules take priority over the default rules.
+All rules that match a given `token_type` and `token_modifiers` are applied. Earlier rules take precedence. If no rules match, the token is not highlighted.
+
+Rules are applied in the following priority order (highest to lowest):
+
+1. **User settings** — rules from `semantic_token_rules` in your settings file.
+2. **Extension rules** — rules from `semantic_token_rules.json` in extension language directories.
+3. **Default rules** — Zed's built-in rules for standard LSP token types.
 
 Each rule in the `semantic_token_rules` array is defined as follows:
 
@@ -473,7 +604,7 @@ Each rule in the `semantic_token_rules` array is defined as follows:
 - `foreground_color`: The foreground color to use for the token type, in hex format (e.g., `"#ff0000"`).
 - `background_color`: The background color to use for the token type, in hex format (e.g., `"#ff0000"`).
 - `underline`: A boolean or color to underline with, in hex format. If `true`, then the token will be underlined with the text color.
-- `strikethrough`: A boolean or color to strikethrough with, in hex format. If `true`, then the token have a strikethrough with the text color.
+- `strikethrough`: A boolean or color to strikethrough with, in hex format. If `true`, then the token will have a strikethrough with the text color.
 - `font_weight`: One of `"normal"`, `"bold"`.
 - `font_style`: One of `"normal"`, `"italic"`.
 

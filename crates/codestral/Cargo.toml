@@ -1,7 +1,7 @@
 [package]
 name = "codestral"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 publish = false
 license = "GPL-3.0-or-later"
 
@@ -22,5 +22,7 @@ log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 text.workspace = true
+zed_credentials_provider.workspace = true
+zeta_prompt.workspace = true
 
 [dev-dependencies]

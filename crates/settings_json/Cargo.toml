@@ -12,12 +12,13 @@ workspace = true
 path = "src/settings_json.rs"
 
 [features]
-default = []
+default = ["editing"]
+editing = ["dep:tree-sitter", "dep:tree-sitter-json"]
 
 [dependencies]
 anyhow.workspace = true
-tree-sitter.workspace = true
-tree-sitter-json.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"], optional = true }
+tree-sitter-json = { workspace = true, optional = true }
 util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -27,9 +28,3 @@ serde_path_to_error.workspace = true
 [dev-dependencies]
 unindent.workspace = true
 pretty_assertions.workspace = true
-
-# Uncomment other workspace dependencies as needed
-# assistant.workspace = true
-# client.workspace = true
-# project.workspace = true
-# settings.workspace = true

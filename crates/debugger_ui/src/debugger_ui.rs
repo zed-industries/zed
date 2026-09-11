@@ -2,17 +2,17 @@ use std::any::TypeId;
 
 use debugger_panel::DebugPanel;
 use editor::{Editor, MultiBufferOffsetUtf16};
-use gpui::{Action, App, DispatchPhase, EntityInputHandler, actions};
+use gpui::{Action, App, DispatchPhase, EntityInputHandler, TaskExt, actions};
 use new_process_modal::{NewProcessModal, NewProcessMode};
 use project::debugger::{self, breakpoint_store::SourceBreakpoint, session::ThreadStatus};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::DebugSession;
-use stack_trace_view::StackTraceView;
+
 use tasks_ui::{Spawn, TaskOverrides};
 use ui::{FluentBuilder, InteractiveElement};
 use util::maybe;
-use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
+use workspace::{ShutdownDebugAdapters, Workspace};
 use zed_actions::debug_panel::{Toggle, ToggleFocus};
 
 pub mod attach_modal;
@@ -21,7 +21,6 @@ mod dropdown_menus;
 mod new_process_modal;
 mod persistence;
 pub(crate) mod session;
-mod stack_trace_view;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod tests;
@@ -32,8 +31,10 @@ actions!(
     [
         /// Starts a new debugging session.
         Start,
-        /// Continues execution until the next breakpoint.
+        /// Continues all threads until the next breakpoint.
         Continue,
+        /// Continues the selected thread until the next breakpoint.
+        ContinueThread,
         /// Detaches the debugger from the running process.
         Detach,
         /// Pauses the currently running program.
@@ -70,8 +71,6 @@ actions!(
         FocusLoadedSources,
         /// Focuses on the terminal panel.
         FocusTerminal,
-        /// Shows the stack trace for the current thread.
-        ShowStackTrace,
         /// Toggles the thread picker dropdown.
         ToggleThreadPicker,
         /// Toggles the session picker dropdown.
@@ -162,6 +161,9 @@ pub fn init(cx: &mut App) {
 
                 let caps = running_state.capabilities(cx);
                 let supports_step_back = caps.supports_step_back.unwrap_or_default();
+                let supports_single_thread_execution_requests = caps
+                    .supports_single_thread_execution_requests
+                    .unwrap_or_default();
                 let supports_detach = running_state.session().read(cx).is_attached();
                 let status = running_state.thread_status(cx);
 
@@ -203,43 +205,18 @@ pub fn init(cx: &mut App) {
                         let active_item = active_item.clone();
                         move |_: &Continue, _, cx| {
                             active_item
-                                .update(cx, |item, cx| item.continue_thread(cx))
+                                .update(cx, |item, cx| item.continue_program(cx))
                                 .ok();
                         }
                     })
-                    .on_action(cx.listener(
-                        |workspace, _: &ShowStackTrace, window, cx| {
-                            let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
-                                return;
-                            };
-
-                            if let Some(existing) = workspace.item_of_type::<StackTraceView>(cx) {
-                                let is_active = workspace
-                                    .active_item(cx)
-                                    .is_some_and(|item| item.item_id() == existing.item_id());
-                                workspace.activate_item(&existing, true, !is_active, window, cx);
-                            } else {
-                                let Some(active_session) = debug_panel.read(cx).active_session()
-                                else {
-                                    return;
-                                };
-
-                                let project = workspace.project();
-
-                                let stack_trace_view = active_session.update(cx, |session, cx| {
-                                    session.stack_trace_view(project, window, cx).clone()
-                                });
-
-                                workspace.add_item_to_active_pane(
-                                    Box::new(stack_trace_view),
-                                    None,
-                                    true,
-                                    window,
-                                    cx,
-                                );
-                            }
-                        },
-                    ))
+                    .when(supports_single_thread_execution_requests, |div| {
+                        let active_item = active_item.clone();
+                        div.on_action(move |_: &ContinueThread, _, cx| {
+                            active_item
+                                .update(cx, |item, cx| item.continue_thread(cx))
+                                .ok();
+                        })
+                    })
                 })
                 .when(supports_detach, |div| {
                     let active_item = active_item.clone();
@@ -335,7 +312,7 @@ pub fn init(cx: &mut App) {
                                     return;
                                 }
                                 maybe!({
-                                    let (buffer, position, _) = editor
+                                    let (buffer, position) = editor
                                         .update(cx, |editor, cx| {
                                             let cursor_point: language::Point = editor
                                                 .selections

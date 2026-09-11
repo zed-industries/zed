@@ -2,6 +2,7 @@
 
 mod clipboard;
 mod destination_list;
+mod direct_manipulation;
 mod direct_write;
 mod directx_atlas;
 mod directx_devices;
@@ -11,6 +12,7 @@ mod display;
 mod events;
 mod keyboard;
 mod platform;
+mod system_notifications;
 mod system_settings;
 mod util;
 mod vsync;
@@ -28,6 +30,7 @@ pub(crate) use display::*;
 pub(crate) use events::*;
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
+pub(crate) use system_notifications::*;
 pub(crate) use system_settings::*;
 pub(crate) use util::*;
 pub(crate) use vsync::*;

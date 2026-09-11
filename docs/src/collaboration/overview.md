@@ -24,8 +24,6 @@ See the [Data and Privacy FAQs](https://zed.dev/faq#data-and-privacy) for more d
 
 ### Selecting Audio Devices
 
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
-
 You can select specific input and output audio devices instead of using system defaults. To configure audio devices:
 
 1. Open {#kb zed::OpenSettings}

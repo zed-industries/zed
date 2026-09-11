@@ -12,7 +12,8 @@ Zed's key binding system is fully customizable. You can rebind any action, creat
 If you're used to a specific editor's defaults, you can change your `base_keymap` through the settings window ({#kb zed::OpenSettings}) or directly through your `settings.json` file ({#kb zed::OpenSettingsFile}).
 We currently support:
 
-- VS Code (default)
+- Zed (default)
+- VS Code
 - Atom
 - Emacs (Beta)
 - JetBrains
@@ -21,14 +22,14 @@ We currently support:
 - Cursor
 - None (disables _all_ key bindings)
 
-This setting can also be changed via the command palette through the `zed: toggle base keymap selector` action.
+This setting can also be changed via the command palette through the {#action zed::ToggleBaseKeymapSelector} action.
 
 You can also enable `vim_mode` or `helix_mode`, which add modal bindings.
 For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
 
 ## Keymap Editor
 
-You can access the keymap editor through the {#kb zed::OpenKeymap} action or by running {#action zed::OpenKeymap} action from the command palette. You can easily add or change a keybind for an action with the `Change Keybinding` or `Add Keybinding` button on the command pallets left bottom corner.
+You can access the keymap editor through the {#kb zed::OpenKeymap} action or by running {#action zed::OpenKeymap} action from the command palette. You can easily add or change a keybind for an action with the `Change Keybinding` or `Add Keybinding` button on the command palette's left bottom corner.
 
 In there, you can see all of the existing actions in Zed as well as the associated keybindings set to them by default.
 
@@ -79,7 +80,7 @@ You can see all of Zed's default bindings for each platform in the default keyma
 - [Windows](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-windows.json)
 - [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json).
 
-If you want to debug problems with custom keymaps, you can use `dev: Open Key Context View` from the command palette.
+If you want to debug problems with custom keymaps, you can use {#action dev::OpenKeyContextView} from the command palette.
 Please file [an issue](https://github.com/zed-industries/zed) if you run into something you think should work but isn't.
 
 ### Keybinding Syntax
@@ -120,7 +121,7 @@ It is possible to match against typing a modifier key on its own. For example, `
 
 If a binding group has a `"context"` key, it will be matched against the currently active contexts in Zed.
 
-Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with the `dev: open key context view` command in the command palette.
+Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with the {#action dev::OpenKeyContextView} command in the command palette.
 
 For example:
 
@@ -174,6 +175,25 @@ The other kind of conflict that arises is when you have two bindings, one of whi
 
 When this happens, and both bindings are active in the current context, Zed will wait for 1 second after you type `ctrl-w` to see if you're about to type `left`. If you don't type anything, or if you type a different key, then `DeleteToNextWordEnd` will be triggered. If you do, then `DeleteToEndOfLine` will be triggered.
 
+Zed can also wait before inserting printable text when it might begin a multi-stroke binding. For example, with a `j k` binding, typing `j` waits briefly for `k`; otherwise, `j` is inserted after the timeout.
+
+Whenever pending input has a timeout, a countdown indicator with the pending keystrokes is shown in the status bar. Hovering it lists the bindings that could still match and pauses the timeout so you can read them. The timeout resumes with the same remaining duration when the pointer leaves. The indicator can be hidden with `{"status_bar": {"pending_keystrokes_indicator": false}}`. Vim and Helix modes continue to use their existing pending-key indicator instead.
+
+To also use the larger which-key menu, open the Settings Editor and search for
+`Show Which-key Menu`. The pending keystrokes indicator remains visible when the
+menu is enabled, and hovering it still pauses the timeout, but its binding list
+popover is disabled. Or add this to your settings.json:
+
+```json [settings]
+{
+  "which_key": {
+    "enabled": true
+  }
+}
+```
+
+Set `which_key.delay_ms` to change how long Zed waits before opening the menu.
+
 ### Non-QWERTY keyboards
 
 Zed's support for non-QWERTY keyboards is still a work in progress.
@@ -186,7 +206,7 @@ Otherwise, read on...
 
 On Cyrillic, Hebrew, Armenian, and other keyboards that are mostly non-ASCII, macOS automatically maps keys to the ASCII range when `cmd` is held. Zed takes this a step further, and it can always match key-presses against either the ASCII layout or the real layout, regardless of modifiers and the `use_key_equivalents` setting. For example, in Thai, pressing `ctrl-ๆ` will match bindings associated with `ctrl-q` or `ctrl-ๆ`.
 
-On keyboards that support extended Latin alphabets (French AZERTY, German QWERTZ, etc.), it is often not possible to type the entire ASCII range without `option`. This introduces an ambiguity: `option-2` produces `@`. To ensure that all the built-in keyboard shortcuts can still be typed on these keyboards, we move key bindings around. For example, shortcuts bound to `@` on QWERTY are moved to `"` on a Spanish layout. This mapping is based on the macOS system defaults and can be seen by running `dev: open key context view` from the command palette.
+On keyboards that support extended Latin alphabets (French AZERTY, German QWERTZ, etc.), it is often not possible to type the entire ASCII range without `option`. This introduces an ambiguity: `option-2` produces `@`. To ensure that all the built-in keyboard shortcuts can still be typed on these keyboards, we move key bindings around. For example, shortcuts bound to `@` on QWERTY are moved to `"` on a Spanish layout. This mapping is based on the macOS system defaults and can be seen by running {#action dev::OpenKeyContextView} from the command palette.
 
 If you are defining shortcuts in your personal keymap, you can opt into the key equivalent mapping by setting `use_key_equivalents` to `true` in your keymap:
 
@@ -304,3 +324,37 @@ For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ct
 
 You can also bind keys to launch Zed Tasks defined in your `tasks.json`.
 See the [tasks documentation](tasks.md#custom-keybindings-for-tasks) for more.
+
+### Subword Navigation
+
+Zed exposes word and subword motions as separate actions. Word motions stop at whitespace and punctuation boundaries, while subword motions also stop inside identifiers such as `camelCase`, `PascalCase`, and `snake_case`.
+
+The JetBrains base keymap uses editor-local `alt-left` / `alt-right` and `shift-alt-left` / `shift-alt-right` for subword navigation to match JetBrains-style CamelHump navigation. If you use another base keymap and want that behavior, add this to your `keymap.json`:
+
+```json [keymap]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-left": "editor::MoveToPreviousSubwordStart",
+      "alt-right": "editor::MoveToNextSubwordEnd",
+      "shift-alt-left": "editor::SelectToPreviousSubwordStart",
+      "shift-alt-right": "editor::SelectToNextSubwordEnd"
+    }
+  }
+]
+```
+
+If you use the JetBrains base keymap and want `alt-left` / `alt-right` to keep moving between tabs in editors, add this override:
+
+```json [keymap]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-left": "pane::ActivatePreviousItem",
+      "alt-right": "pane::ActivateNextItem"
+    }
+  }
+]
+```

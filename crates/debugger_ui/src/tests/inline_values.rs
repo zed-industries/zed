@@ -1,3 +1,4 @@
+#![expect(clippy::result_large_err)]
 use std::{path::Path, sync::Arc};
 
 use dap::{Scope, StackFrame, Variable, requests::Variables};
@@ -1826,14 +1827,15 @@ def process_data(untyped_param, typed_param: int, another_typed: str):
 }
 
 fn python_lang() -> Language {
-    let debug_variables_query = include_str!("../../../languages/src/python/debugger.scm");
+    let debug_variables_query = include_str!("../../../grammars/src/python/debugger.scm");
     Language::new(
         LanguageConfig {
             name: "Python".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["py".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_python::LANGUAGE.into()),
@@ -1843,15 +1845,16 @@ fn python_lang() -> Language {
 }
 
 fn go_lang() -> Arc<Language> {
-    let debug_variables_query = include_str!("../../../languages/src/go/debugger.scm");
+    let debug_variables_query = include_str!("../../../grammars/src/go/debugger.scm");
     Arc::new(
         Language::new(
             LanguageConfig {
                 name: "Go".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["go".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             Some(tree_sitter_go::LANGUAGE.into()),
@@ -2262,15 +2265,16 @@ fn main() {
 }
 
 fn javascript_lang() -> Arc<Language> {
-    let debug_variables_query = include_str!("../../../languages/src/javascript/debugger.scm");
+    let debug_variables_query = include_str!("../../../grammars/src/javascript/debugger.scm");
     Arc::new(
         Language::new(
             LanguageConfig {
                 name: "JavaScript".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["js".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -2281,15 +2285,16 @@ fn javascript_lang() -> Arc<Language> {
 }
 
 fn typescript_lang() -> Arc<Language> {
-    let debug_variables_query = include_str!("../../../languages/src/typescript/debugger.scm");
+    let debug_variables_query = include_str!("../../../grammars/src/typescript/debugger.scm");
     Arc::new(
         Language::new(
             LanguageConfig {
                 name: "TypeScript".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["ts".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -2300,15 +2305,16 @@ fn typescript_lang() -> Arc<Language> {
 }
 
 fn tsx_lang() -> Arc<Language> {
-    let debug_variables_query = include_str!("../../../languages/src/tsx/debugger.scm");
+    let debug_variables_query = include_str!("../../../grammars/src/tsx/debugger.scm");
     Arc::new(
         Language::new(
             LanguageConfig {
                 name: "TSX".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["tsx".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             Some(tree_sitter_typescript::LANGUAGE_TSX.into()),

@@ -47,9 +47,12 @@ impl PlainLlmClient {
             thinking: None,
             tool_choice: None,
             system: None,
+            cache_control: None,
+            context_management: None,
             metadata: None,
             output_config: None,
             stop_sequences: Vec::new(),
+            speed: None,
             temperature: None,
             top_k: None,
             top_p: None,
@@ -61,6 +64,7 @@ impl PlainLlmClient {
             &self.api_key,
             request,
             None,
+            &http_client::CustomHeaders::default(),
         )
         .await
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
@@ -86,9 +90,12 @@ impl PlainLlmClient {
             thinking: None,
             tool_choice: None,
             system: None,
+            cache_control: None,
+            context_management: None,
             metadata: None,
             output_config: None,
             stop_sequences: Vec::new(),
+            speed: None,
             temperature: None,
             top_k: None,
             top_p: None,
@@ -100,6 +107,7 @@ impl PlainLlmClient {
             &self.api_key,
             request,
             None,
+            &http_client::CustomHeaders::default(),
         )
         .await
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
@@ -288,6 +296,14 @@ impl BatchingLlmClient {
     async fn sync_batches(&self) -> Result<()> {
         let _batch_ids = self.upload_pending_requests().await?;
         self.download_finished_batches().await
+    }
+
+    pub fn pending_batch_count(&self) -> Result<usize> {
+        let connection = self.connection.lock().unwrap();
+        let counts: Vec<i32> = connection.select(
+            sql!(SELECT COUNT(*) FROM cache WHERE batch_id IS NOT NULL AND response IS NULL),
+        )?()?;
+        Ok(counts.into_iter().next().unwrap_or(0) as usize)
     }
 
     /// Import batch results from external batch IDs (useful for recovering after database loss)
@@ -572,12 +588,15 @@ impl BatchingLlmClient {
                     thinking: None,
                     tool_choice: None,
                     system: None,
+                    cache_control: None,
+                    context_management: None,
                     metadata: None,
                     output_config: None,
                     stop_sequences: Vec::new(),
                     temperature: None,
                     top_k: None,
                     top_p: None,
+                    speed: None,
                 };
 
                 let custom_id = format!("req_hash_{}", hash);
@@ -824,6 +843,16 @@ impl AnthropicClient {
         match self {
             AnthropicClient::Plain(_) => Ok(()),
             AnthropicClient::Batch(batching_llm_client) => batching_llm_client.sync_batches().await,
+            AnthropicClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
+        }
+    }
+
+    pub fn pending_batch_count(&self) -> Result<usize> {
+        match self {
+            AnthropicClient::Plain(_) => Ok(0),
+            AnthropicClient::Batch(batching_llm_client) => {
+                batching_llm_client.pending_batch_count()
+            }
             AnthropicClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
         }
     }

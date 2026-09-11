@@ -5,23 +5,23 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow};
 use dap::StackFrameId;
 use dap::adapters::DebugAdapterName;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use gpui::{
     Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
-    Subscription, Task, WeakEntity, list,
+    Subscription, Task, TaskExt, WeakEntity, list,
 };
 use util::{
     debug_panic,
     paths::{PathStyle, is_absolute},
 };
 
-use crate::{StackTraceView, ToggleUserFrames};
+use crate::ToggleUserFrames;
 use language::PointUtf16;
 use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame, ThreadStatus};
 use project::{ProjectItem, ProjectPath};
 use ui::{Tooltip, WithScrollbar, prelude::*};
-use workspace::{ItemHandle, Workspace, WorkspaceId};
+use workspace::{Workspace, WorkspaceId};
 
 use super::RunningState;
 
@@ -122,7 +122,7 @@ impl StackFrameList {
             .flatten()
             .and_then(|database_id| {
                 let key = stack_frame_filter_key(&session.read(cx).adapter(), database_id);
-                KEY_VALUE_STORE
+                KeyValueStore::global(cx)
                     .read_kvp(&key)
                     .ok()
                     .flatten()
@@ -154,6 +154,7 @@ impl StackFrameList {
         &self.entries
     }
 
+    #[cfg(test)]
     pub(crate) fn flatten_entries(
         &self,
         show_collapsed: bool,
@@ -394,7 +395,10 @@ impl StackFrameList {
         let stack_frame_id = stack_frame.id;
         self.opened_stack_frame_id = Some(stack_frame_id);
         let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
-            return Task::ready(Err(anyhow!("Project path not found")));
+            return Task::ready(Err(anyhow!(
+                "no absolute source path in stack frame {stack_frame_id}, source: {:?}",
+                stack_frame.source
+            )));
         };
         let row = stack_frame.line.saturating_sub(1) as u32;
         cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
@@ -437,14 +441,7 @@ impl StackFrameList {
                             .project_path(cx)
                             .context("Could not select a stack frame for unnamed buffer")?;
 
-                        let open_preview = !workspace
-                            .item_of_type::<StackTraceView>(cx)
-                            .map(|viewer| {
-                                workspace
-                                    .active_item(cx)
-                                    .is_some_and(|item| item.item_id() == viewer.item_id())
-                            })
-                            .unwrap_or_default();
+                        let open_preview = true;
 
                         let active_debug_line_pane = workspace
                             .project()
@@ -527,7 +524,7 @@ impl StackFrameList {
                 .filter(|path| {
                     // Since we do not know if we are debugging on the host or (a remote/WSL) target,
                     // we need to check if either the path is absolute as Posix or Windows.
-                    is_absolute(path, PathStyle::Posix) || is_absolute(path, PathStyle::Windows)
+                    is_absolute(path, PathStyle::Unix) || is_absolute(path, PathStyle::Windows)
                 })
                 .map(|path| Arc::<Path>::from(Path::new(path)))
         })
@@ -858,8 +855,10 @@ impl StackFrameList {
             .flatten()
         {
             let key = stack_frame_filter_key(&self.session.read(cx).adapter(), database_id);
-            let save_task = KEY_VALUE_STORE.write_kvp(key, self.list_filter.into());
-            cx.background_spawn(save_task).detach();
+            let kvp = KeyValueStore::global(cx);
+            let filter: String = self.list_filter.into();
+            cx.background_spawn(async move { kvp.write_kvp(key, filter).await })
+                .detach();
         }
 
         if let Some(ThreadStatus::Stopped) = thread_status {
@@ -915,7 +914,7 @@ impl StackFrameList {
             .child(
                 IconButton::new(
                     "filter-by-visible-worktree-stack-frame-list",
-                    IconName::ListFilter,
+                    IconName::Filter,
                 )
                 .tooltip(move |_window, cx| {
                     Tooltip::for_action(tooltip_title, &ToggleUserFrames, cx)

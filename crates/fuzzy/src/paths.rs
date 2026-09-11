@@ -1,4 +1,5 @@
 use gpui::BackgroundExecutor;
+use path::{PathStyle, rel_path::RelPath};
 use std::{
     cmp::{self, Ordering},
     sync::{
@@ -6,10 +7,10 @@ use std::{
         atomic::{self, AtomicBool},
     },
 };
-use util::{paths::PathStyle, rel_path::RelPath};
 
 use crate::{
     CharBag,
+    char_bag::simple_lowercase,
     matcher::{MatchCandidate, Matcher},
 };
 
@@ -94,7 +95,7 @@ pub fn match_fixed_path_set(
     max_results: usize,
     path_style: PathStyle,
 ) -> Vec<PathMatch> {
-    let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
+    let lowercase_query = query.chars().map(simple_lowercase).collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
@@ -110,16 +111,12 @@ pub fn match_fixed_path_set(
             path_prefix_chars.extend(path_style.primary_separator().chars());
             let lowercase_pfx = path_prefix_chars
                 .iter()
-                .map(|c| c.to_ascii_lowercase())
+                .map(|c| simple_lowercase(*c))
                 .collect::<Vec<_>>();
 
             (worktree_root_name, path_prefix_chars, lowercase_pfx)
         }
-        None => (
-            RelPath::empty().into(),
-            Default::default(),
-            Default::default(),
-        ),
+        None => (RelPath::empty_arc(), Default::default(), Default::default()),
     };
 
     matcher.match_candidates(
@@ -138,7 +135,7 @@ pub fn match_fixed_path_set(
             distance_to_relative_ancestor: usize::MAX,
         },
     );
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }
 
@@ -171,7 +168,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
 
     let lowercase_query = query
         .iter()
-        .map(|query| query.to_ascii_lowercase())
+        .map(|query| simple_lowercase(*query))
         .collect::<Vec<_>>();
 
     let query = &query;
@@ -217,7 +214,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                             }
                             let lowercase_prefix = prefix
                                 .iter()
-                                .map(|c| c.to_ascii_lowercase())
+                                .map(|c| simple_lowercase(*c))
                                 .collect::<Vec<_>>();
                             matcher.match_candidates(
                                 &prefix,
@@ -259,7 +256,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     }
 
     let mut results = segment_results.concat();
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }
 
@@ -280,7 +277,7 @@ fn distance_between_paths(path: &RelPath, relative_to: &RelPath) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use util::rel_path::RelPath;
+    use path::rel_path::RelPath;
 
     use super::distance_between_paths;
 

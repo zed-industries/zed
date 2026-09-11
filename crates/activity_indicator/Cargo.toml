@@ -12,6 +12,9 @@ workspace = true
 path = "src/activity_indicator.rs"
 doctest = false
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 auto_update.workspace = true
@@ -30,4 +33,4 @@ workspace.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
-release_channel.workspace = true
+

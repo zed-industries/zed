@@ -1,8 +1,6 @@
 use crate::prelude::*;
 use gpui::{FontWeight, Rems, StyleRefinement, UnderlineStyle};
-use settings::Settings;
 use smallvec::SmallVec;
-use theme::ThemeSettings;
 
 /// Sets the size of a label
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
@@ -91,6 +89,7 @@ pub struct LabelLike {
     single_line: bool,
     truncate: bool,
     truncate_start: bool,
+    truncate_middle: bool,
 }
 
 impl Default for LabelLike {
@@ -117,6 +116,7 @@ impl LabelLike {
             single_line: false,
             truncate: false,
             truncate_start: false,
+            truncate_middle: false,
         }
     }
 }
@@ -134,6 +134,22 @@ impl LabelLike {
     /// Truncates overflowing text with an ellipsis (`…`) at the start if needed.
     pub fn truncate_start(mut self) -> Self {
         self.truncate_start = true;
+        self
+    }
+
+    /// Truncates overflowing text with an ellipsis (`…`) in the middle if needed.
+    /// Preserves the start and end of the text. Useful for filenames.
+    pub fn truncate_middle(mut self) -> Self {
+        self.truncate_middle = true;
+        self
+    }
+
+    /// Wraps the text and truncates it with an ellipsis (`…`) at the end of
+    /// the last visible line if it exceeds the given number of lines.
+    pub fn line_clamp(mut self, lines: usize) -> Self {
+        // `line_clamp` alone hard-cuts the text; the ellipsis on the last
+        // visible line is only rendered when a text overflow style is set.
+        self.base = self.base.line_clamp(lines).text_ellipsis();
         self
     }
 }
@@ -191,7 +207,7 @@ impl LabelCommon for LabelLike {
     }
 
     fn buffer_font(mut self, cx: &App) -> Self {
-        let font = theme::ThemeSettings::get_global(cx).buffer_font.clone();
+        let font = theme::theme_settings(cx).buffer_font(cx).clone();
         self.weight = Some(font.weight);
         self.base = self.base.font(font);
         self
@@ -200,7 +216,7 @@ impl LabelCommon for LabelLike {
     fn inline_code(mut self, cx: &App) -> Self {
         self.base = self
             .base
-            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            .font(theme::theme_settings(cx).buffer_font(cx).clone())
             .bg(cx.theme().colors().element_background)
             .rounded_sm()
             .px_0p5();
@@ -255,10 +271,16 @@ impl RenderOnce for LabelLike {
                     .whitespace_nowrap()
                     .text_ellipsis_start()
             })
+            .when(self.truncate_middle, |this| {
+                this.min_w_0()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_middle()
+            })
             .text_color(color)
             .font_weight(
                 self.weight
-                    .unwrap_or(ThemeSettings::get_global(cx).ui_font.weight),
+                    .unwrap_or(theme::theme_settings(cx).ui_font(cx).weight),
             )
             .children(self.children)
     }
@@ -273,15 +295,13 @@ impl Component for LabelLike {
         "LabelLike"
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "A flexible, customizable label-like component that serves as a base for other label types.",
-        )
+    fn description() -> &'static str {
+        "A flexible, customizable label-like component \
+        that serves as a base for other label types."
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+        v_flex()
                 .gap_6()
                 .children(vec![
                     example_group_with_title(
@@ -328,6 +348,5 @@ impl Component for LabelLike {
                     ),
                 ])
                 .into_any_element()
-        )
     }
 }

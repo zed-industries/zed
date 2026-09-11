@@ -1,0 +1,15 @@
+[package]
+name = "env_var"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/env_var.rs"
+
+[dependencies]
+gpui_shared_string.workspace = true

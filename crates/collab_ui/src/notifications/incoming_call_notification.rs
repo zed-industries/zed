@@ -1,7 +1,7 @@
 use crate::notification_window_options;
 use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
-use gpui::{App, WindowHandle, prelude::*};
+use gpui::{App, TaskExt, WindowHandle, prelude::*};
 
 use std::sync::{Arc, Weak};
 use ui::{CollabNotification, prelude::*};
@@ -42,6 +42,14 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
                 }
             }
         }
+
+        for window in notification_windows.drain(..) {
+            window
+                .update(cx, |_, window, _| {
+                    window.remove_window();
+                })
+                .log_err();
+        }
     })
     .detach();
 }
@@ -63,7 +71,7 @@ impl IncomingCallNotificationState {
         let active_call = ActiveCall::global(cx);
         if accept {
             let join = active_call.update(cx, |active_call, cx| active_call.accept_incoming(cx));
-            let caller_user_id = self.call.calling_user.id;
+            let caller_user_id = self.call.calling_user.legacy_id;
             let initial_project_id = self.call.initial_project.as_ref().map(|project| project.id);
             let app_state = self.app_state.clone();
             let cx: &mut App = cx;
@@ -103,7 +111,7 @@ impl IncomingCallNotification {
 
 impl Render for IncomingCallNotification {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
 
         div().size_full().font(ui_font).child(
             CollabNotification::new(
@@ -119,7 +127,7 @@ impl Render for IncomingCallNotification {
             )
             .child(Label::new(format!(
                 "{} is sharing a project in Zed",
-                self.state.call.calling_user.github_login
+                self.state.call.calling_user.username
             ))),
         )
     }

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::OnceLock};
+use std::{env::consts, path::PathBuf, sync::OnceLock};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -374,7 +374,10 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 }
             };
             let adapter_dir = version_path.join("extension").join("adapter");
-            let path = adapter_dir.join("codelldb").to_string_lossy().into_owned();
+            let path = adapter_dir
+                .join(format!("codelldb{}", consts::EXE_SUFFIX))
+                .to_string_lossy()
+                .into_owned();
             self.path_to_codelldb.set(path.clone()).ok();
             command = Some(path);
         };

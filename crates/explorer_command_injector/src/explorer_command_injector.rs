@@ -106,18 +106,17 @@ impl IClassFactory_Impl for ExplorerCommandInjectorFactory_Impl {
         riid: *const windows_core::GUID,
         ppvobject: *mut *mut core::ffi::c_void,
     ) -> Result<()> {
+        if ppvobject.is_null() || riid.is_null() {
+            return Err(windows::Win32::Foundation::E_POINTER.into());
+        }
+
         unsafe {
             *ppvobject = std::ptr::null_mut();
         }
+
         if punkouter.is_none() {
             let factory: IExplorerCommand = ExplorerCommandInjector {}.into();
-            let ret = unsafe { factory.query(riid, ppvobject).ok() };
-            if ret.is_ok() {
-                unsafe {
-                    *ppvobject = factory.into_raw();
-                }
-            }
-            ret
+            unsafe { factory.query(riid, ppvobject).ok() }
         } else {
             Err(E_INVALIDARG.into())
         }
@@ -128,16 +127,12 @@ impl IClassFactory_Impl for ExplorerCommandInjectorFactory_Impl {
     }
 }
 
-#[cfg(all(feature = "stable", not(feature = "preview"), not(feature = "nightly")))]
-const MODULE_ID: GUID = GUID::from_u128(0x6a1f6b13_3b82_48a1_9e06_7bb0a6d0bffd);
-#[cfg(all(feature = "preview", not(feature = "stable"), not(feature = "nightly")))]
-const MODULE_ID: GUID = GUID::from_u128(0xaf8e85ea_fb20_4db2_93cf_56513c1ec697);
-#[cfg(all(feature = "nightly", not(feature = "stable"), not(feature = "preview")))]
-const MODULE_ID: GUID = GUID::from_u128(0x266f2cfe_1653_42af_b55c_fe3590c83871);
-
-// Make cargo clippy happy
-#[cfg(all(feature = "nightly", feature = "stable", feature = "preview"))]
-const MODULE_ID: GUID = GUID::from_u128(0x685f4d49_6718_4c55_b271_ebb5c6a48d6f);
+const MODULE_ID: GUID = cfg_select! {
+    feature = "stable" => { GUID::from_u128(0x6a1f6b13_3b82_48a1_9e06_7bb0a6d0bffd) },
+    feature = "preview" => { GUID::from_u128(0xaf8e85ea_fb20_4db2_93cf_56513c1ec697) },
+    feature = "nightly" => { GUID::from_u128(0x266f2cfe_1653_42af_b55c_fe3590c83871) },
+    _ => { GUID::from_u128(0x685f4d49_6718_4c55_b271_ebb5c6a48d6f) },
+};
 
 #[unsafe(no_mangle)]
 extern "system" fn DllGetClassObject(
@@ -145,19 +140,17 @@ extern "system" fn DllGetClassObject(
     iid: *const GUID,
     out: *mut *mut std::ffi::c_void,
 ) -> HRESULT {
+    if out.is_null() || class_id.is_null() || iid.is_null() {
+        return E_INVALIDARG;
+    }
+
     unsafe {
         *out = std::ptr::null_mut();
     }
     let class_id = unsafe { *class_id };
     if class_id == MODULE_ID {
         let instance: IClassFactory = ExplorerCommandInjectorFactory {}.into();
-        let ret = unsafe { instance.query(iid, out) };
-        if ret.is_ok() {
-            unsafe {
-                *out = instance.into_raw();
-            }
-        }
-        ret
+        unsafe { instance.query(iid, out) }
     } else {
         CLASS_E_CLASSNOTAVAILABLE
     }
@@ -186,16 +179,12 @@ fn get_zed_exe_path() -> Option<String> {
 
 #[inline]
 fn retrieve_command_description() -> Result<HSTRING> {
-    #[cfg(all(feature = "stable", not(feature = "preview"), not(feature = "nightly")))]
-    const REG_PATH: &str = "Software\\Classes\\ZedEditorContextMenu";
-    #[cfg(all(feature = "preview", not(feature = "stable"), not(feature = "nightly")))]
-    const REG_PATH: &str = "Software\\Classes\\ZedEditorPreviewContextMenu";
-    #[cfg(all(feature = "nightly", not(feature = "stable"), not(feature = "preview")))]
-    const REG_PATH: &str = "Software\\Classes\\ZedEditorNightlyContextMenu";
-
-    // Make cargo clippy happy
-    #[cfg(all(feature = "nightly", feature = "stable", feature = "preview"))]
-    const REG_PATH: &str = "Software\\Classes\\ZedEditorClippyContextMenu";
+    const REG_PATH: &str = cfg_select! {
+        feature = "stable" => { r#"Software\Classes\ZedContextMenu"# },
+        feature = "preview" => { r#"Software\Classes\ZedPreviewContextMenu"# },
+        feature = "nightly" => { r#"Software\Classes\ZedNightlyContextMenu"# },
+        _ => { r#"Software\Classes\ZedDevContextMenu"# },
+    };
 
     let key = windows_registry::CURRENT_USER.open(REG_PATH)?;
     key.get_hstring("Title")

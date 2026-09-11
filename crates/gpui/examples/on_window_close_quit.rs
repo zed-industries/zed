@@ -1,3 +1,8 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use gpui::{
     App, Bounds, Context, FocusHandle, KeyBinding, Window, WindowBounds, WindowOptions, actions,
     div, prelude::*, px, rgb, size,
@@ -35,12 +40,15 @@ impl Render for ExampleWindow {
     }
 }
 
-fn main() {
+fn run_example() {
     application().run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         let mut bounds = Bounds::centered(None, size(px(500.), px(500.0)), cx);
 
         cx.bind_keys([KeyBinding::new("cmd-w", CloseWindow, None)]);
-        cx.on_window_closed(|cx| {
+        cx.on_window_closed(|cx, _window_id| {
             if cx.windows().is_empty() {
                 cx.quit();
             }
@@ -80,4 +88,16 @@ fn main() {
         )
         .unwrap();
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

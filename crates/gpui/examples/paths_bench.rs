@@ -1,3 +1,8 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use gpui::{
     Background, Bounds, ColorSpace, Context, Path, PathBuilder, Pixels, Render, TitlebarOptions,
     Window, WindowBounds, WindowOptions, canvas, div, linear_color_stop, linear_gradient, point,
@@ -69,8 +74,11 @@ impl Render for PaintingViewer {
     }
 }
 
-fn main() {
+fn run_example() {
     application().run(|cx| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
@@ -90,4 +98,16 @@ fn main() {
         .unwrap();
         cx.activate(true);
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

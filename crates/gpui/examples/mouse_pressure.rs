@@ -1,3 +1,8 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use gpui::{
     App, Bounds, Context, MousePressureEvent, PressureStage, Window, WindowBounds, WindowOptions,
     div, prelude::*, px, rgb, size,
@@ -24,8 +29,8 @@ impl Render for MousePressureExample {
             .border_color(rgb(0x0000ff))
             .text_xl()
             .text_color(rgb(0xffffff))
-            .child(format!("Pressure stage: {:?}", &self.pressure_stage))
-            .child(format!("Pressure amount: {:.2}", &self.pressure_amount))
+            .child(format!("Pressure stage: {:?}", self.pressure_stage))
+            .child(format!("Pressure amount: {:.2}", self.pressure_amount))
             .on_mouse_pressure(cx.listener(Self::on_mouse_pressure))
     }
 }
@@ -44,8 +49,11 @@ impl MousePressureExample {
     }
 }
 
-fn main() {
+fn run_example() {
     application().run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         let bounds = Bounds::centered(None, size(px(500.), px(500.0)), cx);
 
         cx.open_window(
@@ -64,4 +72,16 @@ fn main() {
 
         cx.activate(true);
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

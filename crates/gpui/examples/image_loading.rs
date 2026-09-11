@@ -1,3 +1,8 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use std::{path::Path, sync::Arc, time::Duration};
 
 use gpui::{
@@ -192,9 +197,11 @@ impl Render for ImageLoadingExample {
     }
 }
 
-fn main() {
-    env_logger::init();
+fn run_example() {
     application().with_assets(Assets {}).run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
@@ -209,4 +216,17 @@ fn main() {
         })
         .unwrap();
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    env_logger::init();
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

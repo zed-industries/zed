@@ -584,11 +584,11 @@ impl ToolchainSelector {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<()> {
-        let (_, buffer, _) = workspace
+        let buffer = workspace
             .active_item(cx)?
             .act_as::<Editor>(cx)?
             .read(cx)
-            .active_excerpt(cx)?;
+            .active_buffer(cx)?;
         let project = workspace.project().clone();
 
         let language_name = buffer.read(cx).language()?.name();
@@ -864,7 +864,7 @@ impl ToolchainSelectorDelegate {
                 Some(())
             }
         });
-        let placeholder_text = "Select a toolchain…".to_string().into();
+        let placeholder_text = Arc::from("Select a toolchain…");
         Self {
             toolchain_selector,
             candidates: Default::default(),
@@ -898,6 +898,10 @@ impl ToolchainSelectorDelegate {
 impl PickerDelegate for ToolchainSelectorDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "toolchain selector"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         self.placeholder_text.clone()
     }
@@ -920,16 +924,16 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                 let worktree_abs_path_root = self.worktree_abs_path_root.clone();
                 let path = self.relative_path.clone();
                 let relative_path = self.relative_path.clone();
+                let db = workspace::WorkspaceDb::global(cx);
                 cx.spawn_in(window, async move |_, cx| {
-                    workspace::WORKSPACE_DB
-                        .set_toolchain(
-                            workspace_id,
-                            worktree_abs_path_root,
-                            relative_path,
-                            toolchain.clone(),
-                        )
-                        .await
-                        .log_err();
+                    db.set_toolchain(
+                        workspace_id,
+                        worktree_abs_path_root,
+                        relative_path,
+                        toolchain.clone(),
+                    )
+                    .await
+                    .log_err();
                     workspace
                         .update(cx, |this, cx| {
                             this.project().update(cx, |this, cx| {
@@ -953,7 +957,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.toolchain_selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
     }
 
     fn selected_index(&self) -> usize {

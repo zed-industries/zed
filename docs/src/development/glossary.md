@@ -1,5 +1,5 @@
 ---
-title: Zed Development: Glossary
+title: "Zed Development: Glossary"
 description: "Guide to zed development: glossary for Zed development."
 ---
 
@@ -44,7 +44,7 @@ for any type name, such as `AnyElement` or `LspStore`.
 - `Global`: A singleton type which has only one value, that is stored in the `App`.
 - `Event`: A data type that can be sent by an `Entity` to subscribers.
 - `Action`: An event that represents a user's keyboard input that can be handled by listeners
-  Example: `file finder: toggle`
+  Example: {#action file_finder::Toggle}
 - `Observing`: Reacting to notifications that entities have changed.
 - `Subscription`: An event handler that is used to react to the changes of state in the application.
   1. Emitted event handling
@@ -84,16 +84,16 @@ h_flex()
 - `Panel`: An `Entity` implementing the `Panel` trait. Panels can be placed in a `Dock`. In the image below: `ProjectPanel` is in the left dock, `DebugPanel` is in the bottom dock, and `AgentPanel` is in the right dock. `Editor` does not implement `Panel`.
 - `Dock`: A UI element similar to a `Pane` that can be opened and hidden. Up to three docks can be open at once: left, right, and bottom. A dock contains one or more `Panel`s, not `Pane`s.
 
-<img width="1921" height="1080" alt="Screenshot for the Pane and Dock features" src="https://github.com/user-attachments/assets/2cb1170e-2850-450d-89bb-73622b5d07b2" />
+<img width="1921" height="auto" alt="Screenshot for the Pane and Dock features" src="https://github.com/user-attachments/assets/2cb1170e-2850-450d-89bb-73622b5d07b2" />
 
 - `Project`: One or more `Worktree`s
 - `Worktree`: Represents either local or remote files.
 
-<img width="552" height="1118" alt="Screenshot for the Worktree feature" src="https://github.com/user-attachments/assets/da5c58e4-b02e-4038-9736-27e3509fdbfa" />
+<img width="552" height="auto" alt="Screenshot for the Worktree feature" src="https://github.com/user-attachments/assets/da5c58e4-b02e-4038-9736-27e3509fdbfa" />
 
 - [Multibuffer](https://zed.dev/docs/multibuffers): A list of Editors, a multi-buffer allows editing multiple files simultaneously. A multi-buffer opens when an operation in Zed returns multiple locations, examples: _search_ or _go to definition_. See project search in the image below.
 
-<img width="800" height="886" alt="Screenshot for the MultiBuffer feature" src="https://github.com/user-attachments/assets/d59dcecd-8ab6-4172-8fb6-b1fc3c3eaf9d" />
+<img width="800" height="auto" alt="Screenshot for the MultiBuffer feature" src="https://github.com/user-attachments/assets/d59dcecd-8ab6-4172-8fb6-b1fc3c3eaf9d" />
 
 ## Editor
 
@@ -113,7 +113,7 @@ h_flex()
 
 - `DapStore`: Is an entity that manages debugger sessions
 - `debugger::Session`: An entity that manages the lifecycle of a debug session and communication with DAPs.
-- `BreakpointStore`: Is an entity that manages breakpoints states in local and remote instances of Zed
+- `BreakpointStore`: Is an entity that manages breakpoint states in local and remote instances of Zed
 - `DebugSession`: Manages a debug session's UI and running state
 - `RunningState`: Directly manages all the views of a debug session
 - `VariableList`: The variable and watch list view of a debug session

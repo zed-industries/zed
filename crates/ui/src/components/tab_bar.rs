@@ -129,7 +129,7 @@ impl RenderOnce for TabBar {
                     .child(
                         h_flex()
                             .id("tabs")
-                            .flex_grow()
+                            .flex_grow_1()
                             .overflow_x_scroll()
                             .when_some(self.scroll_handle, |cx, scroll_handle| {
                                 cx.track_scroll(&scroll_handle)
@@ -161,47 +161,46 @@ impl Component for TabBar {
         "TabBar"
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A horizontal bar containing tabs for navigation between different views or sections.")
+    fn description() -> &'static str {
+        "A horizontal bar containing tabs for navigation between different views \
+        or sections."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Basic Usage",
-                        vec![
-                            single_example(
-                                "Empty TabBar",
-                                TabBar::new("empty_tab_bar").into_any_element(),
-                            ),
-                            single_example(
-                                "With Tabs",
-                                TabBar::new("tab_bar_with_tabs")
-                                    .child(Tab::new("tab1"))
-                                    .child(Tab::new("tab2"))
-                                    .child(Tab::new("tab3"))
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "With Start and End Children",
-                        vec![single_example(
-                            "Full TabBar",
-                            TabBar::new("full_tab_bar")
-                                .start_child(Button::new("start_button", "Start"))
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Basic Usage",
+                    vec![
+                        single_example(
+                            "Empty TabBar",
+                            TabBar::new("empty_tab_bar").into_any_element(),
+                        ),
+                        single_example(
+                            "With Tabs",
+                            TabBar::new("tab_bar_with_tabs")
                                 .child(Tab::new("tab1"))
                                 .child(Tab::new("tab2"))
                                 .child(Tab::new("tab3"))
-                                .end_child(Button::new("end_button", "End"))
                                 .into_any_element(),
-                        )],
-                    ),
-                ])
-                .into_any_element(),
-        )
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "With Start and End Children",
+                    vec![single_example(
+                        "Full TabBar",
+                        TabBar::new("full_tab_bar")
+                            .start_child(Button::new("start_button", "Start"))
+                            .child(Tab::new("tab1"))
+                            .child(Tab::new("tab2"))
+                            .child(Tab::new("tab3"))
+                            .end_child(Button::new("end_button", "End"))
+                            .into_any_element(),
+                    )],
+                ),
+            ])
+            .into_any_element()
     }
 }
