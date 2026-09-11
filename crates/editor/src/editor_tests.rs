@@ -39562,6 +39562,63 @@ async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_next_prev_syntax_node_skips_punctuation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    ));
+
+    let text = "let a = { alice: 1, bob: [2, 3] };";
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    // Stepping between the properties of an object should not stop on the comma
+    // that separates them.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 18)
+            ]);
+        });
+        editor.select_next_syntax_node(&SelectNextSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, "let a = { alice: 1, «bob: [2, 3]ˇ» };", cx);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_prev_syntax_node(&SelectPreviousSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, "let a = { «alice: 1ˇ», bob: [2, 3] };", cx);
+    });
+
+    // The same holds for the elements of an array.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 26)..DisplayPoint::new(DisplayRow(0), 27)
+            ]);
+        });
+        editor.select_next_syntax_node(&SelectNextSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, "let a = { alice: 1, bob: [2, «3ˇ»] };", cx);
+    });
+}
+
+#[gpui::test]
 async fn test_next_prev_document_highlight(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
