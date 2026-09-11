@@ -1,7 +1,8 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{
-    Editor, EditorEvent, HiddenUnstagedDiffHunkRenderer, MultiBuffer, multibuffer_context_lines,
+    Editor, EditorEvent, EditorSettings, HiddenUnstagedDiffHunkRenderer, MultiBuffer,
+    multibuffer_context_lines,
 };
 use git_ui_core::file_diff_view::build_buffer_diff;
 use gpui::{
@@ -11,6 +12,7 @@ use gpui::{
 use language::{Buffer, Capability, HighlightedText, OffsetRangeExt};
 use multi_buffer::PathKey;
 use project::{Project, ProjectPath};
+use settings::Settings;
 use std::{
     any::{Any, TypeId},
     path::{Path, PathBuf},
@@ -201,6 +203,15 @@ impl MultiDiffView {
             editor.set_diff_hunk_renderer(Some(Arc::new(HiddenUnstagedDiffHunkRenderer)), cx);
             editor.disable_diagnostics(cx);
             editor.set_expand_all_diff_hunks(cx);
+            if EditorSettings::get_global(cx).multibuffer_default_folded {
+                let buffer_ids: Vec<_> = editor
+                    .buffer()
+                    .read(cx)
+                    .all_buffers_iter()
+                    .map(|buffer| buffer.read(cx).remote_id())
+                    .collect();
+                editor.fold_buffers(buffer_ids, cx);
+            }
             editor
         });
 

@@ -477,6 +477,13 @@ impl CommitView {
             }
 
             this.update(cx, |this, cx| {
+                let buffer_ids_to_fold = if EditorSettings::get_global(cx).multibuffer_default_folded
+                {
+                    file_statuses.keys().copied().collect()
+                } else {
+                    binary_buffer_ids
+                };
+
                 let commit_view = cx.weak_entity();
                 this.editor.update(cx, |editor, cx| {
                     editor.rhs_editor().update(cx, |editor, _cx| {
@@ -486,10 +493,10 @@ impl CommitView {
                         });
                     });
                 });
-                if !binary_buffer_ids.is_empty() {
+                if !buffer_ids_to_fold.is_empty() {
                     this.editor.update(cx, |editor, cx| {
                         editor.rhs_editor().update(cx, |editor, cx| {
-                            editor.fold_buffers(binary_buffer_ids, cx);
+                            editor.fold_buffers(buffer_ids_to_fold, cx);
                         });
                     });
                 }
