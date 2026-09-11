@@ -10960,7 +10960,6 @@ dependencies = [
  "streaming-iterator",
  "tree-sitter",
  "tree-sitter-json",
- "unindent",
 ]
 
 [[package]]
