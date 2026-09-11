@@ -7504,6 +7504,7 @@ dependencies = [
  "gpui_macros",
  "gpui_platform",
  "gpui_shared_string",
+ "gpui_types",
  "gpui_util",
  "hdrhistogram",
  "heapless",
@@ -7598,6 +7599,7 @@ dependencies = [
  "filedescriptor",
  "futures 0.3.34",
  "gpui",
+ "gpui_types",
  "gpui_util",
  "gpui_wgpu",
  "http_client",
@@ -7712,6 +7714,22 @@ dependencies = [
  "gpui",
  "gpui_util",
  "tokio",
+]
+
+[[package]]
+name = "gpui_types"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "etagere",
+ "lyon",
+ "proptest",
+ "refineable",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "taffy",
 ]
 
 [[package]]

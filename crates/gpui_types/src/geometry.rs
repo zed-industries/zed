@@ -18,8 +18,6 @@ use std::{
 };
 use taffy::prelude::{TaffyGridLine, TaffyGridSpan};
 
-use crate::{App, DisplayId};
-
 /// Axis in a 2D cartesian space.
 #[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum Axis {
@@ -733,36 +731,6 @@ pub fn bounds<T: Clone + Debug + Default + PartialEq>(
     size: Size<T>,
 ) -> Bounds<T> {
     Bounds { origin, size }
-}
-
-impl Bounds<Pixels> {
-    /// Generate a centered bounds for the given display or primary display if none is provided
-    pub fn centered(display_id: Option<DisplayId>, size: Size<Pixels>, cx: &App) -> Self {
-        let display = display_id
-            .and_then(|id| cx.find_display(id))
-            .or_else(|| cx.primary_display());
-
-        display
-            .map(|display| Bounds::centered_at(display.bounds().center(), size))
-            .unwrap_or_else(|| Bounds {
-                origin: point(px(0.), px(0.)),
-                size,
-            })
-    }
-
-    /// Generate maximized bounds for the given display or primary display if none is provided
-    pub fn maximized(display_id: Option<DisplayId>, cx: &App) -> Self {
-        let display = display_id
-            .and_then(|id| cx.find_display(id))
-            .or_else(|| cx.primary_display());
-
-        display
-            .map(|display| display.bounds())
-            .unwrap_or_else(|| Bounds {
-                origin: point(px(0.), px(0.)),
-                size: size(px(1024.), px(768.)),
-            })
-    }
 }
 
 impl<T> Bounds<T>
@@ -2674,7 +2642,10 @@ impl From<Percentage> for Radians {
     JsonSchema,
 )]
 #[repr(transparent)]
-pub struct Pixels(pub(crate) f32);
+pub struct Pixels(
+    /// The raw pixel value.
+    pub f32,
+);
 
 impl Div for Pixels {
     type Output = f32;
@@ -3224,7 +3195,7 @@ impl MulAssign<f32> for ScaledPixels {
     }
 }
 
-/// Represents a length in rems, a unit based on the font-size of the window, which can be assigned with [`Window::set_rem_size`][set_rem_size].
+/// Represents a length in rems, a unit based on the font-size of the window, which can be assigned with `Window::set_rem_size`.
 ///
 /// Rems are used for defining lengths that are scalable and consistent across different UI elements.
 /// The value of `1rem` is typically equal to the font-size of the root element (often the `<html>` element in browsers),
@@ -3232,10 +3203,17 @@ impl MulAssign<f32> for ScaledPixels {
 /// purpose, allowing for scalable and accessible design that can adjust to different display settings or user preferences.
 ///
 /// For example, if the root element's font-size is `16px`, then `1rem` equals `16px`. A length of `2rems` would then be `32px`.
-///
-/// [set_rem_size]: crate::Window::set_rem_size
 #[derive(Clone, Copy, Default, Add, Sub, Mul, Div, Neg, PartialEq)]
 pub struct Rems(pub f32);
+
+/// A source of the current rem size, used to convert [`Pixels`] to [`Rems`].
+///
+/// Implementing this for the window type lets [`Rems::from_pixels`] live in this
+/// crate without depending on the rest of GPUI.
+pub trait HasRemSize {
+    /// The size of one rem, in pixels.
+    fn rem_size(&self) -> Pixels;
+}
 
 impl Rems {
     /// A length of zero.
@@ -3244,9 +3222,9 @@ impl Rems {
     pub fn to_pixels(self, rem_size: Pixels) -> Pixels {
         self * rem_size
     }
-    /// Convert from pixels to Rem
-    pub fn from_pixels(length: Pixels, window: &gpui::Window) -> Self {
-        Self(length / window.rem_size())
+    /// Convert from pixels to Rem, using the rem size reported by `source`.
+    pub fn from_pixels(length: Pixels, source: &impl HasRemSize) -> Self {
+        Self(length / source.rem_size())
     }
 }
 

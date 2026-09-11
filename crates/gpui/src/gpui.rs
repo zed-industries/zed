@@ -13,7 +13,6 @@ mod arena;
 mod asset_cache;
 mod assets;
 mod bounds_tree;
-mod color;
 /// The default colors used by GPUI.
 pub mod colors;
 #[cfg(feature = "profiler")]
@@ -23,7 +22,6 @@ mod elements;
 mod executor;
 mod platform_scheduler;
 pub(crate) use platform_scheduler::PlatformScheduler;
-mod geometry;
 mod gestures;
 mod global;
 mod input;
@@ -95,14 +93,12 @@ pub use app::*;
 pub(crate) use arena::*;
 pub use asset_cache::*;
 pub use assets::*;
-pub use color::*;
 pub use ctor::ctor;
 #[cfg(feature = "profiler")]
 pub use debug_overlay::*;
 pub use element::*;
 pub use elements::*;
 pub use executor::*;
-pub use geometry::*;
 pub use gestures::*;
 pub use global::*;
 pub use gpui_macros::{
@@ -134,6 +130,7 @@ macro_rules! bench_main {
     };
 }
 pub use gpui_shared_string::*;
+pub use gpui_types::*;
 pub use gpui_util::arc_cow::ArcCow;
 pub use http_client;
 pub use input::*;
@@ -155,8 +152,8 @@ pub use styled::*;
 pub use subscription::*;
 pub use svg_renderer::*;
 pub(crate) use tab_stop::*;
+pub use taffy::LayoutId;
 use taffy::TaffyLayoutEngine;
-pub use taffy::{AvailableSpace, LayoutId};
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
 pub use text_system::*;
@@ -166,6 +163,52 @@ pub use window::*;
 
 #[cfg(not(target_family = "wasm"))]
 pub use pollster::block_on;
+
+/// Extension methods on [`Bounds`] that need to resolve the application's displays.
+///
+/// These live in `gpui` rather than `gpui_types` because they require [`App`], while
+/// the base [`Bounds`] type is defined in the platform-agnostic `gpui_types` crate.
+pub trait BoundsExt: Sized {
+    /// Generate a centered bounds for the given display or primary display if none is provided
+    fn centered(display_id: Option<DisplayId>, size: Size<Pixels>, cx: &App) -> Self;
+
+    /// Generate maximized bounds for the given display or primary display if none is provided
+    fn maximized(display_id: Option<DisplayId>, cx: &App) -> Self;
+}
+
+impl BoundsExt for Bounds<Pixels> {
+    fn centered(display_id: Option<DisplayId>, size: Size<Pixels>, cx: &App) -> Self {
+        let display = display_id
+            .and_then(|id| cx.find_display(id))
+            .or_else(|| cx.primary_display());
+
+        display
+            .map(|display| Bounds::centered_at(display.bounds().center(), size))
+            .unwrap_or_else(|| Bounds {
+                origin: point(px(0.), px(0.)),
+                size,
+            })
+    }
+
+    fn maximized(display_id: Option<DisplayId>, cx: &App) -> Self {
+        let display = display_id
+            .and_then(|id| cx.find_display(id))
+            .or_else(|| cx.primary_display());
+
+        display
+            .map(|display| display.bounds())
+            .unwrap_or_else(|| Bounds {
+                origin: point(px(0.), px(0.)),
+                size: size(px(1024.), px(768.)),
+            })
+    }
+}
+
+impl HasRemSize for Window {
+    fn rem_size(&self) -> Pixels {
+        Window::rem_size(self)
+    }
+}
 
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.
