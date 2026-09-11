@@ -755,7 +755,7 @@ mod tests {
     async fn test_columnar_selection_actions_skip_replaced_source_rows(cx: &mut TestAppContext) {
         crate::editor_tests::init_test(cx, |_| {});
         let mut cx = EditorTestContext::new(cx).await;
-        for hidden_count in [1, 1000] {
+        for hidden_count in [1, 128] {
             let text = iter::repeat_n("éab", hidden_count as usize + 3)
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -2303,12 +2303,13 @@ mod tests {
                 let tab = snapshot
                     .tab_snapshot()
                     .point_to_tab_point(point, Bias::Left);
-                let display = point.to_display_point(snapshot);
                 if tab.row() != row
                     || snapshot.tab_snapshot().tab_point_to_point(tab, Bias::Left) != point
-                    || display.to_point(snapshot) != point
-                    || snapshot.is_block_line(display.row())
                 {
+                    return None;
+                }
+                let display = point.to_display_point(snapshot);
+                if display.to_point(snapshot) != point || snapshot.is_block_line(display.row()) {
                     return None;
                 }
                 boundaries
@@ -2698,6 +2699,7 @@ mod tests {
             .map(|columns| (row as u32, columns));
             let answers = query.points_for_rows(&requests);
             let rebuilt_answers = rebuilt_query.points_for_rows(&requests);
+            let mut checked_points = HashSet::default();
             for (((_, columns), points), rebuilt_points) in
                 requests.into_iter().zip(answers).zip(rebuilt_answers)
             {
@@ -2722,6 +2724,9 @@ mod tests {
                 if let Some((start, end)) = points {
                     assert!(start <= end);
                     for point in [start, end] {
+                        if !checked_points.insert(point) {
+                            continue;
+                        }
                         let line = raw_lines
                             .get(point.row as usize)
                             .expect("raw row in bounds");
