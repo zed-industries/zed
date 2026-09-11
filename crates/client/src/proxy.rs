@@ -19,12 +19,11 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> A
 {
 }
 
-/// Whether `NO_PROXY` in the environment excludes `host` from proxying,
+/// Whether the HTTP client's proxy bypass list excludes `host` from proxying,
 /// matching the exclusions the HTTP client already applies to its own
 /// requests.
-pub(crate) fn excluded_from_proxy(host: &str) -> bool {
-    http_client::read_no_proxy_from_env()
-        .is_some_and(|no_proxy| proxy_handshake::no_proxy_matches(&no_proxy, host))
+pub(crate) fn excluded_from_proxy(no_proxy: Option<&str>, host: &str) -> bool {
+    no_proxy.is_some_and(|no_proxy| proxy_handshake::no_proxy_matches(no_proxy, host))
 }
 
 pub(crate) async fn connect_proxy_stream(

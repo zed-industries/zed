@@ -3459,7 +3459,27 @@ Or to set a `socks5` proxy:
 }
 ```
 
-If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` environment variable. This accepts a comma-separated list of hostnames, host suffixes, IPv4/IPv6 addresses or blocks that should not use the proxy. For example if your environment included `NO_PROXY="google.com, 192.168.1.0/24"` all hosts in `192.168.1.*`, `google.com` and `*.google.com` would bypass the proxy. See [reqwest NoProxy docs](https://docs.rs/reqwest/latest/reqwest/struct.NoProxy.html#method.from_string) for more.
+To exclude certain hosts from the proxy, use the [`no_proxy`](#no-proxy) setting.
+
+## No Proxy
+
+- Description: A comma-separated list of hosts that bypass the configured proxy
+- Setting: `no_proxy`
+- Default: `""`
+
+**Options**
+
+Accepts a comma-separated list of hostnames, host suffixes, `host:port` entries, IPv4/IPv6 addresses or CIDR blocks that should not use the proxy. For example, with `"no_proxy": "google.com,192.168.1.0/24"` all hosts in `192.168.1.*`, `google.com` and `*.google.com` bypass the proxy. See the [reqwest NoProxy docs](https://docs.rs/reqwest/latest/reqwest/struct.NoProxy.html#method.from_string) for the full syntax.
+
+```json [settings]
+{
+  "no_proxy": "localhost,127.0.0.1,::1,.internal.company"
+}
+```
+
+When this setting is empty, Zed falls back to the `NO_PROXY` environment variable, and then to `localhost,127.0.0.1,::1` so that local services such as MCP servers and locally hosted LLMs are never routed through the proxy. Setting `no_proxy` replaces both, so include the localhost addresses yourself if you still need them.
+
+The bypass list applies to Zed's HTTP requests as well as to the collaboration WebSocket connection.
 
 ## On Last Window Closed
 
