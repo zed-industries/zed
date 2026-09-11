@@ -11558,7 +11558,7 @@ mod tests {
         panel.update_in(&mut cx, |panel, window, cx| {
             // Mark both entries (`src/partial.rs` and `src/staged.rs`) while
             // setting `src/staged.rs` as the `selected_entry`, simulating the
-            // context menu being deployed by right-clicking on `src/staged.rs`.
+            // context menu being deployed by right-clicking on `src/partial.rs`.
             //
             // Since the context menu will be deployed from the "Staged"
             // section, we expect the menu to offer the ability to unstage the
