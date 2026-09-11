@@ -3529,9 +3529,14 @@ impl Editor {
             return;
         }
 
+        let cancelling_group = self.selections.pending_anchor().is_none()
+            && self.selections.disjoint_anchors().len() > 1;
         if self.mode.is_full()
             && self.change_selections(Default::default(), window, cx, |s| s.try_cancel())
         {
+            if cancelling_group {
+                self.add_selections_state = None;
+            }
             cx.notify();
             return;
         }
@@ -7917,11 +7922,16 @@ impl Editor {
         if let Some((selections, add_selections_state)) =
             selections.filter(|(selections, _)| !selections.is_empty())
         {
-            self.with_selection_effects_deferred(window, cx, |this, window, cx| {
-                this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_anchors_unexpanded(selections.to_vec());
-                });
-                this.add_selections_state = add_selections_state;
+            self.with_selection_effects_deferred(window, cx, |editor, window, cx| {
+                editor.change_selections(
+                    SelectionEffects::no_scroll(),
+                    window,
+                    cx,
+                    |selection_collection| {
+                        selection_collection.select_anchors_unexpanded(selections.to_vec());
+                    },
+                );
+                editor.add_selections_state = add_selections_state;
             });
         }
     }
@@ -10710,7 +10720,7 @@ impl Editor {
             .all::<MultiBufferOffsetUtf16>(&self.display_snapshot(cx));
         let newest_selection = selections
             .iter()
-            .max_by_key(|selection| self.selections.selection_id_order(selection.id))
+            .max_by_key(|selection| selection.id)
             .unwrap();
         let start_delta = range.start.0.0 as isize - newest_selection.start.0.0 as isize;
         let end_delta = range.end.0.0 as isize - newest_selection.end.0.0 as isize;

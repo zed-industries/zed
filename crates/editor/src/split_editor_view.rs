@@ -510,9 +510,7 @@ impl SplitBufferHeadersElement {
                 anchors_by_buffer
                     .entry(text_anchor.buffer_id)
                     .and_modify(|(latest_id, latest_anchor)| {
-                        if editor.selections.selection_id_order(selection.id)
-                            > editor.selections.selection_id_order(*latest_id)
-                        {
+                        if selection.id > *latest_id {
                             *latest_id = selection.id;
                             *latest_anchor = head;
                         }

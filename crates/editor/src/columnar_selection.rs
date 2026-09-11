@@ -17,54 +17,107 @@ impl<'a> ColumnarSelectionRows<'a> {
         Self { snapshot }
     }
 
-    pub(crate) fn columns_for_range(&mut self, range: Range<Point>) -> Range<u32> {
+    pub(crate) fn columns_for_ranges(&mut self, ranges: &[Range<Point>]) -> Vec<Range<u32>> {
         let tabs = self.snapshot.tab_snapshot();
-        let start = tabs.point_to_tab_point(range.start, Bias::Left);
-        let end = tabs.point_to_tab_point(range.end, Bias::Left);
-        if start.row() == end.row() {
-            self.row(start.row()).columns_for_bytes(
-                start.column().min(end.column())..start.column().max(end.column()),
-            )
-        } else {
-            let start = self
-                .row(start.row())
-                .columns_for_bytes(start.column()..start.column())
-                .start;
-            let end = self
-                .row(end.row())
-                .columns_for_bytes(end.column()..end.column())
-                .start;
-            start.min(end)..start.max(end)
+        let mut endpoints = ranges
+            .iter()
+            .enumerate()
+            .flat_map(|(index, range)| {
+                [(range.start, false), (range.end, true)]
+                    .map(|(point, end)| (tabs.point_to_tab_point(point, Bias::Left), index, end))
+            })
+            .collect::<Vec<_>>();
+        endpoints.sort_unstable();
+        let mut answers = vec![0..0; ranges.len()];
+        for endpoints in endpoints.chunk_by(|left, right| left.0.row() == right.0.row()) {
+            let mut text = self.row(endpoints[0].0.row());
+            let mut cursor = text.forward_cursor();
+            for &(point, index, end) in endpoints {
+                text.floor_forward(&mut cursor, point.column());
+                if end {
+                    answers[index].end = cursor.column;
+                } else {
+                    answers[index].start = cursor.column;
+                }
+            }
         }
+        for answer in &mut answers {
+            *answer = answer.start.min(answer.end)..answer.start.max(answer.end);
+        }
+        answers
     }
 
+    pub(crate) fn points_for_rows(
+        &mut self,
+        queries: &[(u32, Range<u32>)],
+    ) -> Vec<Option<(Point, Point)>> {
+        let tabs = self.snapshot.tab_snapshot();
+        let max_row = tabs.max_point().row();
+        let mut endpoints = Vec::new();
+        for (index, (row, columns)) in queries.iter().enumerate() {
+            if *row <= max_row && columns.start <= columns.end {
+                endpoints.push((*row, columns.start, false, index));
+                if columns.start != columns.end {
+                    endpoints.push((*row, columns.end, true, index));
+                }
+            }
+        }
+        endpoints.sort_unstable();
+        let mut answers = vec![None::<(Point, Point)>; queries.len()];
+        for endpoints in endpoints.chunk_by(|left, right| left.0 == right.0) {
+            let row = endpoints[0].0;
+            let length = tabs.line_len(row);
+            let mut text = self.row(row);
+            let mut cursor = text.cursor(0);
+            let mut column = 0;
+            let mut preceding = None;
+            let mut buffer_cursor = None;
+            for &(_, goal, end, index) in endpoints {
+                let columns = &queries[index].1;
+                if (end && answers[index].is_none())
+                    || (!end && columns.start != columns.end && goal >= length)
+                {
+                    continue;
+                }
+                text.advance_columns(&mut cursor, goal - column);
+                column = goal;
+                if !end && columns.start != columns.end && cursor.byte() == length {
+                    continue;
+                }
+                let point = self.point_for_cursor(
+                    row,
+                    &mut text,
+                    cursor.clone(),
+                    preceding,
+                    &mut buffer_cursor,
+                );
+                preceding = Some((cursor.byte(), point));
+                answers[index] = if end {
+                    answers[index]
+                        .zip(point)
+                        .map(|((start, _), end)| (start.min(end), start.max(end)))
+                } else {
+                    point.map(|point| (point, point))
+                };
+            }
+        }
+        answers
+    }
+
+    #[cfg(test)]
+    pub(crate) fn columns_for_range(&mut self, range: Range<Point>) -> Range<u32> {
+        self.columns_for_ranges(&[range]).pop().expect("one range")
+    }
+
+    #[cfg(test)]
     pub(crate) fn points_for_row(
         &mut self,
         row: u32,
         columns: &Range<u32>,
     ) -> Option<(Point, Point)> {
-        let tabs = self.snapshot.tab_snapshot();
-        if row > tabs.max_point().row() {
-            return None;
-        }
-        let is_empty = columns.start == columns.end;
-        if !is_empty && columns.start >= tabs.line_len(row) {
-            return None;
-        }
-        let mut text = self.row(row);
-        let mut cursor = text.cursor(0);
-        text.advance_columns(&mut cursor, columns.start);
-        if !is_empty && cursor.byte() == tabs.line_len(row) {
-            return None;
-        }
-        let start = self.point_for_cursor(row, &mut text, cursor.clone())?;
-        let end = if is_empty {
-            start
-        } else {
-            text.advance_columns(&mut cursor, columns.end - columns.start);
-            self.point_for_cursor(row, &mut text, cursor)?
-        };
-        Some((start.min(end), start.max(end)))
+        self.points_for_rows(&[(row, columns.clone())])
+            .pop()
+            .flatten()
     }
 
     fn point_for_cursor(
@@ -72,9 +125,20 @@ impl<'a> ColumnarSelectionRows<'a> {
         row: u32,
         text: &mut RowText<'a>,
         mut cursor: BoundaryCursor,
+        preceding: Option<(u32, Option<Point>)>,
+        buffer_cursor: &mut Option<BufferRowCursor<'a>>,
     ) -> Option<Point> {
-        let mut buffer_cursor = None;
+        let frontier = preceding.map_or(0, |(byte, _)| byte);
+        let mut backward_buffer_cursor = None;
+        if let Some(buffer_cursor) = buffer_cursor {
+            buffer_cursor.reverse = None;
+        }
         loop {
+            if let Some((byte, point)) = preceding
+                && cursor.byte() <= byte
+            {
+                return point;
+            }
             let tab_point = TabPoint::new(row, cursor.byte());
             let tabs = self.snapshot.tab_snapshot();
             let fold_point = tabs.tab_point_to_fold_point(tab_point, Bias::Left).0;
@@ -85,7 +149,7 @@ impl<'a> ColumnarSelectionRows<'a> {
                 && range.start < fold_point
             {
                 let start = tabs.fold_point_to_tab_point(range.start);
-                text.retreat_to(&mut cursor, start.column());
+                text.retreat_to(&mut cursor, start.column().max(frontier));
                 continue;
             }
             let point = tabs.tab_point_to_point(tab_point, Bias::Left);
@@ -94,7 +158,8 @@ impl<'a> ColumnarSelectionRows<'a> {
             let canonical = tabs.point_to_tab_point(point, Bias::Left);
             if !hidden
                 && canonical == tab_point
-                && self.floor_buffer_point(&mut buffer_cursor, point) == point
+                && self.floor_buffer_point(buffer_cursor, &mut backward_buffer_cursor, point)
+                    == point
             {
                 return Some(point);
             }
@@ -116,7 +181,11 @@ impl<'a> ColumnarSelectionRows<'a> {
                 canonical
             } else {
                 let previous = if let Some(byte) = point.column.checked_sub(1) {
-                    self.floor_buffer_point(&mut buffer_cursor, Point::new(point.row, byte))
+                    self.floor_buffer_point(
+                        buffer_cursor,
+                        &mut backward_buffer_cursor,
+                        Point::new(point.row, byte),
+                    )
                 } else {
                     let row = point.row.checked_sub(1)?;
                     Point::new(
@@ -132,26 +201,56 @@ impl<'a> ColumnarSelectionRows<'a> {
                 return None;
             }
             if preceding < tab_point {
-                text.retreat_to(&mut cursor, preceding.column());
+                text.retreat_to(&mut cursor, preceding.column().max(frontier));
             } else {
                 text.previous_boundary(&mut cursor)?;
             }
         }
     }
 
-    fn floor_buffer_point(&self, cursor: &mut Option<BufferRowCursor<'a>>, point: Point) -> Point {
-        if cursor.as_ref().is_none_or(|cursor| cursor.row != point.row) {
-            let mut text = self.buffer_row(point.row);
-            let boundary = text.floor_at(point.column);
-            *cursor = Some(BufferRowCursor {
-                row: point.row,
-                text,
-                boundary,
-            });
+    fn floor_buffer_point(
+        &self,
+        forward: &mut Option<BufferRowCursor<'a>>,
+        backward: &mut Option<BufferRowCursor<'a>>,
+        point: Point,
+    ) -> Point {
+        if forward.as_ref().is_none_or(|cursor| cursor.row < point.row) {
+            *backward = forward.replace(self.buffer_row_cursor(point.row));
         }
-        let cursor = cursor.as_mut().expect("buffer row cursor initialized");
-        cursor.text.retreat_to(&mut cursor.boundary, point.column);
-        Point::new(point.row, cursor.boundary.byte())
+        let cursor = if let Some(cursor) = forward.as_mut().filter(|cursor| cursor.row == point.row)
+        {
+            cursor
+        } else {
+            if backward
+                .as_ref()
+                .is_none_or(|cursor| cursor.row != point.row)
+            {
+                let cursor = backward.insert(self.buffer_row_cursor(point.row));
+                cursor.reverse = Some(cursor.text.floor_at(point.column));
+            }
+            backward.as_mut().expect("backward buffer row initialized")
+        };
+        if cursor.reverse.is_none() {
+            cursor.text.floor_forward(&mut cursor.forward, point.column);
+            cursor.reverse = Some(cursor.forward.boundary.clone());
+        }
+        let boundary = cursor
+            .reverse
+            .as_mut()
+            .expect("buffer boundary initialized");
+        cursor.text.retreat_to(boundary, point.column);
+        Point::new(point.row, boundary.byte())
+    }
+
+    fn buffer_row_cursor(&self, row: u32) -> BufferRowCursor<'a> {
+        let text = self.buffer_row(row);
+        let forward = text.forward_cursor();
+        BufferRowCursor {
+            row,
+            text,
+            forward,
+            reverse: None,
+        }
     }
 
     fn buffer_row(&self, row: u32) -> RowText<'a> {
@@ -216,10 +315,17 @@ struct BoundaryCursor {
     chunk_index: usize,
 }
 
+struct ForwardCursor {
+    boundary: BoundaryCursor,
+    next: BoundaryCursor,
+    column: u32,
+}
+
 struct BufferRowCursor<'a> {
     row: u32,
     text: RowText<'a>,
-    boundary: BoundaryCursor,
+    forward: ForwardCursor,
+    reverse: Option<BoundaryCursor>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -255,29 +361,43 @@ impl<'a> RowText<'a> {
         }
     }
 
-    fn columns_for_bytes(&mut self, bytes: Range<u32>) -> Range<u32> {
+    fn forward_cursor(&self) -> ForwardCursor {
+        let boundary = self.cursor(0);
+        ForwardCursor {
+            next: boundary.clone(),
+            boundary,
+            column: 0,
+        }
+    }
+
+    fn floor_forward(&mut self, cursor: &mut ForwardCursor, byte: u32) {
+        debug_assert!(byte >= cursor.boundary.byte());
         if let Self::Ascii(length) = self {
-            return bytes.start.min(*length)..bytes.end.min(*length);
+            cursor.column = byte.min(*length);
+            cursor.boundary.graphemes.set_cursor(cursor.column as usize);
+            return;
         }
-        if bytes.end == 0 {
-            return 0..0;
+        while cursor.boundary.byte() < byte {
+            if cursor.next.byte() == cursor.boundary.byte()
+                && self.next_boundary(&mut cursor.next).is_none()
+            {
+                break;
+            }
+            if cursor.next.byte() > byte {
+                break;
+            }
+            cursor.boundary = cursor.next.clone();
+            cursor.column += 1;
         }
-        let mut cursor = self.cursor(0);
-        let mut column = 0;
-        let mut start = None;
-        while let Some(boundary) = self.next_boundary(&mut cursor) {
-            if boundary > bytes.start && start.is_none() {
-                start = Some(column);
-            }
-            if boundary > bytes.end {
-                return start.unwrap_or(column)..column;
-            }
-            column += 1;
-            if boundary == bytes.end {
-                return start.unwrap_or(column)..column;
-            }
-        }
-        start.unwrap_or(column)..column
+    }
+
+    #[cfg(test)]
+    fn columns_for_bytes(&mut self, bytes: Range<u32>) -> Range<u32> {
+        let mut cursor = self.forward_cursor();
+        self.floor_forward(&mut cursor, bytes.start);
+        let start = cursor.column;
+        self.floor_forward(&mut cursor, bytes.end);
+        start..cursor.column
     }
 
     fn advance_columns(&mut self, cursor: &mut BoundaryCursor, count: u32) {
@@ -373,6 +493,11 @@ impl<'a> RowChunks<'a> {
                 .last()
                 .map_or(0, |chunk| chunk.start + chunk.text.len());
             self.chunks.push(TextChunk { start, text });
+            #[cfg(test)]
+            tests::ROW_WORK.with(|work| {
+                let (boundaries, chunks) = work.get();
+                work.set((boundaries, chunks + 1));
+            });
         }
         self.chunks[index]
     }
@@ -389,6 +514,11 @@ impl<'a> RowChunks<'a> {
     }
 
     fn resolve(&mut self, cursor: &mut BoundaryCursor, query: BoundaryQuery) -> Option<u32> {
+        #[cfg(test)]
+        tests::ROW_WORK.with(|work| {
+            let (boundaries, chunks) = work.get();
+            work.set((boundaries + 1, chunks));
+        });
         loop {
             let offset = cursor.graphemes.cur_cursor();
             if query == BoundaryQuery::Check && (offset == 0 || offset == self.length as usize) {
@@ -472,11 +602,12 @@ impl BoundaryCursor {
 mod tests {
     use super::*;
     use crate::{
+        AddSelectionAbove, AddSelectionBelow, SelectionEffects,
         display_map::{
             BlockPlacement, BlockProperties, BlockStyle, Crease, DisplayMap, FoldPlaceholder,
         },
         inlays::Inlay,
-        test::test_font,
+        test::{editor_test_context::EditorTestContext, test_font},
     };
     use collections::HashSet;
     use gpui::{
@@ -491,6 +622,498 @@ mod tests {
     use std::{cell::Cell, env, iter, num::NonZeroU32, sync::Arc};
     use theme::LoadThemes;
     use unicode_segmentation::UnicodeSegmentation as _;
+
+    thread_local! {
+        pub(super) static ROW_WORK: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+    }
+
+    #[gpui::test]
+    async fn test_columnar_selection_actions_batch_work(cx: &mut TestAppContext) {
+        crate::editor_tests::init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+        let rows = [("é.", 3, 2), ("e\u{301}.", 4, 3), ("🦀.", 5, 4)];
+        for count in [32, 128] {
+            let text = rows
+                .iter()
+                .map(|(unit, _, _)| unit.repeat(count))
+                .collect::<Vec<_>>()
+                .join("\n");
+            for above in [false, true] {
+                for (nonempty, reversed) in [(false, false), (true, false), (true, true)] {
+                    let indices = if nonempty { 0..count } else { 1..count + 1 };
+                    let expected = |added| {
+                        rows.iter()
+                            .enumerate()
+                            .filter(|(row, _)| {
+                                if above {
+                                    *row >= 2 - added
+                                } else {
+                                    *row <= added
+                                }
+                            })
+                            .flat_map(|(row, &(_, stride, width))| {
+                                separated_columnar_ranges(
+                                    row as u32,
+                                    indices.clone(),
+                                    stride,
+                                    if nonempty { width } else { 0 },
+                                    reversed,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    };
+                    set_columnar_action_state(&mut cx, &text, &expected(0));
+                    for (direction, added) in [
+                        (above, 1),
+                        (above, 2),
+                        (above, 2),
+                        (!above, 1),
+                        (!above, 0),
+                        (above, 1),
+                    ] {
+                        let expected = expected(added);
+                        assert_eq!(expected.len(), (added + 1) * count);
+                        assert_columnar_action_work(&mut cx, direction, &expected, 4 * (2 * count));
+                    }
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_columnar_selection_actions_join_skipped_rows_work(cx: &mut TestAppContext) {
+        crate::editor_tests::init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+        for count in [32, 128] {
+            for above in [false, true] {
+                let row = |row| if above { 6 - row } else { row };
+                let mut lines = [
+                    "é.".repeat(count + 1),
+                    "é".to_owned(),
+                    "e\u{301}.".repeat(count / 2 + 1),
+                    String::new(),
+                    "🦀.".to_owned(),
+                    "🦀.".repeat(count + 1),
+                    "e\u{301}.".repeat(count + 1),
+                ];
+                if above {
+                    lines.reverse();
+                }
+                let text = lines.join("\n");
+                for reversed in [false, true] {
+                    let sources =
+                        separated_columnar_ranges(row(0), count / 2 + 1..count + 1, 3, 2, reversed)
+                            .into_iter()
+                            .chain(separated_columnar_ranges(
+                                row(2),
+                                1..count / 2 + 1,
+                                4,
+                                3,
+                                reversed,
+                            ))
+                            .collect::<Vec<_>>();
+                    let expected = |added| {
+                        let mut expected = sources.clone();
+                        for (target, stride, width) in
+                            [(5, 5, 4), (6, 4, 3)].into_iter().take(added)
+                        {
+                            expected.extend(separated_columnar_ranges(
+                                row(target),
+                                1..count + 1,
+                                stride,
+                                width,
+                                reversed,
+                            ));
+                        }
+                        expected.sort_unstable_by_key(|range| range.start.min(range.end));
+                        expected
+                    };
+                    set_columnar_action_state(&mut cx, &text, &expected(0));
+                    for (direction, added) in [
+                        (above, 1),
+                        (above, 2),
+                        (above, 2),
+                        (!above, 1),
+                        (!above, 0),
+                        (above, 1),
+                    ] {
+                        let expected = expected(added);
+                        assert_eq!(expected.len(), (added + 1) * count);
+                        assert_columnar_action_work(
+                            &mut cx,
+                            direction,
+                            &expected,
+                            5 * (2 * (count + 1)),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_columnar_selection_actions_skip_replaced_source_rows(cx: &mut TestAppContext) {
+        crate::editor_tests::init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+        for hidden_count in [1, 1000] {
+            let text = iter::repeat_n("éab", hidden_count as usize + 3)
+                .collect::<Vec<_>>()
+                .join("\n");
+            for above in [false, true] {
+                let row = |row| if above { hidden_count + 2 - row } else { row };
+                for ends_inside_replacement in [false, true] {
+                    let end_row = hidden_count + u32::from(!ends_inside_replacement);
+                    let source = Point::new(row(0).min(row(end_row)), 2)
+                        ..Point::new(row(0).max(row(end_row)), 3);
+                    set_columnar_action_state(&mut cx, &text, &[source]);
+                    let blocks = cx.update_editor(|editor, _, cx| {
+                        let buffer = editor.buffer.read(cx).snapshot(cx);
+                        editor.insert_blocks(
+                            [BlockProperties {
+                                placement: BlockPlacement::Replace(
+                                    buffer
+                                        .anchor_after(Point::new(row(1).min(row(hidden_count)), 0))
+                                        ..=buffer.anchor_before(Point::new(
+                                            row(1).max(row(hidden_count)),
+                                            4,
+                                        )),
+                                ),
+                                height: Some(1),
+                                style: BlockStyle::Fixed,
+                                render: Arc::new(|_| div().into_any()),
+                                priority: 0,
+                            }],
+                            None,
+                            cx,
+                        )
+                    });
+                    let mut expected = [0, hidden_count + 1, hidden_count + 2]
+                        .into_iter()
+                        .take(if ends_inside_replacement { 2 } else { 3 })
+                        .map(|source_row| {
+                            Point::new(row(source_row), 2)..Point::new(row(source_row), 3)
+                        })
+                        .collect::<Vec<_>>();
+                    expected.sort_unstable_by_key(|range| range.start);
+                    assert_columnar_action_work(&mut cx, above, &expected, 32);
+                    cx.update_editor(|editor, _, cx| {
+                        editor.remove_blocks(blocks.into_iter().collect(), None, cx);
+                    });
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_columnar_selection_batch_work(cx: &mut TestAppContext) {
+        init_test(cx);
+        let length = 4096;
+        let line = "é".repeat(length);
+        let snapshot = plain_state(&format!("{line}\n{line}"), cx)
+            .build_map(cx)
+            .update(cx, |map, cx| map.snapshot(cx));
+        let mut query = ColumnarSelectionRows::new(&snapshot);
+        let mut ranges = (0..length as u32)
+            .flat_map(|column| {
+                (0..2)
+                    .map(move |row| Point::new(row, column * 2)..Point::new(row, length as u32 * 2))
+            })
+            .collect::<Vec<_>>();
+        let mut expected_columns = (0..length as u32)
+            .flat_map(|column| [column..length as u32, column..length as u32])
+            .collect::<Vec<_>>();
+        for _ in 0..2 {
+            ROW_WORK.set((0, 0));
+            let answers = query.columns_for_ranges(&ranges);
+            assert_eq!(answers.len(), expected_columns.len());
+            for (index, (answer, expected)) in answers.iter().zip(&expected_columns).enumerate() {
+                assert_eq!(answer, expected, "range {index}");
+            }
+            let (boundaries, chunks) = ROW_WORK.get();
+            assert_eq!(boundaries, 2 * length);
+            assert!(chunks <= 2 * length);
+            ranges.reverse();
+            expected_columns.reverse();
+        }
+        let requests = (0..length as u32)
+            .flat_map(|column| (0..2).map(move |row| (row, column..length as u32)))
+            .collect::<Vec<_>>();
+        let expected_points = (0..length as u32)
+            .flat_map(|column| {
+                (0..2).map(move |row| {
+                    Some((
+                        Point::new(row, column * 2),
+                        Point::new(row, length as u32 * 2),
+                    ))
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_batch_points(&mut query, requests, expected_points, 4 * length);
+        assert_eq!(query.columns_for_ranges(&[]), Vec::new());
+        assert_eq!(query.points_for_rows(&[]), Vec::new());
+    }
+
+    #[gpui::test]
+    fn test_columnar_selection_batch_fold_projection(cx: &mut TestAppContext) {
+        init_test(cx);
+        let length = 128;
+        let prefix = "é".repeat(length);
+        let indicators = "🇦".repeat(length);
+        let mut state = plain_state(&format!("{prefix}\n{indicators}\n{indicators}"), cx);
+        let buffer = state.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        state.folds = vec![
+            buffer.anchor_after(Point::new(0, length as u32 * 2))
+                ..buffer.anchor_before(Point::new(1, 4)),
+            buffer.anchor_after(Point::new(1, length as u32 * 4))
+                ..buffer.anchor_before(Point::new(2, 4)),
+        ];
+        let snapshot = state.build_map(cx).update(cx, |map, cx| map.snapshot(cx));
+        let visible_indicators = "🇦".repeat(length - 1);
+        assert_eq!(
+            snapshot.tab_snapshot().text(),
+            format!("{prefix}⋯{visible_indicators}⋯{visible_indicators}")
+        );
+        let end_column = length as u32 * 2 + 2;
+        let end = Point::new(2, length as u32 * 4);
+        let requests = (0..=end_column)
+            .flat_map(|column| [(0, column..column), (0, column..end_column)])
+            .collect::<Vec<_>>();
+        let expected = (0..=end_column)
+            .flat_map(|column| {
+                let point = if column <= length as u32 {
+                    Point::new(0, column * 2)
+                } else if column <= length as u32 * 3 / 2 {
+                    Point::new(0, length as u32 * 2)
+                } else if column < end_column {
+                    Point::new(1, length as u32 * 4)
+                } else {
+                    end
+                };
+                [Some((point, point)), Some((point, end))]
+            })
+            .collect::<Vec<_>>();
+        let mut query = ColumnarSelectionRows::new(&snapshot);
+        assert_batch_points(&mut query, requests, expected, 16 * length);
+    }
+
+    #[gpui::test]
+    fn test_columnar_selection_batch_rejects_before_end(cx: &mut TestAppContext) {
+        init_test(cx);
+        let mut state = plain_state("x\né\n", cx);
+        let buffer = state.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        state.inlays.push(Inlay::mock_hint(
+            0,
+            buffer.anchor_before(Point::new(1, 0)),
+            &format!("é{}\n", "a".repeat(1_048_576)),
+        ));
+        let snapshot = state.build_map(cx).update(cx, |map, cx| map.snapshot(cx));
+        let mut query = ColumnarSelectionRows::new(&snapshot);
+        let mut requests = vec![(1, 0..u32::MAX); 4096];
+        requests.extend([(2, 1..u32::MAX), (0, 2..u32::MAX), (u32::MAX, 0..0)]);
+        for _ in 0..2 {
+            ROW_WORK.set((0, 0));
+            assert_eq!(query.points_for_rows(&requests), vec![None; requests.len()]);
+            assert_eq!(ROW_WORK.get(), (1, 1));
+            requests.reverse();
+        }
+    }
+
+    #[gpui::test]
+    fn test_columnar_selection_batch_virtual_frontier_work(cx: &mut TestAppContext) {
+        init_test(cx);
+        for (folded, length, prefix_length) in [(false, 4096, 1), (true, 64, 1), (true, 4096, 256)]
+        {
+            let prefix = "a".repeat(prefix_length);
+            let placeholder = "é".repeat(length);
+            let point = Point::new(0, prefix_length as u32);
+            let mut state = plain_state(&format!("{prefix}xb"), cx);
+            if !folded {
+                let buffer = state.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+                state.inlays.push(Inlay::mock_hint(
+                    0,
+                    buffer.anchor_after(point),
+                    &placeholder,
+                ));
+            }
+            let map = state.build_map(cx);
+            if folded {
+                map.update(cx, |map, cx| {
+                    map.fold(
+                        vec![Crease::simple(
+                            point..Point::new(0, point.column + 1),
+                            FoldPlaceholder {
+                                collapsed_text: Some(SharedString::from(placeholder.clone())),
+                                ..FoldPlaceholder::test()
+                            },
+                        )],
+                        cx,
+                    )
+                });
+            }
+            let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+            assert_eq!(
+                snapshot.tab_snapshot().text(),
+                if folded {
+                    format!("{prefix}{placeholder}b")
+                } else {
+                    format!("{prefix}{placeholder}xb")
+                }
+            );
+            let end = point.column + length as u32 - 1;
+            let requests = (point.column..=end)
+                .flat_map(|column| [(0, column..column), (0, column..end)])
+                .collect::<Vec<_>>();
+            let expected = vec![Some((point, point)); requests.len()];
+            assert_batch_points(
+                &mut ColumnarSelectionRows::new(&snapshot),
+                requests,
+                expected,
+                8 * length,
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_columnar_selection_batch_frontier_across_original_rows(
+        cx: &mut TestAppContext,
+        mut rng: StdRng,
+    ) {
+        init_test(cx);
+        let lines = [
+            "ééé",
+            "🇦🇶🇦🇶🇦🇶🇦",
+            "🇦🇶🇦🇶🇦🇶🇦🇶",
+            "\t\u{301}界",
+            "\u{600}e\u{301}",
+            "👩🏽\u{200d}💻",
+            "क्\u{200d}ष",
+            "\u{1100}\u{1161}\u{11a8}",
+            "\u{301}\u{301}",
+            "a\0\u{200b}b",
+            "é界🏀",
+            "✈\u{fe0f}1\u{fe0f}\u{20e3}",
+            "का",
+            "",
+        ];
+        for tab_size in [1, 128] {
+            set_tab_size(tab_size, cx);
+            for bias in [None, Some(Bias::Left), Some(Bias::Right)] {
+                let mut state = plain_state(&lines.join("\n"), cx);
+                let buffer = state.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+                for (row, line) in lines.iter().enumerate().skip(1) {
+                    let Some(first) = line.chars().next() else {
+                        continue;
+                    };
+                    let point = Point::new(row as u32, first.len_utf8() as u32);
+                    if row % 4 != 0 {
+                        state.folds.push(
+                            buffer.anchor_after(Point::new(
+                                row as u32 - 1,
+                                lines[row - 1].len() as u32,
+                            ))..buffer.anchor_before(point),
+                        );
+                    }
+                    if let Some(bias) = bias {
+                        state.inlays.push(Inlay::mock_hint(
+                            row,
+                            buffer.anchor_at(point, bias),
+                            ["🇶", "\u{301}", "\t\n\u{600}"][row % 3],
+                        ));
+                    }
+                }
+                let snapshot = state.build_map(cx).update(cx, |map, cx| map.snapshot(cx));
+                let expanded = snapshot
+                    .fold_snapshot()
+                    .text()
+                    .split('\n')
+                    .map(|line| plain_row(line, tab_size))
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    snapshot.tab_snapshot().text(),
+                    expanded
+                        .iter()
+                        .map(|row| row.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                );
+                let raw = snapshot.buffer_snapshot().text();
+                let candidates = expanded
+                    .iter()
+                    .enumerate()
+                    .map(|(row, expanded)| {
+                        enumerated_points(&snapshot, &raw, row as u32, &expanded.boundaries)
+                    })
+                    .collect::<Vec<_>>();
+                let mut requests = expanded
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(row, expanded)| {
+                        (0..=expanded.len + 1)
+                            .chain(iter::once(u32::MAX))
+                            .flat_map(move |start| {
+                                [0, start, start.saturating_add(1), expanded.len, u32::MAX]
+                                    .map(|end| (row as u32, start..end))
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                requests.extend([(u32::MAX, 0..0), (expanded.len() as u32, 0..1)]);
+                requests.extend_from_within(..);
+                requests.shuffle(&mut rng);
+                let mut query = ColumnarSelectionRows::new(&snapshot);
+                for _ in 0..4 {
+                    let answers = query.points_for_rows(&requests);
+                    assert_eq!(answers.len(), requests.len());
+                    for ((row, columns), answer) in requests.iter().zip(answers) {
+                        let expected = expanded.get(*row as usize).and_then(|expanded| {
+                            nearest_points(columns, expanded.len, &candidates[*row as usize])
+                        });
+                        assert_eq!(
+                            answer, expected,
+                            "tab size {tab_size}, bias {bias:?}, row {row}, columns {columns:?}"
+                        );
+                    }
+                    requests.reverse();
+                    requests = requests.into_iter().step_by(7).collect();
+                }
+                let points = lines
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(row, line)| {
+                        scalar_boundaries(line)
+                            .into_iter()
+                            .map(move |byte| Point::new(row as u32, byte as u32))
+                    })
+                    .collect::<Vec<_>>();
+                let mut ranges = points
+                    .iter()
+                    .flat_map(|start| points.iter().map(move |end| *start..*end))
+                    .collect::<Vec<_>>();
+                ranges.extend_from_within(..);
+                ranges.shuffle(&mut rng);
+                let answers = query.columns_for_ranges(&ranges);
+                assert_eq!(answers.len(), ranges.len());
+                for (range, answer) in ranges.iter().zip(answers) {
+                    let column = |point| {
+                        let tab = snapshot
+                            .tab_snapshot()
+                            .point_to_tab_point(point, Bias::Left);
+                        expanded[tab.row() as usize]
+                            .boundaries
+                            .partition_point(|byte| *byte <= tab.column() as usize)
+                            as u32
+                            - 1
+                    };
+                    let start = column(range.start);
+                    let end = column(range.end);
+                    assert_eq!(
+                        answer,
+                        start.min(end)..start.max(end),
+                        "tab size {tab_size}, bias {bias:?}, source {range:?}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_column_boundaries_across_chunks() {
@@ -714,7 +1337,7 @@ mod tests {
     #[gpui::test]
     fn test_columnar_selection_right_inlay_shifts_regional_parity(cx: &mut TestAppContext) {
         init_test(cx);
-        for symbols in [4, 64, 1024] {
+        for symbols in [4, 64, 8192] {
             let text = format!("{}z", "🇦".repeat(symbols));
             let mut state = plain_state(&text, cx);
             let buffer = state.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
@@ -725,14 +1348,19 @@ mod tests {
             assert_eq!(snapshot.tab_snapshot().text(), format!("🇶{text}"));
             let mut query = ColumnarSelectionRows::new(&snapshot);
             let last_flag = symbols as u32 / 2;
-            for column in [1, last_flag / 2, last_flag] {
-                assert_eq!(
-                    query.points_for_row(0, &(column..column)),
-                    Some((Point::zero(), Point::zero())),
-                    "symbols {symbols}, column {column}"
-                );
-            }
+            let requests = (1..=last_flag)
+                .flat_map(|column| [(0, column..column), (0, column..last_flag + 1)])
+                .collect::<Vec<_>>();
             let end = Point::new(0, symbols as u32 * 4);
+            let expected = (1..=last_flag)
+                .flat_map(|_| {
+                    [
+                        Some((Point::zero(), Point::zero())),
+                        Some((Point::zero(), end)),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            assert_batch_points(&mut query, requests, expected, 8 * symbols);
             assert_eq!(
                 query.points_for_row(0, &(last_flag..last_flag + 1)),
                 Some((Point::zero(), end))
@@ -1637,6 +2265,79 @@ mod tests {
         boundaries: Vec<usize>,
     }
 
+    fn assert_batch_points(
+        query: &mut ColumnarSelectionRows<'_>,
+        mut requests: Vec<(u32, Range<u32>)>,
+        mut expected: Vec<Option<(Point, Point)>>,
+        work_bound: usize,
+    ) {
+        for _ in 0..2 {
+            ROW_WORK.set((0, 0));
+            let answers = query.points_for_rows(&requests);
+            assert_eq!(answers.len(), expected.len());
+            for (index, (answer, expected)) in answers.iter().zip(&expected).enumerate() {
+                assert_eq!(answer, expected, "request {index}: {:?}", requests[index]);
+            }
+            let (boundaries, chunks) = ROW_WORK.get();
+            assert!(boundaries <= work_bound, "{boundaries} > {work_bound}");
+            assert!(chunks <= work_bound, "{chunks} > {work_bound}");
+            requests.reverse();
+            expected.reverse();
+        }
+    }
+
+    fn enumerated_points(
+        snapshot: &DisplaySnapshot,
+        raw: &str,
+        row: u32,
+        boundaries: &[usize],
+    ) -> Vec<(u32, Point)> {
+        raw.split('\n')
+            .enumerate()
+            .flat_map(|(row, line)| {
+                grapheme_boundaries(line)
+                    .into_iter()
+                    .map(move |byte| Point::new(row as u32, byte as u32))
+            })
+            .filter_map(|point| {
+                let tab = snapshot
+                    .tab_snapshot()
+                    .point_to_tab_point(point, Bias::Left);
+                let display = point.to_display_point(snapshot);
+                if tab.row() != row
+                    || snapshot.tab_snapshot().tab_point_to_point(tab, Bias::Left) != point
+                    || display.to_point(snapshot) != point
+                    || snapshot.is_block_line(display.row())
+                {
+                    return None;
+                }
+                boundaries
+                    .binary_search(&(tab.column() as usize))
+                    .ok()
+                    .map(|column| (column as u32, point))
+            })
+            .collect()
+    }
+
+    fn nearest_points(
+        columns: &Range<u32>,
+        length: u32,
+        candidates: &[(u32, Point)],
+    ) -> Option<(Point, Point)> {
+        if columns.start > columns.end || (columns.start != columns.end && columns.start >= length)
+        {
+            return None;
+        }
+        let point = |column| {
+            candidates
+                .iter()
+                .filter(|(candidate, _)| *candidate <= column)
+                .max_by_key(|(candidate, _)| *candidate)
+                .map(|(_, point)| *point)
+        };
+        point(columns.start).zip(point(columns.end))
+    }
+
     fn hidden_rows(snapshot: &DisplaySnapshot) -> Vec<bool> {
         (0..=snapshot.buffer_snapshot().max_point().row)
             .map(|row| snapshot.is_block_line(Point::new(row, 0).to_display_point(snapshot).row()))
@@ -1982,34 +2683,9 @@ mod tests {
                     .end,
                 len
             );
-            let candidates = raw_lines
-                .iter()
-                .enumerate()
-                .flat_map(|(row, line)| {
-                    grapheme_boundaries(line)
-                        .into_iter()
-                        .map(move |byte| Point::new(row as u32, byte as u32))
-                })
-                .filter_map(|point| {
-                    let tab = snapshot
-                        .tab_snapshot()
-                        .point_to_tab_point(point, Bias::Left);
-                    let display = point.to_display_point(snapshot);
-                    if tab.row() as usize != row
-                        || snapshot.tab_snapshot().tab_point_to_point(tab, Bias::Left) != point
-                        || display.to_point(snapshot) != point
-                        || snapshot.is_block_line(display.row())
-                    {
-                        return None;
-                    }
-                    boundaries
-                        .binary_search(&(tab.column() as usize))
-                        .ok()
-                        .map(|column| (column as u32, point))
-                })
-                .collect::<Vec<_>>();
+            let candidates = enumerated_points(snapshot, &raw, row as u32, boundaries);
             let middle = rng.random_range(0..=len + 1);
-            for columns in [
+            let requests = [
                 0..0,
                 0..u32::MAX,
                 middle..middle,
@@ -2018,12 +2694,16 @@ mod tests {
                 len..len,
                 len..len + 1,
                 u32::MAX..u32::MAX,
-            ] {
-                let points = query.points_for_row(row as u32, &columns);
+            ]
+            .map(|columns| (row as u32, columns));
+            let answers = query.points_for_rows(&requests);
+            let rebuilt_answers = rebuilt_query.points_for_rows(&requests);
+            for (((_, columns), points), rebuilt_points) in
+                requests.into_iter().zip(answers).zip(rebuilt_answers)
+            {
                 if blocks_agree {
                     assert_eq!(
-                        points,
-                        rebuilt_query.points_for_row(row as u32, &columns),
+                        points, rebuilt_points,
                         "operation {operation}: row {row}, columns {columns:?}"
                     );
                 }
@@ -2034,18 +2714,7 @@ mod tests {
                         "operation {operation}: independent row {row}, columns {columns:?}"
                     );
                 }
-                let expected_candidate = |column| {
-                    candidates
-                        .iter()
-                        .filter(|(candidate, _)| *candidate <= column)
-                        .max_by_key(|(candidate, _)| *candidate)
-                        .map(|(_, point)| *point)
-                };
-                let expected = if columns.start != columns.end && columns.start >= len {
-                    None
-                } else {
-                    expected_candidate(columns.start).zip(expected_candidate(columns.end))
-                };
+                let expected = nearest_points(&columns, len, &candidates);
                 assert_eq!(
                     points, expected,
                     "operation {operation}: enumerated raw boundaries, row {row}, columns {columns:?}, raw {raw:?}, tab {text:?}"
@@ -2096,5 +2765,83 @@ mod tests {
             }
         }
         assert_eq!(query.points_for_row(lines.len() as u32, &(0..0)), None);
+    }
+
+    fn separated_columnar_ranges(
+        row: u32,
+        indices: Range<usize>,
+        stride: u32,
+        width: u32,
+        reversed: bool,
+    ) -> Vec<Range<Point>> {
+        indices
+            .map(|index| {
+                let start = Point::new(row, index as u32 * stride);
+                let end = Point::new(row, start.column + width);
+                if reversed { end..start } else { start..end }
+            })
+            .collect()
+    }
+
+    fn set_columnar_action_state(
+        cx: &mut EditorTestContext,
+        text: &str,
+        expected: &[Range<Point>],
+    ) {
+        cx.update_editor(|editor, window, cx| {
+            editor.set_text(text, window, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges(expected.iter().cloned());
+            });
+            assert_eq!(
+                editor
+                    .selections
+                    .ranges::<Point>(&editor.display_snapshot(cx)),
+                expected,
+            );
+        });
+    }
+
+    #[track_caller]
+    fn assert_columnar_action_work(
+        cx: &mut EditorTestContext,
+        above: bool,
+        expected: &[Range<Point>],
+        work_bound: usize,
+    ) {
+        cx.update_editor(|editor, window, cx| {
+            ROW_WORK.set((0, 0));
+            if above {
+                editor.add_selection_above(
+                    &AddSelectionAbove {
+                        skip_soft_wrap: true,
+                    },
+                    window,
+                    cx,
+                );
+            } else {
+                editor.add_selection_below(
+                    &AddSelectionBelow {
+                        skip_soft_wrap: true,
+                    },
+                    window,
+                    cx,
+                );
+            }
+            let (boundaries, chunks) = ROW_WORK.replace((0, 0));
+            assert!(boundaries > 0);
+            assert!(chunks > 0);
+            assert!(
+                boundaries + chunks <= work_bound,
+                "above {above}: {boundaries} boundaries + {chunks} chunks > {work_bound}",
+            );
+            let actual = editor
+                .selections
+                .ranges::<Point>(&editor.display_snapshot(cx));
+            assert_eq!(actual.len(), expected.len(), "above {above}");
+            for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+                assert_eq!(actual, expected, "above {above}, selection {index}");
+            }
+        });
     }
 }

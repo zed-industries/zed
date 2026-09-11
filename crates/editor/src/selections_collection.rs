@@ -1,15 +1,15 @@
 use std::{
-    cmp, fmt, iter, mem,
-    ops::{AddAssign, Deref, DerefMut, Range, RangeInclusive, Sub},
+    cmp,
+    collections::BTreeMap,
+    fmt, iter, mem,
+    ops::{AddAssign, Deref, DerefMut, Range, Sub},
     sync::Arc,
 };
 
-use collections::HashMap;
 use gpui::Pixels;
 use itertools::{Either, Itertools as _};
 use language::{Bias, Point, Selection, SelectionGoal};
 use multi_buffer::{MultiBufferDimension, MultiBufferOffset, ToPoint};
-use smallvec::SmallVec;
 
 use crate::{
     Anchor, DisplayPoint, DisplayRow, MultiBufferSnapshot, SelectMode, ToOffset,
@@ -27,8 +27,6 @@ pub struct PendingSelection {
 #[derive(Debug, Clone)]
 pub struct SelectionsCollection {
     next_selection_id: usize,
-    used_selection_ids: SmallVec<[RangeInclusive<usize>; 1]>,
-    overflow_selection_id_order: HashMap<usize, usize>,
     line_mode: bool,
     /// The non-pending, non-overlapping selections.
     /// The [SelectionsCollection::pending] selection could possibly overlap these
@@ -43,8 +41,6 @@ impl SelectionsCollection {
     pub fn new() -> Self {
         Self {
             next_selection_id: 1,
-            used_selection_ids: SmallVec::from_buf([0..=0]),
-            overflow_selection_id_order: HashMap::default(),
             line_mode: false,
             disjoint: Arc::default(),
             pending: Some(PendingSelection {
@@ -64,10 +60,6 @@ impl SelectionsCollection {
 
     pub fn clone_state(&mut self, other: &SelectionsCollection) {
         self.next_selection_id = other.next_selection_id;
-        self.used_selection_ids
-            .clone_from(&other.used_selection_ids);
-        self.overflow_selection_id_order
-            .clone_from(&other.overflow_selection_id_order);
         self.line_mode = other.line_mode;
         self.disjoint = other.disjoint.clone();
         self.pending.clone_from(&other.pending);
@@ -310,11 +302,7 @@ impl SelectionsCollection {
         self.pending
             .as_ref()
             .map(|s| &s.selection)
-            .or_else(|| {
-                self.disjoint
-                    .iter()
-                    .max_by_key(|selection| self.selection_id_order(selection.id))
-            })
+            .or_else(|| self.disjoint.iter().max_by_key(|s| s.id))
             .unwrap()
     }
 
@@ -336,7 +324,7 @@ impl SelectionsCollection {
     pub fn oldest_anchor(&self) -> &Selection<Anchor> {
         self.disjoint
             .iter()
-            .min_by_key(|selection| self.selection_id_order(selection.id))
+            .min_by_key(|s| s.id)
             .or_else(|| self.pending.as_ref().map(|p| &p.selection))
             .unwrap()
     }
@@ -469,21 +457,28 @@ impl SelectionsCollection {
         })
     }
 
-    pub(crate) fn build_columnar_selection_from_tab_expanded_columns(
+    pub(crate) fn build_columnar_selections_from_tab_expanded_columns(
         &mut self,
         rows: &mut ColumnarSelectionRows<'_>,
-        tab_row: u32,
-        goal_columns: &Range<u32>,
-        reversed: bool,
-    ) -> Option<Selection<Point>> {
-        let (start, end) = rows.points_for_row(tab_row, goal_columns)?;
-        Some(Selection {
-            id: self.allocate_selection_id(),
-            start,
-            end,
-            reversed,
-            goal: SelectionGoal::None,
-        })
+        queries: &[(u32, Range<u32>, bool)],
+    ) -> Vec<Option<Selection<Point>>> {
+        let row_queries = queries
+            .iter()
+            .map(|(row, columns, _)| (*row, columns.clone()))
+            .collect::<Vec<_>>();
+        rows.points_for_rows(&row_queries)
+            .into_iter()
+            .zip(queries)
+            .map(|(points, &(_, _, reversed))| {
+                points.map(|(start, end)| Selection {
+                    id: self.allocate_selection_id(),
+                    start,
+                    end,
+                    reversed,
+                    goal: SelectionGoal::None,
+                })
+            })
+            .collect()
     }
 
     /// Finds the next columnar selection by walking display rows one at a time
@@ -519,47 +514,82 @@ impl SelectionsCollection {
         None
     }
 
-    pub(crate) fn find_next_columnar_selection_by_buffer_row(
+    pub(crate) fn find_next_columnar_selections_by_buffer_row(
         &mut self,
         display_map: &DisplaySnapshot,
         rows: &mut ColumnarSelectionRows<'_>,
-        selection: &Selection<Point>,
+        queries: &[(Selection<Point>, Range<u32>)],
         above: bool,
-        goal_columns: &Range<u32>,
-    ) -> Option<Selection<Point>> {
+    ) -> Vec<Option<Selection<Point>>> {
         let tabs = display_map.tab_snapshot();
-        let point = if above {
-            selection.start
-        } else {
-            selection.end
-        };
-        let mut row = tabs.point_to_tab_point(point, Bias::Left).row();
         let max_row = tabs.max_point().row();
-        loop {
-            row = if above {
-                row.checked_sub(1)?
-            } else if row < max_row {
-                row + 1
+        let next_row = |row: u32| {
+            if above {
+                row.checked_sub(1)
             } else {
-                return None;
+                row.checked_add(1).filter(|row| *row <= max_row)
+            }
+        };
+        let mut pending = BTreeMap::<_, Vec<_>>::new();
+        let mut answers = vec![None; queries.len()];
+        for (index, (selection, columns)) in queries.iter().enumerate() {
+            if columns.start > columns.end {
+                continue;
+            }
+            let point = if above {
+                selection.start
+            } else {
+                selection.end
             };
+            if let Some(row) = next_row(tabs.point_to_tab_point(point, Bias::Left).row()) {
+                pending.entry(row).or_default().push(index);
+            }
+        }
+        while let Some((row, query_indices)) = if above {
+            pending.pop_last()
+        } else {
+            pending.pop_first()
+        } {
             if let Some(hidden_rows) = display_map.fully_replaced_tab_rows(row) {
-                row = if above {
+                let row = if above {
                     *hidden_rows.start()
                 } else {
                     *hidden_rows.end()
                 };
+                if let Some(row) = next_row(row) {
+                    pending.entry(row).or_default().extend(query_indices);
+                }
                 continue;
             }
-            if let Some(candidate) = self.build_columnar_selection_from_tab_expanded_columns(
-                rows,
-                row,
-                goal_columns,
-                selection.reversed,
-            ) {
-                return Some(candidate);
+            let row_queries = query_indices
+                .iter()
+                .map(|&index| (row, queries[index].1.clone()))
+                .collect::<Vec<_>>();
+            let next_row = next_row(row);
+            for (index, points) in query_indices
+                .into_iter()
+                .zip(rows.points_for_rows(&row_queries))
+            {
+                if let Some(points) = points {
+                    answers[index] = Some(points);
+                } else if let Some(row) = next_row {
+                    pending.entry(row).or_default().push(index);
+                }
             }
         }
+        answers
+            .into_iter()
+            .zip(queries)
+            .map(|(points, (selection, _))| {
+                points.map(|(start, end)| Selection {
+                    id: self.allocate_selection_id(),
+                    start,
+                    end,
+                    reversed: selection.reversed,
+                    goal: SelectionGoal::None,
+                })
+            })
+            .collect()
     }
 
     pub fn change_with<R>(
@@ -649,77 +679,10 @@ impl SelectionsCollection {
         self.is_extending = is_extending;
     }
 
-    pub(crate) fn selection_id_order(&self, id: usize) -> (usize, usize) {
-        (
-            self.overflow_selection_id_order
-                .get(&id)
-                .copied()
-                .unwrap_or(0),
-            id,
-        )
-    }
-
     fn allocate_selection_id(&mut self) -> usize {
         let id = self.next_selection_id;
-        self.reserve_selection_ids(iter::once(id));
+        self.next_selection_id = id.wrapping_add(1);
         id
-    }
-
-    fn reserve_selection_ids(&mut self, ids: impl Iterator<Item = usize>) {
-        let mut ids = ids.collect::<SmallVec<[usize; 4]>>();
-        ids.sort_unstable();
-        for id in ids {
-            let index = self
-                .used_selection_ids
-                .partition_point(|range| *range.end() < id);
-            if self
-                .used_selection_ids
-                .get(index)
-                .is_some_and(|range| range.contains(&id))
-            {
-                continue;
-            }
-            if self
-                .used_selection_ids
-                .last()
-                .is_some_and(|range| *range.end() == usize::MAX)
-            {
-                self.overflow_selection_id_order
-                    .insert(id, self.overflow_selection_id_order.len() + 1);
-            }
-            let previous = index.checked_sub(1).filter(|previous| {
-                self.used_selection_ids[*previous].end().checked_add(1) == Some(id)
-            });
-            let joins_next = self
-                .used_selection_ids
-                .get(index)
-                .is_some_and(|range| id.checked_add(1) == Some(*range.start()));
-            match (previous, joins_next) {
-                (Some(previous), true) => {
-                    let end = *self.used_selection_ids.remove(index).end();
-                    self.used_selection_ids[previous] =
-                        *self.used_selection_ids[previous].start()..=end;
-                }
-                (Some(previous), false) => {
-                    self.used_selection_ids[previous] =
-                        *self.used_selection_ids[previous].start()..=id;
-                }
-                (None, true) => {
-                    self.used_selection_ids[index] = id..=*self.used_selection_ids[index].end();
-                }
-                (None, false) => self.used_selection_ids.insert(index, id..=id),
-            }
-        }
-        self.next_selection_id = self
-            .used_selection_ids
-            .last()
-            .and_then(|range| range.end().checked_add(1))
-            .or_else(|| {
-                self.used_selection_ids
-                    .first()
-                    .and_then(|range| range.end().checked_add(1))
-            })
-            .expect("selection ID space exhausted");
     }
 }
 
@@ -837,7 +800,6 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     }
 
     pub(crate) fn set_pending(&mut self, selection: Selection<Anchor>, mode: SelectMode) {
-        self.reserve_selection_ids(iter::once(selection.id));
         self.collection.pending = Some(PendingSelection { selection, mode });
         self.selections_changed = true;
     }
@@ -898,7 +860,6 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     where
         T: ToOffset + std::marker::Copy + std::fmt::Debug,
     {
-        self.reserve_selection_ids(selections.iter().map(|selection| selection.id));
         let mut selections = selections
             .into_iter()
             .map(|selection| selection.map(|it| it.to_offset(self.snapshot)))
@@ -941,7 +902,6 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     }
 
     pub fn select_anchors(&mut self, selections: Vec<Selection<Anchor>>) {
-        self.reserve_selection_ids(selections.iter().map(|selection| selection.id));
         let map = self.display_snapshot();
         let resolved_selections =
             resolve_selections_wrapping_blocks::<MultiBufferOffset, _>(&selections, &map)
@@ -1051,7 +1011,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         let disjoint = self.disjoint.clone();
         for selection in disjoint
             .iter()
-            .sorted_by_key(|selection| cmp::Reverse(self.selection_id_order(selection.id)))
+            .sorted_by(|first, second| Ord::cmp(&second.id, &first.id))
         {
             new_selections.push(Selection {
                 id: self.new_selection_id(),
@@ -1462,7 +1422,7 @@ mod tests {
     use project::project_settings::DiagnosticSeverity;
     use rand::{Rng as _, rngs::StdRng};
     use settings::SettingsStore;
-    use std::{collections::BTreeSet, sync::Arc};
+    use std::sync::Arc;
 
     fn row_range_snapshot(cx: &mut gpui::TestAppContext, text: &str) -> DisplaySnapshot {
         selection_test_display_map(cx, text).update(cx, |map, cx| map.snapshot(cx))
@@ -1633,441 +1593,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn imported_selection_ids_advance_allocator(cx: &mut gpui::TestAppContext) {
-        let snapshot = row_range_snapshot(cx, "abcdef");
-        for expand_blocks in [false, true] {
-            for imported_id in [1, 40, usize::MAX - 2] {
-                let imported = Selection {
-                    id: imported_id,
-                    start: MultiBufferOffset(0),
-                    end: MultiBufferOffset(1),
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                };
-                let mut collection = SelectionsCollection::new();
-                collection.change_with(&snapshot, |selections| {
-                    let anchors = vec![selection_to_anchor_selection(imported, &snapshot)];
-                    if expand_blocks {
-                        selections.select_anchors(anchors);
-                    } else {
-                        selections.select_anchors_unexpanded(anchors);
-                    }
-                    assert_eq!(selections.next_selection_id(), imported_id + 1);
-                    selections.insert_range(MultiBufferOffset(3)..MultiBufferOffset(3));
-                });
-                assert_eq!(
-                    collection.all_unexpanded::<MultiBufferOffset>(&snapshot),
-                    vec![
-                        imported,
-                        Selection {
-                            id: imported_id + 1,
-                            start: MultiBufferOffset(3),
-                            end: MultiBufferOffset(3),
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        },
-                    ]
-                );
-                collection.change_with(&snapshot, |selections| {
-                    selections.delete(imported_id + 1);
-                    selections.select(vec![imported]);
-                    assert_eq!(selections.next_selection_id(), imported_id + 2);
-                });
-                assert_eq!(
-                    collection.all_unexpanded::<MultiBufferOffset>(&snapshot),
-                    vec![imported]
-                );
-                let mut cloned = SelectionsCollection::new();
-                cloned.clone_state(&collection);
-                assert_eq!(cloned.next_selection_id(), imported_id + 2);
-            }
-        }
-    }
-
-    #[gpui::test]
-    fn imported_selection_ids_wrap_without_collisions(cx: &mut gpui::TestAppContext) {
-        let snapshot = row_range_snapshot(cx, "abcdefghijklmnop");
-        for (imported_id, expected_ids) in [
-            (usize::MAX, [3, 4, 5, 6, 7, 8]),
-            (usize::MAX - 1, [usize::MAX, 3, 4, 5, 6, 7]),
-            (usize::MAX - 2, [usize::MAX - 1, usize::MAX, 3, 4, 5, 6]),
-        ] {
-            for import_mode in 0..4 {
-                let mut collection = SelectionsCollection::new();
-                collection.change_with(&snapshot, |selections| {
-                    selections.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(1)]);
-                    selections.select_ranges([MultiBufferOffset(2)..MultiBufferOffset(3)]);
-                });
-                let retained = collection.all_unexpanded::<MultiBufferOffset>(&snapshot)[0];
-                assert_eq!(retained.id, 2);
-                let imported = Selection {
-                    id: imported_id,
-                    start: MultiBufferOffset(0),
-                    end: MultiBufferOffset(1),
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                };
-                let mut expected = vec![imported, retained];
-                collection.change_with(&snapshot, |selections| {
-                    match import_mode {
-                        0 => selections.select(expected.clone()),
-                        1 => selections.select_anchors(
-                            expected
-                                .iter()
-                                .map(|selection| {
-                                    selection_to_anchor_selection(*selection, &snapshot)
-                                })
-                                .collect(),
-                        ),
-                        2 => selections.select_anchors_unexpanded(
-                            expected
-                                .iter()
-                                .map(|selection| {
-                                    selection_to_anchor_selection(*selection, &snapshot)
-                                })
-                                .collect(),
-                        ),
-                        3 => selections.set_pending(
-                            selection_to_anchor_selection(imported, &snapshot),
-                            SelectMode::Character,
-                        ),
-                        _ => unreachable!(),
-                    }
-                    assert_eq!(
-                        selections.all_unexpanded::<MultiBufferOffset>(&snapshot),
-                        expected
-                    );
-                    for (index, id) in expected_ids.into_iter().enumerate() {
-                        let position = MultiBufferOffset(6 + index);
-                        selections.insert_range(position..position);
-                        expected.push(Selection {
-                            id,
-                            start: position,
-                            end: position,
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        });
-                        assert_eq!(
-                            selections.all_unexpanded::<MultiBufferOffset>(&snapshot),
-                            expected,
-                            "imported_id={imported_id}, import_mode={import_mode}, index={index}"
-                        );
-                        let anchors = selections.disjoint_anchors().to_vec();
-                        selections.select_anchors_unexpanded(anchors);
-                    }
-                    for id in expected_ids {
-                        selections.delete(id);
-                    }
-                    assert_eq!(
-                        selections.all_unexpanded::<MultiBufferOffset>(&snapshot),
-                        [imported, retained]
-                    );
-                });
-                let mut cloned = SelectionsCollection::new();
-                cloned.clone_state(&collection);
-                cloned.change_with(&snapshot, |selections| {
-                    let next_id = expected_ids[5] + 1;
-                    assert_eq!(selections.new_selection_id(), next_id);
-                    assert_eq!(selections.new_selection_id(), next_id + 1);
-                    assert_eq!(selections.new_selection_id(), next_id + 2);
-                });
-            }
-        }
-    }
-
-    #[gpui::test]
-    fn imported_selection_ids_wrap_preserves_selection_age(cx: &mut gpui::TestAppContext) {
-        let snapshot = row_range_snapshot(cx, "abcdef");
-        let source = Selection {
-            id: usize::MAX,
-            start: MultiBufferOffset(0),
-            end: MultiBufferOffset(1),
-            reversed: false,
-            goal: SelectionGoal::None,
-        };
-        let mut collection = SelectionsCollection::new();
-        collection.change_with(&snapshot, |selections| {
-            selections.select(vec![source]);
-            selections.insert_range(MultiBufferOffset(3)..MultiBufferOffset(3));
-        });
-        assert_eq!(collection.oldest_anchor().id, usize::MAX);
-        assert_eq!(collection.newest_anchor().id, 1);
-        let mut cloned = SelectionsCollection::new();
-        cloned.clone_state(&collection);
-        assert_eq!(cloned.oldest_anchor().id, usize::MAX);
-        assert_eq!(cloned.newest_anchor().id, 1);
-        cloned.change_with(&snapshot, |selections| selections.reverse_selections());
-        assert_eq!(
-            cloned.newest::<MultiBufferOffset>(&snapshot).range(),
-            MultiBufferOffset(0)..MultiBufferOffset(1)
-        );
-        assert_eq!(
-            cloned.oldest::<MultiBufferOffset>(&snapshot).range(),
-            MultiBufferOffset(3)..MultiBufferOffset(3)
-        );
-        collection.change_with(&snapshot, |selections| {
-            selections.select(vec![
-                Selection {
-                    id: 100,
-                    start: MultiBufferOffset(2),
-                    end: MultiBufferOffset(3),
-                    ..source
-                },
-                source,
-            ]);
-        });
-        assert_eq!(collection.newest_anchor().id, 100);
-        collection.change_with(&snapshot, |selections| {
-            selections.insert_range(MultiBufferOffset(5)..MultiBufferOffset(5));
-        });
-        assert_eq!(collection.newest_anchor().id, 2);
-        assert_eq!(collection.oldest_anchor().id, usize::MAX);
-    }
-
-    #[gpui::test]
-    fn imported_selection_ids_wrap_preserves_reserved_gaps(cx: &mut gpui::TestAppContext) {
-        let snapshot = row_range_snapshot(cx, "abcdef");
-        let imports = [usize::MAX - 2, 9, 3, usize::MAX, 5, 4, 2, usize::MAX - 1];
-        for reverse in [false, true] {
-            let mut imports = imports;
-            if reverse {
-                imports.reverse();
-            }
-            let mut reserved = BTreeSet::from([0]);
-            let mut collection = SelectionsCollection::new();
-            collection.change_with(&snapshot, |selections| {
-                for id in imports {
-                    let imported = Selection {
-                        id,
-                        start: snapshot.anchor_after(MultiBufferOffset(1)),
-                        end: snapshot.anchor_before(MultiBufferOffset(2)),
-                        reversed: false,
-                        goal: SelectionGoal::None,
-                    };
-                    selections.set_pending(imported, SelectMode::Character);
-                    reserved.insert(id);
-                    for _ in 0..3 {
-                        let expected = reserved
-                            .last()
-                            .and_then(|id| id.checked_add(1))
-                            .unwrap_or_else(|| {
-                                (1..).find(|id| !reserved.contains(id)).expect("unused ID")
-                            });
-                        assert_eq!(selections.new_selection_id(), expected);
-                        assert!(reserved.insert(expected));
-                    }
-                    assert_eq!(selections.pending_anchor(), Some(&imported));
-                }
-            });
-        }
-    }
-
-    #[gpui::test]
-    fn imported_selection_ids_wrap_after_coalescing(cx: &mut gpui::TestAppContext) {
-        let snapshot = row_range_snapshot(cx, "abcdef");
-        for (imported_id, expected_ids) in [
-            (usize::MAX, [2, 3, 4]),
-            (usize::MAX - 1, [usize::MAX, 2, 3]),
-            (usize::MAX - 2, [usize::MAX - 1, usize::MAX, 2]),
-        ] {
-            for expand_blocks in [false, true] {
-                let mut collection = SelectionsCollection::new();
-                collection.change_with(&snapshot, |selections| {
-                    let retained = Selection {
-                        id: 1,
-                        start: MultiBufferOffset(0),
-                        end: MultiBufferOffset(1),
-                        reversed: false,
-                        goal: SelectionGoal::None,
-                    };
-                    let imported = Selection {
-                        id: imported_id,
-                        start: retained.end,
-                        end: retained.end,
-                        ..retained
-                    };
-                    let anchors = [retained, imported]
-                        .into_iter()
-                        .map(|selection| selection_to_anchor_selection(selection, &snapshot))
-                        .collect();
-                    if expand_blocks {
-                        selections.select_anchors(anchors);
-                    } else {
-                        selections.select_anchors_unexpanded(anchors);
-                    }
-                    assert_eq!(
-                        selections.all_unexpanded::<MultiBufferOffset>(&snapshot),
-                        [retained]
-                    );
-                    for expected_id in expected_ids {
-                        assert_eq!(selections.new_selection_id(), expected_id);
-                    }
-                });
-            }
-        }
-    }
-
-    #[gpui::test]
-    fn imported_selection_ids_wrap_across_selection_builders(cx: &mut gpui::TestAppContext) {
-        let snapshot = row_range_snapshot(cx, "abcdef");
-        let mut collection = SelectionsCollection::new();
-        collection.change_with(&snapshot, |selections| {
-            let imported = Selection {
-                id: usize::MAX,
-                start: MultiBufferOffset(0),
-                end: MultiBufferOffset(1),
-                reversed: false,
-                goal: SelectionGoal::None,
-            };
-            selections.select(vec![imported]);
-            selections.set_pending_anchor_range(
-                snapshot.anchor_after(MultiBufferOffset(3))
-                    ..snapshot.anchor_before(MultiBufferOffset(4)),
-                SelectMode::Character,
-            );
-            assert_eq!(
-                selections.pending_anchor().map(|selection| selection.id),
-                Some(1)
-            );
-            selections.select_ranges([
-                MultiBufferOffset(0)..MultiBufferOffset(1),
-                MultiBufferOffset(3)..MultiBufferOffset(4),
-            ]);
-            assert_eq!(
-                selections
-                    .disjoint_anchors()
-                    .iter()
-                    .map(|selection| selection.id)
-                    .collect::<Vec<_>>(),
-                [2, 3]
-            );
-            selections.select_anchor_ranges([
-                snapshot.anchor_after(MultiBufferOffset(0))
-                    ..snapshot.anchor_before(MultiBufferOffset(1)),
-                snapshot.anchor_after(MultiBufferOffset(3))
-                    ..snapshot.anchor_before(MultiBufferOffset(4)),
-            ]);
-            assert_eq!(
-                selections
-                    .disjoint_anchors()
-                    .iter()
-                    .map(|selection| selection.id)
-                    .collect::<Vec<_>>(),
-                [4, 5]
-            );
-            selections.select_display_ranges([
-                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
-                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 4),
-            ]);
-            assert_eq!(
-                selections
-                    .disjoint_anchors()
-                    .iter()
-                    .map(|selection| selection.id)
-                    .collect::<Vec<_>>(),
-                [6, 7]
-            );
-            selections.replace_cursors_with(|_| {
-                vec![
-                    DisplayPoint::new(DisplayRow(0), 0),
-                    DisplayPoint::new(DisplayRow(0), 3),
-                ]
-            });
-            assert_eq!(
-                selections
-                    .disjoint_anchors()
-                    .iter()
-                    .map(|selection| selection.id)
-                    .collect::<Vec<_>>(),
-                [8, 9]
-            );
-            selections.reverse_selections();
-            assert_eq!(
-                selections
-                    .disjoint_anchors()
-                    .iter()
-                    .map(|selection| selection.id)
-                    .collect::<Vec<_>>(),
-                [11, 10]
-            );
-            let buffer_id = snapshot
-                .anchor_to_buffer_anchor(selections.first_anchor().start)
-                .expect("selection buffer")
-                .0
-                .buffer_id;
-            selections.remove_selections_from_buffer(buffer_id);
-            assert_eq!(selections.first_anchor().id, 12);
-        });
-    }
-
-    #[gpui::test]
-    fn coalesced_and_pending_imports_reserve_selection_ids(cx: &mut gpui::TestAppContext) {
-        let snapshot = row_range_snapshot(cx, "abcdef");
-        let imported = [
-            Selection {
-                id: 1,
-                start: MultiBufferOffset(0),
-                end: MultiBufferOffset(1),
-                reversed: false,
-                goal: SelectionGoal::None,
-            },
-            Selection {
-                id: 40,
-                start: MultiBufferOffset(1),
-                end: MultiBufferOffset(1),
-                reversed: false,
-                goal: SelectionGoal::None,
-            },
-        ];
-        for expand_blocks in [false, true] {
-            let mut collection = SelectionsCollection::new();
-            collection.change_with(&snapshot, |selections| {
-                let anchors = imported
-                    .iter()
-                    .map(|selection| selection_to_anchor_selection(*selection, &snapshot))
-                    .collect();
-                if expand_blocks {
-                    selections.select_anchors(anchors);
-                } else {
-                    selections.select_anchors_unexpanded(anchors);
-                }
-                assert_eq!(selections.next_selection_id(), 41);
-                assert_eq!(
-                    selections.all_unexpanded::<MultiBufferOffset>(&snapshot),
-                    vec![imported[0]]
-                );
-            });
-        }
-        let mut collection = SelectionsCollection::new();
-        collection.change_with(&snapshot, |selections| {
-            selections.select(imported.to_vec());
-            assert_eq!(selections.next_selection_id(), 41);
-            assert_eq!(
-                selections.all_unexpanded::<MultiBufferOffset>(&snapshot),
-                vec![imported[0]]
-            );
-        });
-        for disjoint in [Vec::new(), vec![imported[0]]] {
-            let mut collection = SelectionsCollection::new();
-            collection.change_with(&snapshot, |selections| {
-                selections.select_anchors(
-                    disjoint
-                        .into_iter()
-                        .map(|selection| selection_to_anchor_selection(selection, &snapshot))
-                        .collect(),
-                );
-                selections.set_pending(
-                    selection_to_anchor_selection(imported[1], &snapshot),
-                    SelectMode::Character,
-                );
-                assert_eq!(selections.next_selection_id(), 41);
-                selections.insert_range(MultiBufferOffset(5)..MultiBufferOffset(5));
-                assert_eq!(selections.newest_anchor().id, 41);
-            });
-        }
-    }
-
-    #[gpui::test]
     fn select_anchors_unexpanded_preserves_hidden_buffer_ranges(cx: &mut gpui::TestAppContext) {
         let map = selection_test_display_map(cx, "aaaa\nbbbb\ncccc\ndddd\neeee\nffff");
         let snapshot = map.update(cx, |map, cx| {
@@ -2119,7 +1644,6 @@ mod tests {
         });
         assert_eq!(collection.all_unexpanded::<Point>(&snapshot), saved);
         assert_eq!(collection.pending_anchor(), None);
-        assert_eq!(collection.next_selection_id(), 16);
 
         let mut overlapping = saved[0];
         overlapping.id = 30;
@@ -2144,7 +1668,239 @@ mod tests {
                 ..saved[0]
             }]
         );
-        assert_eq!(collection.next_selection_id(), 31);
+    }
+
+    #[gpui::test]
+    fn columnar_selection_batch_preserves_request_order(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "abcd\n\né🦀z\n\txyz");
+        assert_eq!(snapshot.tab_snapshot().text(), "abcd\n\né🦀z\n    xyz");
+        let mut rows = ColumnarSelectionRows::new(&snapshot);
+        let mut collection = SelectionsCollection::new();
+        let actual = collection.build_columnar_selections_from_tab_expanded_columns(
+            &mut rows,
+            &[
+                (2, 1..2, true),
+                (1, 0..1, false),
+                (0, 2..u32::MAX, false),
+                (2, 0..3, false),
+                (u32::MAX, 0..0, true),
+                (1, u32::MAX..u32::MAX, true),
+                (0, 4..5, true),
+                (0, u32::MAX..u32::MAX, false),
+                (3, 1..3, true),
+                (3, 0..5, false),
+                (2, 3..4, false),
+                (0, Range { start: 3, end: 2 }, false),
+            ],
+        );
+        assert_eq!(
+            actual,
+            vec![
+                Some(columnar_test_selection(1, 2, 2..6, true)),
+                None,
+                Some(columnar_test_selection(2, 0, 2..4, false)),
+                Some(columnar_test_selection(3, 2, 0..7, false)),
+                None,
+                Some(columnar_test_selection(4, 1, 0..0, true)),
+                None,
+                Some(columnar_test_selection(5, 0, 4..4, false)),
+                Some(columnar_test_selection(6, 3, 0..0, true)),
+                Some(columnar_test_selection(7, 3, 0..2, false)),
+                None,
+                None,
+            ]
+        );
+        assert_eq!(collection.next_selection_id(), 8);
+        assert_eq!(
+            collection.build_columnar_selections_from_tab_expanded_columns(&mut rows, &[]),
+            Vec::new()
+        );
+        assert_eq!(collection.next_selection_id(), 8);
+    }
+
+    #[gpui::test]
+    fn columnar_selection_batch_joins_different_starts_and_skips(cx: &mut gpui::TestAppContext) {
+        for above in [false, true] {
+            let mut lines = [
+                "abcdefgh", "x", "", "abcdefgh", "x", "", "abcdefgh", "x", "abcdefgh",
+            ];
+            if above {
+                lines.reverse();
+            }
+            let snapshot = row_range_snapshot(cx, &lines.join("\n"));
+            let mut rows = ColumnarSelectionRows::new(&snapshot);
+            let mut collection = SelectionsCollection::new();
+            let row = |row| if above { 8 - row } else { row };
+            let queries = [
+                (5, 2..5, false),
+                (0, 3..7, true),
+                (2, 2..4, false),
+                (1, 1..2, true),
+                (8, 0..1, false),
+                (0, 8..9, true),
+                (3, 0..0, false),
+                (6, 0..2, true),
+                (6, u32::MAX..u32::MAX, false),
+                (5, Range { start: 1, end: 0 }, true),
+                (7, 0..8, true),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(index, (source_row, columns, reversed))| {
+                (
+                    columnar_test_selection(index + 20, row(source_row), 0..0, reversed),
+                    columns,
+                )
+            })
+            .collect::<Vec<_>>();
+            assert_eq!(
+                collection.find_next_columnar_selections_by_buffer_row(
+                    &snapshot, &mut rows, &queries, above,
+                ),
+                vec![
+                    Some(columnar_test_selection(1, row(6), 2..5, false)),
+                    Some(columnar_test_selection(2, row(3), 3..7, true)),
+                    Some(columnar_test_selection(3, row(3), 2..4, false)),
+                    Some(columnar_test_selection(4, row(3), 1..2, true)),
+                    None,
+                    None,
+                    Some(columnar_test_selection(5, row(4), 0..0, false)),
+                    Some(columnar_test_selection(6, row(7), 0..1, true)),
+                    Some(columnar_test_selection(7, row(7), 1..1, false)),
+                    None,
+                    Some(columnar_test_selection(8, row(8), 0..8, true)),
+                ],
+                "above: {above}"
+            );
+            assert_eq!(collection.next_selection_id(), 9);
+        }
+    }
+
+    #[gpui::test]
+    fn columnar_selection_batch_uses_directional_endpoints(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "abcd\nabcd\nabcd\nabcd\nabcd");
+        let mut rows = ColumnarSelectionRows::new(&snapshot);
+        for above in [false, true] {
+            let mut collection = SelectionsCollection::new();
+            let queries = [false, true].map(|reversed| {
+                (
+                    Selection {
+                        id: 20,
+                        start: Point::new(1, 1),
+                        end: Point::new(3, 2),
+                        reversed,
+                        goal: SelectionGoal::None,
+                    },
+                    1..3,
+                )
+            });
+            let destination = if above { 0 } else { 4 };
+            assert_eq!(
+                collection.find_next_columnar_selections_by_buffer_row(
+                    &snapshot, &mut rows, &queries, above,
+                ),
+                vec![
+                    Some(columnar_test_selection(1, destination, 1..3, false)),
+                    Some(columnar_test_selection(2, destination, 1..3, true)),
+                ]
+            );
+            assert_eq!(collection.next_selection_id(), 3);
+        }
+    }
+
+    #[gpui::test]
+    fn columnar_selection_batch_unavailable_does_not_allocate(cx: &mut gpui::TestAppContext) {
+        for text in ["", "abcd"] {
+            let snapshot = row_range_snapshot(cx, text);
+            let mut rows = ColumnarSelectionRows::new(&snapshot);
+            let mut collection = SelectionsCollection::new();
+            for above in [false, true] {
+                let queries = [
+                    (columnar_test_selection(0, 0, 0..0, false), 0..0),
+                    (columnar_test_selection(0, 0, 0..0, true), 0..1),
+                ];
+                assert_eq!(
+                    collection.find_next_columnar_selections_by_buffer_row(
+                        &snapshot, &mut rows, &queries, above,
+                    ),
+                    vec![None, None]
+                );
+                assert_eq!(
+                    collection.find_next_columnar_selections_by_buffer_row(
+                        &snapshot,
+                        &mut rows,
+                        &[],
+                        above,
+                    ),
+                    Vec::new()
+                );
+                assert_eq!(collection.next_selection_id(), 1);
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn columnar_selection_batch_joins_replacement_skips(cx: &mut gpui::TestAppContext) {
+        let map = selection_test_display_map(
+            cx,
+            &iter::repeat_n("abcdefgh", 9).collect::<Vec<_>>().join("\n"),
+        );
+        let snapshot = map.update(cx, |map, cx| {
+            let buffer = map.snapshot(cx).buffer_snapshot().clone();
+            map.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Replace(
+                        buffer.anchor_after(Point::new(3, 0))
+                            ..=buffer.anchor_before(Point::new(5, 8)),
+                    ),
+                    height: Some(1),
+                    style: BlockStyle::Fixed,
+                    render: Arc::new(|_| div().into_any_element()),
+                    priority: 0,
+                }],
+                cx,
+            );
+            map.snapshot(cx)
+        });
+        for above in [false, true] {
+            let mut rows = ColumnarSelectionRows::new(&snapshot);
+            let mut collection = SelectionsCollection::new();
+            let row = |row| if above { 8 - row } else { row };
+            let queries = [
+                (6, 1..3, false),
+                (0, 2..6, true),
+                (2, 1..2, false),
+                (4, 0..0, true),
+                (5, 3..7, true),
+                (8, 0..0, false),
+                (1, 8..9, false),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(index, (source_row, columns, reversed))| {
+                (
+                    columnar_test_selection(index + 20, row(source_row), 0..0, reversed),
+                    columns,
+                )
+            })
+            .collect::<Vec<_>>();
+            assert_eq!(
+                collection.find_next_columnar_selections_by_buffer_row(
+                    &snapshot, &mut rows, &queries, above,
+                ),
+                vec![
+                    Some(columnar_test_selection(1, row(7), 1..3, false)),
+                    Some(columnar_test_selection(2, row(1), 2..6, true)),
+                    Some(columnar_test_selection(3, row(6), 1..2, false)),
+                    Some(columnar_test_selection(4, row(6), 0..0, true)),
+                    Some(columnar_test_selection(5, row(6), 3..7, true)),
+                    None,
+                    None,
+                ],
+                "above: {above}"
+            );
+            assert_eq!(collection.next_selection_id(), 6);
+        }
     }
 
     #[gpui::test]
@@ -2187,25 +1943,39 @@ mod tests {
                 };
                 let mut collection = SelectionsCollection::new();
                 let mut rows = ColumnarSelectionRows::new(&snapshot);
-                let actual = collection.find_next_columnar_selection_by_buffer_row(
+                let actual = collection.find_next_columnar_selections_by_buffer_row(
                     &snapshot,
                     &mut rows,
-                    &source,
+                    &[(source, 0..1)],
                     above,
-                    &(0..1),
                 );
                 assert_eq!(
                     actual,
-                    expected_row.map(|row| Selection {
+                    vec![expected_row.map(|row| Selection {
                         id: 1,
                         start: Point::new(row, 0),
                         end: Point::new(row, 1),
                         reversed: above,
                         goal: SelectionGoal::None,
-                    }),
+                    })],
                     "hidden: {hidden:?}, above: {above}"
                 );
             }
+        }
+    }
+
+    fn columnar_test_selection(
+        id: usize,
+        row: u32,
+        columns: Range<u32>,
+        reversed: bool,
+    ) -> Selection<Point> {
+        Selection {
+            id,
+            start: Point::new(row, columns.start),
+            end: Point::new(row, columns.end),
+            reversed,
+            goal: SelectionGoal::None,
         }
     }
 
