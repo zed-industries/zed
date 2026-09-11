@@ -577,7 +577,7 @@ impl MetalRenderer {
 
         // Headless callers do not have a Cocoa event-loop pool to release
         // autoreleased command buffers and render-pass descriptors.
-        objc::rc::autoreleasepool(|| {
+        objc2::rc::autoreleasepool(|_| {
             // Update path intermediate textures for this size
             self.update_path_intermediate_textures(size);
 
@@ -624,7 +624,7 @@ impl MetalRenderer {
             anyhow::bail!("Invalid size for render_scene: {:?}", size);
         }
 
-        objc::rc::autoreleasepool(|| {
+        objc2::rc::autoreleasepool(|_| {
             self.update_path_intermediate_textures(size);
 
             let needs_new_target = self.headless_render_target.as_ref().is_none_or(|texture| {
