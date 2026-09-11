@@ -605,7 +605,6 @@ impl RatePredictionsModal {
                         &predicted_buffer_snapshot.text,
                         predicted_buffer_snapshot.language().cloned(),
                         predicted_buffer.read(cx).language_registry(),
-                        buffer_diff::DiffBaseKind::Custom,
                         cx,
                     )
                 });
@@ -712,7 +711,6 @@ impl RatePredictionsModal {
                     &expected_buffer_snapshot.text,
                     expected_buffer_snapshot.language().cloned(),
                     expected_buffer.read(cx).language_registry(),
-                    buffer_diff::DiffBaseKind::Custom,
                     cx,
                 )
             });

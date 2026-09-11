@@ -370,3 +370,9 @@ pub(crate) mod m_2026_08_26 {
 
     pub(crate) use settings::rename_folder_icons_to_folder_indicator;
 }
+
+pub(crate) mod m_2026_08_30 {
+    mod settings;
+
+    pub(crate) use settings::nest_markdown_preview_settings;
+}
