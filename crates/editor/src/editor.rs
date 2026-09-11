@@ -1201,6 +1201,7 @@ pub struct Editor {
     inlay_hints: Option<LspInlayHintData>,
     folding_newlines: Task<()>,
     select_next_is_case_sensitive: Option<bool>,
+    select_next_whole_word: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
     on_local_selections_changed:
         Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
@@ -2557,6 +2558,7 @@ impl Editor {
             folding_newlines: Task::ready(()),
             lookup_key: None,
             select_next_is_case_sensitive: None,
+            select_next_whole_word: None,
             on_local_selections_changed: None,
             suppress_selection_callback: false,
             applicable_language_settings: HashMap::default(),

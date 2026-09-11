@@ -554,7 +554,7 @@ impl Editor {
                 self.select_prev_state = Some(SelectNextState {
                     query: self
                         .build_query(&[selected_text.chars().rev().collect::<String>()], cx)?,
-                    wordwise: false,
+                    wordwise: self.select_next_whole_word.unwrap_or(false),
                     done: false,
                 });
                 self.select_previous(action, window, cx)?;
@@ -2296,7 +2296,7 @@ impl Editor {
             } else if let Some(selected_text) = selected_text {
                 self.select_next_state = Some(SelectNextState {
                     query: self.build_query(&[selected_text], cx)?,
-                    wordwise: false,
+                    wordwise: self.select_next_whole_word.unwrap_or(false),
                     done: false,
                 });
                 self.select_next_match_internal(

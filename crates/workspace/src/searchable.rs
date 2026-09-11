@@ -206,6 +206,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         cx: &mut Context<Self>,
     ) -> Option<usize>;
     fn set_search_is_case_sensitive(&mut self, _: Option<bool>, _: &mut Context<Self>) {}
+    fn set_search_whole_word(&mut self, _: Option<bool>, _: &mut Context<Self>) {}
 }
 
 pub trait SearchableItemHandle: ItemHandle {
@@ -304,6 +305,7 @@ pub trait SearchableItemHandle: ItemHandle {
     );
 
     fn set_search_is_case_sensitive(&self, is_case_sensitive: Option<bool>, cx: &mut App);
+    fn set_search_whole_word(&self, whole_word: Option<bool>, cx: &mut App);
 }
 
 impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
@@ -511,6 +513,10 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
         self.update(cx, |this, cx| {
             this.set_search_is_case_sensitive(enabled, cx)
         });
+    }
+
+    fn set_search_whole_word(&self, whole_word: Option<bool>, cx: &mut App) {
+        self.update(cx, |this, cx| this.set_search_whole_word(whole_word, cx));
     }
 }
 

@@ -528,7 +528,15 @@ impl ToolbarItemView for BufferSearchBar {
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_searchable_item_subscriptions.take();
-        self.active_searchable_item.take();
+        let active_searchable_item = item.and_then(|item| item.to_searchable_item_handle(cx));
+        if let Some(previous_item) = self.active_searchable_item.take()
+            && active_searchable_item
+                .as_ref()
+                .is_none_or(|item| item.item_id() != previous_item.item_id())
+        {
+            previous_item.set_search_is_case_sensitive(None, cx);
+            previous_item.set_search_whole_word(None, cx);
+        }
         self.splittable_editor = None;
         self._splittable_editor_subscription = None;
 
@@ -545,9 +553,7 @@ impl ToolbarItemView for BufferSearchBar {
             self.splittable_editor = Some(splittable_editor.downgrade());
         }
 
-        if let Some(searchable_item_handle) =
-            item.and_then(|item| item.to_searchable_item_handle(cx))
-        {
+        if let Some(searchable_item_handle) = active_searchable_item {
             let this = cx.entity().downgrade();
 
             let search_event_subscription = searchable_item_handle.subscribe_to_search_events(
@@ -608,6 +614,7 @@ impl ToolbarItemView for BufferSearchBar {
 
             let is_project_search = searchable_item_handle.supported_options(cx).find_in_results;
             self.active_searchable_item = Some(searchable_item_handle);
+            self.sync_select_next_search_options(cx);
             drop(self.update_matches(true, false, window, cx));
             if self.needs_expand_collapse_option(cx) && self.is_dismissed() {
                 return ToolbarItemLocation::PrimaryLeft;
@@ -823,7 +830,7 @@ impl BufferSearchBar {
         self.dismissed = true;
         cx.emit(Event::Dismissed);
         self.query_error = None;
-        self.sync_select_next_case_sensitivity(cx);
+        self.sync_select_next_search_options(cx);
 
         for searchable_item in self.searchable_items_with_matches.keys() {
             if let Some(searchable_item) =
@@ -877,7 +884,7 @@ impl BufferSearchBar {
             }
             self.search_suggested(seed_query_override, window, cx);
             self.smartcase(window, cx);
-            self.sync_select_next_case_sensitivity(cx);
+            self.sync_select_next_search_options(cx);
             self.replace_enabled |= deploy.replace_enabled;
             self.selection_search_enabled =
                 self.selection_search_enabled
@@ -1210,7 +1217,7 @@ impl BufferSearchBar {
         self.default_options = self.search_options;
         drop(self.update_matches(false, false, window, cx));
         self.adjust_query_regex_language(cx);
-        self.sync_select_next_case_sensitivity(cx);
+        self.sync_select_next_search_options(cx);
         cx.notify();
     }
 
@@ -1245,7 +1252,7 @@ impl BufferSearchBar {
     pub fn set_search_options(&mut self, search_options: SearchOptions, cx: &mut Context<Self>) {
         self.search_options = search_options;
         self.adjust_query_regex_language(cx);
-        self.sync_select_next_case_sensitivity(cx);
+        self.sync_select_next_search_options(cx);
         cx.notify();
     }
 
@@ -1849,21 +1856,26 @@ impl BufferSearchBar {
         }
     }
 
-    /// Updates the searchable item's case sensitivity option to match the
-    /// search bar's current case sensitivity setting. This ensures that
+    /// Updates the searchable item's case sensitivity and whole-word options to match the
+    /// search bar's current settings. This ensures that
     /// editor's `select_next`/ `select_previous` operations respect the buffer
     /// search bar's search options.
     ///
-    /// Clears the case sensitivity when the search bar is dismissed so that
-    /// only the editor's settings are respected.
-    fn sync_select_next_case_sensitivity(&self, cx: &mut Context<Self>) {
+    /// Clears the overrides when the search bar is dismissed so that
+    /// the editor's default selection behavior is restored.
+    fn sync_select_next_search_options(&self, cx: &mut Context<Self>) {
         let case_sensitive = match self.dismissed {
             true => None,
             false => Some(self.search_options.contains(SearchOptions::CASE_SENSITIVE)),
         };
+        let whole_word = match self.dismissed {
+            true => None,
+            false => Some(self.search_options.contains(SearchOptions::WHOLE_WORD)),
+        };
 
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             active_searchable_item.set_search_is_case_sensitive(case_sensitive, cx);
+            active_searchable_item.set_search_whole_word(whole_word, cx);
         }
     }
 }
@@ -4094,6 +4106,186 @@ mod tests {
                 "Calling deploy on an already deployed search bar should not prevent settings updates from being detected"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_select_occurrences_respect_whole_word(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+        let mut editor_cx = EditorTestContext::for_editor_in(editor, cx).await;
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.set_search_options(
+                SearchOptions::CASE_SENSITIVE | SearchOptions::WHOLE_WORD,
+                cx,
+            );
+        });
+
+        for backwards in [false, true] {
+            editor_cx.set_state("«ˇfoo» fooBar food barfoo foo");
+            for _ in 0..2 {
+                editor_cx.update_editor(|editor, window, cx| {
+                    if backwards {
+                        editor.select_previous(&Default::default(), window, cx)
+                    } else {
+                        editor.select_next(&Default::default(), window, cx)
+                    }
+                    .unwrap();
+                });
+                editor_cx.assert_editor_state("«ˇfoo» fooBar food barfoo «ˇfoo»");
+            }
+        }
+
+        editor_cx.set_state("«ˇfoo» fooBar food barfoo foo");
+        editor_cx.update_editor(|editor, window, cx| {
+            editor
+                .select_all_matches(&editor::actions::SelectAllMatches, window, cx)
+                .unwrap();
+        });
+        editor_cx.assert_editor_state("«ˇfoo» fooBar food barfoo «ˇfoo»");
+    }
+
+    #[gpui::test]
+    async fn test_select_occurrences_update_whole_word_option(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+        let mut editor_cx = EditorTestContext::for_editor_in(editor, cx).await;
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.set_search_options(
+                SearchOptions::CASE_SENSITIVE | SearchOptions::WHOLE_WORD,
+                cx,
+            );
+        });
+
+        editor_cx.set_state("«ˇfoo» fooBar food");
+        editor_cx.update_editor(|editor, window, cx| {
+            editor.select_next(&Default::default(), window, cx).unwrap();
+        });
+        editor_cx.assert_editor_state("«ˇfoo» fooBar food");
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_whole_word(&Default::default(), window, cx);
+        });
+        editor_cx.update_editor(|editor, window, cx| {
+            editor.select_next(&Default::default(), window, cx).unwrap();
+        });
+        editor_cx.assert_editor_state("«ˇfoo» «ˇfoo»Bar food");
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_whole_word(&Default::default(), window, cx);
+        });
+        editor_cx.update_editor(|editor, window, cx| {
+            editor.select_next(&Default::default(), window, cx).unwrap();
+        });
+        editor_cx.assert_editor_state("«ˇfoo» «ˇfoo»Bar food");
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.dismiss(&Default::default(), window, cx);
+        });
+        editor_cx.update_editor(|editor, window, cx| {
+            editor.select_next(&Default::default(), window, cx).unwrap();
+        });
+        editor_cx.assert_editor_state("«ˇfoo» «ˇfoo»Bar «ˇfoo»d");
+    }
+
+    #[gpui::test]
+    async fn test_select_occurrences_resync_on_active_item_change(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+        let buffer = cx.new(|cx| Buffer::local("", cx));
+        let next_editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+        let mut editor_cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+        let mut next_editor_cx = EditorTestContext::for_editor_in(next_editor.clone(), cx).await;
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.set_search_options(
+                SearchOptions::CASE_SENSITIVE | SearchOptions::WHOLE_WORD,
+                cx,
+            );
+        });
+        editor_cx.set_state("«ˇfoo» fooBar food");
+        editor_cx.update_editor(|editor, window, cx| {
+            editor.select_next(&Default::default(), window, cx).unwrap();
+        });
+        editor_cx.assert_editor_state("«ˇfoo» fooBar food");
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.set_active_pane_item(Some(&next_editor), window, cx);
+        });
+        for backwards in [false, true] {
+            next_editor_cx.set_state("«ˇfoo» fooBar food FOO foo");
+            next_editor_cx.update_editor(|editor, window, cx| {
+                if backwards {
+                    editor.select_previous(&Default::default(), window, cx)
+                } else {
+                    editor.select_next(&Default::default(), window, cx)
+                }
+                .unwrap();
+            });
+            next_editor_cx.assert_editor_state("«ˇfoo» fooBar food FOO «ˇfoo»");
+        }
+
+        next_editor_cx.set_state("«ˇfoo» fooBar food FOO foo");
+        next_editor_cx.update_editor(|editor, window, cx| {
+            editor
+                .select_all_matches(&editor::actions::SelectAllMatches, window, cx)
+                .unwrap();
+        });
+        next_editor_cx.assert_editor_state("«ˇfoo» fooBar food FOO «ˇfoo»");
+
+        editor_cx.update_editor(|editor, window, cx| {
+            editor.select_next(&Default::default(), window, cx).unwrap();
+        });
+        editor_cx.assert_editor_state("«ˇfoo» «ˇfoo»Bar food");
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.dismiss(&Default::default(), window, cx);
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+        });
+        editor_cx.update_editor(|editor, window, cx| {
+            editor.select_next(&Default::default(), window, cx).unwrap();
+        });
+        editor_cx.assert_editor_state("«ˇfoo» «ˇfoo»Bar «ˇfoo»d");
+    }
+
+    #[gpui::test]
+    async fn test_select_occurrences_clear_options_without_active_item(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+        let mut editor_cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+
+        for backwards in [false, true] {
+            search_bar.update_in(cx, |search_bar, window, cx| {
+                search_bar.set_active_pane_item(Some(&editor), window, cx);
+                search_bar.set_search_options(
+                    SearchOptions::CASE_SENSITIVE | SearchOptions::WHOLE_WORD,
+                    cx,
+                );
+            });
+            editor_cx.set_state("«ˇfoo» fooBar food");
+            editor_cx.update_editor(|editor, window, cx| {
+                if backwards {
+                    editor.select_previous(&Default::default(), window, cx)
+                } else {
+                    editor.select_next(&Default::default(), window, cx)
+                }
+                .unwrap();
+            });
+            editor_cx.assert_editor_state("«ˇfoo» fooBar food");
+
+            search_bar.update_in(cx, |search_bar, window, cx| {
+                search_bar.set_active_pane_item(None, window, cx);
+            });
+            editor_cx.update_editor(|editor, window, cx| {
+                if backwards {
+                    editor.select_previous(&Default::default(), window, cx)
+                } else {
+                    editor.select_next(&Default::default(), window, cx)
+                }
+                .unwrap();
+            });
+            if backwards {
+                editor_cx.assert_editor_state("«ˇfoo» fooBar «ˇfoo»d");
+            } else {
+                editor_cx.assert_editor_state("«ˇfoo» «ˇfoo»Bar food");
+            }
+        }
     }
 
     #[gpui::test]
