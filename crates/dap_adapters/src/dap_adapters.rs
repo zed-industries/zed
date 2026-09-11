@@ -1,4 +1,5 @@
 mod codelldb;
+mod env_file;
 mod gdb;
 mod go;
 mod javascript;

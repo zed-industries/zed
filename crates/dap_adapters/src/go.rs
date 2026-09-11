@@ -7,22 +7,14 @@ use dap::{
         latest_github_release,
     },
 };
-use fs::Fs;
 use futures::StreamExt;
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
 use log::warn;
-use serde_json::{Map, Value};
 use task::TcpArgumentsTemplate;
 use util;
 
-use std::{
-    env::consts,
-    ffi::OsStr,
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::OnceLock,
-};
+use std::{env::consts, ffi::OsStr, path::PathBuf, sync::OnceLock};
 
 use crate::*;
 
@@ -505,13 +497,14 @@ impl DebugAdapter for GoDebugAdapter {
                 .entry("cwd")
                 .or_insert_with(|| delegate.worktree_root_path().to_string_lossy().into());
 
-            handle_envs(
+            crate::env_file::apply_env_file(
                 configuration,
                 &mut envs,
                 cwd.as_deref(),
                 delegate.fs().clone(),
+                Self::ADAPTER_NAME,
             )
-            .await;
+            .await?;
         }
 
         if let Some(connection_options) = &task_definition.tcp_connection {
@@ -562,66 +555,4 @@ impl DebugAdapter for GoDebugAdapter {
             },
         })
     }
-}
-
-// delve doesn't do anything with the envFile setting, so we intercept it
-async fn handle_envs(
-    config: &mut Map<String, Value>,
-    envs: &mut HashMap<String, String>,
-    cwd: Option<&Path>,
-    fs: Arc<dyn Fs>,
-) -> Option<()> {
-    let env_files = match config.get("envFile")? {
-        Value::Array(arr) => arr.iter().map(|v| v.as_str()).collect::<Vec<_>>(),
-        Value::String(s) => vec![Some(s.as_str())],
-        _ => return None,
-    };
-
-    let rebase_path = |path: PathBuf| {
-        if path.is_absolute() {
-            Some(path)
-        } else {
-            cwd.map(|p| p.join(path))
-        }
-    };
-
-    let mut env_vars = HashMap::default();
-    for path in env_files {
-        let Some(path) = path
-            .and_then(|s| PathBuf::from_str(s).ok())
-            .and_then(rebase_path)
-        else {
-            continue;
-        };
-
-        if let Ok(file) = fs.open_sync(&path).await {
-            let file_envs: HashMap<String, String> = dotenvy::from_read_iter(file)
-                .filter_map(Result::ok)
-                .collect();
-            envs.extend(file_envs.iter().map(|(k, v)| (k.clone(), v.clone())));
-            env_vars.extend(file_envs);
-        } else {
-            warn!("While starting Go debug session: failed to read env file {path:?}");
-        };
-    }
-
-    let mut env_obj: serde_json::Map<String, Value> = serde_json::Map::new();
-
-    for (k, v) in env_vars {
-        env_obj.insert(k, Value::String(v));
-    }
-
-    if let Some(existing_env) = config.get("env").and_then(|v| v.as_object()) {
-        for (k, v) in existing_env {
-            env_obj.insert(k.clone(), v.clone());
-        }
-    }
-
-    if !env_obj.is_empty() {
-        config.insert("env".to_string(), Value::Object(env_obj));
-    }
-
-    // remove envFile now that it's been handled
-    config.remove("envFile");
-    Some(())
 }
