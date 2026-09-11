@@ -5870,7 +5870,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
   "git_panel": {
     "button": true,
     "dock": "left",
-    "default_width": 360,
+    "default_width": 640,
     "status_style": "icon",
     "fallback_branch_name": "main",
     "sort_by": "path",
@@ -5896,6 +5896,16 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
 - `starts_open`: Whether the git panel should open on startup
+
+## Git Commit Buffer Font Size
+
+- Description: The font size for the commit editor in the Git panel and commit modal. Falls back to `buffer_font_size` when unset.
+- Setting: `git_commit_buffer_font_size`
+- Default: `null`
+
+**Options**
+
+An integer font size from `6` to `100` pixels (inclusive)
 
 ## Git Worktree Directory
 
