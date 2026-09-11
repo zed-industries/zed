@@ -14,7 +14,12 @@ use util::{ResultExt, paths::SanitizedPath};
 
 use crate::{Fs, PathEvent, PathEventKind, Watcher};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+mod diagnostics;
+pub use diagnostics::{
+    WatchDiagnosticEvent, WatchRecording, WatchRoot, WatchSnapshot, WatcherSnapshot,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub enum OsWatcherKind {
     Native,
     Poll,
@@ -907,6 +912,7 @@ pub struct OsWatcher {
     backend: Mutex<Option<Box<dyn WatchBackend>>>,
     event_tx: async_channel::Sender<notify::Result<notify::Event>>,
     _dispatch_task: Task<()>,
+    diagnostics: Arc<diagnostics::DiagnosticRecorder>,
 }
 
 impl OsWatcher {
@@ -945,6 +951,7 @@ impl OsWatcher {
             backend: Mutex::new(backend),
             event_tx,
             _dispatch_task: dispatch_task,
+            diagnostics: Default::default(),
         })
     }
 
@@ -954,7 +961,21 @@ impl OsWatcher {
         &self,
     ) -> impl Fn(notify::Result<notify::Event>) + Send + Sync + 'static {
         let event_tx = self.event_tx.clone();
-        move |event| enqueue(&event_tx, event)
+        let diagnostics = self.diagnostics.clone();
+        let kind = self.kind;
+        move |event| {
+            diagnostics.record(|| match &event {
+                Ok(event) => WatchDiagnosticEvent::from_notify_event(kind, event),
+                Err(error) => WatchDiagnosticEvent::new(
+                    kind,
+                    "error",
+                    &error.paths,
+                    format!("{error:?}"),
+                    false,
+                ),
+            });
+            enqueue(&event_tx, event);
+        }
     }
 
     pub(crate) fn is_recursive(&self) -> bool {
@@ -978,6 +999,16 @@ impl OsWatcher {
 
         if !path_already_covered && !path_already_registered {
             if self.kind == OsWatcherKind::Native && state.is_native_watch_limit_cooldown_active() {
+                self.diagnostics.record(|| {
+                    WatchDiagnosticEvent::new(
+                        self.kind,
+                        "watch_skipped",
+                        &[path.as_path().to_owned()],
+                        "Native watch limit cooldown is active; registration will be retried"
+                            .into(),
+                        false,
+                    )
+                });
                 return Ok(None);
             }
 
@@ -1054,7 +1085,8 @@ impl OsWatcher {
 
     fn watch(&self, path: &Path) -> anyhow::Result<()> {
         self.ensure_backend()?;
-        self.backend
+        let result = self
+            .backend
             .lock()
             .as_mut()
             .expect("watcher backend initialized")
@@ -1065,7 +1097,24 @@ impl OsWatcher {
                 } else {
                     notify::RecursiveMode::NonRecursive
                 },
-            )?;
+            );
+        self.diagnostics.record(|| {
+            WatchDiagnosticEvent::new(
+                self.kind,
+                if result.is_ok() {
+                    "watch"
+                } else {
+                    "watch_error"
+                },
+                &[path.to_owned()],
+                match &result {
+                    Ok(()) => format!("recursive={}", self.recursive),
+                    Err(error) => format!("{error:?}"),
+                },
+                false,
+            )
+        });
+        result?;
         Ok(())
     }
 
@@ -1076,6 +1125,22 @@ impl OsWatcher {
             .as_mut()
             .map(|watcher| watcher.unwatch(path));
 
+        self.diagnostics.record(|| {
+            WatchDiagnosticEvent::new(
+                self.kind,
+                if matches!(&watcher, Some(Err(_))) {
+                    "unwatch_error"
+                } else {
+                    "unwatch"
+                },
+                &[path.to_owned()],
+                match &watcher {
+                    Some(Err(error)) => format!("{error:?}"),
+                    _ => String::new(),
+                },
+                false,
+            )
+        });
         match watcher {
             // inotify auto-removes a watch when its directory is deleted, so a
             // later unwatch races that and fails with a benign error. Either way
@@ -1103,18 +1168,36 @@ impl OsWatcher {
                     // workloads like grep or language server indexing.
                     let config =
                         notify::Config::default().with_event_kinds(notify::EventKindMask::CORE);
-                    Box::new(<notify::RecommendedWatcher as notify::Watcher>::new(
-                        self.event_sink(),
-                        config,
-                    )?)
+                    Box::new(
+                        <notify::RecommendedWatcher as notify::Watcher>::new(
+                            self.event_sink(),
+                            config,
+                        )
+                        .inspect_err(|error| self.record_backend_error(error))?,
+                    )
                 }
                 OsWatcherKind::Poll => {
                     let config = notify::Config::default().with_poll_interval(*POLL_INTERVAL);
-                    Box::new(notify::PollWatcher::new(self.event_sink(), config)?)
+                    Box::new(
+                        notify::PollWatcher::new(self.event_sink(), config)
+                            .inspect_err(|error| self.record_backend_error(error))?,
+                    )
                 }
             });
         }
         Ok(())
+    }
+
+    fn record_backend_error(&self, error: &notify::Error) {
+        self.diagnostics.record(|| {
+            WatchDiagnosticEvent::new(
+                self.kind,
+                "backend_error",
+                &error.paths,
+                format!("{error:?}"),
+                false,
+            )
+        });
     }
 }
 
@@ -1317,6 +1400,7 @@ mod tests {
             ),
             event_tx,
             _dispatch_task: Task::ready(()),
+            diagnostics: Default::default(),
         }
     }
 
