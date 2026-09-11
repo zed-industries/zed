@@ -12,7 +12,7 @@ use buffer_diagnostics::BufferDiagnosticsEditor;
 use collections::{BTreeSet, HashMap, HashSet};
 use diagnostic_renderer::DiagnosticBlock;
 use editor::{
-    Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
+    Anchor, Editor, EditorEvent, EditorSettings, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
     multibuffer_context_lines,
 };
@@ -636,7 +636,7 @@ impl ProjectDiagnosticsEditor {
                     })
                     .collect();
                 // TODO(cole): maybe should use the nonshrinking API?
-                this.multibuffer.update(cx, |multi_buffer, cx| {
+                let buffer_newly_added = this.multibuffer.update(cx, |multi_buffer, cx| {
                     multi_buffer.set_excerpt_ranges_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer.clone(),
@@ -645,6 +645,12 @@ impl ProjectDiagnosticsEditor {
                         cx,
                     )
                 });
+                if buffer_newly_added && EditorSettings::get_global(cx).multibuffer_default_folded
+                {
+                    this.editor.update(cx, |editor, cx| {
+                        editor.fold_buffer(buffer_id, cx);
+                    });
+                }
                 let multibuffer_snapshot = this.multibuffer.read(cx).snapshot(cx);
                 let anchor_ranges: Vec<Range<Anchor>> = excerpt_ranges
                     .into_iter()
