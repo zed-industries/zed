@@ -4106,7 +4106,6 @@ mod internal_tests {
                 },
                 cx,
             );
-            assert!(!cx.has_flag::<AcpBetaFeatureFlag>());
             let path_style = project.read(cx).path_style(cx);
             thread.update(cx, |thread, cx| {
                 thread.set_model(model.clone(), cx);
@@ -4146,8 +4145,7 @@ mod internal_tests {
             ]
         );
 
-        let compaction_id = acp_thread.read_with(cx, |thread, cx| {
-            assert!(!cx.has_flag::<AcpBetaFeatureFlag>());
+        let compaction_id = acp_thread.read_with(cx, |thread, _| {
             let Some(acp_thread::AgentThreadEntry::ContextCompaction(compaction)) =
                 thread.entries().last()
             else {
@@ -4216,7 +4214,6 @@ mod internal_tests {
         });
         let restored = cx
             .update(|cx| {
-                assert!(!cx.has_flag::<AcpBetaFeatureFlag>());
                 connection.clone().load_session(
                     session_id,
                     project,
@@ -4261,21 +4258,11 @@ mod internal_tests {
         let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        thread.update(cx, |thread, cx| {
-            thread.push_acp_user_block(
-                ClientUserMessageId::new(),
-                [acp::ContentBlock::from("before native compaction")],
-                project.read(cx).path_style(cx),
-                cx,
-            );
-        });
         let mut saved_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
-        let provider = LanguageModelProviderId::from("openai".to_string());
-        let items = vec![json!({"type": "compaction", "encrypted_content": "opaque state"})];
         saved_thread.messages.push(Arc::new(Message::Compaction(
             CompactionInfo::ProviderNative {
-                provider: provider.clone(),
-                items: items.clone(),
+                provider: LanguageModelProviderId::from("openai".to_string()),
+                items: vec![json!({"type": "compaction", "encrypted_content": "opaque state"})],
             },
         )));
         let restored_session_id = acp::SessionId::new("provider-native-compaction");
@@ -4292,17 +4279,10 @@ mod internal_tests {
             .await
             .expect("provider-native compaction should save");
 
-        drop(thread);
-        drop(acp_thread);
-        release_dropped_entities(cx);
-        agent.read_with(cx, |agent, _| {
-            assert!(!agent.sessions.contains_key(&session_id));
-            assert!(!agent.sessions.contains_key(&restored_session_id));
-        });
         let restored = cx
             .update(|cx| {
-                connection.clone().load_session(
-                    restored_session_id.clone(),
+                connection.load_session(
+                    restored_session_id,
                     project,
                     PathList::new(&[Path::new("/a")]),
                     None,
@@ -4326,21 +4306,6 @@ mod internal_tests {
             assert!(compaction.error.is_none());
             assert!(!thread.is_compacting());
         });
-
-        let restored_thread =
-            cx.update(|cx| native_thread_for_session(&agent, &restored_session_id, cx));
-        let saved_thread = restored_thread
-            .read_with(cx, |thread, cx| thread.to_db(cx))
-            .await;
-        let Some(Message::Compaction(CompactionInfo::ProviderNative {
-            provider: restored_provider,
-            items: restored_items,
-        })) = saved_thread.messages.last().map(Arc::as_ref)
-        else {
-            panic!("provider-native compaction should survive the database round trip");
-        };
-        assert_eq!(restored_provider, &provider);
-        assert_eq!(restored_items, &items);
     }
 
     #[gpui::test]

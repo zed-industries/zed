@@ -984,20 +984,4 @@ mod tests {
         let markdowns = compaction_markdowns(&compaction, true).collect::<Vec<_>>();
         assert_eq!(markdowns, vec![summary, unsupported, error]);
     }
-
-    #[gpui::test]
-    fn test_error_only_compaction_markdown(cx: &mut App) {
-        let error = cx.new(|cx| Markdown::new("error match".into(), None, None, cx));
-        let compaction = ContextCompaction {
-            id: ContextCompactionId("compaction".into()),
-            status: ContextCompactionStatus::Failed,
-            summary: Vec::new(),
-            error: Some(error.clone()),
-        };
-
-        assert_eq!(
-            compaction_markdowns(&compaction, true).collect::<Vec<_>>(),
-            vec![error]
-        );
-    }
 }

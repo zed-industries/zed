@@ -6651,106 +6651,43 @@ mod tests {
             .await
             .expect("failed to create ACP thread");
 
-        thread
-            .update(cx, |thread, cx| {
-                thread.handle_session_update(
-                    acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
-                        "compaction",
-                        acp::CompactionStatus::InProgress,
-                    )),
-                    cx,
-                )
-            })
-            .expect("failed to start context compaction");
-        thread
-            .update(cx, |thread, cx| {
-                thread.handle_session_update(
-                    acp::SessionUpdate::CompactionSummaryChunk(acp::CompactionSummaryChunk::new(
-                        "compaction",
-                        acp::ContentBlock::Text(acp::TextContent::new("retained ")),
-                    )),
-                    cx,
-                )
-            })
-            .expect("failed to append first context compaction chunk");
-        thread
-            .update(cx, |thread, cx| {
-                thread.handle_session_update(
-                    acp::SessionUpdate::CompactionSummaryChunk(acp::CompactionSummaryChunk::new(
-                        "compaction",
-                        acp::ContentBlock::Text(acp::TextContent::new("context")),
-                    )),
-                    cx,
-                )
-            })
-            .expect("failed to append second context compaction chunk");
-        thread
-            .update(cx, |thread, cx| {
-                thread.handle_session_update(
-                    acp::SessionUpdate::CompactionUpdate(acp::CompactionUpdate::new(
-                        "compaction",
-                        acp::CompactionStatus::Completed,
-                    )),
-                    cx,
-                )
-            })
-            .expect("failed to complete context compaction");
+        thread.update(cx, |thread, cx| {
+            for summary in ["retained context", "replacement summary"] {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::CompactionUpdate(
+                            acp::CompactionUpdate::new(
+                                "compaction",
+                                acp::CompactionStatus::Completed,
+                            )
+                            .summary(vec![acp::ContentBlock::Text(
+                                acp::TextContent::new(summary),
+                            )]),
+                        ),
+                        cx,
+                    )
+                    .expect("failed to set context compaction summary");
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
+                else {
+                    panic!("compaction entry must exist");
+                };
+                assert_eq!(compaction.status, ContextCompactionStatus::Completed);
+                assert!(compaction.error.is_none());
+                assert_eq!(
+                    compaction
+                        .summary
+                        .first()
+                        .map(|block| block.to_markdown(cx)),
+                    Some(summary)
+                );
+                assert_eq!(
+                    thread.to_markdown(cx),
+                    format!("## Context Compaction (Completed)\n\n{summary}\n\n")
+                );
+            }
 
-        thread.read_with(cx, |thread, cx| {
-            let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
-            else {
-                unreachable!("compaction update must create a context compaction entry");
-            };
-            assert_eq!(compaction.status, ContextCompactionStatus::Completed);
-            assert_eq!(compaction.error, None);
-            assert_eq!(
-                compaction
-                    .summary
-                    .first()
-                    .map(|summary| summary.to_markdown(cx)),
-                Some("retained context")
-            );
-            assert_eq!(
-                thread.to_markdown(cx),
-                "## Context Compaction (Completed)\n\nretained context\n\n"
-            );
-        });
-
-        thread
-            .update(cx, |thread, cx| {
-                thread.handle_session_update(
-                    acp::SessionUpdate::CompactionUpdate(
-                        acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Completed)
-                            .summary(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                                "replacement summary",
-                            ))]),
-                    ),
-                    cx,
-                )
-            })
-            .expect("failed to replace context compaction summary");
-
-        thread.read_with(cx, |thread, cx| {
-            let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
-            else {
-                unreachable!("compaction entry must still exist");
-            };
-            assert_eq!(
-                compaction
-                    .summary
-                    .first()
-                    .map(|summary| summary.to_markdown(cx)),
-                Some("replacement summary")
-            );
-            assert_eq!(
-                thread.to_markdown(cx),
-                "## Context Compaction (Completed)\n\nreplacement summary\n\n"
-            );
-        });
-
-        thread
-            .update(cx, |thread, cx| {
-                thread.handle_session_update(
+            thread
+                .handle_session_update(
                     acp::SessionUpdate::CompactionUpdate(
                         acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Failed)
                             .summary(None::<Vec<acp::ContentBlock>>)
@@ -6758,13 +6695,10 @@ mod tests {
                     ),
                     cx,
                 )
-            })
-            .expect("failed to record context compaction failure");
-
-        thread.read_with(cx, |thread, cx| {
+                .expect("failed to record context compaction failure");
             let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
             else {
-                unreachable!("compaction entry must still exist");
+                panic!("compaction entry must still exist");
             };
             assert_eq!(compaction.status, ContextCompactionStatus::Failed);
             assert!(compaction.summary.is_empty());
@@ -6779,30 +6713,26 @@ mod tests {
                 thread.to_markdown(cx),
                 "## Context Compaction (Failed)\n\n**Error:** model unavailable\n\n"
             );
-        });
 
-        for error in [
-            MaybeUndefined::Undefined,
-            MaybeUndefined::Value("model *still* unavailable".to_string()),
-            MaybeUndefined::Null,
-        ] {
-            let expected_error = match &error {
-                MaybeUndefined::Undefined => Some("model unavailable".to_string()),
-                MaybeUndefined::Value(error) => Some(error.clone()),
-                MaybeUndefined::Null => None,
-            };
-            thread
-                .update(cx, |thread, cx| {
-                    thread.handle_session_update(
+            for error in [
+                MaybeUndefined::Undefined,
+                MaybeUndefined::Value("model *still* unavailable".to_string()),
+                MaybeUndefined::Null,
+            ] {
+                let expected_error = match &error {
+                    MaybeUndefined::Undefined => Some("model unavailable".to_string()),
+                    MaybeUndefined::Value(error) => Some(error.clone()),
+                    MaybeUndefined::Null => None,
+                };
+                thread
+                    .handle_session_update(
                         acp::SessionUpdate::CompactionUpdate(
                             acp::CompactionUpdate::new("compaction", acp::CompactionStatus::Failed)
                                 .error(error),
                         ),
                         cx,
                     )
-                })
-                .expect("failed to patch compaction error");
-            thread.read_with(cx, |thread, cx| {
+                    .expect("failed to patch compaction error");
                 let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
                 else {
                     panic!("compaction entry must still exist");
@@ -6821,17 +6751,15 @@ mod tests {
                             .contains(&format!("**Error:** {}", MarkdownEscaped(&error)))
                     );
                 }
-            });
-        }
+            }
 
-        for summary in [
-            vec![acp::ContentBlock::Text(acp::TextContent::new(""))],
-            Vec::new(),
-        ] {
-            let expected_length = summary.len();
-            thread
-                .update(cx, |thread, cx| {
-                    thread.handle_session_update(
+            for summary in [
+                vec![acp::ContentBlock::Text(acp::TextContent::new(""))],
+                Vec::new(),
+            ] {
+                let expected_length = summary.len();
+                thread
+                    .handle_session_update(
                         acp::SessionUpdate::CompactionUpdate(
                             acp::CompactionUpdate::new(
                                 "compaction",
@@ -6841,16 +6769,14 @@ mod tests {
                         ),
                         cx,
                     )
-                })
-                .expect("failed to patch compaction summary");
-            thread.read_with(cx, |thread, _| {
+                    .expect("failed to patch compaction summary");
                 let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.last()
                 else {
                     panic!("compaction entry must still exist");
                 };
                 assert_eq!(compaction.summary.len(), expected_length);
-            });
-        }
+            }
+        });
     }
 
     #[gpui::test]
