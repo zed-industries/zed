@@ -524,7 +524,7 @@ alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev 
 any_vec = "0.14"
 anyhow = "1.0.86"
 arc-swap = "1.9.0"
-ashpd = { version = "0.13.5", default-features = false, features = [
+ashpd = { version = "0.13", default-features = false, features = [
     "async-io",
     "inhibit",
     "notification",
