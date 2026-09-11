@@ -6,7 +6,10 @@ use git::{
     Oid,
     repository::{InitialGraphCommitData, LogSource, RepoPath},
 };
-use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
+use gpui::{
+    AnyWindowHandle, Empty, Entity, InputEvent as _, KeyDownEvent, Keystroke, TestAppContext,
+    VisualTestContext,
+};
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, LanguageServerId,
     PointUtf16, Unclipped,
@@ -174,6 +177,66 @@ async fn test_opening_file(cx: &mut gpui::TestAppContext) {
         ]
     );
     ensure_single_file_is_opened(&workspace, "test/second.rs", cx);
+
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    pane.read_with(cx, |pane, _| {
+        assert_eq!(pane.items_len(), 1);
+        let active_item = pane.active_item();
+        assert!(active_item.is_some());
+        assert_eq!(
+            pane.preview_item_id(),
+            active_item.map(|item| item.item_id())
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_opening_file_with_project_panel_previews_disabled(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .preview_tabs
+                    .get_or_insert_default()
+                    .enable_preview_from_project_panel = Some(false);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/src"),
+        json!({
+            "test": {
+                "first.rs": "// First Rust file",
+                "second.rs": "// Second Rust file",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/src").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "src/test", cx);
+    for path in ["src/test/first.rs", "src/test/second.rs"] {
+        select_path(&panel, path, cx);
+        panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+        cx.run_until_parked();
+    }
+
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    pane.read_with(cx, |pane, _| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(pane.preview_item_id(), None);
+    });
 }
 
 #[gpui::test]
@@ -11966,4 +12029,166 @@ async fn test_file_rows_reserve_the_chevron_slot(cx: &mut gpui::TestAppContext) 
             "{indicator:?}: a directory draws its own chevron, so it reserves nothing"
         );
     }
+}
+
+#[gpui::test]
+async fn test_file_drag_state_clears_before_window_handoff(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "file.txt": "" }))
+        .await;
+    let first_project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let second_project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let (first_window, first_panel) = create_drag_test_panel(&first_project, cx);
+    let (second_window, second_panel) = create_drag_test_panel(&second_project, cx);
+
+    cx.update(|cx| {
+        cx.update_window(first_window, |_, window, cx| {
+            window.dispatch_event(
+                KeyDownEvent {
+                    keystroke: Keystroke::parse("down").expect("valid keystroke"),
+                    is_held: false,
+                    prefer_character_input: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            enter_file_drag_over_root(&first_panel, window, cx);
+            window.draw(cx).clear(cx);
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+        })
+        .expect("first window is open");
+        cx.update_window(second_window, |_, window, cx| {
+            enter_file_drag_over_root(&second_panel, window, cx);
+        })
+        .expect("second window is open");
+
+        assert!(cx.has_active_drag());
+        assert_drag_state_cleared(first_panel.read(cx));
+        cx.update_window(first_window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert_drag_state_cleared(first_panel.read(cx));
+        })
+        .expect("first window is open");
+        assert!(second_panel.read(cx).drag_target_entry.is_some());
+        assert!(cx.has_active_drag());
+
+        cx.update_window(second_window, |_, window, cx| {
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+            assert_drag_state_cleared(second_panel.read(cx));
+        })
+        .expect("second window is open");
+        assert!(!cx.has_active_drag());
+    });
+}
+
+#[gpui::test]
+async fn test_file_drag_state_clears_on_render_after_drag_stops(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "file.txt": "" }))
+        .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let (window, panel) = create_drag_test_panel(&project, cx);
+
+    cx.update_window(window, |_, window, cx| {
+        enter_file_drag_over_root(&panel, window, cx);
+        window.draw(cx).clear(cx);
+        assert!(cx.stop_active_drag(window));
+        assert!(panel.read(cx).drag_target_entry.is_some());
+
+        window.draw(cx).clear(cx);
+        assert_drag_state_cleared(panel.read(cx));
+    })
+    .expect("window is open");
+}
+
+fn create_drag_test_panel(
+    project: &Entity<Project>,
+    cx: &mut TestAppContext,
+) -> (AnyWindowHandle, Entity<ProjectPanel>) {
+    let window = cx.open_window(size(px(800.), px(600.)), |window, cx| {
+        MultiWorkspace::test_new(project.clone(), window, cx)
+    });
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("window is open");
+    let window = AnyWindowHandle::from(window);
+    let panel = cx
+        .update_window(window, |_, window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                let panel = ProjectPanel::new(workspace, window, cx);
+                workspace.add_panel(panel.clone(), window, cx);
+                workspace.open_panel::<ProjectPanel>(window, cx);
+                panel
+            })
+        })
+        .expect("window is open");
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+        .expect("window is open");
+    (window, panel)
+}
+
+fn enter_file_drag_over_root(panel: &Entity<ProjectPanel>, window: &mut Window, cx: &mut App) {
+    let (position, root_entry_id) = {
+        let panel = panel.read(cx);
+        let scroll = panel.scroll_handle.0.borrow();
+        let bounds = scroll.base_handle.bounds();
+        let item_size = scroll
+            .last_item_size
+            .expect("project entries were rendered");
+        let item_count = panel
+            .state
+            .visible_entries
+            .iter()
+            .map(|worktree| worktree.entries.len())
+            .sum::<usize>();
+        assert_eq!(item_count, 2);
+        let item_height = item_size.contents.height / item_count as f32;
+        let position = bounds.origin + point(bounds.size.width / 2., item_height / 2.);
+        let worktree = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .expect("project has a worktree")
+            .read(cx);
+        let root_entry_id = worktree.root_entry().expect("worktree has a root").id;
+        (position, root_entry_id)
+    };
+    window.dispatch_event(
+        FileDropEvent::Entered {
+            position,
+            paths: ExternalPaths(
+                [PathBuf::from(path!("/outside/file.txt"))]
+                    .into_iter()
+                    .collect(),
+            ),
+        }
+        .to_platform_input(),
+        cx,
+    );
+    let panel = panel.read(cx);
+    let target_entry_ids = panel
+        .drag_target_entry
+        .as_ref()
+        .and_then(|target| match target {
+            DragTarget::Entry {
+                entry_id,
+                highlight_entry_id,
+            } => Some((*entry_id, *highlight_entry_id)),
+            DragTarget::Background => None,
+        });
+    assert_eq!(target_entry_ids, Some((root_entry_id, root_entry_id)));
+    assert_eq!(panel.previous_drag_position, Some(position));
+    assert!(panel.hover_scroll_task.is_some());
+}
+
+fn assert_drag_state_cleared(panel: &ProjectPanel) {
+    assert!(panel.drag_target_entry.is_none());
+    assert!(panel.folded_directory_drag_target.is_none());
+    assert!(panel.hover_scroll_task.is_none());
+    assert!(panel.hover_expand_task.is_none());
+    assert_eq!(panel.previous_drag_position, None);
 }

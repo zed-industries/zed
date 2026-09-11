@@ -109,11 +109,12 @@ pub fn init(cx: &mut App) {
         update_rebuild_dev_extension_visibility(&store, cx);
     })
     .detach();
+    extension_suggest::init(cx);
 
-    cx.observe_new(move |workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else {
+    cx.observe_new(move |workspace: &mut Workspace, window, _cx| {
+        if window.is_none() {
             return;
-        };
+        }
         workspace
             .register_action(
                 move |workspace, action: &zed_actions::Extensions, window, cx| {
@@ -281,13 +282,6 @@ pub fn init(cx: &mut App) {
                     }
                 }
             });
-
-        cx.subscribe_in(workspace.project(), window, |_, _, event, window, cx| {
-            if let project::Event::LanguageNotFound(buffer) = event {
-                extension_suggest::suggest(buffer.clone(), window, cx);
-            }
-        })
-        .detach();
     })
     .detach();
 }

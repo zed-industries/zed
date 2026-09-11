@@ -17,7 +17,7 @@ use cloud_llm_client::{
 };
 use db::AppDatabase;
 use edit_prediction_types::EditPredictionRequestTrigger;
-use feature_flags::{FeatureFlag as _, FeatureFlagAppExt as _, FeatureFlagsSettings};
+use feature_flags::FeatureFlagsSettings;
 use futures::{
     AsyncReadExt, FutureExt, StreamExt,
     channel::{mpsc, oneshot},
@@ -767,8 +767,8 @@ fn make_collaborator_replica(
 ) -> (Entity<Buffer>, clock::Global) {
     let (state, version) =
         buffer.read_with(cx, |buffer, _cx| (buffer.to_proto(_cx), buffer.version()));
-    let collaborator = cx.new(|_cx| {
-        Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None).unwrap()
+    let collaborator = cx.new(|cx| {
+        Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None, cx).unwrap()
     });
     (collaborator, version)
 }
