@@ -204,6 +204,8 @@ pub struct ThemeColors {
     // Editor
     // ===
     pub editor_foreground: Hsla,
+    /// Text color used for CodeLens items in the editor.
+    pub editor_code_lens_foreground: Hsla,
     pub editor_background: Hsla,
     pub editor_gutter_background: Hsla,
     pub editor_subheader_background: Hsla,
