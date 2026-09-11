@@ -681,6 +681,8 @@ pub struct App {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
     text_system: Arc<TextSystem>,
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    defer_draw_until_frame: bool,
 
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
@@ -802,6 +804,8 @@ impl App {
                 this: this.clone(),
                 platform: platform.clone(),
                 text_system,
+                #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+                defer_draw_until_frame: false,
                 text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
                 mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
@@ -1717,7 +1721,8 @@ impl App {
                     .values()
                     .filter_map(|window| {
                         let window = window.as_deref()?;
-                        window.invalidator.is_dirty().then_some(window.handle)
+                        (!self.defer_draw_until_frame && window.invalidator.is_dirty())
+                            .then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
                 {

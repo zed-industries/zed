@@ -2,8 +2,11 @@ use std::{
     cell::{OnceCell, RefCell},
     future::Future,
     rc::Rc,
-    sync::Arc,
-    time::Duration,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use anyhow::{Result, anyhow};
@@ -116,6 +119,10 @@ impl BenchReport {
     /// Creates a report that treats `frame_budget_nanos` as the per-frame budget
     /// when counting frame budget overruns.
     pub fn with_frame_budget_nanos(frame_budget_nanos: u128) -> Self {
+        assert!(
+            frame_budget_nanos > 0,
+            "frame budget must be at least one nanosecond"
+        );
         Self {
             frame_snapshot: Rc::new(RefCell::new(WindowFrameSnapshot::new())),
             frame_budget_nanos,
@@ -423,6 +430,28 @@ struct MeasuredTaskInput<Input> {
     trace_scope: Option<TraceScope>,
 }
 
+/// Keeps effect delivery synchronous while leaving drawing to the platform frame callback.
+struct RendererScope {
+    app: Rc<AppCell>,
+    previous: bool,
+}
+
+impl RendererScope {
+    fn start(app: &Rc<AppCell>) -> Self {
+        let previous = std::mem::replace(&mut app.borrow_mut().defer_draw_until_frame, true);
+        Self {
+            app: app.clone(),
+            previous,
+        }
+    }
+}
+
+impl Drop for RendererScope {
+    fn drop(&mut self) {
+        self.app.borrow_mut().defer_draw_until_frame = self.previous;
+    }
+}
+
 struct MeasuredTaskOutput<Output> {
     trace_scope: Option<TraceScope>,
     report: BenchReport,
@@ -723,9 +752,15 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// Measures frame latency after updating a GPUI entity in its current window.
     ///
     /// Each iteration runs `update` against the entity in its current window. In
-    /// bench builds, flushing the update's effects synchronously draws dirty
-    /// windows. The entity should be part of the window's render tree, such as the
+    /// renderer measurements, effects flush without drawing until the platform
+    /// frame callback. The entity should be part of the window's render tree, such as the
     /// root view or a child of it.
+    ///
+    /// Each iteration first pumps at most the initial ready task count, yielding
+    /// to input and a frame when the report's frame budget is exhausted. At least
+    /// one ready task runs even if the budget is already exhausted. This is
+    /// unpaced: the budget limits ready work, not the whole loop, and cannot
+    /// preempt a task poll.
     ///
     /// Frame events are collected through the GPUI frame profiler
     /// ([`crate::profiler::record_frame_event`]), which is enabled for the
@@ -738,52 +773,172 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         V: 'static + Render,
     {
         let bencher = self.take_bencher("bench_renderer");
-        let window_id = self
-            .with_window(view.entity_id(), |window, _| {
-                window.window_handle().window_id()
-            })
-            .expect("cannot benchmark renderer for entity without a current window");
-
         let dispatcher = self.background_executor.dispatcher().clone();
         let collector = TraceScope::start(self.foreground_journal_collector());
+        let _renderer_scope = RendererScope::start(&self.app);
 
         let mut benchmark = || {
+            let turn_start = Instant::now();
             // Work already queued at frame start delays the frame in
             // production too, so run it inside the measured interval.
             dispatcher
                 .as_threaded()
                 .expect("validated in BenchAppContext::build")
-                .run_ready_main_tasks();
-            self.with_window(view.entity_id(), |window, cx| {
-                view.update(cx, |view, cx| update(view, window, cx));
-            })
-            .expect("cannot benchmark renderer for entity without a current window");
-            // Submit the frame drawn by the update's effect flush, mirroring
-            // production where every drawn frame is presented. With a headless
-            // renderer this includes scene submission to the GPU.
-            self.with_window(view.entity_id(), |window, _| {
-                window.present_if_needed();
-            })
-            .expect("cannot benchmark renderer for entity without a current window");
+                .run_ready_main_tasks_while(|ran_any| {
+                    !ran_any || turn_start.elapsed().as_nanos() < self.report.frame_budget_nanos
+                });
+            let handle = self
+                .with_window(view.entity_id(), |window, cx| {
+                    view.update(cx, |view, cx| update(view, window, cx));
+                    window.window_handle()
+                })
+                .expect("cannot benchmark renderer for entity without a current window");
+            self.request_frame(handle);
         };
         bencher.iter(&mut benchmark);
 
         let events = collector.finish();
-        self.report
-            .record_frame_timings(events.frame_events.iter().filter(|event| match event {
-                FrameEvent::Draw(timing) => timing.window_id == window_id,
-                FrameEvent::Present(timing) => timing.window_id == window_id,
-            }));
-        // Foreground work isn't attributed to a window, so unlike frame
-        // timings above it isn't filtered by `window_id`. A benchmark app
-        // hosts one window at a time, so this cannot pick up unrelated
-        // windows' work.
+        self.report.record_frame_timings(events.frame_events.iter());
         self.report
             .record_foreground_events(events.foreground_events());
         self.replace_bencher(bencher);
     }
 
-    /// Adds a window with an empty root view for benchmark setup.
+    /// Measures finite rendering sessions with fresh, untimed setup for each iteration.
+    ///
+    /// `setup` returns session state, its window, and a shared stop flag.
+    /// Loop turns pump at most the initial ready foreground task count, then call
+    /// `input` with a zero-based turn number unless stopped. Between polls, the
+    /// stop flag and session deadline are checked; after at least one poll, the
+    /// report's frame budget yields remaining work to input and a frame. This
+    /// snapshots a count, not task identities. It is an unpaced benchmark policy,
+    /// not OS event-loop emulation or a bound on input, draw, or whole-loop time.
+    /// Once stopped, only scheduled platform frame callbacks run until the window
+    /// is clean and its final changes have been submitted for presentation.
+    /// Pending animation callbacks alone do not delay completion.
+    /// Turns run without pacing or explicit OS-thread yields. A clean turn need not draw.
+    ///
+    /// Store `true` with release ordering to stop. Stopping does not imply success:
+    /// validate the workload in `Input::drop` or retained fixture state afterward.
+    /// Setup, session state destruction, and report aggregation are outside both
+    /// timing and tracing. Own outstanding tasks in `Input` so dropping it cancels
+    /// them; do not detach session work that could leak into subsequent iterations.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the window is removed or stopping and final presentation exceed `timeout`.
+    /// The deadline is checked between polls and frames and cannot preempt a blocking task
+    /// poll, input callback, draw, or present.
+    pub fn bench_renderer_session<Input>(
+        &mut self,
+        timeout: Duration,
+        mut setup: impl FnMut(&mut Self) -> (Input, AnyWindowHandle, Arc<AtomicBool>),
+        mut input: impl FnMut(&mut Input, u64, &mut Window, &mut App),
+    ) {
+        let bencher = self.take_bencher("bench_renderer_session");
+        let mut setup_context = self.clone();
+        let mut benchmark_context = self.clone();
+        let dispatcher = self.background_executor.dispatcher().clone();
+        let report = self.report.clone();
+
+        bencher.iter_batched_ref(
+            || {
+                setup_context.settle();
+                MeasuredTaskInput {
+                    input: setup(&mut setup_context),
+                    trace_scope: Some(TraceScope::start(
+                        setup_context.foreground_journal_collector(),
+                    )),
+                }
+            },
+            |measured_input| {
+                let (state, window, stopped) = &mut measured_input.input;
+                let _renderer_scope = RendererScope::start(&benchmark_context.app);
+                let started = Instant::now();
+                let check_deadline = || {
+                    assert!(
+                        started.elapsed() < timeout,
+                        "renderer session did not stop within {timeout:?} with final changes presented"
+                    );
+                };
+                let mut frame = 0;
+                loop {
+                    check_deadline();
+                    let turn_start = Instant::now();
+                    if !stopped.load(Ordering::Acquire) {
+                        dispatcher
+                            .as_threaded()
+                            .expect("validated in BenchAppContext::build")
+                            .run_ready_main_tasks_while(|ran_any| {
+                                check_deadline();
+                                !stopped.load(Ordering::Acquire)
+                                    && (!ran_any
+                                        || turn_start.elapsed().as_nanos()
+                                            < report.frame_budget_nanos)
+                            });
+                        check_deadline();
+                        benchmark_context
+                            .update_window(*window, |_, window, cx| {
+                                if !stopped.load(Ordering::Acquire) {
+                                    input(state, frame, window, cx);
+                                }
+                            })
+                            .expect("renderer session window must remain open");
+                    }
+                    check_deadline();
+                    benchmark_context.request_frame(*window);
+                    check_deadline();
+                    let finished = stopped.load(Ordering::Acquire) && {
+                        // A scheduled callback can return early under throttling.
+                        // Read without an update, which would flush unrelated effects.
+                        let app = benchmark_context.app.borrow();
+                        let window = app
+                            .windows
+                            .get(window.window_id())
+                            .and_then(Option::as_deref)
+                            .expect("renderer session window must remain open");
+                        !window.invalidator.is_dirty() && !window.needs_present.get()
+                    };
+                    if !finished {
+                        frame += 1;
+                    }
+                    if finished {
+                        break;
+                    }
+                }
+                MeasuredTaskOutput {
+                    trace_scope: measured_input.trace_scope.take(),
+                    report: report.clone(),
+                    _output: (),
+                }
+            },
+            criterion::BatchSize::PerIteration,
+        );
+        self.replace_bencher(bencher);
+    }
+
+    fn request_frame(&mut self, handle: AnyWindowHandle) -> bool {
+        let platform_window = {
+            let mut app = self.app.borrow_mut();
+            let window = app
+                .windows
+                .get_mut(handle.window_id())
+                .and_then(Option::as_deref_mut)
+                .expect("renderer window must remain open");
+            window
+                .platform_window
+                .as_test()
+                .expect("benchmark platform window")
+                .clone()
+        };
+        // The production callback borrows App itself and may rearm its frame request.
+        platform_window.simulate_scheduled_frame()
+    }
+
+    /// Adds an active window with an empty root view for benchmark setup.
+    ///
+    /// Activation is settled before returning so renderer measurements exercise
+    /// foreground animation rather than the inactive-window frame throttle.
     pub fn add_empty_window(&mut self) -> BenchWindowContext<'a, 'measurement> {
         let bounds = {
             let app = self.app.borrow();
@@ -801,6 +956,10 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                 )
                 .expect("failed to open benchmark window")
                 .into();
+            // An active renderer workload must not inherit the platform
+            // callback's inactive-window animation throttle.
+            app.update_window(window, |_, window, _| window.activate_window())
+                .expect("new benchmark window must remain open");
             window
         };
 
@@ -1129,6 +1288,762 @@ mod tests {
 
     use super::*;
     use crate::profiler::journal::install_test_foreground_journal;
+
+    #[test]
+    fn renderer_follows_view_to_its_current_window() {
+        struct Root(Entity<Empty>);
+
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl crate::IntoElement {
+                self.0.clone()
+            }
+        }
+
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let mut criterion = criterion::Criterion::default()
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("renderer_current_window", |bencher| {
+            let mut cx = BenchAppContext::new(platform.clone(), None, bencher);
+            let mut original = cx.add_empty_window();
+            let mut destination = cx.add_empty_window();
+            let view = original.update(|window, cx| window.replace_root(cx, |_, _| Empty));
+            let original_handle = original.window_handle();
+            let destination_handle = destination.window_handle();
+            let task = cx.update(|cx| {
+                cx.spawn({
+                    let view = view.clone();
+                    async move |cx| {
+                        destination_handle
+                            .update(cx, |_, window, cx| {
+                                window.replace_root(cx, |_, _| Root(view));
+                                window.draw(cx).clear(cx);
+                            })
+                            .expect("destination window must remain open");
+                        original_handle
+                            .update(cx, |_, window, _| window.remove_window())
+                            .expect("original window must still be open");
+                    }
+                })
+            });
+            let mut updates = 0;
+            cx.bench_renderer(view, |_, window, _| {
+                assert_eq!(window.window_handle(), destination_handle);
+                updates += 1;
+                window.refresh();
+            });
+            assert!(updates > 0);
+            destination.update(|window, _| {
+                assert!(!window.invalidator.is_dirty());
+                assert!(!window.needs_present.get());
+                window.remove_window();
+            });
+            drop(task);
+            cx.teardown();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "frame budget must be at least one nanosecond")]
+    fn report_rejects_zero_frame_budget() {
+        BenchReport::with_frame_budget_nanos(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "frame budget must be at least one nanosecond")]
+    fn report_rejects_subnanosecond_frame_rate() {
+        BenchReport::with_fps(1_000_000_001);
+    }
+
+    #[test]
+    fn renderer_scope_coalesces_effects_and_preserves_synchronous_callers() {
+        use std::cell::Cell;
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let mut criterion = criterion::Criterion::default().without_plots();
+        criterion = criterion
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("renderer_effects_contract", |bencher| {
+            let mut cx = BenchAppContext::new(platform.clone(), None, bencher);
+            let mut window = cx.add_empty_window();
+            let handle = window.window_handle();
+            let state = cx.new(|_| ());
+            let notifications = Rc::new(Cell::new(0));
+            let subscription = cx.update(|cx| {
+                cx.observe(&state, {
+                    let notifications = notifications.clone();
+                    move |_, _| notifications.set(notifications.get() + 1)
+                })
+            });
+            let events = Rc::new(Cell::new(0));
+            let emitter = cx.new(|_| BenchEmitter);
+            let event_subscription = cx.update(|cx| {
+                cx.subscribe(&emitter, {
+                    let events = events.clone();
+                    move |_, _, _| events.set(events.get() + 1)
+                })
+            });
+            let trace = TraceScope::start(cx.foreground_journal_collector());
+            let mut frames = FrameTimingCollector::new();
+            let mut take_draws = || {
+                frames
+                    .collect_unseen()
+                    .iter()
+                    .filter(|event| matches!(event, FrameEvent::Draw(_)))
+                    .count()
+            };
+            {
+                let _scope = RendererScope::start(&cx.app);
+                for _ in 0..3 {
+                    window.update(|window, cx| {
+                        state.update(cx, |_, cx| cx.notify());
+                        emitter.update(cx, |_, cx| cx.emit(()));
+                        window.refresh();
+                    });
+                }
+                assert_eq!(notifications.get(), 3);
+                assert_eq!(events.get(), 3);
+                assert_eq!(take_draws(), 0);
+                assert!(cx.request_frame(handle));
+                assert_eq!(take_draws(), 1);
+                window.update(|window, _| assert!(!window.needs_present.get()));
+                let callbacks = Rc::new(Cell::new(0));
+                window.update(|window, _| {
+                    window.on_next_frame({
+                        let callbacks = callbacks.clone();
+                        move |window, _| {
+                            callbacks.set(callbacks.get() + 1);
+                            window.refresh();
+                            window.on_next_frame(move |window, _| {
+                                callbacks.set(callbacks.get() + 1);
+                                window.refresh();
+                            });
+                        }
+                    })
+                });
+                assert!(cx.request_frame(handle));
+                assert_eq!(callbacks.get(), 1);
+                assert!(cx.request_frame(handle));
+                assert_eq!(callbacks.get(), 2);
+                assert_eq!(take_draws(), 2);
+                window.update(|window, cx| {
+                    window.refresh();
+                    window.dispatch_event(
+                        crate::PlatformInput::ModifiersChanged(Default::default()),
+                        cx,
+                    );
+                    assert_eq!(
+                        take_draws(),
+                        1,
+                        "key dispatch still needs a current dispatch tree"
+                    );
+                    window.refresh();
+                });
+                cx.request_frame(handle);
+                assert_eq!(
+                    take_draws(),
+                    1,
+                    "the scheduled draw must follow the special input draw"
+                );
+            }
+            window.update(|window, _| window.refresh());
+            assert_eq!(take_draws(), 1);
+            let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _scope = RendererScope::start(&cx.app);
+                panic!("scope restoration");
+            }));
+            assert!(unwind.is_err());
+            assert!(!cx.read(|cx| cx.defer_draw_until_frame));
+            drop(trace);
+            drop(subscription);
+            drop(event_subscription);
+            let view = window.update(|window, cx| window.replace_root(cx, |_, _| Empty));
+            let mut updates = 0;
+            let mut frames = FrameTimingCollector::new();
+            cx.bench_renderer(view, |_, window, _| {
+                if updates > 0 {
+                    assert_eq!(
+                        take_draw_count(&mut frames),
+                        1,
+                        "each renderer turn must draw once"
+                    );
+                }
+                updates += 1;
+                window.refresh();
+                window.refresh();
+            });
+            assert!(updates > 0);
+            assert_eq!(cx.report.frame_snapshot.borrow().draw.len(), updates);
+            window.update(|window, _| window.remove_window());
+            cx.teardown();
+        });
+    }
+
+    #[test]
+    fn renderer_session_keeps_up_with_input_generated_work() {
+        use std::cell::Cell;
+
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        // Isolate the count bound from machine speed; the tiny-budget test below
+        // separately exercises yielding to frames.
+        let report = BenchReport::with_frame_budget_nanos(Duration::from_secs(5).as_nanos());
+        let mut criterion = criterion::Criterion::default()
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("renderer_input_work", |bencher| {
+            let mut cx = BenchAppContext::new_with_platform_and_report(
+                platform.clone(),
+                None,
+                bencher,
+                report.clone(),
+            );
+            cx.bench_renderer_session(
+                Duration::from_secs(5),
+                |cx| {
+                    let mut window = cx.add_empty_window();
+                    let handle = window.window_handle();
+                    let stopped = Arc::new(AtomicBool::new(false));
+                    let completed = Rc::new(Cell::new(0));
+                    let draws_before = report.frame_snapshot.borrow().draw.len();
+                    let frames = Rc::new(RefCell::new(FrameTimingCollector::new()));
+                    let teardown = OnDrop({
+                        let completed = completed.clone();
+                        let report = report.clone();
+                        move || {
+                            assert_eq!(
+                                completed.get(),
+                                65,
+                                "stop must leave the other ready tasks unpolled"
+                            );
+                            assert_eq!(
+                                report.frame_snapshot.borrow().draw.len() - draws_before,
+                                18,
+                                "coalesce each turn into one draw, including the stopping task"
+                            );
+                            window.update(|window, _| {
+                                assert!(!window.invalidator.is_dirty());
+                                assert!(!window.needs_present.get());
+                                window.remove_window();
+                            });
+                        }
+                    });
+                    (
+                        (Vec::new(), completed, stopped.clone(), frames, teardown),
+                        handle,
+                        stopped,
+                    )
+                },
+                |(tasks, completed, stopped, frames, _), turn, window, cx| {
+                    assert!(turn <= 16, "stop must skip the final input");
+                    assert_eq!(
+                        take_draw_count(&mut frames.borrow_mut()),
+                        usize::from(turn > 0),
+                        "coalesce the previous turn and defer this turn's draw"
+                    );
+                    assert_eq!(
+                        completed.get(),
+                        turn * 4,
+                        "each input's ready work must finish before the next input"
+                    );
+                    window.refresh();
+                    tasks.clear();
+                    for _ in 0..4 {
+                        tasks.push(cx.spawn({
+                            let completed = completed.clone();
+                            let stopped = stopped.clone();
+                            let handle = window.window_handle();
+                            async move |cx| {
+                                completed.set(completed.get() + 1);
+                                if turn == 16 {
+                                    cx.update_window(handle, |_, window, _| window.refresh())
+                                        .expect("open window");
+                                    stopped.store(true, Ordering::Release);
+                                }
+                            }
+                        }));
+                    }
+                },
+            );
+            cx.teardown();
+        });
+    }
+
+    #[test]
+    fn renderer_session_gives_frames_progress_with_a_task_backlog() {
+        use std::cell::Cell;
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let report = BenchReport::with_frame_budget_nanos(1);
+        let mut criterion = criterion::Criterion::default()
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("renderer_task_backlog", |bencher| {
+            let mut cx = BenchAppContext::new_with_platform_and_report(
+                platform.clone(),
+                None,
+                bencher,
+                report.clone(),
+            );
+            cx.bench_renderer_session(
+                Duration::from_secs(5),
+                |cx| {
+                    let mut window = cx.add_empty_window();
+                    let handle = window.window_handle();
+                    let stopped = Arc::new(AtomicBool::new(false));
+                    let polls = Rc::new(Cell::new(0));
+                    let tasks: Vec<_> = (0..8)
+                        .map(|_| {
+                            cx.update(|cx| {
+                                cx.spawn({
+                                    let polls = polls.clone();
+                                    async move |cx| {
+                                        polls.set(polls.get() + 1);
+                                        for _ in 0..3 {
+                                            cx.update_window(handle, |_, window, _| {
+                                                window.refresh()
+                                            })
+                                            .expect("open window");
+                                        }
+                                        let start = Instant::now();
+                                        while start.elapsed() < Duration::from_millis(2) {
+                                            std::hint::spin_loop();
+                                        }
+                                    }
+                                })
+                            })
+                        })
+                        .collect();
+                    let draws_before = report.frame_snapshot.borrow().draw.len();
+                    let frames = Rc::new(RefCell::new(FrameTimingCollector::new()));
+                    let teardown = OnDrop({
+                        let report = report.clone();
+                        move || {
+                            assert_eq!(
+                                polls.get(),
+                                3,
+                                "do not drain the backlog before input and frames"
+                            );
+                            assert_eq!(
+                                report.frame_snapshot.borrow().draw.len() - draws_before,
+                                3,
+                                "coalesce each task's updates with input"
+                            );
+                            window.update(|window, _| {
+                                assert!(!window.needs_present.get());
+                                window.remove_window();
+                            });
+                        }
+                    });
+                    ((tasks, teardown, stopped.clone(), frames), handle, stopped)
+                },
+                |(_, _, stopped, frames), turn, window, _| {
+                    assert_eq!(
+                        take_draw_count(&mut frames.borrow_mut()),
+                        usize::from(turn > 0),
+                        "draw once per turn, not during each task update"
+                    );
+                    window.refresh();
+                    if turn == 2 {
+                        stopped.store(true, Ordering::Release);
+                    }
+                },
+            );
+            assert!(report.foreground_work().expect("task polls").max >= Duration::from_millis(2));
+            cx.teardown();
+        });
+    }
+
+    #[test]
+    fn renderer_session_presents_task_completion_and_restarts_outside_tracing() {
+        use futures::StreamExt;
+        use std::cell::Cell;
+
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let report = BenchReport::default();
+        let sessions = Rc::new(Cell::new(0));
+        let mut criterion = criterion::Criterion::default()
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("renderer_session_restarts", |bencher| {
+            let mut cx = BenchAppContext::new_with_platform_and_report(
+                platform.clone(),
+                None,
+                bencher,
+                report.clone(),
+            );
+            cx.bench_renderer_session(
+                Duration::from_secs(5),
+                |cx| {
+                    let draws_before = report.frame_snapshot.borrow().draw.len();
+                    let mut window = cx.add_empty_window();
+                    let handle = window.window_handle();
+                    window.update(|window, _| window.present_if_needed());
+                    let stopped = Arc::new(AtomicBool::new(false));
+                    let (sender, mut receiver) = futures::channel::mpsc::unbounded();
+                    let task = cx.update(|cx| {
+                        cx.spawn({
+                            let stopped = stopped.clone();
+                            async move |cx| {
+                                for _ in 0..3 {
+                                    receiver
+                                        .next()
+                                        .await
+                                        .expect("input must advance each frame");
+                                    cx.update_window(handle, |_, window, _| window.refresh())
+                                        .expect("session window must remain open");
+                                }
+                                stopped.store(true, Ordering::Release);
+                            }
+                        })
+                    });
+                    let callbacks = Rc::new(Cell::new(0));
+                    let teardown = OnDrop({
+                        let callbacks = callbacks.clone();
+                        let sessions = sessions.clone();
+                        let report = report.clone();
+                        move || {
+                            assert_eq!(callbacks.get(), 3, "stop must skip the final input");
+                            window.update(|window, _| {
+                                assert!(
+                                    !window.needs_present.get(),
+                                    "the task's final dirty frame must be presented"
+                                );
+                            });
+                            assert_eq!(
+                                report.frame_snapshot.borrow().draw.len() - draws_before,
+                                4,
+                                "coalesce task and input invalidations into frame callbacks, excluding setup"
+                            );
+                            // A teardown draw must not enter the next session's report.
+                            window.update(|window, _| window.refresh());
+                            window.update(|window, _| window.remove_window());
+                            sessions.set(sessions.get() + 1);
+                        }
+                    });
+                    ((sender, callbacks, task, teardown), handle, stopped)
+                },
+                |(sender, callbacks, _, _), frame, window, _| {
+                    assert_eq!(frame, callbacks.get());
+                    callbacks.set(frame + 1);
+                    window.refresh();
+                    sender
+                        .unbounded_send(())
+                        .expect("session task must be alive");
+                },
+            );
+            cx.teardown();
+        });
+        assert!(sessions.get() > 1, "Criterion must create fresh sessions");
+    }
+
+    #[test]
+    fn renderer_session_presents_stopped_inactive_window_without_draining_work() {
+        use std::cell::Cell;
+
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let report = BenchReport::default();
+        let mut criterion = criterion::Criterion::default()
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("renderer_session_inactive_stop", |bencher| {
+            let mut cx = BenchAppContext::new_with_platform_and_report(
+                platform.clone(),
+                None,
+                bencher,
+                report.clone(),
+            );
+            cx.bench_renderer_session(
+                Duration::from_secs(5),
+                |cx| {
+                    let mut window = cx.add_empty_window();
+                    let handle = window.window_handle();
+                    let _scope = RendererScope::start(&cx.app);
+                    window.update(|window, _| window.refresh());
+                    assert!(cx.request_frame(handle));
+                    let presented = Instant::now();
+                    let platform_window = window.update(|window, _| {
+                        assert!(!window.invalidator.is_dirty());
+                        assert!(!window.needs_present.get());
+                        window.platform_window.as_test().unwrap().clone()
+                    });
+                    platform_window.simulate_active_status_change(false);
+                    let stopped = Arc::new(AtomicBool::new(false));
+                    let callbacks = Rc::new(Cell::new(0));
+                    let task_ran = Rc::new(Cell::new(false));
+                    let draws_before = report.frame_snapshot.borrow().draw.len();
+                    let teardown = OnDrop({
+                        let callbacks = callbacks.clone();
+                        let task_ran = task_ran.clone();
+                        let report = report.clone();
+                        move || {
+                            assert!(!task_ran.get(), "stopped sessions must not pump tasks");
+                            assert_eq!(callbacks.get(), 1);
+                            assert_eq!(
+                                report.frame_snapshot.borrow().draw.len() - draws_before,
+                                1,
+                                "the final refresh must draw despite throttling"
+                            );
+                            window.update(|window, _| {
+                                assert!(!window.is_window_active());
+                                assert!(!window.invalidator.is_dirty());
+                                assert!(!window.needs_present.get());
+                                assert_eq!(window.next_frame_callbacks.borrow().len(), 1);
+                                window.remove_window();
+                            });
+                        }
+                    });
+                    (
+                        (
+                            stopped.clone(),
+                            callbacks,
+                            task_ran,
+                            None,
+                            presented,
+                            teardown,
+                        ),
+                        handle,
+                        stopped,
+                    )
+                },
+                |(stopped, callbacks, task_ran, task, presented, _), turn, window, cx| {
+                    assert_eq!(turn, 0, "no input may run after stop");
+                    assert!(!window.is_window_active());
+                    window.refresh();
+                    window.on_next_frame({
+                        let callbacks = callbacks.clone();
+                        move |window, _| {
+                            callbacks.set(callbacks.get() + 1);
+                            window.on_next_frame(|_, _| {
+                                panic!("future animation must not delay completion");
+                            });
+                        }
+                    });
+                    *task = Some(cx.foreground_executor().spawn({
+                        let task_ran = task_ran.clone();
+                        async move { task_ran.set(true) }
+                    }));
+                    assert!(
+                        presented.elapsed() < Duration::from_micros(33_333),
+                        "stop must occur before the inactive throttle interval"
+                    );
+                    stopped.store(true, Ordering::Release);
+                },
+            );
+            cx.teardown();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "renderer session did not stop within")]
+    fn renderer_session_bounds_an_unset_stop_flag() {
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let mut criterion = criterion::Criterion::default().without_plots();
+        criterion.bench_function("renderer_session_timeout", |bencher| {
+            let mut cx = BenchAppContext::new(platform.clone(), None, bencher);
+            cx.bench_renderer_session(
+                Duration::ZERO,
+                |cx| {
+                    let window = cx.add_empty_window();
+                    ((), window.window_handle(), Arc::new(AtomicBool::new(false)))
+                },
+                |_, _, window, _| window.refresh(),
+            );
+        });
+    }
+
+    #[test]
+    fn renderer_session_rejects_overlong_stopping_callbacks() {
+        use std::cell::Cell;
+
+        for stop_in_frame in [false, true] {
+            let callback_ran = Rc::new(Cell::new(false));
+            let session_dropped = Rc::new(Cell::new(false));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+                let mut criterion = criterion::Criterion::default().without_plots();
+                criterion.bench_function("renderer_session_overlong_stop", |bencher| {
+                    let mut cx = BenchAppContext::new(platform.clone(), None, bencher);
+                    cx.bench_renderer_session(
+                        Duration::from_secs(1),
+                        |cx| {
+                            assert!(
+                                !callback_ran.get(),
+                                "overlong stopping callback must not complete successfully"
+                            );
+                            let mut window = cx.add_empty_window();
+                            let handle = window.window_handle();
+                            let stopped = Arc::new(AtomicBool::new(false));
+                            let teardown = OnDrop({
+                                let session_dropped = session_dropped.clone();
+                                move || {
+                                    window.update(|window, _| window.remove_window());
+                                    session_dropped.set(true);
+                                }
+                            });
+                            ((stopped.clone(), teardown), handle, stopped)
+                        },
+                        |(stopped, _), turn, window, _| {
+                            assert_eq!(turn, 0);
+                            let stop = {
+                                let callback_ran = callback_ran.clone();
+                                let stopped = stopped.clone();
+                                move || {
+                                    callback_ran.set(true);
+                                    // Setup is untimed; only this final callback exceeds the deadline.
+                                    std::thread::sleep(Duration::from_millis(1100));
+                                    stopped.store(true, Ordering::Release);
+                                }
+                            };
+                            if stop_in_frame {
+                                window.on_next_frame(move |_, _| stop());
+                            } else {
+                                stop();
+                            }
+                        },
+                    );
+                    panic!("overlong stopping callback must not complete successfully");
+                });
+            }));
+            assert!(callback_ran.get(), "must reach the final stopping callback");
+            assert!(session_dropped.get(), "timeout must drop session state");
+            let panic = result.expect_err("overlong session must panic");
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .expect("timeout panic must have a message");
+            assert!(
+                message.contains("renderer session did not stop within"),
+                "unexpected panic: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn renderer_session_presents_input_stop_and_cancels_pending_owned_work() {
+        use std::cell::Cell;
+
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let report = BenchReport::default();
+        let sessions = Rc::new(Cell::new(0));
+        let cancelled = Rc::new(Cell::new(0));
+        let resumed = Rc::new(Cell::new(0));
+        let mut criterion = criterion::Criterion::default()
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("renderer_session_input_stop", |bencher| {
+            let mut cx = BenchAppContext::new_with_platform_and_report(
+                platform.clone(),
+                None,
+                bencher,
+                report.clone(),
+            );
+            cx.bench_renderer_session(
+                Duration::from_secs(5),
+                |cx| {
+                    assert_eq!(cancelled.get(), sessions.get());
+                    assert_eq!(resumed.get(), 0, "previous session work must not resume");
+                    let draws_before = report.frame_snapshot.borrow().draw.len();
+                    let mut window = cx.add_empty_window();
+                    let handle = window.window_handle();
+                    window.update(|window, _| window.present_if_needed());
+                    let stopped = Arc::new(AtomicBool::new(false));
+                    let started = Rc::new(Cell::new(false));
+                    let (sender, receiver) = futures::channel::oneshot::channel();
+                    let task = cx.foreground_executor().spawn({
+                        let started = started.clone();
+                        let cancelled = cancelled.clone();
+                        let resumed = resumed.clone();
+                        async move {
+                            let _on_drop = OnDrop(|| cancelled.set(cancelled.get() + 1));
+                            started.set(true);
+                            receiver.await.expect("input must wake the pending task");
+                            resumed.set(resumed.get() + 1);
+                        }
+                    });
+                    let teardown = OnDrop({
+                        let report = report.clone();
+                        let sessions = sessions.clone();
+                        move || {
+                            window.update(|window, _| {
+                                assert!(
+                                    !window.needs_present.get(),
+                                    "input's final dirty frame must be presented"
+                                );
+                            });
+                            assert_eq!(report.frame_snapshot.borrow().draw.len() - draws_before, 1);
+                            window.update(|window, _| window.remove_window());
+                            sessions.set(sessions.get() + 1);
+                        }
+                    });
+                    (
+                        (Some(sender), started, stopped.clone(), task, teardown),
+                        handle,
+                        stopped,
+                    )
+                },
+                |(sender, started, stopped, _, _), frame, window, _| {
+                    assert_eq!(frame, 0, "stopping input must not be called again");
+                    assert!(started.get(), "the owned task must already be pending");
+                    // Make the unfinished task runnable: without cancellation it
+                    // would resume when the next session's setup settles work.
+                    sender
+                        .take()
+                        .expect("only one input")
+                        .send(())
+                        .expect("pending receiver");
+                    window.refresh();
+                    window.on_next_frame({
+                        let stopped = stopped.clone();
+                        move |window, _| {
+                            window.refresh();
+                            stopped.store(true, Ordering::Release);
+                        }
+                    });
+                },
+            );
+            cx.teardown();
+        });
+        assert!(sessions.get() > 1);
+        assert_eq!(cancelled.get(), sessions.get());
+        assert_eq!(
+            resumed.get(),
+            0,
+            "no cancelled task may resume, including the last"
+        );
+    }
+
+    fn take_draw_count(frames: &mut FrameTimingCollector) -> usize {
+        frames
+            .collect_unseen()
+            .iter()
+            .filter(|event| matches!(event, FrameEvent::Draw(_)))
+            .count()
+    }
+
+    struct BenchEmitter;
+
+    impl crate::EventEmitter<()> for BenchEmitter {}
+
+    struct OnDrop<F: FnMut()>(F);
+
+    impl<F: FnMut()> Drop for OnDrop<F> {
+        fn drop(&mut self) {
+            (self.0)();
+        }
+    }
 
     #[test]
     fn foreground_work_reports_long_task_without_window_draw() {
