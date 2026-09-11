@@ -75,6 +75,33 @@ pub fn assign_kernelspec(
     Ok(())
 }
 
+/// Picks the line worth showing out of a failed `pip`/`uv` run.
+///
+/// Both write styled output, and uv ends a refusal with a `hint:` line, so taking the
+/// last line reliably surfaced the suggestion while dropping the reason: an externally
+/// managed environment reported "Consider creating a virtual environment" and never said
+/// why. Prefer the first line that names an error, and fall back to the last non-empty
+/// line for installers that do not label anything.
+fn installer_failure_reason(stderr: &[u8]) -> String {
+    let stderr = terminal::strip_ansi_text(stderr);
+
+    let labelled = stderr.lines().map(str::trim).find(|line| {
+        let lowered = line.to_ascii_lowercase();
+        lowered.starts_with("error:") || lowered.starts_with("error ")
+    });
+
+    if let Some(line) = labelled {
+        return line.to_string();
+    }
+
+    stderr
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .unwrap_or("unknown error")
+        .to_string()
+}
+
 pub fn install_ipykernel_and_assign(
     kernel_specification: KernelSpecification,
     weak_editor: WeakEntity<Editor>,
@@ -94,6 +121,31 @@ pub fn install_ipykernel_and_assign(
     let notification_id = NotificationId::unique::<IpykernelInstall>();
 
     let workspace = Workspace::for_window(window, cx);
+
+    // PEP 668: an externally managed interpreter turns every installer away, so say what
+    // would actually work instead of starting an install that cannot finish. Callers
+    // discard this function's `Result`, so the explanation has to reach the user as a
+    // toast rather than an error return.
+    if !env_spec.can_install_ipykernel {
+        if let Some(workspace) = &workspace {
+            workspace.update(cx, |workspace, cx| {
+                workspace.show_toast(
+                    workspace::Toast::new(
+                        notification_id.clone(),
+                        format!(
+                            "{} is externally managed, so ipykernel cannot be installed \
+                             into it. Create a virtual environment (for example `uv venv` \
+                             or `python -m venv .venv`) and select that instead.",
+                            env_name
+                        ),
+                    ),
+                    cx,
+                );
+            });
+        }
+        return Ok(());
+    }
+
     if let Some(workspace) = &workspace {
         workspace.update(cx, |workspace, cx| {
             workspace.show_toast(
@@ -133,8 +185,7 @@ pub fn install_ipykernel_and_assign(
         if output.status.success() {
             anyhow::Ok(())
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("{}", stderr.lines().last().unwrap_or("unknown error"))
+            anyhow::bail!("{}", installer_failure_reason(&output.stderr))
         }
     });
 
@@ -684,6 +735,65 @@ mod tests {
     use gpui::App;
     use indoc::indoc;
     use language::{Buffer, Language, LanguageConfig, LanguageRegistry};
+
+    /// Verbatim stderr from `uv pip install ipykernel` against a uv-managed
+    /// interpreter, ANSI styling and all. The reason is on the `error:` line and the
+    /// trailing line is a `hint:`, so taking the last line reported the suggestion and
+    /// dropped the cause.
+    const UV_EXTERNALLY_MANAGED_STDERR: &str = concat!(
+        "\x1b[2mUsing Python 3.11.15 environment at: /home/u/.local/share/uv/python/cpython-3.11.15\x1b[0m\n",
+        "\x1b[1m\x1b[31merror\x1b[39m\x1b[0m\x1b[1m:\x1b[0m The interpreter at ",
+        "\x1b[36m/home/u/.local/share/uv/python/cpython-3.11.15\x1b[39m is externally managed, ",
+        "and indicates the following:\n",
+        "\n",
+        "\x1b[32m  This Python installation is managed by uv and should not be modified.\x1b[39m\n",
+        "\n",
+        "\x1b[36m\x1b[1mhint\x1b[0m\x1b[39m\x1b[1m:\x1b[0m Consider creating a virtual environment, e.g., with `uv venv`\n",
+    );
+
+    #[test]
+    fn test_installer_failure_reason_prefers_the_error_over_the_hint() {
+        let reason = installer_failure_reason(UV_EXTERNALLY_MANAGED_STDERR.as_bytes());
+
+        assert!(
+            reason.contains("externally managed"),
+            "the reason the install failed must survive, got: {reason}"
+        );
+        assert!(
+            !reason.contains("hint"),
+            "the trailing hint must not be reported as the error, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn test_installer_failure_reason_strips_ansi() {
+        let reason = installer_failure_reason(UV_EXTERNALLY_MANAGED_STDERR.as_bytes());
+
+        assert!(
+            !reason.contains('\x1b'),
+            "escape sequences must not reach the toast, got: {reason:?}"
+        );
+        assert!(
+            reason.starts_with("error:"),
+            "the error label is split across escapes, so stripping has to happen first, got: {reason:?}"
+        );
+    }
+
+    #[test]
+    fn test_installer_failure_reason_falls_back_to_the_last_line() {
+        let stderr = b"Collecting ipykernel\nSomething went wrong\n\n";
+
+        assert_eq!(
+            installer_failure_reason(stderr),
+            "Something went wrong",
+            "installers that label nothing should still report their last real line"
+        );
+    }
+
+    #[test]
+    fn test_installer_failure_reason_handles_empty_output() {
+        assert_eq!(installer_failure_reason(b""), "unknown error");
+    }
 
     #[gpui::test]
     fn test_snippet_ranges(cx: &mut App) {
