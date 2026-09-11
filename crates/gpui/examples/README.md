@@ -34,12 +34,34 @@ Install [Trunk](https://trunkrs.dev/) if needed. The gallery's toolchain file se
 nightly Rust, the WASM target, and `rust-src`. Its Trunk configuration supplies the
 cross-origin-isolation headers needed for shared memory and watches the GPUI
 example and renderer sources for automatic rebuilds and browser reloads. Use a
-browser with WebGPU support.
+browser with WebGPU or WebGL2 support.
 
 The gallery builds separate Cargo binaries directly from the existing example
 sources. To add another browser-compatible example, register its binary in the
 gallery's `Cargo.toml`, add an auxiliary Rust asset in `index.html`, and add its
 gallery link with the corresponding `data-module` name.
+
+### Canvas font fallback
+
+The web text system uses browser fonts for eligible missing CJK and emoji
+graphemes. It renders each complete grapheme independently, retaining the primary
+font's baseline and line-spacing metrics. Contextual CJK spacing and arbitrary
+OpenType features are not reproduced. Other scripts remain on Cosmic Text.
+Browser font availability is assumed stable for the application's lifetime.
+
+With the gallery server running, a browser smoke test checks native-font
+preservation, whole-grapheme rendering, emoji atlas reuse, and input/deletion:
+
+```sh
+node crates/gpui_web/examples/hello_web/test_canvas_fallback.mjs
+```
+
+This requires Node.js 22 or newer and Chrome/Chromium. On macOS it uses the
+standard Google Chrome application path; elsewhere it uses `chromium`. Set
+`CHROME` to override the executable, and pass an optional server URL as the first
+argument. Screenshots and logs are saved under the gallery's ignored `target`
+directory. The test intercepts clipboard writes rather than modifying the system
+clipboard.
 
 ## Where to start
 

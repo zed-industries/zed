@@ -26,9 +26,6 @@ if (route !== "/") {
         status.textContent = `Loading ${title}…`;
 
         try {
-            if (!navigator.gpu) {
-                throw new Error("This example requires a browser with WebGPU support.");
-            }
             if (!window.crossOriginIsolated) {
                 throw new Error("Shared-memory WASM requires cross-origin isolation. Serve this page with trunk serve.");
             }
@@ -36,7 +33,7 @@ if (route !== "/") {
             const bindings = await import(`/${example.dataset.module}.js`);
             await bindings.default();
             window.wasmBindings = bindings;
-            // GPUI reports asynchronous GPU initialization failures in the page itself.
+            // GPUI chooses WebGPU or WebGL2 and reports initialization failures itself.
             status.hidden = true;
         } catch (error) {
             showError(error);

@@ -84,6 +84,29 @@ impl FontMatchProperties {
 }
 
 impl CosmicTextSystem {
+    /// Returns the selected face's weight and style, which may differ from the request.
+    pub fn font_weight_and_style(
+        &self,
+        font_id: FontId,
+    ) -> Result<(gpui::FontWeight, gpui::FontStyle)> {
+        let state = self.0.read();
+        let font = state
+            .loaded_fonts
+            .get(font_id.0)
+            .context("invalid font ID")?;
+        let face = state
+            .font_system
+            .db()
+            .face(font.font.id())
+            .context("font face not found")?;
+        let style = match face.style {
+            cosmic_text::Style::Normal => gpui::FontStyle::Normal,
+            cosmic_text::Style::Italic => gpui::FontStyle::Italic,
+            cosmic_text::Style::Oblique => gpui::FontStyle::Oblique,
+        };
+        Ok((gpui::FontWeight(face.weight.0 as f32), style))
+    }
+
     pub fn new(system_font_fallback: &str) -> Self {
         let font_system = FontSystem::new();
 
@@ -1093,6 +1116,31 @@ mod tests {
         let text_system = CosmicTextSystem::new_without_system_fonts("IBM Plex Sans");
         text_system.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
         Ok(text_system)
+    }
+
+    #[test]
+    fn font_properties_describe_the_selected_face() -> Result<()> {
+        let text_system = text_system()?;
+        let regular = gpui::font("IBM Plex Sans");
+        let regular_id = text_system.font_id(&regular)?;
+        for (weight, style) in [
+            (gpui::FontWeight::MEDIUM, gpui::FontStyle::Normal),
+            (gpui::FontWeight::BOLD, gpui::FontStyle::Italic),
+            (gpui::FontWeight::NORMAL, gpui::FontStyle::Oblique),
+        ] {
+            let requested = Font {
+                weight,
+                style,
+                ..regular.clone()
+            };
+            let font_id = text_system.font_id(&requested)?;
+            assert_eq!(font_id, regular_id);
+            assert_eq!(
+                text_system.font_weight_and_style(font_id)?,
+                (gpui::FontWeight::NORMAL, gpui::FontStyle::Normal)
+            );
+        }
+        Ok(())
     }
 
     fn layout_text(text_system: &CosmicTextSystem, text: &str) -> Result<LineLayout> {
