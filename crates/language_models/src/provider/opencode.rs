@@ -566,9 +566,7 @@ impl LanguageModel for OpenCodeLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        self.model
-            .supported_reasoning_effort_levels(self.subscription)
-            .is_some_and(|levels| levels.iter().any(|effort| *effort != ReasoningEffort::None))
+        self.model.supports_thinking(self.subscription)
     }
 
     fn supports_disabling_thinking(&self) -> bool {

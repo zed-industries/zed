@@ -637,7 +637,6 @@ impl Model {
                 ..
             } => *interleaved_reasoning,
 
-            // Default
             _ => false,
         }
     }
@@ -958,6 +957,30 @@ impl Model {
                     | ApiProtocol::OpenAiResponses
                     | ApiProtocol::OpenAiChat
             ),
+        }
+    }
+
+    pub fn supports_thinking(&self, subscription: OpenCodeSubscription) -> bool {
+        match self {
+            // These models reason, but offer no selectable reasoning efforts
+            Self::Glm5
+            | Self::Glm5_1
+            | Self::GrokBuild0_1
+            | Self::KimiK2_5
+            | Self::KimiK2_6
+            | Self::KimiK2_7Code
+            | Self::MiniMaxM2_5
+            | Self::MiniMaxM2_7
+            | Self::MiniMaxM3
+            | Self::MimoV2_5
+            | Self::MimoV2_5Pro
+            | Self::Qwen3_6Plus
+            | Self::Qwen3_7Max
+            | Self::Qwen3_7Plus => true,
+
+            _ => self
+                .supported_reasoning_effort_levels(subscription)
+                .is_some_and(|levels| levels.iter().any(|effort| *effort != ReasoningEffort::None)),
         }
     }
 
