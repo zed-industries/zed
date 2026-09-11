@@ -2575,7 +2575,7 @@ impl AcpThread {
     }
 
     pub fn is_compacting(&self) -> bool {
-        self.entries.iter().any(|entry| {
+        self.entries.iter().rev().any(|entry| {
             matches!(
                 entry,
                 AgentThreadEntry::ContextCompaction(compaction) if compaction.is_in_progress()
