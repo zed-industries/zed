@@ -858,8 +858,7 @@ mod tests {
             test_theme
                 .styles
                 .colors
-                .editor_code_lens_foreground
-                .unwrap_or(test_theme.styles.colors.text_muted),
+                .color(::theme::ThemeColorField::EditorCodeLensForeground),
             green
         );
     }
