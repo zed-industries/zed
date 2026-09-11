@@ -77,12 +77,7 @@ pub(super) fn try_handle_client_command(
         .read(cx)
         .language_server_adapter_for_id(action.server_id)
         .and_then(|adapter| adapter.adapter.client_command(&command.command, arguments))
-        .or_else(|| match command.command.as_str() {
-            "editor.action.showReferences"
-            | "editor.action.goToLocations"
-            | "editor.action.peekLocations" => Some(ClientCommand::ShowLocations),
-            _ => None,
-        });
+        .or_else(|| well_known_client_command(&command.command));
 
     match client_command {
         Some(ClientCommand::ScheduleTask(task_template)) => {
@@ -92,6 +87,21 @@ pub(super) fn try_handle_client_command(
             try_show_references(arguments, action, editor, window, cx)
         }
         None => false,
+    }
+}
+
+/// Client-side commands that servers written against VS Code embed in code
+/// lenses: the VS Code built-ins, plus the jdtls references and implementations
+/// lenses, which vscode-java implements on the client with the same
+/// `[uri, position, locations]` arguments.
+fn well_known_client_command(command: &str) -> Option<ClientCommand> {
+    match command {
+        "editor.action.showReferences"
+        | "editor.action.goToLocations"
+        | "editor.action.peekLocations"
+        | "java.show.references"
+        | "java.show.implementations" => Some(ClientCommand::ShowLocations),
+        _ => None,
     }
 }
 
@@ -727,12 +737,34 @@ mod tests {
     use multi_buffer::{MultiBufferRow, ToPoint as _};
     use text::Point;
 
-    use super::{CODE_LENS_SEPARATOR, displayed_title};
+    use language::ClientCommand;
+
+    use super::{CODE_LENS_SEPARATOR, displayed_title, well_known_client_command};
     use crate::{
         Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT,
         editor_tests::{init_test, update_test_editor_settings},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
+
+    #[test]
+    fn test_well_known_client_commands() {
+        for command in [
+            "editor.action.showReferences",
+            "editor.action.goToLocations",
+            "editor.action.peekLocations",
+            "java.show.references",
+            "java.show.implementations",
+        ] {
+            assert!(
+                matches!(
+                    well_known_client_command(command),
+                    Some(ClientCommand::ShowLocations)
+                ),
+                "{command} should open the locations list"
+            );
+        }
+        assert!(well_known_client_command("java.action.applyRefactoringCommand").is_none());
+    }
 
     #[gpui::test]
     async fn test_code_lens_blocks(cx: &mut TestAppContext) {
