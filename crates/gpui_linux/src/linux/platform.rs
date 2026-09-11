@@ -16,6 +16,14 @@ use std::{
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use anyhow::ensure;
 use anyhow::{Context as _, anyhow};
+#[cfg(any(feature = "wayland", feature = "x11"))]
+use ashpd::{
+    desktop::{
+        Request,
+        inhibit::{InhibitFlags, InhibitOptions, InhibitProxy},
+    },
+    enumflags2::BitFlags,
+};
 use calloop::{LoopSignal, channel::Sender};
 use futures::channel::oneshot;
 use gpui_util::{ResultExt as _, new_std_command};
@@ -24,8 +32,8 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
 use gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
+    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
+    DisplayId, ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
     WindowButtonLayout, WindowParams,
@@ -262,6 +270,33 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn thermal_state(&self) -> ThermalState {
         ThermalState::Nominal
+    }
+
+    #[cfg(not(any(feature = "wayland", feature = "x11")))]
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(Err(anyhow!(
+            "Idle sleep prevention for {reason:?} requires a Linux windowing backend"
+        )))
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        let executor = self.background_executor();
+        let (guard_tx, guard_rx) = oneshot::channel();
+        executor
+            .spawn({
+                let executor = executor.clone();
+                let reason = reason.to_owned();
+                async move {
+                    guard_tx
+                        .send(inhibit_idle_sleep(reason, executor).await)
+                        .ok();
+                }
+            })
+            .detach();
+        executor
+            .clone()
+            .spawn(async move { await_idle_sleep_prevention(guard_rx, &executor).await })
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
@@ -1258,6 +1293,56 @@ pub(super) fn compositor_gpu_hint_from_dev_t(dev: u64) -> Option<gpui_wgpu::Comp
     })
 }
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
+async fn inhibit_idle_sleep(reason: String, executor: BackgroundExecutor) -> Result<ActivityGuard> {
+    let proxy = InhibitProxy::new()
+        .await
+        .context("Idle sleep prevention portal is unavailable")?;
+    let request = proxy
+        .inhibit(
+            None,
+            BitFlags::from(InhibitFlags::Suspend),
+            InhibitOptions::default().set_reason(reason.as_str()),
+        )
+        .await
+        .context("Failed to request idle sleep prevention")?;
+    request
+        .response()
+        .context("Idle sleep prevention request was rejected")?;
+    Ok(release_on_drop(request, executor))
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn release_on_drop(request: Request<()>, executor: BackgroundExecutor) -> ActivityGuard {
+    ActivityGuard::new(move || {
+        executor
+            .spawn(async move {
+                request
+                    .close()
+                    .await
+                    .context("Failed to release idle sleep prevention")
+                    .log_err();
+            })
+            .detach();
+    })
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+async fn await_idle_sleep_prevention(
+    guard_rx: oneshot::Receiver<Result<ActivityGuard>>,
+    executor: &BackgroundExecutor,
+) -> Result<ActivityGuard> {
+    match futures::future::select(guard_rx, executor.timer(Duration::from_secs(10))).await {
+        futures::future::Either::Left((Ok(result), _)) => result,
+        futures::future::Either::Left((Err(_), _)) => {
+            Err(anyhow!("Idle sleep prevention request was abandoned"))
+        }
+        futures::future::Either::Right(_) => Err(anyhow!(
+            "Idle sleep prevention acquisition timed out after 10 seconds"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1296,6 +1381,98 @@ mod tests {
             zero,
             Point::new(px(5.0), px(5.1))
         ),);
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    mod idle_sleep_prevention {
+        use super::super::await_idle_sleep_prevention;
+        use anyhow::{Result, anyhow};
+        use futures::channel::oneshot;
+        use gpui::{ActivityGuard, TestAppContext};
+        use std::{
+            sync::{
+                Arc,
+                atomic::{AtomicUsize, Ordering::SeqCst},
+            },
+            time::Duration,
+        };
+
+        #[gpui::test]
+        async fn guard_passes_through_and_releases_on_drop(cx: &mut TestAppContext) {
+            let released = Arc::new(AtomicUsize::new(0));
+            let (guard_tx, guard_rx) = oneshot::channel();
+            assert!(guard_tx.send(Ok(release_guard(released.clone()))).is_ok());
+            let guard = await_idle_sleep_prevention(guard_rx, &cx.background_executor)
+                .await
+                .expect("acquisition should succeed");
+
+            assert_eq!(released.load(SeqCst), 0);
+            drop(guard);
+            assert_eq!(released.load(SeqCst), 1);
+        }
+
+        #[gpui::test]
+        async fn acquisition_error_passes_through(cx: &mut TestAppContext) {
+            let (guard_tx, guard_rx) = oneshot::channel::<Result<ActivityGuard>>();
+            assert!(guard_tx.send(Err(anyhow!("inhibition rejected"))).is_ok());
+            assert_eq!(
+                await_idle_sleep_prevention(guard_rx, &cx.background_executor)
+                    .await
+                    .err()
+                    .expect("acquisition should fail")
+                    .to_string(),
+                "inhibition rejected"
+            );
+        }
+
+        #[gpui::test]
+        async fn abandoned_acquisition_is_an_error(cx: &mut TestAppContext) {
+            let (guard_tx, guard_rx) = oneshot::channel::<Result<ActivityGuard>>();
+            drop(guard_tx);
+            assert_eq!(
+                await_idle_sleep_prevention(guard_rx, &cx.background_executor)
+                    .await
+                    .err()
+                    .expect("acquisition should fail")
+                    .to_string(),
+                "Idle sleep prevention request was abandoned"
+            );
+        }
+
+        #[gpui::test]
+        async fn late_guard_after_timeout_is_released(cx: &mut TestAppContext) {
+            let released = Arc::new(AtomicUsize::new(0));
+            let (guard_tx, guard_rx) = oneshot::channel();
+            let task = cx.background_executor.spawn({
+                let executor = cx.background_executor.clone();
+                async move { await_idle_sleep_prevention(guard_rx, &executor).await }
+            });
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_secs(9));
+            cx.run_until_parked();
+            assert!(!guard_tx.is_canceled());
+            cx.executor().advance_clock(Duration::from_secs(1));
+            assert_eq!(
+                task.await
+                    .err()
+                    .expect("acquisition should time out")
+                    .to_string(),
+                "Idle sleep prevention acquisition timed out after 10 seconds"
+            );
+
+            assert!(guard_tx.is_canceled());
+            if let Err(Ok(guard)) = guard_tx.send(Ok(release_guard(released.clone()))) {
+                assert_eq!(released.load(SeqCst), 0);
+                drop(guard);
+            }
+            assert_eq!(released.load(SeqCst), 1);
+        }
+
+        fn release_guard(released: Arc<AtomicUsize>) -> ActivityGuard {
+            ActivityGuard::new(move || {
+                released.fetch_add(1, SeqCst);
+            })
+        }
     }
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
