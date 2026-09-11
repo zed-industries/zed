@@ -122,7 +122,9 @@ enum ThreadFeedback {
 
 #[derive(Debug)]
 pub(crate) enum ThreadError {
-    PaymentRequired,
+    PaymentRequired {
+        provider: SharedString,
+    },
     DataRetentionConsentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
@@ -186,7 +188,9 @@ impl From<anyhow::Error> for ThreadError {
                         provider: provider.to_string().into(),
                     },
                     ProviderErrorCategory::PromptTooLarge { .. } => Self::PromptTooLarge,
-                    ProviderErrorCategory::PaymentRequired => Self::PaymentRequired,
+                    ProviderErrorCategory::PaymentRequired => Self::PaymentRequired {
+                        provider: provider.to_string().into(),
+                    },
                     ProviderErrorCategory::Authentication => Self::AuthenticationFailed {
                         provider: provider.to_string().into(),
                     },
@@ -3747,6 +3751,25 @@ pub(crate) mod tests {
             error,
             ThreadError::ProviderRejection { message }
                 if message == "This content was flagged as potentially violating our terms of use."
+        ));
+    }
+
+    #[test]
+    fn test_payment_required_preserves_provider() {
+        let provider_error = LanguageModelCompletionError::from_provider_response(
+            language_model::LanguageModelProviderName::new("OpenRouter"),
+            None,
+            None,
+            "This request requires more credits.".to_string(),
+            None,
+            ProviderErrorCategory::PaymentRequired,
+        );
+
+        let error = ThreadError::from(anyhow!(provider_error));
+
+        assert!(matches!(
+            error,
+            ThreadError::PaymentRequired { provider } if provider == "OpenRouter"
         ));
     }
 
