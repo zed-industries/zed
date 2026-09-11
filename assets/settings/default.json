@@ -1330,6 +1330,10 @@
     //
     // Default: never
     "play_sound_when_agent_done": "never",
+    // Whether to keep the system awake while agent threads are running.
+    //
+    // Default: true
+    "prevent_idle_sleep": true,
     // Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
     //
     // Default: true
