@@ -421,6 +421,12 @@ jobs:
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
+        name: Zed-AllUsers-aarch64.exe
+        path: target/Zed-AllUsers-aarch64.exe
+        if-no-files-found: error
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
         name: zed-remote-server-windows-aarch64.zip
         path: target/zed-remote-server-windows-aarch64.zip
         if-no-files-found: error
@@ -471,6 +477,12 @@ jobs:
       with:
         name: Zed-x86_64.exe
         path: target/Zed-x86_64.exe
+        if-no-files-found: error
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: Zed-AllUsers-x86_64.exe
+        path: target/Zed-AllUsers-x86_64.exe
         if-no-files-found: error
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -605,6 +617,8 @@ jobs:
         mv ./artifacts/bwrap-linux-x86_64.gz/bwrap-linux-x86_64.gz release-artifacts/bwrap-linux-x86_64.gz
         mv ./artifacts/Zed-x86_64.exe/Zed-x86_64.exe release-artifacts/Zed-x86_64.exe
         mv ./artifacts/Zed-aarch64.exe/Zed-aarch64.exe release-artifacts/Zed-aarch64.exe
+        mv ./artifacts/Zed-AllUsers-x86_64.exe/Zed-AllUsers-x86_64.exe release-artifacts/Zed-AllUsers-x86_64.exe
+        mv ./artifacts/Zed-AllUsers-aarch64.exe/Zed-AllUsers-aarch64.exe release-artifacts/Zed-AllUsers-aarch64.exe
         mv ./artifacts/zed-remote-server-macos-aarch64.gz/zed-remote-server-macos-aarch64.gz release-artifacts/zed-remote-server-macos-aarch64.gz
         mv ./artifacts/zed-remote-server-macos-x86_64.gz/zed-remote-server-macos-x86_64.gz release-artifacts/zed-remote-server-macos-x86_64.gz
         mv ./artifacts/zed-remote-server-linux-aarch64.gz/zed-remote-server-linux-aarch64.gz release-artifacts/zed-remote-server-linux-aarch64.gz

@@ -330,50 +330,70 @@ function BuildInstaller {
     # Windows runner 2025 doesn't have iscc in PATH for now, https://github.com/actions/runner-images/issues/11228
     $innoSetupPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 
-    $definitions = @{
-        "AppId"          = $appId
-        "AppIconName"    = $appIconName
-        "OutputDir"      = "$env:ZED_WORKSPACE\target"
-        "AppSetupName"   = $appSetupName
-        "AppName"        = $appName
-        "AppDisplayName" = $appDisplayName
-        "RegValueName"   = $regValueName
-        "AppMutex"       = $appMutex
-        "AppExeName"     = $appExeName
-        "ResourcesDir"   = "$innoDir"
-        "ShellNameShort" = $appShellNameShort
-        "AppUserId"      = $appUserId
-        "Version"        = "$env:RELEASE_VERSION"
-        "SourceDir"      = "$env:ZED_WORKSPACE"
-        "AppxFullName"   = $appAppxFullName
+    function Invoke-InnoSetup {
+        param(
+            [string]$SetupName,
+            [switch]$AllUsers
+        )
+
+        $definitions = @{
+            "AppId"          = $appId
+            "AppIconName"    = $appIconName
+            "OutputDir"      = "$env:ZED_WORKSPACE\target"
+            "AppSetupName"   = $SetupName
+            "AppName"        = $appName
+            "AppDisplayName" = $appDisplayName
+            "RegValueName"   = $regValueName
+            "AppMutex"       = $appMutex
+            "AppExeName"     = $appExeName
+            "ResourcesDir"   = "$innoDir"
+            "ShellNameShort" = $appShellNameShort
+            "AppUserId"      = $appUserId
+            "Version"        = "$env:RELEASE_VERSION"
+            "SourceDir"      = "$env:ZED_WORKSPACE"
+            "AppxFullName"   = $appAppxFullName
+        }
+        if ($AllUsers) {
+            $definitions["AllUsersInstall"] = "1"
+        }
+
+        $defs = @()
+        foreach ($key in $definitions.Keys) {
+            $defs += "/d$key=`"$($definitions[$key])`""
+        }
+
+        $innoArgs = @($issFilePath) + $defs
+        if($canCodeSign) {
+            # Checked by zed.iss to decide whether to sign the installer.
+            $env:ZED_SIGN_BUNDLE = "1"
+            $signTool = "powershell.exe -ExecutionPolicy Bypass -File $innoDir\sign.ps1 `$f"
+            $innoArgs += "/sDefaultsign=`"$signTool`""
+        }
+
+        # Execute Inno Setup
+        Write-Host "🚀 Running Inno Setup: $innoSetupPath $innoArgs"
+        $process = Start-Process -FilePath $innoSetupPath -ArgumentList $innoArgs -NoNewWindow -Wait -PassThru
+
+        if ($process.ExitCode -eq 0) {
+            Write-Host "✅ Inno Setup successfully compiled the installer"
+            if ($AllUsers) {
+                Write-Output "SETUP_PATH_ALL_USERS=target/$SetupName.exe" >> $env:GITHUB_ENV
+            }
+            else {
+                Write-Output "SETUP_PATH=target/$SetupName.exe" >> $env:GITHUB_ENV
+            }
+            $script:buildSuccess = $true
+        }
+        else {
+            Write-Host "❌ Inno Setup failed: $($process.ExitCode)"
+            $script:buildSuccess = $false
+        }
     }
 
-    $defs = @()
-    foreach ($key in $definitions.Keys) {
-        $defs += "/d$key=`"$($definitions[$key])`""
-    }
-
-    $innoArgs = @($issFilePath) + $defs
-    if($canCodeSign) {
-        # Checked by zed.iss to decide whether to sign the installer.
-        $env:ZED_SIGN_BUNDLE = "1"
-        $signTool = "powershell.exe -ExecutionPolicy Bypass -File $innoDir\sign.ps1 `$f"
-        $innoArgs += "/sDefaultsign=`"$signTool`""
-    }
-
-    # Execute Inno Setup
-    Write-Host "🚀 Running Inno Setup: $innoSetupPath $innoArgs"
-    $process = Start-Process -FilePath $innoSetupPath -ArgumentList $innoArgs -NoNewWindow -Wait -PassThru
-
-    if ($process.ExitCode -eq 0) {
-        Write-Host "✅ Inno Setup successfully compiled the installer"
-        Write-Output "SETUP_PATH=target/$appSetupName.exe" >> $env:GITHUB_ENV
-        $script:buildSuccess = $true
-    }
-    else {
-        Write-Host "❌ Inno Setup failed: $($process.ExitCode)"
-        $script:buildSuccess = $false
-    }
+    # Per-user installer (default) and all-users installer for system-wide
+    # installs; both share zed.iss and differ via the AllUsersInstall define.
+    Invoke-InnoSetup -SetupName $appSetupName
+    Invoke-InnoSetup -SetupName "Zed-AllUsers-$Architecture" -AllUsers
 }
 
 ParseZedWorkspace
