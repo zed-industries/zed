@@ -5340,6 +5340,9 @@ version = "0.1.0"
 dependencies = [
  "ai_onboarding",
  "anyhow",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sigv4",
  "buffer_diff",
  "client",
  "clock",
@@ -5361,6 +5364,7 @@ dependencies = [
  "futures 0.3.34",
  "git",
  "gpui",
+ "gpui_tokio",
  "heapless",
  "indoc",
  "itertools 0.14.0",
