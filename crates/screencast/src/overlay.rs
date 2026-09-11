@@ -181,7 +181,7 @@ impl ScreencastOverlay {
             return;
         }
 
-        if self.recent_keys.len() > MAX_VISIBLE_KEYS {
+        if self.recent_keys.len() >= MAX_VISIBLE_KEYS {
             self.recent_keys.clear();
             self.pending_modifier_keys.clear();
         }
@@ -277,14 +277,17 @@ impl Render for ScreencastOverlay {
             .border_t_1()
             .border_color(colors.border.opacity(0.5))
             .child(
-                h_flex()
-                    .font_buffer(cx) // Match editor font family, maybe it should match system?
-                    .w_auto()
-                    .min_w_0()
-                    .justify_center()
-                    .gap_2()
-                    .overflow_hidden()
-                    .children(keycaps),
+                h_flex().w_full().justify_center().child(
+                    h_flex()
+                        .font_buffer(cx) // Match editor font family, maybe it should match system?
+                        .min_w_0()
+                        .max_w_full()
+                        .justify_end()
+                        .px_4()
+                        .gap_2()
+                        .overflow_hidden()
+                        .children(keycaps),
+                ),
             )
             .into_any_element()
     }
