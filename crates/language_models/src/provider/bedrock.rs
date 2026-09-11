@@ -2005,8 +2005,8 @@ pub fn into_bedrock(
     guardrail_version: Option<String>,
 ) -> Result<bedrock::Request> {
     let max_output_tokens = request
-        .effective_max_output_tokens(Some(max_output_tokens))
-        .unwrap_or(max_output_tokens);
+        .max_output_tokens
+        .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
     if request.contains_custom_tool_input() {
         anyhow::bail!("Bedrock does not support custom tools");
     }

@@ -820,7 +820,7 @@ fn into_copilot_chat(
 ) -> Result<CopilotChatRequest> {
     let max_tokens = request
         .max_output_tokens
-        .and_then(|_| request.effective_max_output_tokens(Some(model.max_output_tokens() as u64)));
+        .map(|limit| limit.min(model.max_output_tokens() as u64));
     let temperature = request.temperature;
     let tool_choice = request.tool_choice;
     let thinking_allowed = request.thinking_allowed;
@@ -1074,7 +1074,7 @@ fn into_copilot_responses(
 
     let max_output_tokens = request
         .max_output_tokens
-        .and_then(|_| request.effective_max_output_tokens(Some(model.max_output_tokens() as u64)));
+        .map(|limit| limit.min(model.max_output_tokens() as u64));
     let LanguageModelRequest {
         thread_id: _,
         prompt_id: _,
