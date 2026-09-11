@@ -2000,10 +2000,6 @@ mod tests {
     }
 
     /// Verifies that restarting a stopped server only affects its worktree.
-    ///
-    /// This test directly exercises the stopped-row submenu's "Restart Server" handler
-    /// to ensure that the UI menu closure correctly invokes `restart_server_for_worktree`
-    /// rather than `restart_server_by_name`.
     #[gpui::test]
     async fn test_lsp_button_restarts_only_the_stopped_worktree_server(cx: &mut TestAppContext) {
         init_test(cx);

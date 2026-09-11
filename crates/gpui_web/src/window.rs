@@ -4,6 +4,7 @@ use crate::events::{
 };
 use crate::ime_mirror::ImeMirror;
 use crate::platform::WebWindowLifecycle;
+use crate::viewport::WebViewport;
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
@@ -13,7 +14,7 @@ use gpui::{
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Scene, Size, TextInputConfiguration, TextInputStateChange, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
-    WindowParams, px,
+    WindowInsets, WindowParams, px,
 };
 use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 use wasm_bindgen::prelude::*;
@@ -25,6 +26,7 @@ pub(crate) struct WebWindowCallbacks {
     pub(crate) active_status_change: Option<Box<dyn FnMut(bool)>>,
     pub(crate) hover_status_change: Option<Box<dyn FnMut(bool)>>,
     pub(crate) resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
+    pub(crate) visual_viewport_changed: Option<Box<dyn FnMut()>>,
     pub(crate) moved: Option<Box<dyn FnMut()>>,
     pub(crate) should_close: Option<Box<dyn FnMut() -> bool>>,
     pub(crate) close: Option<Box<dyn FnOnce()>>,
@@ -51,8 +53,10 @@ pub(crate) struct WebWindowInner {
     pub(crate) browser_window: web_sys::Window,
     pub(crate) canvas: web_sys::HtmlCanvasElement,
     pub(crate) ime_mirror: ImeMirror,
+    pub(crate) viewport: RefCell<WebViewport>,
     pub(crate) has_device_pixel_support: bool,
     pub(crate) is_mac: bool,
+    pub(crate) touch_input: bool,
     pub(crate) state: RefCell<WebWindowMutableState>,
     pub(crate) callbacks: RefCell<WebWindowCallbacks>,
     pub(crate) click_state: RefCell<ClickState>,
@@ -61,17 +65,12 @@ pub(crate) struct WebWindowInner {
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
     pub(crate) is_composing: Cell<bool>,
-    /// Set while `sync_virtual_keyboard` blur/focus-cycles the hidden input.
+    /// Set while `show_virtual_keyboard` blur/focus-cycles the hidden input.
     /// The cycle is a keyboard-visibility hint, not a real activity change;
     /// letting the focus/blur listeners report it would re-enter GPUI
     /// synchronously from inside an input dispatch, and a `RefCell`
     /// double-borrow panic on wasm never unwinds, wedging the app.
     pub(crate) suppress_focus_status_events: Cell<bool>,
-    /// The visual viewport's width and greatest height seen at that width,
-    /// in layout pixels. The keyboard-visibility probe compares the current
-    /// height against this maximum; the width detects rotation, which must
-    /// restart the calibration.
-    pub(crate) visual_viewport_probe: Cell<(f64, f64)>,
     /// The visual viewport height when the current pointer gesture began.
     /// A mid-gesture change means the software keyboard opened or closed and
     /// reflowed the layout, so the release position no longer refers to what
@@ -97,6 +96,8 @@ pub struct WebWindow {
     _raf_closure: Closure<dyn FnMut()>,
     _resize_observer: Option<web_sys::ResizeObserver>,
     _resize_observer_closure: Closure<dyn FnMut(js_sys::Array)>,
+    _safe_area_observer: Option<web_sys::ResizeObserver>,
+    _safe_area_observer_closure: Closure<dyn FnMut(js_sys::Array)>,
     _event_listeners: WebEventListeners,
 }
 
@@ -168,7 +169,14 @@ impl WebWindow {
         };
         let renderer = WgpuRenderer::new_from_surface(context, surface, renderer_config)?;
 
-        let ime_mirror = ImeMirror::new(&document, &body)?;
+        let touch_input = browser_window
+            .match_media("(pointer: coarse)")
+            .ok()
+            .flatten()
+            .is_some_and(|query| query.matches());
+        let ime_mirror = ImeMirror::new(&document, &body, touch_input)?;
+        let mut viewport = WebViewport::new(&document)?;
+        viewport.update(&browser_window, &canvas)?;
 
         let display: Rc<dyn PlatformDisplay> = Rc::new(WebDisplay::new(browser_window.clone()));
 
@@ -198,8 +206,10 @@ impl WebWindow {
             browser_window,
             canvas,
             ime_mirror,
+            viewport: RefCell::new(viewport),
             has_device_pixel_support,
             is_mac,
+            touch_input,
             state: RefCell::new(mutable_state),
             callbacks: RefCell::new(WebWindowCallbacks::default()),
             click_state: RefCell::new(ClickState::default()),
@@ -209,7 +219,6 @@ impl WebWindow {
             notify_scale: Cell::new(false),
             is_composing: Cell::new(false),
             suppress_focus_status_events: Cell::new(false),
-            visual_viewport_probe: Cell::new((0.0, 0.0)),
             gesture_start_visual_viewport_height: Cell::new(0.0),
             touch_tap_candidate: Cell::new(None),
             mql_handle: RefCell::new(None),
@@ -231,6 +240,26 @@ impl WebWindow {
         }
 
         let event_listeners = inner.register_event_listeners();
+        let safe_area_observer_closure = Closure::wrap(Box::new({
+            let inner = Rc::downgrade(&inner);
+            move |_: js_sys::Array| {
+                if let Some(inner) = inner.upgrade() {
+                    inner.notify_viewport_changed();
+                }
+            }
+        }) as Box<dyn FnMut(js_sys::Array)>);
+        let safe_area_observer =
+            match web_sys::ResizeObserver::new(safe_area_observer_closure.as_ref().unchecked_ref())
+            {
+                Ok(observer) => {
+                    inner.viewport.borrow().observe_safe_area(&observer);
+                    Some(observer)
+                }
+                Err(error) => {
+                    log::warn!("Failed to observe safe area: {error:?}");
+                    None
+                }
+            };
 
         Ok(Self {
             inner,
@@ -241,6 +270,8 @@ impl WebWindow {
             _resize_observer: resize_observer,
             _resize_observer_closure: resize_observer_closure,
             _event_listeners: event_listeners,
+            _safe_area_observer: safe_area_observer,
+            _safe_area_observer_closure: safe_area_observer_closure,
         })
     }
 
@@ -362,6 +393,27 @@ impl WebWindow {
 }
 
 impl WebWindowInner {
+    fn sample_viewport(&self) -> bool {
+        match self
+            .viewport
+            .borrow_mut()
+            .update(&self.browser_window, &self.canvas)
+        {
+            Ok(changed) => changed,
+            Err(error) => {
+                log::warn!("Failed to update browser viewport: {error:#}");
+                false
+            }
+        }
+    }
+
+    pub(crate) fn notify_viewport_changed(&self) {
+        self.with_callback(
+            |callbacks| &mut callbacks.visual_viewport_changed,
+            |callback| callback(),
+        );
+    }
+
     /// Invokes a registered callback with take/call/restore semantics.
     ///
     /// The callback is removed from the slot for the duration of the call, so
@@ -555,6 +607,9 @@ impl Drop for WebWindow {
         if let Some(ref observer) = self._resize_observer {
             observer.disconnect();
         }
+        if let Some(observer) = &self._safe_area_observer {
+            observer.disconnect();
+        }
 
         // The DPR media-query closure captures an `Rc<WebWindowInner>` and is
         // stored inside the inner itself, forming a reference cycle; take it
@@ -695,10 +750,85 @@ impl PlatformWindow for WebWindow {
         self.inner.ime_mirror.apply_configuration(&configuration);
     }
 
+    fn show_soft_keyboard(&self) {
+        self.inner.show_virtual_keyboard();
+    }
+
+    fn hide_soft_keyboard(&self) {
+        if !self.inner.touch_input {
+            return;
+        }
+        self.inner.ime_mirror.set_virtual_keyboard_enabled(false);
+        // Restart the browser input session without a software keyboard, but
+        // keep receiving hardware keys that can move the caret back into an
+        // editable region. GPUI focus, not this DOM element, owns their target.
+        self.inner.suppress_focus_status_events.set(true);
+        self.inner.ime_mirror.blur();
+        self.inner.suppress_focus_status_events.set(false);
+        // Chrome can coalesce a same-task blur/focus and leave the keyboard
+        // visible. Restore the hardware-key receiver after this task instead.
+        let callback = Closure::once_into_js({
+            let inner = Rc::downgrade(&self.inner);
+            move || {
+                if let Some(inner) = inner.upgrade()
+                    && !inner.ime_mirror.virtual_keyboard_enabled()
+                    && inner.state.borrow().is_active
+                {
+                    inner.suppress_focus_status_events.set(true);
+                    inner.ime_mirror.focus();
+                    inner.suppress_focus_status_events.set(false);
+                }
+            }
+        });
+        if let Err(error) = self
+            .inner
+            .browser_window
+            .set_timeout_with_callback(callback.unchecked_ref())
+        {
+            log::warn!("failed to restore keyboard event receiver: {error:?}");
+        }
+    }
+
+    fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
+        self.inner.viewport.borrow().visible_bounds
+    }
+
+    fn prepare_frame(&self) -> bool {
+        self.inner.sample_viewport()
+    }
+
+    fn on_visual_viewport_changed(&self, callback: Box<dyn FnMut()>) {
+        self.inner.callbacks.borrow_mut().visual_viewport_changed = Some(callback);
+    }
+
+    fn insets(&self) -> WindowInsets {
+        self.inner.viewport.borrow().insets.clone()
+    }
+
     fn text_input_state_changed(&self, change: TextInputStateChange) {
+        // React to editability transitions, not each frame: manually dismissing
+        // the keyboard must remain effective until another editing gesture.
+        // On desktop, the DOM input remains the keyboard event receiver even
+        // when GPUI focuses a read-only surface. Blurring it would also disable
+        // hardware shortcuts, unlike a native window.
+        if self.inner.touch_input {
+            match change {
+                TextInputStateChange::FocusGained => self.inner.show_virtual_keyboard(),
+                TextInputStateChange::FocusLost => self.hide_soft_keyboard(),
+                TextInputStateChange::SelectionChanged | TextInputStateChange::ContentChanged => {}
+            }
+            return;
+        }
         match change {
-            TextInputStateChange::FocusGained => self.inner.sync_virtual_keyboard(true),
-            TextInputStateChange::FocusLost => self.inner.sync_virtual_keyboard(false),
+            TextInputStateChange::FocusGained => {
+                self.inner.ime_mirror.set_read_only(false);
+                if !self.inner.ime_mirror.is_focused() {
+                    self.inner.focus_ime_mirror();
+                }
+            }
+            TextInputStateChange::FocusLost => {
+                self.inner.ime_mirror.set_read_only(true);
+            }
             TextInputStateChange::SelectionChanged | TextInputStateChange::ContentChanged => {}
         }
     }
