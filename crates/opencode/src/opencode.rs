@@ -962,7 +962,8 @@ impl Model {
 
     pub fn supports_thinking(&self, subscription: OpenCodeSubscription) -> bool {
         match self {
-            // These models reason, but offer no selectable reasoning efforts
+            // These models support reasoning, but does not offer
+           // any selectable reasoning efforts
             Self::Glm5
             | Self::Glm5_1
             | Self::GrokBuild0_1
@@ -1173,8 +1174,8 @@ impl Model {
             // DeepSeek models
             Self::DeepSeekV4_1Flash => Some(vec![
                 ReasoningEffort::Low,
-                ReasoningEffort::High,
                 ReasoningEffort::Max,
+                ReasoningEffort::High,
             ]),
             Self::DeepSeekV4Pro => Some(vec![ReasoningEffort::Max, ReasoningEffort::High]),
             Self::DeepSeekV4FlashVisionExp | Self::DeepSeekV4Flash => Some(vec![
