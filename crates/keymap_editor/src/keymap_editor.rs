@@ -477,6 +477,12 @@ enum PreviousEdit {
     Keybinding {
         action_mapping: ActionMapping,
         action_name: &'static str,
+        source: Option<KeybindSource>,
+        action_arguments: Option<String>,
+        /// Which identical binding to select: rows sharing mapping, name,
+        /// source and (JSON-equal) arguments are disambiguated positionally,
+        /// mirroring `user_binding_occurrence`.
+        occurrence: usize,
         /// The scrollbar position to fallback to if we don't find the keybinding during a refresh
         /// this can happen if there's a filter applied to the search and the keybinding modification
         /// filters the binding from the search results
@@ -576,11 +582,24 @@ fn user_binding_occurrence(
             candidate.meta() == Some(KeybindSource::User.meta())
                 && !gpui::is_unbind(candidate.action())
                 && candidate.action().name() == binding.action().name()
-                && candidate.action_input() == binding.action_input()
+                && action_inputs_equal(
+                    candidate.action_input().as_deref(),
+                    binding.action_input().as_deref(),
+                )
                 && candidate.predicate() == binding.predicate()
                 && keystrokes_match_exactly(candidate.keystrokes(), binding.keystrokes())
         })
         .count()
+}
+
+fn action_inputs_equal(a: Option<&str>, b: Option<&str>) -> bool {
+    match (
+        a.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
+        b.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
+    ) {
+        (Some(a), Some(b)) => a == b,
+        _ => a == b,
+    }
 }
 
 impl KeymapEditor {
@@ -1022,19 +1041,35 @@ impl KeymapEditor {
                         PreviousEdit::Keybinding {
                             action_mapping,
                             action_name,
+                            source,
+                            action_arguments,
+                            occurrence,
                             fallback,
                         } => {
+                            let mut matches_to_skip = occurrence;
                             let scroll_position =
                                 this.matches.iter().enumerate().find_map(|(index, item)| {
                                     let binding = &this.keybindings[item.candidate_id];
-                                    if binding.get_action_mapping().is_some_and(|binding_mapping| {
-                                        binding_mapping == action_mapping
-                                    }) && binding.action().name == action_name
-                                    {
-                                        Some(index)
-                                    } else {
-                                        None
+                                    let is_match = binding.get_action_mapping().is_some_and(
+                                        |binding_mapping| binding_mapping == action_mapping,
+                                    ) && binding.action().name == action_name
+                                        && binding.keybind_source() == source
+                                        && action_inputs_equal(
+                                            binding
+                                                .action()
+                                                .arguments
+                                                .as_ref()
+                                                .map(|arguments| arguments.text.as_str()),
+                                            action_arguments.as_deref(),
+                                        );
+                                    if !is_match {
+                                        return None;
                                     }
+                                    if matches_to_skip > 0 {
+                                        matches_to_skip -= 1;
+                                        return None;
+                                    }
+                                    Some(index)
                                 });
 
                             if let Some(scroll_position) = scroll_position {
@@ -1578,6 +1613,13 @@ impl KeymapEditor {
                 .map(|action_mapping| PreviousEdit::Keybinding {
                     action_mapping,
                     action_name: to_restore.action().name,
+                    source: to_restore.keybind_source(),
+                    action_arguments: to_restore
+                        .action()
+                        .arguments
+                        .as_ref()
+                        .map(|arguments| arguments.text.to_string()),
+                    occurrence: to_restore.source_occurrence().unwrap_or(0),
                     fallback: scroll_offset,
                 })
                 .unwrap_or(PreviousEdit::ScrollBarOffset(scroll_offset)),
@@ -3072,6 +3114,11 @@ impl KeybindingEditorModal {
                             keymap.previous_edit = Some(PreviousEdit::Keybinding {
                                 action_mapping,
                                 action_name,
+                                source: Some(KeybindSource::User),
+                                action_arguments: new_action_args.clone(),
+                                // The saved binding was just written to the user keymap.
+                                // Select its first match, falling back to scroll offset.
+                                occurrence: 0,
                                 fallback: keymap.table_interaction_state.read(cx).scroll_offset(),
                             });
                             let status_toast = StatusToast::new(
@@ -4626,7 +4673,64 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             assert_eq!(suppression_states, vec![true, false]);
+            // The restored (second) row must stay selected, not the first match.
+            assert_eq!(editor.selected_index, Some(rows[1]));
         });
+
+        // Enter on the restored row must open Edit, not restore again: the
+        // remaining suppressor must survive an EditBinding action.
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.edit_binding(&EditBinding, window, cx);
+        });
+        cx.run_until_parked();
+
+        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        assert_eq!(
+            content.matches("unbind").count(),
+            1,
+            "Enter must not have removed the remaining suppressor, got:\n{content}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_restore_action_sequence_binding(cx: &mut gpui::TestAppContext) {
+        let keymap_content = r#"[
+    {
+        "bindings": {
+            "alt-cmd-shift-c": ["action::Sequence", ["zed::OpenKeymap"]]
+        }
+    },
+    {
+        "unbind": {
+            "alt-cmd-shift-c": ["action::Sequence", ["zed::OpenKeymap"]]
+        }
+    }
+]"#;
+        let (fs, keymap_editor, mut cx) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut cx;
+
+        let rows = keymap_editor.read_with(cx, |editor, _| {
+            visible_rows_for_action(editor, "action::Sequence")
+        });
+        assert_eq!(rows.len(), 1);
+
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.selected_index = Some(rows[0]);
+            editor.restore_binding(&RestoreBinding, window, cx);
+        });
+        cx.run_until_parked();
+
+        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        assert_eq!(
+            content,
+            r#"[
+    {
+        "bindings": {
+            "alt-cmd-shift-c": ["action::Sequence", ["zed::OpenKeymap"]]
+        }
+    }
+]"#
+        );
     }
 
     #[test]
@@ -4829,5 +4933,40 @@ mod tests {
             unbind_suppressor_source(&binding, 1, &[&user_unbind, &binding]),
             None
         );
+    }
+
+    #[test]
+    fn user_binding_occurrence_ignores_argument_key_order() {
+        assert!(action_inputs_equal(
+            Some(r#"{"stop_at_soft_wraps":false,"stop_at_indent":true}"#),
+            Some(r#"{"stop_at_indent":true,"stop_at_soft_wraps":false}"#),
+        ));
+        assert!(!action_inputs_equal(
+            Some(r#"{"stop_at_soft_wraps":false}"#),
+            Some(r#"{"stop_at_soft_wraps":true}"#),
+        ));
+        assert!(action_inputs_equal(None, None));
+        assert!(!action_inputs_equal(None, Some("{}")));
+        // Unparseable inputs fall back to exact string equality.
+        assert!(action_inputs_equal(Some("{"), Some("{")));
+        assert!(!action_inputs_equal(Some("{"), Some("}")));
+
+        let load = |input: &str| {
+            gpui::KeyBinding::load(
+                "tab",
+                Box::new(zed_actions::OpenKeymap),
+                None,
+                false,
+                Some(SharedString::new(input)),
+                &gpui::DummyKeyboardMapper,
+            )
+            .unwrap()
+            .with_meta(KeybindSource::User.meta())
+        };
+        let first = load(r#"{"stop_at_soft_wraps":false,"stop_at_indent":true}"#);
+        let second = load(r#"{"stop_at_indent":true,"stop_at_soft_wraps":false}"#);
+        let all = vec![&first, &second];
+        assert_eq!(user_binding_occurrence(&first, 0, &all), 0);
+        assert_eq!(user_binding_occurrence(&second, 1, &all), 1);
     }
 }

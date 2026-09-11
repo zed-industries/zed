@@ -545,7 +545,7 @@ impl KeymapFile {
                 match action_input {
                     Some(action_input) => (
                         ActionSequence::build_sequence(action_input.clone(), cx),
-                        None,
+                        Some(action_input.to_string()),
                     ),
                     None => (Err(ActionSequence::expected_array_error()), None),
                 }
@@ -1369,6 +1369,16 @@ impl KeymapFile {
             )
         }
 
+        fn keystrokes_exact_match(
+            keystrokes: &[KeybindingKeystroke],
+            target: &[KeybindingKeystroke],
+        ) -> bool {
+            keystrokes.len() == target.len()
+                && keystrokes.iter().zip(target).all(|(a, b)| {
+                    a.inner().key == b.inner().key && a.inner().modifiers == b.inner().modifiers
+                })
+        }
+
         fn find_nth_binding_in_entries<'a, 'b, T>(
             entries: Option<&'b IndexMap<String, T>>,
             kind: BindingKind,
@@ -1403,9 +1413,7 @@ impl KeymapFile {
                     continue;
                 }
                 let keystrokes_match = if keystrokes_exact {
-                    keystrokes.iter().zip(target.keystrokes).all(|(a, b)| {
-                        a.inner().key == b.inner().key && a.inner().modifiers == b.inner().modifiers
-                    })
+                    keystrokes_exact_match(&keystrokes, target.keystrokes)
                 } else {
                     keystrokes
                         .iter()
@@ -1961,6 +1969,35 @@ mod tests {
                 .as_ref()
                 .map(ToString::to_string),
             Some("{}".to_string())
+        );
+    }
+
+    #[gpui::test]
+    fn keymap_loads_sequence_action_with_input(cx: &mut App) {
+        let key_bindings = match KeymapFile::load(
+            indoc::indoc! {r#"
+                [
+                    {
+                        "bindings": {
+                            "alt-cmd-shift-c": ["action::Sequence", ["test_keymap_file::StringAction"]]
+                        }
+                    }
+                ]
+            "#},
+            cx,
+        ) {
+            crate::keymap_file::KeymapFileLoadResult::Success { key_bindings } => key_bindings,
+            other => panic!("expected Success, got {other:?}"),
+        };
+
+        assert_eq!(key_bindings.len(), 1);
+        assert_eq!(key_bindings[0].action().name(), "action::Sequence");
+        assert_eq!(
+            key_bindings[0]
+                .action_input()
+                .as_ref()
+                .map(ToString::to_string),
+            Some(r#"["test_keymap_file::StringAction"]"#.to_string())
         );
     }
 
@@ -3629,6 +3666,45 @@ mod tests {
               {
                 "bindings": {
                   "cmd-s": "workspace::Save"
+                }
+              }
+            ]
+            "#
+            .unindent(),
+        );
+
+        // Sequence payloads are preserved at load time, so the restore target carries the full sequence array.
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "alt-cmd-shift-c": ["action::Sequence", ["zed::OpenKeymap"]]
+                }
+              },
+              {
+                "unbind": {
+                  "alt-cmd-shift-c": ["action::Sequence", ["zed::OpenKeymap"]]
+                }
+              }
+            ]
+            "#
+            .unindent(),
+            KeybindUpdateOperation::RemoveUnbind {
+                target: KeybindUpdateTarget {
+                    context: None,
+                    keystrokes: &parse_keystrokes("alt-cmd-shift-c"),
+                    action_name: "action::Sequence",
+                    action_arguments: Some(r#"["zed::OpenKeymap"]"#),
+                },
+                target_keybind_source: KeybindSource::User,
+                target_keybind_occurrence: 0,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "alt-cmd-shift-c": ["action::Sequence", ["zed::OpenKeymap"]]
                 }
               }
             ]
