@@ -16,8 +16,6 @@ use crate::{
     zeta,
 };
 
-const WINDOW_LINES_ABOVE: u32 = 10;
-const WINDOW_LINES_BELOW: u32 = 10;
 // High effort requests send nearly the whole file as extra context so the model
 // can reason about code far from the cursor, while the editable window stays the
 // same size. The context is still bounded to keep enormous files from producing
@@ -88,14 +86,15 @@ pub fn request_prediction(
 
     let is_high_effort = matches!(trigger, PredictEditsRequestTrigger::ExplicitHighEffort);
     let effort = is_high_effort.then(|| HIGH_EFFORT.to_string());
+    let window_lines = if is_high_effort {
+        custom_settings.high_effort_sweep_window_lines
+    } else {
+        custom_settings.sweep_window_lines
+    };
 
     let cursor_point = position.to_point(&snapshot);
-    let window_range = fixed_line_window_around_cursor(
-        &snapshot,
-        cursor_point,
-        WINDOW_LINES_ABOVE,
-        WINDOW_LINES_BELOW,
-    );
+    let window_range =
+        fixed_line_window_around_cursor(&snapshot, cursor_point, window_lines, window_lines);
     let file_context = is_high_effort.then(|| {
         let context_range = fixed_line_window_around_cursor(
             &snapshot,

@@ -3468,6 +3468,8 @@ async fn make_sweep_prompt_test_ep_store(
                                     settings::EditPredictionPromptFormatContent::Sweep,
                                 ),
                                 max_output_tokens: Some(64),
+                                sweep_window_lines: None,
+                                high_effort_sweep_window_lines: None,
                                 prediction_debounce: None,
                             },
                         ),

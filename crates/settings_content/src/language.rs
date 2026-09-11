@@ -180,6 +180,16 @@ pub struct CustomEditPredictionProviderSettingsContent {
     ///
     /// Default: 256
     pub max_output_tokens: Option<u32>,
+    /// Number of lines above and below the cursor included in the editable window
+    /// for the Sweep prompt format.
+    ///
+    /// Default: 10
+    pub sweep_window_lines: Option<u32>,
+    /// Number of lines above and below the cursor included in the editable window
+    /// for the Sweep prompt format when a high effort prediction is requested.
+    ///
+    /// Default: 20
+    pub high_effort_sweep_window_lines: Option<u32>,
     /// The debounce delay in milliseconds before automatically requesting a prediction
     /// after typing stops. Set to 0 to request predictions immediately.
     ///
@@ -323,6 +333,16 @@ pub struct OllamaEditPredictionSettingsContent {
     ///
     /// Default: 256
     pub max_output_tokens: Option<u32>,
+    /// Number of lines above and below the cursor included in the editable window
+    /// for the Sweep prompt format.
+    ///
+    /// Default: 10
+    pub sweep_window_lines: Option<u32>,
+    /// Number of lines above and below the cursor included in the editable window
+    /// for the Sweep prompt format when a high effort prediction is requested.
+    ///
+    /// Default: 20
+    pub high_effort_sweep_window_lines: Option<u32>,
     /// Api URL to use for completions.
     ///
     /// Default: "http://localhost:11434"

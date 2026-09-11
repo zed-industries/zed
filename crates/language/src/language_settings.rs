@@ -611,6 +611,10 @@ pub struct OpenAiCompatibleEditPredictionSettings {
     pub model: String,
     /// Maximum tokens to generate.
     pub max_output_tokens: u32,
+    /// Lines above and below the cursor in the Sweep editable window.
+    pub sweep_window_lines: u32,
+    /// Lines above and below the cursor in the Sweep editable window for high effort requests.
+    pub high_effort_sweep_window_lines: u32,
     /// Custom API URL to use for Ollama.
     pub api_url: Arc<str>,
     /// The prompt format to use for completions. When `None`, the format
@@ -945,6 +949,8 @@ impl settings::Settings for AllLanguageSettings {
             .map(|model| OpenAiCompatibleEditPredictionSettings {
                 model: model.0,
                 max_output_tokens: ollama.max_output_tokens.unwrap(),
+                sweep_window_lines: ollama.sweep_window_lines.unwrap(),
+                high_effort_sweep_window_lines: ollama.high_effort_sweep_window_lines.unwrap(),
                 api_url: ollama.api_url.unwrap().into(),
                 prompt_format: ollama.prompt_format.unwrap().into(),
                 prediction_debounce: ollama.prediction_debounce.unwrap(),
@@ -961,6 +967,10 @@ impl settings::Settings for AllLanguageSettings {
             .map(|(model, api_url)| OpenAiCompatibleEditPredictionSettings {
                 model,
                 max_output_tokens: openai_compatible_settings.max_output_tokens.unwrap(),
+                sweep_window_lines: openai_compatible_settings.sweep_window_lines.unwrap(),
+                high_effort_sweep_window_lines: openai_compatible_settings
+                    .high_effort_sweep_window_lines
+                    .unwrap(),
                 api_url: api_url.into(),
                 prompt_format: openai_compatible_settings.prompt_format.unwrap().into(),
                 prediction_debounce: openai_compatible_settings.prediction_debounce.unwrap(),
