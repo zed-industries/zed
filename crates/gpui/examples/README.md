@@ -6,6 +6,41 @@ Examples can be run from the Zed repository root:
 cargo run -p gpui --example hello_world
 ```
 
+## Running in a browser
+
+A selection of these examples is also served by the standalone web gallery:
+
+```sh
+cd crates/gpui_web/examples/hello_web
+trunk serve
+```
+
+Open <http://localhost:8080/> to choose an example:
+
+| Path | Example |
+| --- | --- |
+| `/hello-world` | Hello world |
+| `/text` | Styled text |
+| `/text-layout` | Alignment and decorations |
+| `/text-wrapper` | Wrapping and truncation |
+| `/input` | Text input and selection |
+| `/prime-sieve` | Background task demo |
+
+The server supports direct links and reloads at each path. Only the selected
+example's WASM module is loaded. Follow **All examples** to return to the gallery;
+navigation reloads the page so the previous app and its workers are released.
+
+Install [Trunk](https://trunkrs.dev/) if needed. The gallery's toolchain file selects
+nightly Rust, the WASM target, and `rust-src`. Its Trunk configuration supplies the
+cross-origin-isolation headers needed for shared memory and watches the GPUI
+example and renderer sources for automatic rebuilds and browser reloads. Use a
+browser with WebGPU support.
+
+The gallery builds separate Cargo binaries directly from the existing example
+sources. To add another browser-compatible example, register its binary in the
+gallery's `Cargo.toml`, add an auxiliary Rust asset in `index.html`, and add its
+gallery link with the corresponding `data-module` name.
+
 ## Where to start
 
 - `hello_world` shows the basic shape of a GPUI application: create an
