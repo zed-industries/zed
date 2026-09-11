@@ -46,6 +46,8 @@ pub enum VersionStrategy<'a> {
     Pin(&'a Version),
     /// Install if current version is older than latest version
     Latest(&'a Version),
+    /// Install if current version exceeds the maximum allowed version
+    Maximum(&'a Version),
 }
 
 #[derive(Clone)]
@@ -232,10 +234,14 @@ impl NodeRuntime {
         &self,
         directory: &Path,
         args: &[&str],
-    ) -> Result<Output> {
+        should_install: impl std::future::Future<Output = bool>,
+    ) -> Result<()> {
         let _install_lock = acquire_npm_install_lock(directory).await?;
-        self.run_npm_subcommand(Some(directory), "install", args)
-            .await
+        if should_install.await {
+            self.run_npm_subcommand(Some(directory), "install", args)
+                .await?;
+        }
+        Ok(())
     }
 
     pub async fn npm_package_installed_version(
@@ -403,6 +409,7 @@ impl NodeRuntime {
         let version_strategy_label = match &version_strategy {
             VersionStrategy::Pin(version) => format!("pin:{version}"),
             VersionStrategy::Latest(version) => format!("latest:{version}"),
+            VersionStrategy::Maximum(version) => format!("maximum:{version}"),
         };
         let should_install =
             should_install_npm_package_version(&installed_version, version_strategy);
@@ -438,6 +445,7 @@ fn should_install_npm_package_version(
     match version_strategy {
         VersionStrategy::Pin(pinned_version) => installed_version != pinned_version,
         VersionStrategy::Latest(latest_version) => installed_version < latest_version,
+        VersionStrategy::Maximum(maximum_version) => installed_version > maximum_version,
     }
 }
 
@@ -1250,6 +1258,7 @@ mod tests {
     struct ConcurrentNpmRuntime {
         active_installs: Arc<AtomicUsize>,
         maximum_concurrent_installs: Arc<AtomicUsize>,
+        completed_installs: Arc<AtomicUsize>,
     }
 
     #[async_trait]
@@ -1274,6 +1283,7 @@ mod tests {
                 .fetch_max(active_installs, Ordering::SeqCst);
             smol::future::yield_now().await;
             self.active_installs.fetch_sub(1, Ordering::SeqCst);
+            self.completed_installs.fetch_add(1, Ordering::SeqCst);
 
             Ok(Output {
                 status: ExitStatus::from_raw(0),
@@ -1304,6 +1314,7 @@ mod tests {
     fn concurrent_npm_runtime(
         active_installs: Arc<AtomicUsize>,
         maximum_concurrent_installs: Arc<AtomicUsize>,
+        completed_installs: Arc<AtomicUsize>,
     ) -> NodeRuntime {
         let options = NodeBinaryOptions::default();
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
@@ -1311,6 +1322,7 @@ mod tests {
             instance: Some(Box::new(ConcurrentNpmRuntime {
                 active_installs,
                 maximum_concurrent_installs,
+                completed_installs,
             })),
             last_options: Some(options.clone()),
             options: watch::channel(Some(options)).1,
@@ -1319,27 +1331,50 @@ mod tests {
     }
 
     #[test]
-    fn test_npm_installs_are_serialized_per_directory() {
+    fn test_npm_installs_are_serialized_and_rechecked_per_directory() {
         smol::block_on(async {
             let temp_dir = tempfile::tempdir().unwrap();
             let active_installs = Arc::new(AtomicUsize::new(0));
             let maximum_concurrent_installs = Arc::new(AtomicUsize::new(0));
+            let completed_installs = Arc::new(AtomicUsize::new(0));
             let first_runtime = concurrent_npm_runtime(
                 active_installs.clone(),
                 maximum_concurrent_installs.clone(),
+                completed_installs.clone(),
             );
-            let second_runtime =
-                concurrent_npm_runtime(active_installs, maximum_concurrent_installs.clone());
+            let second_runtime = concurrent_npm_runtime(
+                active_installs,
+                maximum_concurrent_installs.clone(),
+                completed_installs.clone(),
+            );
+
+            let first_should_install = {
+                let completed_installs = completed_installs.clone();
+                async move { completed_installs.load(Ordering::SeqCst) == 0 }
+            };
+            let second_should_install = {
+                let completed_installs = completed_installs.clone();
+                async move { completed_installs.load(Ordering::SeqCst) == 0 }
+            };
 
             let (first_result, second_result) = future::join(
-                first_runtime.run_npm_install_with_lock(temp_dir.path(), &["test-package"]),
-                second_runtime.run_npm_install_with_lock(temp_dir.path(), &["test-package"]),
+                first_runtime.run_npm_install_with_lock(
+                    temp_dir.path(),
+                    &["test-package"],
+                    first_should_install,
+                ),
+                second_runtime.run_npm_install_with_lock(
+                    temp_dir.path(),
+                    &["test-package"],
+                    second_should_install,
+                ),
             )
             .await;
 
             first_result.unwrap();
             second_result.unwrap();
             assert_eq!(maximum_concurrent_installs.load(Ordering::SeqCst), 1);
+            assert_eq!(completed_installs.load(Ordering::SeqCst), 1);
         });
     }
 
@@ -1440,6 +1475,26 @@ mod tests {
         assert!(!should_install_npm_package_version(
             &Version::parse("3.0.0")?,
             VersionStrategy::Latest(&target_version)
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_maximum_version_strategy_accepts_older_installed_versions() -> Result<()> {
+        let maximum_version = Version::parse("2.0.0")?;
+
+        assert!(!should_install_npm_package_version(
+            &Version::parse("2.0.0")?,
+            VersionStrategy::Maximum(&maximum_version)
+        ));
+        assert!(!should_install_npm_package_version(
+            &Version::parse("1.0.0")?,
+            VersionStrategy::Maximum(&maximum_version)
+        ));
+        assert!(should_install_npm_package_version(
+            &Version::parse("3.0.0")?,
+            VersionStrategy::Maximum(&maximum_version)
         ));
 
         Ok(())
