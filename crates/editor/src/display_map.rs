@@ -1039,6 +1039,29 @@ impl DisplayMap {
     }
 
     #[instrument(skip_all)]
+    pub fn insert_above_blocks(
+        &mut self,
+        blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> Vec<CustomBlockId> {
+        let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
+        Self::with_synced_companion_mut(
+            self.entity_id,
+            &self.companion,
+            cx,
+            |companion_view, _cx| {
+                self.block_map
+                    .write(
+                        self_wrap_snapshot.clone(),
+                        self_wrap_edits.clone(),
+                        companion_view,
+                    )
+                    .insert_above_blocks(blocks)
+            },
+        )
+    }
+
+    #[instrument(skip_all)]
     pub fn resize_blocks(&mut self, heights: HashMap<CustomBlockId, u32>, cx: &mut Context<Self>) {
         let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
 
