@@ -10,6 +10,8 @@ use util::RangeExt;
 
 use crate::BufferRow;
 
+pub type RowChunkId = usize;
+
 /// An range of rows, exclusive as [`lsp::Range`] and
 /// <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#range>
 /// denote.
@@ -27,7 +29,7 @@ pub struct RowChunks {
     buffer_snapshot: text::BufferSnapshot,
     last_row: BufferRow,
     max_rows_per_chunk: u32,
-    computed_chunks: Mutex<HashMap<usize, RowChunk>>,
+    computed_chunks: Mutex<HashMap<RowChunkId, RowChunk>>,
 }
 
 impl std::fmt::Debug for RowChunks {
@@ -86,12 +88,18 @@ impl RowChunks {
         }
     }
 
-    fn chunk_row_range(&self, id: usize) -> Range<BufferRow> {
-        let start = id as u32 * self.max_rows_per_chunk;
-        start..(start + self.max_rows_per_chunk).min(self.last_row)
+    fn chunk_row_range(&self, id: RowChunkId) -> Range<BufferRow> {
+        let start = u32::try_from(id)
+            .unwrap_or(u32::MAX)
+            .saturating_mul(self.max_rows_per_chunk)
+            .min(self.last_row);
+        start
+            ..start
+                .saturating_add(self.max_rows_per_chunk)
+                .min(self.last_row)
     }
 
-    fn chunk(&self, id: usize) -> RowChunk {
+    fn chunk(&self, id: RowChunkId) -> RowChunk {
         *self.computed_chunks.lock().entry(id).or_insert_with(|| {
             let row_range = self.chunk_row_range(id);
             let start = Point::new(row_range.start, 0);
@@ -113,7 +121,7 @@ impl RowChunks {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RowChunk {
-    pub id: usize,
+    pub id: RowChunkId,
     pub start: BufferRow,
     pub end_exclusive: BufferRow,
     pub start_anchor: Anchor,

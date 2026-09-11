@@ -47,9 +47,9 @@ pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
         // constantly.
         Duration::from_millis(100)
     } else {
-        // One 120Hz refresh: an interval that spends this much on the
-        // foreground has plausibly dropped a frame.
-        Duration::from_millis(8)
+        // At least one dropped frame on any display. Generous while budget
+        // incidents are plentiful; lower it as they get fixed.
+        Duration::from_millis(24)
     };
 
     if cfg!(debug_assertions) {
