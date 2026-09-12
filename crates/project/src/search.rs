@@ -1,5 +1,6 @@
+use crate::ProjectPath;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
-use anyhow::{Ok, Result};
+use anyhow::{Context as _, Ok, Result};
 use client::proto;
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use gpui::Entity;
@@ -18,6 +19,19 @@ use util::{
     paths::{PathMatcher, PathStyle},
     rel_path::RelPath,
 };
+use worktree::WorktreeId;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchOmission {
+    pub path: ProjectPath,
+    pub reason: SearchOmissionReason,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SearchOmissionReason {
+    NotIndexed,
+    GitIgnored,
+}
 
 #[derive(Debug)]
 pub enum SearchResult {
@@ -28,6 +42,39 @@ pub enum SearchResult {
     LimitReached,
     WaitingForScan,
     Searching,
+}
+
+impl SearchOmission {
+    pub fn to_proto(&self) -> proto::SearchOmission {
+        proto::SearchOmission {
+            path: Some(proto::ProjectPath {
+                worktree_id: self.path.worktree_id.to_proto(),
+                path: self.path.path.as_unix_str().to_owned(),
+            }),
+            reason: match self.reason {
+                SearchOmissionReason::NotIndexed => proto::SearchOmissionReason::NotIndexed,
+                SearchOmissionReason::GitIgnored => proto::SearchOmissionReason::GitIgnored,
+            } as i32,
+        }
+    }
+
+    pub(crate) fn from_proto(message: proto::SearchOmission) -> Result<Self> {
+        let path = message.path.context("missing search omission path")?;
+        let reason = match proto::SearchOmissionReason::try_from(message.reason)? {
+            proto::SearchOmissionReason::NotIndexed => SearchOmissionReason::NotIndexed,
+            proto::SearchOmissionReason::GitIgnored => SearchOmissionReason::GitIgnored,
+            proto::SearchOmissionReason::Unspecified => {
+                anyhow::bail!("missing search omission reason")
+            }
+        };
+        Ok(Self {
+            path: ProjectPath {
+                worktree_id: WorktreeId::from_proto(path.worktree_id),
+                path: Arc::from(RelPath::from_unix_str(&path.path)?),
+            },
+            reason,
+        })
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]

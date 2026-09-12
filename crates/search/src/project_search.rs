@@ -11,7 +11,7 @@ use crate::{
     text_finder::TextFinder,
 };
 use anyhow::Context as _;
-use collections::HashMap;
+use collections::{BTreeMap, BTreeSet, HashMap};
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
     SearchResultsStatus, SelectionEffects,
@@ -20,7 +20,7 @@ use editor::{
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
-use futures::{StreamExt, stream::FuturesOrdered};
+use futures::{FutureExt as _, StreamExt, future::Shared, stream::FuturesOrdered};
 use gpui::{
     Action, AnyElement, App, AsyncApp, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point,
@@ -33,15 +33,16 @@ use menu::Confirm;
 use multi_buffer;
 use project::{
     Project, ProjectPath, SearchResults,
-    search::{SearchInputKind, SearchQuery, SearchResult},
+    search::{SearchInputKind, SearchOmission, SearchOmissionReason, SearchQuery, SearchResult},
     search_history::SearchHistoryCursor,
 };
-use settings::Settings;
+use settings::{Settings, WorktreeId};
 use std::{
     any::{Any, TypeId},
     iter::Peekable,
     mem,
     ops::{Not, Range},
+    path::Path,
     pin::pin,
     sync::{
         Arc,
@@ -261,6 +262,8 @@ pub struct ProjectSearch {
     last_search_query_text: Option<String>,
     pub search_id: usize,
     search_state: SearchState,
+    omissions: Option<Arc<SearchOmissions>>,
+    pending_omissions: Option<PendingSearchOmissions>,
     phase: SearchPhase,
     reuses_excerpts: bool,
     results_refreshed: bool,
@@ -270,6 +273,21 @@ pub struct ProjectSearch {
     pub project_search_turning_into_text_finder: Arc<AtomicBool>,
     _excerpts_subscription: Subscription,
     _workspace_subscription: Option<Subscription>,
+}
+
+struct SearchOmissionsView {
+    editor: Entity<Editor>,
+}
+
+struct PendingSearchOmissions {
+    collect: Shared<Task<Arc<SearchOmissions>>>,
+    _publish: Task<()>,
+}
+
+struct SearchOmissions {
+    complete: bool,
+    entries: Vec<SearchOmission>,
+    worktree_roots: HashMap<WorktreeId, Arc<Path>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -415,6 +433,8 @@ impl ProjectSearch {
             last_search_query_text: None,
             search_id: 0,
             search_state: SearchState::Idle,
+            omissions: None,
+            pending_omissions: None,
             phase: SearchPhase::Idle,
             reuses_excerpts: false,
             results_refreshed: true,
@@ -427,6 +447,74 @@ impl ProjectSearch {
         }
     }
 
+    pub(crate) fn track_search_omissions(
+        &mut self,
+        results: &SearchResults<SearchResult>,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_search_omissions(cx);
+        let worktree_roots = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                (worktree.id(), worktree.abs_path())
+            })
+            .collect::<HashMap<_, _>>();
+        let omissions = results.omissions.clone();
+        let status = results.omissions_status.clone();
+        let collect = cx.background_spawn(async move {
+            let mut entries = Vec::new();
+            while let Ok(batch) = omissions.recv().await {
+                entries.extend(batch);
+            }
+            Arc::new(SearchOmissions {
+                complete: status.is_complete(),
+                entries,
+                worktree_roots,
+            })
+        });
+        self.await_search_omissions(collect.shared(), cx);
+    }
+
+    pub(crate) fn clear_search_omissions(&mut self, cx: &mut Context<Self>) {
+        self.pending_omissions = None;
+        self.omissions = None;
+        cx.notify();
+    }
+
+    fn await_search_omissions(
+        &mut self,
+        collect: Shared<Task<Arc<SearchOmissions>>>,
+        cx: &mut Context<Self>,
+    ) {
+        let publish = cx.spawn({
+            let collect = collect.clone();
+            async move |this, cx| {
+                let omissions = collect.await;
+                this.update(cx, |this, cx| {
+                    this.omissions = Some(omissions);
+                    this.pending_omissions = None;
+                    cx.notify();
+                })
+                .log_err();
+            }
+        });
+        self.pending_omissions = Some(PendingSearchOmissions {
+            collect,
+            _publish: publish,
+        });
+    }
+
+    fn show_search_omissions(&self, cx: &App) -> bool {
+        EditorSettings::get_global(cx).search.show_omitted_paths
+            && self
+                .omissions
+                .as_ref()
+                .is_some_and(|omissions| !omissions.entries.is_empty())
+    }
+
     fn clone(&self, cx: &mut Context<Self>) -> Entity<Self> {
         cx.new(|cx| {
             let excerpts = self
@@ -435,7 +523,7 @@ impl ProjectSearch {
             let excerpts_subscription = Self::subscribe_to_excerpts(&excerpts, cx);
             let workspace_subscription = Self::subscribe_to_workspace(&self.workspace, cx);
 
-            Self {
+            let mut clone = Self {
                 project: self.project.clone(),
                 workspace: self.workspace.clone(),
                 excerpts,
@@ -449,6 +537,8 @@ impl ProjectSearch {
                 } else {
                     self.search_state
                 },
+                omissions: self.omissions.clone(),
+                pending_omissions: None,
                 phase: if self.phase == SearchPhase::Confirmed {
                     SearchPhase::Confirmed
                 } else {
@@ -462,7 +552,11 @@ impl ProjectSearch {
                 project_search_turning_into_text_finder: Arc::new(AtomicBool::new(false)),
                 _excerpts_subscription: excerpts_subscription,
                 _workspace_subscription: workspace_subscription,
+            };
+            if let Some(pending) = &self.pending_omissions {
+                clone.await_search_omissions(pending.collect.clone(), cx);
             }
+            clone
         })
     }
     fn subscribe_to_excerpts(
@@ -556,6 +650,7 @@ impl ProjectSearch {
         let search = self
             .project
             .update(cx, |project, cx| project.search(query.clone(), cx));
+        self.track_search_omissions(&search, cx);
         self.last_search_query_text = Some(query.as_str().to_string());
         self.search_id += 1;
         self.active_query = Some(query);
@@ -590,6 +685,7 @@ impl ProjectSearch {
     }
 
     fn clear(&mut self, cx: &mut Context<Self>) {
+        self.clear_search_omissions(cx);
         self.pending_search = None;
         self.match_ranges.clear();
         self.excerpts.update(cx, |excerpts, cx| excerpts.clear(cx));
@@ -798,6 +894,96 @@ async fn consume_search_stream(
         .ok()?;
 
     None
+}
+
+impl Render for SearchOmissionsView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(self.editor.clone())
+    }
+}
+
+impl Focusable for SearchOmissionsView {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl EventEmitter<()> for SearchOmissionsView {}
+
+impl Item for SearchOmissionsView {
+    type Event = ();
+
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        SharedString::from("Search Omissions")
+    }
+
+    fn capability(&self, _cx: &App) -> language::Capability {
+        language::Capability::ReadOnly
+    }
+
+    fn as_searchable(&self, _: &Entity<Self>, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
+        self.editor.to_searchable_item_handle(cx)
+    }
+}
+
+impl SearchOmissions {
+    fn report(&self, query: &str) -> String {
+        let mut groups = BTreeMap::<_, BTreeMap<_, BTreeSet<_>>>::new();
+        for omission in &self.entries {
+            groups
+                .entry(omission.reason)
+                .or_default()
+                .entry(omission.path.worktree_id)
+                .or_default()
+                .insert(omission.path.path.as_ref());
+        }
+
+        let mut report = format!(
+            "Project Search Omissions\n\nQuery: {query:?}\n\n\
+             These paths were not searched in full.\n\
+             This report describes project scope before include and exclude search filters.\n\
+             Listed directories can still contain included files that appear in the results.\n\
+             Unindexed contents are unknown, so this is not a list of missing matches.\n\
+             The report is a snapshot; run the search again after changing files or settings.\n"
+        );
+        if !self.complete {
+            report.push_str(
+                "\nOmission reporting did not complete; additional paths may be omitted.\n",
+            );
+        }
+        for (reason, worktrees) in groups {
+            report.push_str(match reason {
+                SearchOmissionReason::NotIndexed => {
+                    "\nNot indexed\n\
+                     These directories were not fully loaded when search enumerated files.\n\
+                     Check file_scan_depth and file_scan_inclusions for deferred directories.\n\
+                     Other unloaded directories, such as external symlink targets, can also appear here.\n"
+                }
+                SearchOmissionReason::GitIgnored => {
+                    "\nGit ignore rules\n\
+                     These paths were skipped because they are ignored by Git.\n\
+                     Enable Include Ignored in the search filters, or set search.include_ignored to true for new searches.\n\
+                     Use file_scan_inclusions to include specific ignored paths.\n"
+                }
+            });
+            for (worktree_id, paths) in worktrees {
+                if let Some(root) = self.worktree_roots.get(&worktree_id) {
+                    report.push_str(&format!("\nRoot: {root:?}\n"));
+                } else {
+                    report.push_str(&format!("\nWorktree: {}\n", worktree_id.to_proto()));
+                }
+                for path in paths {
+                    report.push_str(&format!("  - {:?}\n", path.as_unix_str()));
+                }
+            }
+        }
+        report.push_str(
+            "\nOther search settings\n\
+             Paths matching file_scan_exclusions are absent from the index and cannot be enumerated here.\n\
+             To hide the info icon without changing search scope, set search.show_omitted_paths to false.\n",
+        );
+        report
+    }
 }
 
 struct ReusedResults {
@@ -2970,6 +3156,45 @@ impl ProjectSearchBar {
         }
     }
 
+    fn open_search_omissions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = &self.active_project_search else {
+            return;
+        };
+        let search = view.read(cx).entity.read(cx);
+        let Some(omissions) = search.omissions.clone() else {
+            return;
+        };
+        let query = search
+            .active_query
+            .as_ref()
+            .map(|query| query.as_str().to_owned())
+            .unwrap_or_default();
+        let workspace = search.workspace.clone();
+        let report = cx.background_spawn(async move { omissions.report(&query) });
+        cx.spawn_in(window, async move |_, cx| {
+            let report = report.await;
+            workspace.update_in(cx, |workspace, window, cx| {
+                let buffer = cx.new(|cx| {
+                    let mut buffer = Buffer::local(report, cx);
+                    buffer.set_capability(language::Capability::ReadOnly, cx);
+                    buffer
+                });
+                let editor = cx.new(|cx| {
+                    let mut editor = Editor::for_buffer(buffer, None, window, cx);
+                    editor.set_read_only(true);
+                    editor.buffer().update(cx, |buffer, cx| {
+                        buffer.set_title("Search Omissions".to_owned(), cx);
+                    });
+                    editor
+                });
+                let report = cx.new(|_| SearchOmissionsView { editor });
+                workspace.add_item_to_active_pane(Box::new(report), None, true, window, cx);
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn open_text_finder(
         &mut self,
         _: &OpenTextFinder,
@@ -3136,6 +3361,16 @@ impl Render for ProjectSearchBar {
         let mode_column = h_flex()
             .gap_1()
             .min_w_64()
+            .when(project_search.show_search_omissions(cx), |this| {
+                this.child(
+                    IconButton::new("project-search-omissions", IconName::Info)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(Tooltip::text("Some paths were omitted from search"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_search_omissions(window, cx);
+                        })),
+                )
+            })
             .child(
                 IconButton::new("project-search-filter-button", IconName::Filter)
                     .shape(IconButtonShape::Square)
@@ -3548,6 +3783,294 @@ pub mod tests {
         assert_eq!(split_glob_patterns(r"\{a,b\}"), vec![r"\{a", r"b\}"]);
         assert_eq!(split_glob_patterns(r"a\\,b"), vec![r"a\\", "b"]);
         assert_eq!(split_glob_patterns(r"a\\\,b"), vec![r"a\\\,b"]);
+    }
+
+    #[test]
+    fn test_search_omissions_report() {
+        let omissions = SearchOmissions {
+            complete: true,
+            entries: [
+                (2, "cached", SearchOmissionReason::GitIgnored),
+                (1, "z/深", SearchOmissionReason::NotIndexed),
+                (1, "cache\nother", SearchOmissionReason::GitIgnored),
+                (1, "a/b", SearchOmissionReason::NotIndexed),
+                (3, "missing", SearchOmissionReason::GitIgnored),
+            ]
+            .into_iter()
+            .map(|(worktree_id, path, reason)| SearchOmission {
+                path: ProjectPath::from((WorktreeId::from_proto(worktree_id), rel_path(path))),
+                reason,
+            })
+            .collect(),
+            worktree_roots: [
+                (WorktreeId::from_proto(1), Arc::from(Path::new("/one"))),
+                (WorktreeId::from_proto(2), Arc::from(Path::new("/two"))),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let expected = r#"Project Search Omissions
+
+Query: "need\nle"
+
+These paths were not searched in full.
+This report describes project scope before include and exclude search filters.
+Listed directories can still contain included files that appear in the results.
+Unindexed contents are unknown, so this is not a list of missing matches.
+The report is a snapshot; run the search again after changing files or settings.
+
+Not indexed
+These directories were not fully loaded when search enumerated files.
+Check file_scan_depth and file_scan_inclusions for deferred directories.
+Other unloaded directories, such as external symlink targets, can also appear here.
+
+Root: "/one"
+  - "a/b"
+  - "z/深"
+
+Git ignore rules
+These paths were skipped because they are ignored by Git.
+Enable Include Ignored in the search filters, or set search.include_ignored to true for new searches.
+Use file_scan_inclusions to include specific ignored paths.
+
+Root: "/one"
+  - "cache\nother"
+
+Root: "/two"
+  - "cached"
+
+Worktree: 3
+  - "missing"
+
+Other search settings
+Paths matching file_scan_exclusions are absent from the index and cannot be enumerated here.
+To hide the info icon without changing search scope, set search.show_omitted_paths to false.
+"#;
+        assert_eq!(omissions.report("need\nle"), expected);
+        let omissions = SearchOmissions {
+            complete: false,
+            ..omissions
+        };
+        assert_eq!(
+            omissions.report("need\nle"),
+            expected.replace(
+                "\nNot indexed\n",
+                "\nOmission reporting did not complete; additional paths may be omitted.\n\nNot indexed\n"
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_search_omissions_info_and_report(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_depth = Some(2);
+                });
+            });
+        });
+        let SearchBarTest {
+            project,
+            window,
+            search_bar,
+            search_view,
+            mut cx,
+        } = setup_search_bar_test(
+            json!({
+                ".zed": { "settings.json": "{\"private_files\": [\"ignored\"]}" },
+                ".gitignore": "ignored/\n",
+                "a": { "b": { "deep.txt": "needle" } },
+                "ignored": { "file.txt": "needle" },
+                "visible.txt": "needle"
+            }),
+            cx,
+        )
+        .await;
+        let search = search_view.read_with(&cx, |view, _| view.entity.clone());
+        for (query, expected_matches) in [("absent", 0), ("needle", 1)] {
+            perform_project_search(&search_view, query, &mut cx);
+            search.read_with(&cx, |search, cx| {
+                assert_eq!(search.match_ranges.len(), expected_matches);
+                assert!(search.show_search_omissions(cx));
+                let omissions = search.omissions.as_ref().unwrap();
+                assert!(omissions.complete);
+                assert_eq!(
+                    omissions
+                        .entries
+                        .iter()
+                        .map(|omission| (omission.path.path.as_ref(), omission.reason))
+                        .collect::<Vec<_>>(),
+                    vec![
+                        (rel_path("a/b"), SearchOmissionReason::NotIndexed),
+                        (rel_path("ignored"), SearchOmissionReason::GitIgnored),
+                    ]
+                );
+            });
+        }
+        search.update(&mut cx, |search, cx| {
+            search.search_state = SearchState::Completed(SearchCompletion::Results {
+                limit_reached: true,
+            });
+            assert!(search.show_search_omissions(cx));
+        });
+        let expected_report = search.read_with(&cx, |search, _| {
+            search.omissions.as_ref().unwrap().report("needle")
+        });
+        search_bar.update_in(&mut cx, |bar, window, cx| {
+            bar.open_search_omissions(window, cx);
+        });
+        cx.run_until_parked();
+        window
+            .read_with(&cx, |workspace, cx| {
+                let report = workspace.active_item_as::<SearchOmissionsView>(cx).unwrap();
+                assert!(report.to_followable_item_handle(cx).is_none());
+                assert!(report.to_searchable_item_handle(cx).is_some());
+                let editor = report.read(cx).editor.read(cx);
+                assert_eq!(editor.title(cx), "Search Omissions");
+                assert_eq!(editor.capability(cx), language::Capability::ReadOnly);
+                assert_eq!(editor.text(cx), expected_report);
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+                assert!(
+                    project
+                        .read(cx)
+                        .buffer_store()
+                        .read(cx)
+                        .get(buffer.read(cx).remote_id())
+                        .is_none()
+                );
+            })
+            .unwrap();
+        let results = project.update(&mut cx, |project, cx| {
+            project.search(
+                SearchQuery::text(
+                    "Project Search Omissions",
+                    false,
+                    false,
+                    false,
+                    PathMatcher::default(),
+                    PathMatcher::default(),
+                    false,
+                    None,
+                )
+                .unwrap(),
+                cx,
+            )
+        });
+        let mut buffers = Vec::new();
+        while let Ok(result) = results.rx.recv().await {
+            if let SearchResult::Buffer { buffer, ranges } = result {
+                buffers.push(buffer.read_with(&cx, |buffer, _| {
+                    (
+                        buffer
+                            .file()
+                            .map(|file| file.path().as_unix_str().to_owned()),
+                        ranges.len(),
+                    )
+                }));
+            }
+        }
+        assert_eq!(buffers, vec![(Some("visible.txt".to_owned()), 0)]);
+        results.task_handle.await;
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .editor
+                        .search
+                        .get_or_insert_default()
+                        .show_omitted_paths = Some(false);
+                });
+            });
+        });
+        search.read_with(&cx, |search, cx| {
+            assert!(!search.show_search_omissions(cx));
+            assert_eq!(search.match_ranges.len(), 1);
+            assert_eq!(search.omissions.as_ref().unwrap().entries.len(), 2);
+        });
+        search_view.update(&mut cx, |view, _| {
+            view.search_options.insert(SearchOptions::INCLUDE_IGNORED);
+        });
+        perform_project_search(&search_view, "needle", &mut cx);
+        search.read_with(&cx, |search, _| {
+            assert_eq!(search.match_ranges.len(), 2);
+            assert_eq!(
+                search
+                    .omissions
+                    .as_ref()
+                    .unwrap()
+                    .entries
+                    .iter()
+                    .map(|omission| (omission.path.path.as_ref(), omission.reason))
+                    .collect::<Vec<_>>(),
+                vec![(rel_path("a/b"), SearchOmissionReason::NotIndexed)]
+            );
+        });
+        search_view.update(&mut cx, |view, _| {
+            view.included_opened_only = true;
+            view.filters_enabled = true;
+        });
+        perform_project_search(&search_view, "Project Search Omissions", &mut cx);
+        search.read_with(&cx, |search, _| {
+            assert_eq!(search.match_ranges.len(), 0);
+            assert_eq!(search.omissions.as_ref().unwrap().entries, Vec::new());
+        });
+        search_view.update_in(&mut cx, |view, window, cx| {
+            view.included_opened_only = false;
+            view.query_editor.update(cx, |editor, cx| {
+                editor.set_text("needle", window, cx);
+            });
+            view.search(SearchMode::Manual, cx);
+            view.entity.update(cx, |search, cx| search.clear(cx));
+        });
+        cx.run_until_parked();
+        search.read_with(&cx, |search, _| {
+            assert!(search.omissions.is_none());
+            assert!(search.pending_omissions.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_search_omissions_arrive_after_split(cx: &mut TestAppContext) {
+        init_test(cx);
+        let SearchBarTest {
+            search_view,
+            mut cx,
+            ..
+        } = setup_search_bar_test(
+            json!({
+                ".gitignore": "ignored/\n",
+                "ignored": { "file.txt": "needle" },
+                "visible.txt": "needle"
+            }),
+            cx,
+        )
+        .await;
+        perform_project_search(&search_view, "needle", &mut cx);
+        let search = search_view.read_with(&cx, |view, _| view.entity.clone());
+        let expected = search.read_with(&cx, |search, _| search.omissions.clone().unwrap());
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        let split = search.update(&mut cx, |search, cx| {
+            assert_eq!(search.match_ranges.len(), 1);
+            assert!(search.pending_search.is_none());
+            search.omissions = None;
+            let collect = cx.background_spawn(async move { receiver.await.unwrap() });
+            search.await_search_omissions(collect.shared(), cx);
+            search.clone(cx)
+        });
+        search.update(&mut cx, |search, cx| search.clear(cx));
+        assert!(sender.send(expected.clone()).is_ok());
+        cx.run_until_parked();
+        split.read_with(&cx, |search, cx| {
+            assert!(search.show_search_omissions(cx));
+            assert!(search.pending_omissions.is_none());
+            assert_eq!(search.match_ranges.len(), 1);
+            assert_eq!(search.omissions.as_ref().unwrap().entries, expected.entries);
+        });
+        search.read_with(&cx, |search, cx| {
+            assert!(!search.show_search_omissions(cx));
+        });
     }
 
     #[perf]

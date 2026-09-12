@@ -3996,7 +3996,8 @@ Non-negative `integer` values
     "include_ignored": false,
     "regex": false,
     "center_on_match": false,
-    "search_on_type": true
+    "search_on_type": true,
+    "show_omitted_paths": true
   }
 }
 ```
@@ -4044,6 +4045,24 @@ Non-negative `integer` values
 - Description: Start searching as you type in project search, without pressing Enter.
 - Setting: `search_on_type`
 - Default: `true`
+
+### Show Omitted Paths {#search-show-omitted-paths}
+
+- Description: Show an info icon when paths are omitted from project search.
+- Setting: `show_omitted_paths`
+- Default: `true`
+
+To hide the icon, open the Settings Editor and turn off **Show Omitted Paths** under **Search & Files > Search**.
+
+Or add this to your settings.json:
+
+```json [settings]
+{
+  "search": {
+    "show_omitted_paths": false
+  }
+}
+```
 
 ## Search Wrap
 

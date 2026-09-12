@@ -20,6 +20,7 @@ use editor::{
 };
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
+use futures::future::BoxFuture;
 use git::{
     Oid,
     repository::{CommitData, GitCommitTemplate, RepoPath, Worktree as GitWorktree},
@@ -39,15 +40,19 @@ use lsp::{
     LanguageServerId, LanguageServerName,
 };
 use node_runtime::NodeRuntime;
+use parking_lot::Mutex;
 use project::{
     LanguageServerLogType, ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
     image_store,
     lsp_store::log_store::{LanguageServerKind, LanguageServerLogKey, LogStore},
-    search::{SearchQuery, SearchResult},
+    search::{SearchOmission, SearchOmissionReason, SearchQuery, SearchResult},
 };
 use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
-use rpc::proto;
+use rpc::{
+    AnyProtoClient, ProtoClient, ProtoMessageHandlerSet,
+    proto::{self, EnvelopedMessage as _},
+};
 use serde_json::json;
 use settings::{
     Settings, SettingsLocation, SettingsStore, SplicingVec, initial_server_settings_content,
@@ -519,6 +524,278 @@ async fn test_remote_project_image_source(cx: &mut TestAppContext, server_cx: &m
             .as_deref(),
         Some([0, 0, 255, 255].as_slice())
     );
+}
+
+#[gpui::test]
+async fn test_remote_project_search_omissions(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/root"), json!({
+        ".zed": { "settings.json": "{\"file_scan_depth\": 1, \"private_files\": [\"private\"]}" },
+        ".gitignore": "ignored/\nprivate/\n*.log\n",
+        "deferred": { "file.txt": "needle" },
+        "ignored": { "file.txt": "needle" },
+        "private": { "file.txt": "needle" },
+        "single.log": "needle",
+        "visible.txt": "needle"
+    })).await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/root"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let server_worktree = headless.read_with(server_cx, |headless, cx| {
+        headless
+            .worktree_store
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+    });
+    server_worktree
+        .read_with(server_cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+    let read_dirs = fs.read_dir_call_count();
+    let results = project.update(cx, |project, cx| {
+        project.search(
+            SearchQuery::text(
+                "needle",
+                false,
+                false,
+                false,
+                PathMatcher::default(),
+                PathMatcher::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx,
+        )
+    });
+    let mut omissions = Vec::new();
+    while let Ok(batch) = results.omissions.recv().await {
+        omissions.extend(batch);
+    }
+    assert_eq!(
+        omissions,
+        vec![
+            SearchOmission {
+                path: ProjectPath::from((worktree_id, rel_path("deferred"))),
+                reason: SearchOmissionReason::NotIndexed
+            },
+            SearchOmission {
+                path: ProjectPath::from((worktree_id, rel_path("ignored"))),
+                reason: SearchOmissionReason::GitIgnored
+            },
+            SearchOmission {
+                path: ProjectPath::from((worktree_id, rel_path("private"))),
+                reason: SearchOmissionReason::GitIgnored
+            },
+            SearchOmission {
+                path: ProjectPath::from((worktree_id, rel_path("single.log"))),
+                reason: SearchOmissionReason::GitIgnored
+            },
+        ]
+    );
+    let mut paths = Vec::new();
+    while let Ok(result) = results.rx.recv().await {
+        if let SearchResult::Buffer { buffer, .. } = result {
+            paths.push(buffer.read_with(cx, |buffer, _| buffer.file().unwrap().path().clone()));
+        }
+    }
+    results.task_handle.await;
+    assert_eq!(paths, vec![Arc::from(rel_path("visible.txt"))]);
+    assert!(results.omissions_status.is_complete());
+    assert_eq!(fs.read_dir_call_count(), read_dirs);
+
+    let (started_sender, started) = async_channel::unbounded();
+    let (release, released) = async_channel::unbounded();
+    let (finished_sender, finished) = async_channel::unbounded();
+    let original_client = headless.update(server_cx, |headless, _| {
+        let original_client = headless.session.clone();
+        headless.session = AnyProtoClient::from(Arc::new(SearchOmissionsTestClient {
+            client: original_client.clone(),
+            started: started_sender,
+            released,
+            finished: finished_sender,
+            handlers: Mutex::default(),
+        }));
+        original_client
+    });
+    let results = project.update(cx, |project, cx| {
+        project.search(
+            SearchQuery::text(
+                "needle",
+                false,
+                false,
+                false,
+                PathMatcher::default(),
+                PathMatcher::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx,
+        )
+    });
+    let late_chunk = started.recv().await.unwrap();
+    assert!(!results.omissions_status.is_complete());
+    drop(results.task_handle);
+    finished.recv().await.unwrap();
+    assert_eq!(
+        results.omissions.recv().await,
+        Err(async_channel::RecvError)
+    );
+    original_client.request(late_chunk).await.unwrap();
+    assert_eq!(
+        results.omissions.recv().await,
+        Err(async_channel::RecvError)
+    );
+    assert!(!results.omissions_status.is_complete());
+    headless.update(server_cx, |headless, _| headless.session = original_client);
+    drop(release);
+}
+
+#[gpui::test]
+async fn test_remote_project_search_omissions_chunks(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let mut files = serde_json::Map::new();
+    files.insert(".gitignore".to_owned(), json!("*.log\n"));
+    for index in 0..257 {
+        files.insert(format!("{index:03}.log"), json!("needle"));
+    }
+    fs.insert_tree(path!("/root"), serde_json::Value::Object(files))
+        .await;
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/root"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+    let read_dirs = fs.read_dir_call_count();
+    let results = project.update(cx, |project, cx| {
+        project.search(
+            SearchQuery::text(
+                "needle",
+                false,
+                false,
+                false,
+                PathMatcher::default(),
+                PathMatcher::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx,
+        )
+    });
+    let mut omissions = Vec::new();
+    let mut batch_sizes = Vec::new();
+    while let Ok(batch) = results.omissions.recv().await {
+        batch_sizes.push(batch.len());
+        omissions.extend(batch);
+    }
+    assert_eq!(batch_sizes, vec![256, 1]);
+    assert!(results.omissions_status.is_complete());
+    assert_eq!(
+        omissions,
+        (0..257)
+            .map(|index| SearchOmission {
+                path: ProjectPath {
+                    worktree_id,
+                    path: Arc::from(rel_path(&format!("{index:03}.log"))),
+                },
+                reason: SearchOmissionReason::GitIgnored,
+            })
+            .collect::<Vec<_>>()
+    );
+    let mut matched_files = 0;
+    while let Ok(result) = results.rx.recv().await {
+        if let SearchResult::Buffer { .. } = result {
+            matched_files += 1;
+        }
+    }
+    results.task_handle.await;
+    assert_eq!(matched_files, 0);
+    assert_eq!(fs.read_dir_call_count(), read_dirs);
+}
+
+#[gpui::test]
+async fn test_remote_project_search_omission_failure_finishes_matches(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({ ".gitignore": "*.log\n", "hidden.log": "needle", "visible.txt": "needle" }),
+    )
+    .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/root"), true, cx)
+        })
+        .await
+        .unwrap();
+    let (started_sender, started) = async_channel::unbounded();
+    let (release, released) = async_channel::unbounded();
+    let (finished_sender, finished) = async_channel::unbounded();
+    headless.update(server_cx, |headless, _| {
+        headless.session = AnyProtoClient::from(Arc::new(SearchOmissionsTestClient {
+            client: headless.session.clone(),
+            started: started_sender,
+            released,
+            finished: finished_sender,
+            handlers: Mutex::default(),
+        }));
+    });
+    let results = project.update(cx, |project, cx| {
+        project.search(
+            SearchQuery::text(
+                "needle",
+                false,
+                false,
+                false,
+                PathMatcher::default(),
+                PathMatcher::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx,
+        )
+    });
+    started.recv().await.unwrap();
+    release.send(false).await.unwrap();
+    finished.recv().await.unwrap();
+    let mut paths = Vec::new();
+    while let Ok(result) = results.rx.recv().await {
+        if let SearchResult::Buffer { buffer, .. } = result {
+            paths.push(buffer.read_with(cx, |buffer, _| buffer.file().unwrap().path().clone()));
+        }
+    }
+    results.task_handle.await;
+    assert_eq!(paths, vec![Arc::from(rel_path("visible.txt"))]);
+    assert_eq!(
+        results.omissions.recv().await,
+        Err(async_channel::RecvError)
+    );
+    assert!(!results.omissions_status.is_complete());
 }
 
 #[gpui::test]
@@ -5169,4 +5446,58 @@ fn build_project(ssh: Entity<RemoteClient>, cx: &mut TestAppContext) -> Entity<P
     });
 
     cx.update(|cx| Project::remote(ssh, client, node, user_store, languages, fs, false, cx))
+}
+
+struct SearchOmissionsTestClient {
+    client: AnyProtoClient,
+    started: async_channel::Sender<proto::FindSearchCandidatesChunk>,
+    released: async_channel::Receiver<bool>,
+    finished: async_channel::Sender<()>,
+    handlers: Mutex<ProtoMessageHandlerSet>,
+}
+
+impl ProtoClient for SearchOmissionsTestClient {
+    fn request(
+        &self,
+        envelope: proto::Envelope,
+        _: &'static str,
+    ) -> BoxFuture<'static, anyhow::Result<proto::Envelope>> {
+        let client = self.client.clone();
+        let started = self.started.clone();
+        let released = self.released.clone();
+        let finished = self.finished.clone();
+        Box::pin(async move {
+            let Some(proto::envelope::Payload::FindSearchCandidatesChunk(chunk)) = envelope.payload
+            else {
+                anyhow::bail!("Unexpected request in search omission test");
+            };
+            if !chunk.omissions.is_empty() {
+                let _finished = util::defer(move || finished.try_send(()).unwrap());
+                started.send(chunk.clone()).await?;
+                anyhow::ensure!(released.recv().await?, "Injected omission RPC failure");
+            }
+            let response = client.request(chunk).await?;
+            Ok(response.into_envelope(0, None, None))
+        })
+    }
+
+    fn send(&self, _: proto::Envelope, _: &'static str) -> anyhow::Result<()> {
+        anyhow::bail!("Unexpected send in search omission test")
+    }
+
+    fn send_response(&self, _: proto::Envelope, _: &'static str) -> anyhow::Result<()> {
+        anyhow::bail!("Unexpected response in search omission test")
+    }
+
+    fn message_handler_set(&self) -> &Mutex<ProtoMessageHandlerSet> {
+        &self.handlers
+    }
+
+    fn is_via_collab(&self) -> bool {
+        false
+    }
+
+    fn has_wsl_interop(&self) -> bool {
+        false
+    }
 }

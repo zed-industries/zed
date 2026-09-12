@@ -204,6 +204,12 @@ pub struct SearchSettings {
     pub center_on_match: bool,
     /// Start searching as you type in project search, without pressing Enter.
     pub search_on_type: bool,
+    /// Whether to show an info icon when paths are omitted from project search.
+    /// Click the icon to open a buffer with a grouped report of omitted paths.
+    /// Disabling this setting hides only the icon and does not change the search scope.
+    ///
+    /// Default: true
+    pub show_omitted_paths: bool,
 }
 
 impl EditorSettings {
@@ -311,6 +317,7 @@ impl Settings for EditorSettings {
                 regex: search.regex.unwrap(),
                 center_on_match: search.center_on_match.unwrap(),
                 search_on_type: search.search_on_type.unwrap(),
+                show_omitted_paths: search.show_omitted_paths.unwrap(),
             },
             auto_signature_help: editor.auto_signature_help.unwrap(),
             language_detection: editor.language_detection.unwrap(),

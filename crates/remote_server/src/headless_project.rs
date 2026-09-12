@@ -9,7 +9,7 @@ use lsp::LanguageServerId;
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, TaskExt};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, Task, TaskExt};
 use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
@@ -1142,9 +1142,23 @@ impl HeadlessProject {
                     message.limit as _,
                     cx,
                 )
+                .include_private_omissions(message.include_private_omissions)
                 .into_handle(query, cx)
                 .matching_buffers(cx)
             });
+            let omissions_task = if message.report_omissions {
+                cx.background_spawn(project::project_search::forward_search_omissions(
+                    results.omissions,
+                    results.omissions_status,
+                    rpc::AnyProtoClient::from(client.clone()),
+                    project_id,
+                    peer_id,
+                    handle,
+                ))
+            } else {
+                drop(results.omissions);
+                Task::ready(Ok(()))
+            };
             let (batcher, batches) =
                 project::project_search::AdaptiveBatcher::new(cx.background_executor());
             let mut new_matches = Box::pin(results.rx);
@@ -1164,6 +1178,7 @@ impl HeadlessProject {
                                         proto::FindSearchCandidatesMatches { buffer_ids },
                                     ),
                                 ),
+                                ..proto::FindSearchCandidatesChunk::default()
                             })
                             .await?;
                     }
@@ -1182,9 +1197,10 @@ impl HeadlessProject {
             }
             batcher.flush().await;
 
-            sender_task.await?;
+            let sender_result = sender_task.await;
+            omissions_task.await.log_err();
 
-            client
+            let done_result = client
                 .request(proto::FindSearchCandidatesChunk {
                     handle,
                     peer_id: Some(peer_id),
@@ -1192,8 +1208,11 @@ impl HeadlessProject {
                     variant: Some(proto::find_search_candidates_chunk::Variant::Done(
                         proto::FindSearchCandidatesDone {},
                     )),
+                    ..proto::FindSearchCandidatesChunk::default()
                 })
-                .await?;
+                .await;
+            sender_result?;
+            done_result?;
             anyhow::Ok(())
         });
         _buffer_store.update(&mut cx, |this, _| {

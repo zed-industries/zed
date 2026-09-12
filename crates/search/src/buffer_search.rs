@@ -3977,6 +3977,7 @@ mod tests {
                 regex: false,
                 center_on_match: false,
                 search_on_type: false,
+                show_omitted_paths: true,
             },
             cx,
         );
@@ -4041,6 +4042,7 @@ mod tests {
                 regex: false,
                 center_on_match: false,
                 search_on_type: false,
+                show_omitted_paths: true,
             },
             cx,
         );
@@ -4080,6 +4082,7 @@ mod tests {
                 regex: false,
                 center_on_match: false,
                 search_on_type: false,
+                show_omitted_paths: true,
             },
             cx,
         );
@@ -4309,6 +4312,7 @@ mod tests {
                         regex: Some(search_settings.regex),
                         center_on_match: Some(search_settings.center_on_match),
                         search_on_type: Some(search_settings.search_on_type),
+                        show_omitted_paths: Some(search_settings.show_omitted_paths),
                     });
                 });
             });

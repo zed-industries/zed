@@ -321,6 +321,19 @@ message FindSearchCandidates {
   SearchQuery query = 2;
   uint64 limit = 3;
   uint64 handle = 4;
+  bool report_omissions = 5;
+  bool include_private_omissions = 6;
+}
+
+message SearchOmission {
+  ProjectPath path = 1;
+  SearchOmissionReason reason = 2;
+}
+
+enum SearchOmissionReason {
+  SEARCH_OMISSION_REASON_UNSPECIFIED = 0;
+  SEARCH_OMISSION_REASON_NOT_INDEXED = 1;
+  SEARCH_OMISSION_REASON_GIT_IGNORED = 2;
 }
 
 message FindSearchCandidatesDone {}
@@ -338,6 +351,9 @@ message FindSearchCandidatesChunk {
     FindSearchCandidatesMatches matches = 4;
     FindSearchCandidatesDone done = 5;
   }
+  repeated SearchOmission omissions = 6;
+  bool omissions_done = 7;
+  optional uint64 omissions_sequence = 8;
 }
 
 message FindSearchCandidatesCancelled {

@@ -2794,6 +2794,13 @@ impl Snapshot {
         self.entries_by_path.summary().deferred_scan_dir_count
     }
 
+    pub fn search_omission_entries(&self, include_ignored: bool) -> impl Iterator<Item = &Entry> {
+        self.entries_by_path.filter::<_, ()>((), move |summary| {
+            summary.unloaded_dir_count > 0
+                || (!include_ignored && summary.file_count > summary.non_ignored_file_count)
+        })
+    }
+
     fn traverse_from_offset(
         &self,
         include_files: bool,
@@ -4212,6 +4219,7 @@ impl sum_tree::Item for Entry {
             non_ignored_count,
             file_count,
             non_ignored_file_count,
+            unloaded_dir_count: usize::from(self.kind == EntryKind::UnloadedDir),
             deferred_scan_dir_count: usize::from(
                 self.kind == EntryKind::UnloadedDir
                     && !self.is_ignored
@@ -4238,6 +4246,7 @@ pub struct EntrySummary {
     file_count: usize,
     non_ignored_file_count: usize,
     deferred_scan_dir_count: usize,
+    unloaded_dir_count: usize,
 }
 
 impl Default for EntrySummary {
@@ -4249,6 +4258,7 @@ impl Default for EntrySummary {
             file_count: 0,
             non_ignored_file_count: 0,
             deferred_scan_dir_count: 0,
+            unloaded_dir_count: 0,
         }
     }
 }
@@ -4265,6 +4275,7 @@ impl sum_tree::ContextLessSummary for EntrySummary {
         self.file_count += rhs.file_count;
         self.non_ignored_file_count += rhs.non_ignored_file_count;
         self.deferred_scan_dir_count += rhs.deferred_scan_dir_count;
+        self.unloaded_dir_count += rhs.unloaded_dir_count;
     }
 }
 

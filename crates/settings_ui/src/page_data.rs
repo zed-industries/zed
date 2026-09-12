@@ -3645,7 +3645,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
 }
 
 fn search_and_files_page() -> SettingsPage {
-    fn search_section() -> [SettingsPageItem; 10] {
+    fn search_section() -> [SettingsPageItem; 11] {
         [
             SettingsPageItem::SectionHeader("Search"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3805,6 +3805,31 @@ fn search_and_files_page() -> SettingsPage {
                             .search
                             .get_or_insert_default()
                             .search_on_type = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Omitted Paths",
+                description: "Show an info icon when paths are omitted from project search.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("search.show_omitted_paths"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .search
+                            .as_ref()?
+                            .show_omitted_paths
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .search
+                            .get_or_insert_default()
+                            .show_omitted_paths = value;
                     },
                 }),
                 metadata: None,
