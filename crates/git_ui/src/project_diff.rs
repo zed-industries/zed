@@ -1578,7 +1578,9 @@ mod tests {
             workspace.active_item_as::<ProjectDiff>(cx).unwrap()
         });
         let editor = item.read_with(cx, |item, cx| item.editor(cx).read(cx).rhs_editor().clone());
-        let text = editor.update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx).text());
+        let text = editor.update(cx, |editor, cx| {
+            editor.buffer().read(cx).snapshot(cx).text()
+        });
 
         // Unique per-file content, so appearance order is excerpt order.
         let actual = text
