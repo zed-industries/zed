@@ -41,9 +41,9 @@ use crate::{
     PlatformKeyboardLayout, PlatformKeyboardMapper, Point, RenderGlyphParams, RenderImage,
     RenderImageParams, RenderSvgParams, ResizeEdge, Scene, ShapedGlyph, ShapedRun, SharedString,
     Size, SourceMetadata, SvgRenderer, SystemNotification, SystemNotificationResponse,
-    SystemWindowTab, Task, ThermalState, Window, WindowAppearance, WindowBackgroundAppearance,
-    WindowButtonLayout, WindowControlArea, WindowControls, WindowDecorations, hash, point, px,
-    size,
+    SystemWindowTab, Task, TextRenderingMode, ThermalState, Window, WindowAppearance,
+    WindowBackgroundAppearance, WindowButtonLayout, WindowControlArea, WindowControls,
+    WindowDecorations, hash, point, px, size,
 };
 use anyhow::{Context as _, Result};
 use futures::channel::oneshot;
@@ -1771,18 +1771,7 @@ pub enum WindowKind {
     Dialog,
 }
 
-/// The text rendering mode to use for drawing glyphs.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum TextRenderingMode {
-    /// Use the platform's default text rendering mode.
-    #[default]
-    PlatformDefault,
-    /// Use subpixel (ClearType-style) text rendering.
-    Subpixel,
-    /// Use grayscale text rendering.
-    Grayscale,
-}
-
+/// The options that can be configured for a file dialog prompt
 /// What kind of prompt styling to show
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PromptLevel {

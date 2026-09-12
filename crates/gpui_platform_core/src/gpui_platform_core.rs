@@ -28,6 +28,7 @@ mod prompt;
 mod screen_capture;
 #[cfg(any(test, feature = "test-support"))]
 mod test_dispatcher;
+mod text_system;
 mod window;
 
 pub use app::*;
@@ -47,4 +48,5 @@ pub use prompt::*;
 pub use screen_capture::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_dispatcher::*;
+pub use text_system::*;
 pub use window::*;
