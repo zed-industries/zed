@@ -2942,11 +2942,6 @@ fn report_visibility(window_state: &Arc<Mutex<MacWindowState>>) {
                     return;
                 }
                 state.last_visibility = Some(visibility);
-                log::debug!(
-                    "window {:?} visibility {visibility:?} (occlusionState={:#x})",
-                    state.handle.window_id(),
-                    unsafe { state.native_window.occlusionState().bits() },
-                );
                 if let Some(mut callback) = state.visibility_callback.take() {
                     drop(state);
                     callback(visibility);

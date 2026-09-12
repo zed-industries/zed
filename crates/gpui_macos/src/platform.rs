@@ -157,6 +157,11 @@ unsafe fn build_classes() {
             );
 
             decl.add_method(
+                sel!(onSystemSleep:),
+                on_system_sleep as extern "C" fn(&mut Object, Sel, id),
+            );
+
+            decl.add_method(
                 sel!(onSystemWake:),
                 on_system_wake as extern "C" fn(&mut Object, Sel, id),
             );
@@ -179,8 +184,9 @@ pub(crate) struct MacPlatformState {
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     on_thermal_state_change: Option<Box<dyn FnMut()>>,
+    on_system_sleep: Option<Box<dyn FnMut()>>,
     on_system_wake: Option<Box<dyn FnMut()>>,
-    system_wake_observer_registered: bool,
+    system_power_observers_registered: bool,
     quit: Option<Box<dyn FnMut() -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -236,8 +242,9 @@ impl MacPlatform {
             dock_menu: None,
             on_keyboard_layout_change: None,
             on_thermal_state_change: None,
+            on_system_sleep: None,
             on_system_wake: None,
-            system_wake_observer_registered: false,
+            system_power_observers_registered: false,
             menus: None,
             keyboard_mapper,
             cursor_visible: Arc::new(AtomicBool::new(true)),
@@ -477,6 +484,24 @@ impl MacPlatform {
             version.minorVersion,
             version.patchVersion,
         )
+    }
+
+    // Before the app finishes launching there is no delegate yet;
+    // `did_finish_launching` registers the observers then.
+    fn ensure_system_power_observers(&self) {
+        if self.0.lock().system_power_observers_registered {
+            return;
+        }
+
+        // SAFETY: APP_CLASS is registered during startup and returns the shared NSApplication.
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            let delegate: id = msg_send![app, delegate];
+            if delegate != nil {
+                register_system_power_observers(delegate);
+                self.0.lock().system_power_observers_registered = true;
+            }
+        }
     }
 }
 
@@ -974,23 +999,14 @@ impl Platform for MacPlatform {
         self.0.lock().on_thermal_state_change = Some(callback);
     }
 
-    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
-        let mut state = self.0.lock();
-        state.on_system_wake = Some(callback);
-        if state.system_wake_observer_registered {
-            return;
-        }
-        drop(state);
+    fn on_system_sleep(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_system_sleep = Some(callback);
+        self.ensure_system_power_observers();
+    }
 
-        // SAFETY: APP_CLASS is registered during startup and returns the shared NSApplication.
-        unsafe {
-            let app: id = msg_send![APP_CLASS, sharedApplication];
-            let delegate: id = msg_send![app, delegate];
-            if delegate != nil {
-                register_system_wake_observer(delegate);
-                self.0.lock().system_wake_observer_registered = true;
-            }
-        }
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_system_wake = Some(callback);
+        self.ensure_system_power_observers();
     }
 
     fn thermal_state(&self) -> ThermalState {
@@ -1317,9 +1333,11 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         let platform = get_mac_platform(this);
         let callback = {
             let mut state = platform.0.lock();
-            if state.on_system_wake.is_some() && !state.system_wake_observer_registered {
-                register_system_wake_observer(observer);
-                state.system_wake_observer_registered = true;
+            if (state.on_system_sleep.is_some() || state.on_system_wake.is_some())
+                && !state.system_power_observers_registered
+            {
+                register_system_power_observers(observer);
+                state.system_power_observers_registered = true;
             }
             state.finish_launching.take()
         };
@@ -1329,11 +1347,17 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     }
 }
 
-unsafe fn register_system_wake_observer(observer: id) {
-    // SAFETY: observer is an Objective-C object implementing onSystemWake:.
+unsafe fn register_system_power_observers(observer: id) {
+    // SAFETY: observer is an Objective-C object implementing onSystemSleep: and onSystemWake:.
     unsafe {
         let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
         let workspace_center: *mut Object = msg_send![workspace, notificationCenter];
+        let sleep_name = ns_string("NSWorkspaceWillSleepNotification");
+        let _: () = msg_send![workspace_center, addObserver: observer
+            selector: sel!(onSystemSleep:)
+            name: sleep_name
+            object: nil
+        ];
         let wake_name = ns_string("NSWorkspaceDidWakeNotification");
         let _: () = msg_send![workspace_center, addObserver: observer
             selector: sel!(onSystemWake:)
@@ -1402,6 +1426,30 @@ extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
                 .lock()
                 .on_thermal_state_change
                 .get_or_insert(callback);
+        }
+    }
+}
+
+// Deferred to the main queue like the wake and thermal notifications. The
+// machine keeps running the main run loop for well over a frame after the
+// observers return, so the block runs before it suspends.
+extern "C" fn on_system_sleep(this: &mut Object, _: Sel, _: id) {
+    // SAFETY: this is the registered app delegate carrying MAC_PLATFORM_IVAR.
+    let platform = unsafe { get_mac_platform(this) };
+    let platform_ptr = platform as *const MacPlatform as *mut c_void;
+    // SAFETY: platform lives for the process lifetime while callbacks are registered.
+    unsafe {
+        DispatchQueue::main().exec_async_f(platform_ptr, on_system_sleep);
+    }
+
+    extern "C" fn on_system_sleep(context: *mut c_void) {
+        // SAFETY: context is the MacPlatform pointer queued above.
+        let platform = unsafe { &*(context as *const MacPlatform) };
+        let mut lock = platform.0.lock();
+        if let Some(mut callback) = lock.on_system_sleep.take() {
+            drop(lock);
+            callback();
+            platform.0.lock().on_system_sleep.get_or_insert(callback);
         }
     }
 }

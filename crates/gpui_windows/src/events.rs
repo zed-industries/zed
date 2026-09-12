@@ -1293,10 +1293,6 @@ impl WindowsWindowInner {
                     return;
                 }
                 this.state.last_visibility.set(Some(visibility));
-                // TODO(visibility): temporary, so the transition is visible in a plain
-                // terminal while the Windows backend is being tested; revert to
-                // `log::debug!` before merging.
-                dbg!(this.handle.window_id(), visibility);
                 if let Some(mut callback) = this.state.callbacks.visibility_change.take() {
                     callback(visibility);
                     this.state.callbacks.visibility_change.set(Some(callback));

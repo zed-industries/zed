@@ -120,7 +120,20 @@ pub(crate) struct PlatformHandlers {
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
+    pub(crate) system_sleep: Option<Box<dyn FnMut()>>,
     pub(crate) system_wake: Option<Box<dyn FnMut()>>,
+}
+
+/// A logind `PrepareForSleep` signal, forwarded from the D-Bus listener to
+/// the client's event loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))),
+    allow(dead_code)
+)]
+pub(crate) enum SystemPowerEvent {
+    Sleep,
+    Wake,
 }
 
 pub(crate) struct LinuxCommon {
@@ -139,8 +152,8 @@ pub(crate) struct LinuxCommon {
         not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))),
         allow(dead_code)
     )]
-    wake_sender: Sender<()>,
-    wake_listener_started: bool,
+    power_sender: Sender<SystemPowerEvent>,
+    power_listener_started: bool,
 }
 
 impl LinuxCommon {
@@ -149,10 +162,10 @@ impl LinuxCommon {
     ) -> (
         Self,
         PriorityQueueCalloopReceiver<RunnableVariant>,
-        calloop::channel::Channel<()>,
+        calloop::channel::Channel<SystemPowerEvent>,
     ) {
         let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
-        let (wake_sender, wake_receiver) = calloop::channel::channel();
+        let (power_sender, power_receiver) = calloop::channel::channel();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::linux::CosmicTextSystem::new("IBM Plex Sans"));
@@ -178,40 +191,45 @@ impl LinuxCommon {
             app_name: None,
             system_notifications: crate::linux::system_notifications::SystemNotificationState::new(
             ),
-            wake_sender,
-            wake_listener_started: false,
+            power_sender,
+            power_listener_started: false,
         };
 
-        (common, main_receiver, wake_receiver)
+        (common, main_receiver, power_receiver)
     }
 
-    pub(crate) fn start_wake_listener(&mut self) {
-        if !self.wake_listener_started {
+    pub(crate) fn start_power_listener(&mut self) {
+        if !self.power_listener_started {
             #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
             smol::spawn({
-                let wake_sender = self.wake_sender.clone();
+                let power_sender = self.power_sender.clone();
                 async move {
-                    if let Err(error) = listen_for_system_wake(wake_sender).await {
-                        log::debug!("failed to listen for system wake events: {error:?}");
+                    if let Err(error) = listen_for_system_power_events(power_sender).await {
+                        log::debug!("failed to listen for system sleep/wake events: {error:?}");
                     }
                 }
             })
             .detach();
 
-            self.wake_listener_started = true;
+            self.power_listener_started = true;
         }
     }
 
-    pub(crate) fn handle_system_wake(&mut self) {
-        if let Some(mut callback) = self.callbacks.system_wake.take() {
+    pub(crate) fn handle_system_power_event(&mut self, event: SystemPowerEvent) {
+        let callback = match event {
+            SystemPowerEvent::Sleep => &mut self.callbacks.system_sleep,
+            SystemPowerEvent::Wake => &mut self.callbacks.system_wake,
+        };
+        if let Some(callback) = callback.as_mut() {
             callback();
-            self.callbacks.system_wake = Some(callback);
         }
     }
 }
 
 #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
-async fn listen_for_system_wake(wake_sender: Sender<()>) -> anyhow::Result<()> {
+async fn listen_for_system_power_events(
+    power_sender: Sender<SystemPowerEvent>,
+) -> anyhow::Result<()> {
     use futures::StreamExt as _;
 
     let connection = ashpd::zbus::Connection::system().await?;
@@ -225,10 +243,12 @@ async fn listen_for_system_wake(wake_sender: Sender<()>) -> anyhow::Result<()> {
     let mut sleep_events = proxy.receive_signal("PrepareForSleep").await?;
 
     while let Some(message) = sleep_events.next().await {
-        let sleeping = message.body().deserialize::<bool>()?;
-        if !sleeping {
-            wake_sender.send(()).ok();
-        }
+        let event = if message.body().deserialize::<bool>()? {
+            SystemPowerEvent::Sleep
+        } else {
+            SystemPowerEvent::Wake
+        };
+        power_sender.send(event).ok();
     }
 
     Ok(())
@@ -594,10 +614,17 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         });
     }
 
+    fn on_system_sleep(&self, callback: Box<dyn FnMut()>) {
+        self.inner.with_common(|common| {
+            common.callbacks.system_sleep = Some(callback);
+            common.start_power_listener();
+        });
+    }
+
     fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
         self.inner.with_common(|common| {
             common.callbacks.system_wake = Some(callback);
-            common.start_wake_listener();
+            common.start_power_listener();
         });
     }
 
