@@ -141,6 +141,13 @@ struct Args {
     /// Generate shell completions for Zed
     #[arg(long, value_names = ["SHELL"])]
     completions: Option<Shell>,
+    /// Focus the terminal tab in which the process with the given PID runs.
+    ///
+    /// The terminal is found by its shell or foreground process: the PID itself or one of its
+    /// ancestors. Lets a program running in a Zed terminal bring the user back to it, e.g. from
+    /// a desktop notification.
+    #[arg(long, value_name = "PID", conflicts_with_all = ["wait", "diff", "paths_with_position"])]
+    focus_terminal: Option<u32>,
     /// Uninstall Zed from user system
     #[cfg(all(
         any(target_os = "linux", target_os = "macos"),
@@ -717,18 +724,22 @@ fn run() -> Result<()> {
                 #[cfg(not(target_os = "windows"))]
                 let wsl = None;
 
-                let open_request = CliRequest::Open {
-                    paths,
-                    urls,
-                    diff_paths,
-                    diff_all: diff_all_mode,
-                    wsl,
-                    wait: args.wait,
-                    open_behavior,
-                    env,
-                    user_data_dir: user_data_dir_for_thread,
-                    dev_container: args.dev_container,
-                    cwd: env::current_dir().ok(),
+                let open_request = if let Some(pid) = args.focus_terminal {
+                    CliRequest::FocusTerminal { pid }
+                } else {
+                    CliRequest::Open {
+                        paths,
+                        urls,
+                        diff_paths,
+                        diff_all: diff_all_mode,
+                        wsl,
+                        wait: args.wait,
+                        open_behavior,
+                        env,
+                        user_data_dir: user_data_dir_for_thread,
+                        dev_container: args.dev_container,
+                        cwd: env::current_dir().ok(),
+                    }
                 };
 
                 tx.send(open_request)?;
@@ -748,6 +759,12 @@ fn run() -> Result<()> {
                             tx.send(CliRequest::SetOpenBehavior { behavior })?;
                         }
                     }
+                }
+
+                // A Zed that does not know the request drops the connection without an answer.
+                if args.focus_terminal.is_some() && exit_status.lock().is_none() {
+                    eprintln!("Zed closed the connection without answering: does it support --focus-terminal?");
+                    exit_status.lock().replace(1);
                 }
 
                 Ok(())

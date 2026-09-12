@@ -15,7 +15,7 @@ use futures::future;
 use futures::{FutureExt, StreamExt};
 use git_ui::multi_diff_view::MultiDiffView;
 use git_ui_core::file_diff_view::FileDiffView;
-use gpui::{App, AsyncApp, Global, TaskExt, WindowHandle};
+use gpui::{App, AsyncApp, Entity, Global, TaskExt, WindowHandle};
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
 use recent_projects::{RemoteSettings, navigate_to_positions, open_remote_project};
@@ -25,13 +25,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use ui::SharedString;
 use util::ResultExt;
 use util::debug_panic;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
-use workspace::{AppState, MultiWorkspace, OpenOptions, OpenResult, SerializedWorkspaceLocation};
+use workspace::{
+    AppState, MultiWorkspace, OpenOptions, OpenResult, Pane, SerializedWorkspaceLocation, Workspace,
+};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -675,8 +678,132 @@ pub async fn handle_cli_connection(
                 // resolve_open_behavior
                 debug_panic!("unexpected SetOpenBehavior message");
             }
+            CliRequest::FocusTerminal { pid } => {
+                let status = match cx.update(|cx| focus_terminal_for_pid(pid, cx)) {
+                    Ok(()) => 0,
+                    Err(error) => {
+                        responses
+                            .send(CliResponse::Stderr {
+                                message: format!("{error:#}"),
+                            })
+                            .log_err();
+                        1
+                    }
+                };
+                responses.send(CliResponse::Exit { status }).log_err();
+            }
         }
     }
+}
+
+/// The process `pid` and its ancestors, nearest first.
+fn process_ancestors(pid: u32) -> Vec<sysinfo::Pid> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+    let mut system = System::new();
+    let mut ancestors = Vec::new();
+    let mut current = Pid::from_u32(pid);
+    while ancestors.len() < 64 {
+        ancestors.push(current);
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[current]),
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        match system.process(current).and_then(|process| process.parent()) {
+            Some(parent) if parent != current => current = parent,
+            _ => break,
+        }
+    }
+    ancestors
+}
+
+/// Where a terminal view lives in a workspace.
+enum TerminalLocation {
+    Center(Entity<TerminalView>),
+    Dock {
+        pane: Entity<Pane>,
+        item_index: usize,
+    },
+}
+
+/// The terminal of `workspace` whose shell or foreground process is one of `pids`.
+fn find_terminal(
+    workspace: &Entity<Workspace>,
+    pids: &[sysinfo::Pid],
+    cx: &App,
+) -> Option<TerminalLocation> {
+    let runs_one_of = |terminal_view: &Entity<TerminalView>| {
+        let terminal = terminal_view.read(cx).terminal().read(cx);
+        terminal.pid().is_some_and(|pid| pids.contains(&pid))
+            || terminal
+                .pid_getter()
+                .is_some_and(|getter| pids.contains(&getter.fallback_pid()))
+    };
+
+    let workspace = workspace.read(cx);
+    if let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) {
+        for pane in terminal_panel.read(cx).panes() {
+            let item_index = pane.read(cx).items().enumerate().find_map(|(index, item)| {
+                item.act_as::<TerminalView>(cx)
+                    .filter(runs_one_of)
+                    .map(|_| index)
+            });
+            if let Some(item_index) = item_index {
+                return Some(TerminalLocation::Dock {
+                    pane: pane.clone(),
+                    item_index,
+                });
+            }
+        }
+    }
+    workspace
+        .items_of_type::<TerminalView>(cx)
+        .find(runs_one_of)
+        .map(TerminalLocation::Center)
+}
+
+/// Brings the user to the terminal in which the process `pid` runs: activates its window,
+/// workspace and tab. The terminal is recognized by its shell or foreground process, which is
+/// `pid` or one of its ancestors.
+fn focus_terminal_for_pid(pid: u32, cx: &mut App) -> Result<()> {
+    let pids = process_ancestors(pid);
+    for window in cx.windows() {
+        let Some(multi_workspace) = window.downcast::<MultiWorkspace>() else {
+            continue;
+        };
+        let focused = multi_workspace.update(cx, |multi_workspace, window, cx| {
+            let workspaces: Vec<_> = multi_workspace.workspaces().cloned().collect();
+            for workspace in workspaces {
+                let Some(location) = find_terminal(&workspace, &pids, cx) else {
+                    continue;
+                };
+                window.activate_window();
+                multi_workspace.activate(workspace.clone(), None, window, cx);
+                match location {
+                    TerminalLocation::Center(terminal_view) => {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.activate_item(&terminal_view, true, true, window, cx);
+                        });
+                    }
+                    TerminalLocation::Dock { pane, item_index } => {
+                        pane.update(cx, |pane, cx| {
+                            pane.activate_item(item_index, true, true, window, cx);
+                        });
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.focus_panel::<TerminalPanel>(window, cx);
+                        });
+                    }
+                }
+                return true;
+            }
+            false
+        })?;
+        if focused {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("no terminal is running process {pid}")
 }
 
 /// Resolves the CLI open behavior when no explicit open behavior flag was given.

@@ -72,6 +72,10 @@ pub enum CliRequest {
     SetOpenBehavior {
         behavior: CliBehaviorSetting,
     },
+    /// Focus the terminal in which the process `pid` runs.
+    FocusTerminal {
+        pid: u32,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

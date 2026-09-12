@@ -104,6 +104,16 @@ zed --diff file1.txt file2.txt
 zed --diff old.rs new.rs --diff old2.rs new2.rs
 ```
 
+### `--focus-terminal <PID>`
+
+Bring the terminal tab in which a process runs to the front: its window, workspace and tab are activated. The terminal is found by its shell or foreground process, which may be the given PID or one of its ancestors. This lets a program running in a Zed terminal call the user back to it, for example when a long task finishes:
+
+```sh
+zed --focus-terminal $$
+```
+
+Exits with status 1 when no open terminal runs the process.
+
 ### `--foreground`
 
 Run Zed in the foreground, keeping the terminal attached. Useful for debugging:
