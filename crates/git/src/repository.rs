@@ -732,6 +732,7 @@ pub enum LogSource {
     #[default]
     All,
     Branch(SharedString),
+    Branches(Vec<SharedString>),
     Sha(Oid),
     Path(RepoPath),
 }
@@ -747,6 +748,10 @@ impl LogSource {
                 Cow::Borrowed("HEAD"),
             ],
             LogSource::Branch(branch) => vec![Cow::Borrowed(branch.as_str())],
+            LogSource::Branches(branches) => branches
+                .iter()
+                .map(|branch| Cow::Borrowed(branch.as_ref()))
+                .collect(),
             LogSource::Sha(oid) => vec![Cow::Owned(oid.to_string())],
             LogSource::Path(path) => vec![
                 Cow::Borrowed("--follow"),
@@ -5452,6 +5457,7 @@ mod tests {
         for source in [
             LogSource::All,
             LogSource::Branch("docs/rewrite".into()),
+            LogSource::Branches(vec!["main".into(), "feature".into()]),
             LogSource::Sha(Oid::from_str("0000000000000000000000000000000000000000").unwrap()),
         ] {
             let args = source.get_args();
@@ -5469,6 +5475,12 @@ mod tests {
             1,
             "Path states the separator itself and must not gain a second one"
         );
+    }
+
+    #[test]
+    fn test_multiple_branches_are_passed_as_revisions() {
+        let source = LogSource::Branches(vec!["main".into(), "feature".into()]);
+        assert_eq!(source.get_args(), ["main", "feature", "--"]);
     }
 
     #[gpui::test]

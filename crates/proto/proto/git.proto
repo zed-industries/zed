@@ -788,6 +788,9 @@ message GetCommitDataResponse {
 }
 
 message GitLogSourceAll {}
+message GitLogSourceBranches {
+  repeated string branches = 1;
+}
 
 message GitLogSource {
   oneof source {
@@ -795,6 +798,7 @@ message GitLogSource {
     string branch = 2;
     string sha = 3;
     string path = 4;
+    GitLogSourceBranches branches = 5;
   }
 }
 

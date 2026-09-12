@@ -11079,6 +11079,11 @@ fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
         source: Some(match log_source {
             LogSource::All => proto::git_log_source::Source::All(proto::GitLogSourceAll {}),
             LogSource::Branch(branch) => proto::git_log_source::Source::Branch(branch.to_string()),
+            LogSource::Branches(branches) => {
+                proto::git_log_source::Source::Branches(proto::GitLogSourceBranches {
+                    branches: branches.iter().map(ToString::to_string).collect(),
+                })
+            }
             LogSource::Sha(sha) => proto::git_log_source::Source::Sha(sha.to_string()),
             LogSource::Path(path) => {
                 proto::git_log_source::Source::Path(path.as_unix_str().to_owned())
@@ -11094,6 +11099,15 @@ fn log_source_from_proto(log_source: proto::GitLogSource) -> Result<LogSource> {
     {
         proto::git_log_source::Source::All(_) => Ok(LogSource::All),
         proto::git_log_source::Source::Branch(branch) => Ok(LogSource::Branch(branch.into())),
+        proto::git_log_source::Source::Branches(branches) => {
+            let branches: Vec<SharedString> =
+                branches.branches.into_iter().map(Into::into).collect();
+            if branches.is_empty() {
+                Ok(LogSource::All)
+            } else {
+                Ok(LogSource::Branches(branches))
+            }
+        }
         proto::git_log_source::Source::Sha(sha) => Ok(LogSource::Sha(Oid::from_str(&sha)?)),
         proto::git_log_source::Source::Path(path) => {
             Ok(LogSource::Path(RepoPath::from_proto(&path)?))
