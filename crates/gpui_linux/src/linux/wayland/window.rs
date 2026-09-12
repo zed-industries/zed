@@ -92,7 +92,7 @@ struct InProgressConfigure {
     fullscreen: bool,
     maximized: bool,
     resizing: bool,
-    suspended: bool,
+    visibility: WindowVisibility,
     tiling: Tiling,
 }
 
@@ -118,8 +118,8 @@ pub struct WaylandWindowState {
     background_appearance: WindowBackgroundAppearance,
     fullscreen: bool,
     maximized: bool,
-    /// The `xdg_toplevel` `suspended` state (xdg-shell v6).
-    suspended: bool,
+    /// `Hidden` while the `xdg_toplevel` `suspended` state (xdg-shell v6) is set.
+    visibility: WindowVisibility,
     tiling: Tiling,
     window_bounds: Bounds<Pixels>,
     client: WaylandClientStatePtr,
@@ -617,7 +617,7 @@ impl WaylandWindowState {
             background_appearance: WindowBackgroundAppearance::Opaque,
             fullscreen: false,
             maximized: false,
-            suspended: false,
+            visibility: WindowVisibility::Visible,
             tiling: Tiling::default(),
             window_bounds: options.bounds,
             in_progress_configure: None,
@@ -1083,8 +1083,8 @@ impl WaylandWindowStatePtr {
                     state.fullscreen = configure.fullscreen;
                     state.maximized = configure.maximized;
                     state.tiling = configure.tiling;
-                    let visibility_changed = state.suspended != configure.suspended;
-                    state.suspended = configure.suspended;
+                    let visibility_changed = state.visibility != configure.visibility;
+                    state.visibility = configure.visibility;
                     // Limit interactive resizes to once per vblank
                     let throttled = configure.resizing && state.resize_throttle;
                     if throttled {
@@ -1109,11 +1109,7 @@ impl WaylandWindowStatePtr {
                     }
                     drop(state);
                     if visibility_changed {
-                        self.report_visibility(if configure.suspended {
-                            WindowVisibility::Hidden
-                        } else {
-                            WindowVisibility::Visible
-                        });
+                        self.report_visibility(configure.visibility);
                     }
                     if throttled {
                         return;
@@ -1211,7 +1207,7 @@ impl WaylandWindowStatePtr {
                 let mut fullscreen = false;
                 let mut maximized = false;
                 let mut resizing = false;
-                let mut suspended = false;
+                let mut visibility = WindowVisibility::Visible;
 
                 for state in states {
                     match state {
@@ -1222,7 +1218,7 @@ impl WaylandWindowStatePtr {
                             fullscreen = true;
                         }
                         xdg_toplevel::State::Resizing => resizing = true,
-                        xdg_toplevel::State::Suspended => suspended = true,
+                        xdg_toplevel::State::Suspended => visibility = WindowVisibility::Hidden,
                         xdg_toplevel::State::TiledTop => {
                             tiling.top = true;
                         }
@@ -1251,7 +1247,7 @@ impl WaylandWindowStatePtr {
                     fullscreen,
                     maximized,
                     resizing,
-                    suspended,
+                    visibility,
                     tiling,
                 });
 
@@ -1326,7 +1322,7 @@ impl WaylandWindowStatePtr {
                     fullscreen: false,
                     maximized: false,
                     resizing: false,
-                    suspended: false,
+                    visibility: WindowVisibility::Visible,
                     tiling: Tiling::default(),
                 });
                 drop(state);
@@ -1361,7 +1357,7 @@ impl WaylandWindowStatePtr {
                     fullscreen: false,
                     maximized: false,
                     resizing: false,
-                    suspended: false,
+                    visibility: WindowVisibility::Visible,
                     tiling: Tiling::default(),
                 });
 
@@ -1814,11 +1810,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn visibility(&self) -> WindowVisibility {
-        if self.borrow().suspended {
-            WindowVisibility::Hidden
-        } else {
-            WindowVisibility::Visible
-        }
+        self.borrow().visibility
     }
 
     fn is_hovered(&self) -> bool {
