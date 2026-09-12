@@ -1078,6 +1078,7 @@ impl VsCodeSettings {
             restore_on_file_reopen: self.read_bool("workbench.editor.restoreViewState"),
             reveal_if_open: self.read_bool("workbench.editor.revealIfOpen"),
             restore_on_startup: None,
+            launchpad: None,
             window_decorations: None,
             show_call_status_icon: None,
             use_system_path_prompts: self.read_bool("files.simpleDialog.enable").map(|b| !b),
