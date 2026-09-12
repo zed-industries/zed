@@ -860,6 +860,21 @@ impl ConversationView {
                 }
             }
         }));
+        subscriptions.push(cx.subscribe_in(
+            &project,
+            window,
+            |this, project, event, window, cx| {
+                if let project::Event::WorktreePathsChanged { old_worktree_paths } = event {
+                    let paths_old = old_worktree_paths.folder_path_list();
+                    let paths_new = project.read(cx).worktree_paths(cx);
+                    let paths_new = paths_new.folder_path_list();
+                    if paths_old.paths().len() == paths_new.paths().len() && paths_old != paths_new
+                    {
+                        this.reset(window, cx);
+                    }
+                }
+            },
+        ));
 
         cx.on_release(|this, cx| {
             this.request_elicitation_form_states.clear();
@@ -898,6 +913,7 @@ impl ConversationView {
                 project,
                 initial_content,
                 source,
+                Task::ready(()),
                 window,
                 cx,
             ),
@@ -919,7 +935,10 @@ impl ConversationView {
         let next_request_elicitation_connection =
             Self::request_elicitation_connection_for_state(&state);
 
-        if let Some(connected) = self.as_connected() {
+        // `reset` transfers close ownership to `Loading`, which awaits it before reloading.
+        if !matches!(&state, ServerState::Loading { .. })
+            && let Some(connected) = self.as_connected()
+        {
             connected.close_all_sessions(cx).detach();
         }
 
@@ -1023,6 +1042,10 @@ impl ConversationView {
 
         self.clear_resolved_request_elicitations(cx);
         self.loading_status = None;
+        let close_task = self
+            .as_connected()
+            .map(|connected| connected.close_all_sessions(cx))
+            .unwrap_or_else(|| Task::ready(()));
 
         let state = Self::initial_state(
             self.agent.clone(),
@@ -1034,6 +1057,7 @@ impl ConversationView {
             self.project.clone(),
             None,
             AgentThreadSource::AgentPanel,
+            close_task,
             window,
             cx,
         );
@@ -1059,6 +1083,7 @@ impl ConversationView {
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
         source: AgentThreadSource,
+        close_task: Task<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
@@ -1099,6 +1124,9 @@ impl ConversationView {
         let thread_location = "current_worktree";
 
         let load_task = cx.spawn_in(window, async move |this, cx| {
+            // A reset must finish closing its previous sessions before starting the replacement.
+            close_task.await;
+
             let connection = match connect_result.await {
                 Ok(AgentConnectedState { connection, .. }) => connection,
                 Err(err) => {
@@ -4671,6 +4699,211 @@ pub(crate) mod tests {
             captured_cwd.lock().as_ref().unwrap(),
             &PathList::new(&[Path::new("/project/subdir")]),
             "Should use session cwd when it's inside the project"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_acp_session_not_reloaded_for_subdirectory_rename(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "subdir": { "file.txt": "hello" } }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
+        });
+
+        let connection = StubAgentConnection::new().with_supports_load_session(true);
+        crate::test_support::open_thread_with_connection(&panel, connection, cx);
+
+        let initial_thread_id = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+
+        fs.rename(
+            Path::new("/project/subdir"),
+            Path::new("/project/subdir-renamed"),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let thread_id_after = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+        assert_eq!(
+            thread_id_after, initial_thread_id,
+            "renaming a subdirectory should not reload the ACP session"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_acp_session_not_reloaded_for_worktree_add(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project-a", json!({})).await;
+        fs.insert_tree("/project-b", json!({})).await;
+        let project = Project::test(fs.clone(), [Path::new("/project-a")], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
+        });
+
+        let connection = StubAgentConnection::new().with_supports_load_session(true);
+        crate::test_support::open_thread_with_connection(&panel, connection, cx);
+
+        let initial_thread_id = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree("/project-b", true, cx)
+            })
+            .await
+            .expect("should add worktree");
+        cx.run_until_parked();
+
+        let thread_id_after = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+        assert_eq!(
+            thread_id_after, initial_thread_id,
+            "adding a worktree should not reload the ACP session"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_acp_session_not_reloaded_for_worktree_remove(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project-a", json!({})).await;
+        fs.insert_tree("/project-b", json!({})).await;
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/project-a"), Path::new("/project-b")],
+            cx,
+        )
+        .await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
+        });
+
+        let connection = StubAgentConnection::new().with_supports_load_session(true);
+        crate::test_support::open_thread_with_connection(&panel, connection, cx);
+
+        let initial_thread_id = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project
+                .visible_worktrees(cx)
+                .find(|wt| wt.read(cx).abs_path().as_ref() == Path::new("/project-b"))
+                .map(|wt| wt.read(cx).id())
+                .expect("should find project-b worktree")
+        });
+        project.update(cx, |project, cx| {
+            project.remove_worktree(worktree_id, cx);
+        });
+        cx.run_until_parked();
+
+        let thread_id_after = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+        assert_eq!(
+            thread_id_after, initial_thread_id,
+            "removing a worktree should not reload the ACP session"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_acp_session_reloaded_for_project_rename(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "hello" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
+        });
+
+        let connection = StubAgentConnection::new().with_supports_load_session(true);
+        crate::test_support::open_thread_with_connection(&panel, connection, cx);
+
+        let initial_thread_id = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap()
+            .entity_id();
+
+        fs.rename(
+            Path::new("/project"),
+            Path::new("/project-renamed"),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        let worktree = project.read_with(cx, |project, cx| {
+            project.visible_worktrees(cx).next().unwrap()
+        });
+        cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        cx.run_until_parked();
+
+        let thread_after = panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx))
+            .unwrap();
+        assert_ne!(
+            thread_after.entity_id(),
+            initial_thread_id,
+            "renaming the project root should reload the ACP session"
+        );
+        assert_eq!(
+            thread_after.read_with(cx, |thread, _| thread.work_dirs().cloned()),
+            Some(PathList::new(&[Path::new("/project-renamed")])),
+            "the reloaded session should use the renamed root as its cwd"
         );
     }
 
@@ -11164,6 +11397,38 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_reset_waits_for_session_close_before_loading(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = CloseCapableConnection::new();
+        let load_session_count = connection.load_session_count.clone();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        let close_gate = connection.gate_next_close();
+
+        conversation_view.update_in(cx, |view, window, cx| view.reset(window, cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            load_session_count.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "load_session should wait for close_session to complete"
+        );
+
+        close_gate
+            .send(())
+            .await
+            .expect("close gate should remain open");
+        cx.run_until_parked();
+
+        assert_eq!(
+            load_session_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "load_session should start after close_session completes"
+        );
+    }
+
+    #[gpui::test]
     async fn test_close_session_returns_error_when_unsupported(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -11202,13 +11467,23 @@ pub(crate) mod tests {
     #[derive(Clone)]
     struct CloseCapableConnection {
         closed_sessions: Arc<Mutex<Vec<acp::SessionId>>>,
+        load_session_count: Arc<std::sync::atomic::AtomicUsize>,
+        close_gate: Arc<Mutex<Option<async_channel::Receiver<()>>>>,
     }
 
     impl CloseCapableConnection {
         fn new() -> Self {
             Self {
                 closed_sessions: Arc::new(Mutex::new(Vec::new())),
+                load_session_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                close_gate: Arc::new(Mutex::new(None)),
             }
+        }
+
+        fn gate_next_close(&self) -> async_channel::Sender<()> {
+            let (close_tx, close_rx) = async_channel::bounded(1);
+            *self.close_gate.lock() = Some(close_rx);
+            close_tx
         }
     }
 
@@ -11253,12 +11528,35 @@ pub(crate) mod tests {
             true
         }
 
+        fn supports_load_session(&self) -> bool {
+            true
+        }
+
+        fn load_session(
+            self: Rc<Self>,
+            _session_id: acp::SessionId,
+            project: Entity<Project>,
+            work_dirs: PathList,
+            _title: Option<SharedString>,
+            cx: &mut App,
+        ) -> Task<Result<Entity<AcpThread>>> {
+            self.load_session_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.new_session(project, work_dirs, cx)
+        }
+
         fn close_session(
             self: Rc<Self>,
             session_id: &acp::SessionId,
-            _cx: &mut App,
+            cx: &mut App,
         ) -> Task<Result<()>> {
             self.closed_sessions.lock().push(session_id.clone());
+            if let Some(close_gate) = self.close_gate.lock().take() {
+                return cx.background_spawn(async move {
+                    close_gate.recv().await?;
+                    Ok(())
+                });
+            }
             Task::ready(Ok(()))
         }
 
