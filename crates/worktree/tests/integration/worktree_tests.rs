@@ -1334,6 +1334,55 @@ async fn test_real_fs_scan_symlinks_expanded(cx: &mut TestAppContext) {
     });
 }
 
+#[cfg(unix)]
+#[gpui::test]
+async fn test_real_fs_shows_dangling_symlinks(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    init_test(cx);
+
+    let temp_root = TempTree::new(json!({ "project": {} }));
+    let project_root = temp_root.path().join("project");
+    std::os::unix::fs::symlink("Agents.md", project_root.join("AGENTS.md")).unwrap();
+
+    let tree = Worktree::local(
+        project_root.as_path(),
+        true,
+        Arc::new(RealFs::new(None, cx.executor())),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        let entry = tree.entry_for_path(rel_path("AGENTS.md")).unwrap();
+        assert!(entry.is_file());
+        assert_eq!(entry.canonical_path, None);
+    });
+
+    std::os::unix::fs::symlink("Missing.md", project_root.join("README.link")).unwrap();
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        let entry = tree.entry_for_path(rel_path("README.link")).unwrap();
+        assert!(entry.is_file());
+        assert_eq!(entry.canonical_path, None);
+    });
+
+    std::fs::write(project_root.join("Agents.md"), "").unwrap();
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("AGENTS.md")).is_some());
+        assert!(tree.entry_for_path(rel_path("Agents.md")).is_some());
+    });
+}
+
 #[gpui::test]
 async fn test_internal_symlink_updates_preserve_entry_ids(cx: &mut TestAppContext) {
     init_test(cx);
