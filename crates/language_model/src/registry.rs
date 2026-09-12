@@ -488,7 +488,7 @@ impl LanguageModelRegistry {
 
         self.inline_assistant_model
             .clone()
-            .or_else(|| self.default_model.clone())
+            .or_else(|| self.default_model())
     }
 
     pub fn commit_message_model(&self, cx: &App) -> Option<ConfiguredModel> {
@@ -538,7 +538,7 @@ impl LanguageModelRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake_provider::FakeLanguageModelProvider;
+    use crate::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
 
     #[test]
     fn selected_model_allows_slashes_in_model_id() {
@@ -701,12 +701,61 @@ mod tests {
             );
 
             assert!(registry.default_model().is_none());
+            assert!(registry.inline_assistant_model().is_none());
 
             registry.set_should_use_fallback(true);
 
             let default_model = registry.default_model().unwrap();
             assert_eq!(default_model.model.id(), model.id());
             assert_eq!(default_model.provider.id(), provider.id());
+            assert!(
+                registry
+                    .inline_assistant_model()
+                    .is_some_and(|inline_model| inline_model.is_same_as(&default_model))
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_inline_assistant_model_precedence(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+        let provider = Arc::new(FakeLanguageModelProvider::default());
+        let [inline_model, default_model, fallback_model] =
+            ["inline", "default", "fallback"].map(|model_id| ConfiguredModel {
+                provider: provider.clone(),
+                model: Arc::new(FakeLanguageModel::with_id_and_thinking(
+                    "fake", model_id, model_id, false,
+                )),
+            });
+
+        registry.update(cx, |registry, cx| {
+            registry.set_should_use_fallback(true);
+            registry.set_fallback_model(Some(fallback_model.clone()), cx);
+            registry.set_default_model(Some(default_model.clone()), cx);
+            registry.set_inline_assistant_model(Some(inline_model.clone()), cx);
+
+            assert!(
+                registry
+                    .inline_assistant_model()
+                    .is_some_and(|model| model.is_same_as(&inline_model))
+            );
+
+            registry.set_inline_assistant_model(None, cx);
+            assert!(
+                registry
+                    .inline_assistant_model()
+                    .is_some_and(|model| model.is_same_as(&default_model))
+            );
+
+            registry.set_default_model(None, cx);
+            assert!(
+                registry
+                    .inline_assistant_model()
+                    .is_some_and(|model| model.is_same_as(&fallback_model))
+            );
+
+            registry.set_should_use_fallback(false);
+            assert!(registry.inline_assistant_model().is_none());
         });
     }
 
