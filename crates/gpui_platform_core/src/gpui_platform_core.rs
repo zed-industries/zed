@@ -11,6 +11,10 @@
 
 #![warn(missing_docs)]
 
+mod display;
 mod keyboard;
+mod window;
 
+pub use display::*;
 pub use keyboard::*;
+pub use window::*;

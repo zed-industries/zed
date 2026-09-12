@@ -7,10 +7,10 @@ use crate::profiler;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
-    Capslock, ContentMask, Context, Corners, CursorHideMode, CursorStyle, Decorations,
-    DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
-    Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
-    GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    Capslock, ContentMask, Context, Corners, CursorHideMode, CursorStyle, DEFAULT_WINDOW_SIZE,
+    Decorations, DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId,
+    Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId,
+    GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
     Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
     MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
@@ -75,9 +75,6 @@ use crate::util::{
     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
 };
 pub use prompts::*;
-
-/// Default window size used when no explicit size is provided.
-pub const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(1095.));
 
 /// A 6:5 aspect ratio minimum window size to be used for functional,
 /// additional-to-main-Zed windows, like the settings and rules library windows.

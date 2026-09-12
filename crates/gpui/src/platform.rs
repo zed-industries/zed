@@ -34,12 +34,13 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds, BoundsExt,
-    Capslock, DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload,
-    Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource,
-    Keymap, LineLayout, Modifiers, Pixels, PlatformGestures, PlatformInput, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
-    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab,
-    Task, Window, WindowControlArea, hash, point, px, size,
+    Capslock, DevicePixels, DispatchEventResult, DisplayId, Edges, ExternalDragPayload, Font,
+    FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
+    LineLayout, Modifiers, Pixels, PlatformDisplay, PlatformGestures, PlatformInput,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString,
+    Size, SvgRenderer, SystemWindowTab, Task, Window, WindowAppearance, WindowBackgroundAppearance,
+    WindowControlArea, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -64,14 +65,13 @@ use std::ops;
 use std::time::Duration;
 use std::{
     ffi::OsString,
-    fmt::{self, Debug},
+    fmt::Debug,
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
 use strum::EnumIter;
-use uuid::Uuid;
 
 pub use app_menu::*;
 
@@ -357,37 +357,6 @@ pub trait Platform: 'static {
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
 }
 
-/// A handle to a platform's display, e.g. a monitor or laptop screen.
-pub trait PlatformDisplay: Debug {
-    /// Get the ID for this display
-    fn id(&self) -> DisplayId;
-
-    /// Returns a stable identifier for this display that can be persisted and used
-    /// across system restarts.
-    fn uuid(&self) -> Result<Uuid>;
-
-    /// Get the bounds for this display
-    fn bounds(&self) -> Bounds<Pixels>;
-
-    /// Get the visible bounds for this display, excluding taskbar/dock areas.
-    /// This is the usable area where windows can be placed without being obscured.
-    /// Defaults to the full display bounds if not overridden.
-    fn visible_bounds(&self) -> Bounds<Pixels> {
-        self.bounds()
-    }
-
-    /// Get the default bounds for this display to place a window
-    fn default_bounds(&self) -> Bounds<Pixels> {
-        let bounds = self.bounds();
-        let center = bounds.center();
-        let clipped_window_size = DEFAULT_WINDOW_SIZE.min(&bounds.size);
-
-        let offset = clipped_window_size / 2.0;
-        let origin = point(center.x - offset.width, center.y - offset.height);
-        Bounds::new(origin, clipped_window_size)
-    }
-}
-
 /// A notification posted to the operating system's notification center,
 /// rather than rendered as in-app UI.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -473,35 +442,6 @@ pub trait ScreenCaptureStream {
 
 /// A frame of video captured from a screen.
 pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
-
-/// An opaque identifier for a hardware display
-#[derive(PartialEq, Eq, Hash, Copy, Clone)]
-pub struct DisplayId(pub(crate) u64);
-
-impl DisplayId {
-    /// Create a new `DisplayId` from a raw platform display identifier.
-    pub fn new(id: u64) -> Self {
-        Self(id)
-    }
-}
-
-impl From<u64> for DisplayId {
-    fn from(id: u64) -> Self {
-        Self(id)
-    }
-}
-
-impl From<DisplayId> for u64 {
-    fn from(id: DisplayId) -> Self {
-        id.0
-    }
-}
-
-impl Debug for DisplayId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "DisplayId({})", self.0)
-    }
-}
 
 /// Which part of the window to resize
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2233,59 +2173,6 @@ pub enum WindowKind {
     /// A window that appears on top of its parent window and blocks interaction with it
     /// until the modal window is closed
     Dialog,
-}
-
-/// The appearance of the window, as defined by the operating system.
-///
-/// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)
-/// values.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum WindowAppearance {
-    /// A light appearance.
-    ///
-    /// On macOS, this corresponds to the `aqua` appearance.
-    #[default]
-    Light,
-
-    /// A light appearance with vibrant colors.
-    ///
-    /// On macOS, this corresponds to the `NSAppearanceNameVibrantLight` appearance.
-    VibrantLight,
-
-    /// A dark appearance.
-    ///
-    /// On macOS, this corresponds to the `darkAqua` appearance.
-    Dark,
-
-    /// A dark appearance with vibrant colors.
-    ///
-    /// On macOS, this corresponds to the `NSAppearanceNameVibrantDark` appearance.
-    VibrantDark,
-}
-
-/// The appearance of the background of the window itself, when there is
-/// no content or the content is transparent.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
-pub enum WindowBackgroundAppearance {
-    /// Opaque.
-    ///
-    /// This lets the window manager know that content behind this
-    /// window does not need to be drawn.
-    ///
-    /// Actual color depends on the system and themes should define a fully
-    /// opaque background color instead.
-    #[default]
-    Opaque,
-    /// Plain alpha transparency.
-    Transparent,
-    /// Transparency, but the contents behind the window are blurred.
-    ///
-    /// Not always supported.
-    Blurred,
-    /// The Mica backdrop material, supported on Windows 11.
-    MicaBackdrop,
-    /// The Mica Alt backdrop material, supported on Windows 11.
-    MicaAltBackdrop,
 }
 
 /// The text rendering mode to use for drawing glyphs.

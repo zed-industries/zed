@@ -13,5 +13,7 @@ path = "src/gpui_platform_core.rs"
 doctest = false
 
 [dependencies]
+anyhow.workspace = true
 collections.workspace = true
 gpui_types.workspace = true
+uuid.workspace = true

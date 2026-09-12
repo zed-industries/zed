@@ -7702,8 +7702,10 @@ dependencies = [
 name = "gpui_platform_core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "collections",
  "gpui_types",
+ "uuid",
 ]
 
 [[package]]
