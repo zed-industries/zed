@@ -79,15 +79,18 @@ pub fn open(
                                         .read(cx)
                                         .stopped_language_servers
                                         .iter()
-                                        .find(|(_, state)| state.server_id == id)
+                                        .find(|(key, state)| {
+                                            state.server_id == id
+                                                && key.kind.is_for_project(
+                                                    &weak_project,
+                                                    &weak_lsp_store,
+                                                )
+                                        })
                                         .map(|(key, state)| {
                                             LanguageServerLogKey::new(
                                                 key.kind.clone(),
                                                 state.server_id,
                                             )
-                                        })
-                                        .filter(|key| {
-                                            key.is_for_project(&weak_project, &weak_lsp_store)
                                         })
                                 }),
                             LanguageServerSelector::Name(name) => log_store
@@ -105,15 +108,18 @@ pub fn open(
                                         .read(cx)
                                         .stopped_language_servers
                                         .iter()
-                                        .find(|(_, state)| state.name.as_ref() == Some(&name))
+                                        .find(|(key, state)| {
+                                            state.name.as_ref() == Some(&name)
+                                                && key.kind.is_for_project(
+                                                    &weak_project,
+                                                    &weak_lsp_store,
+                                                )
+                                        })
                                         .map(|(key, state)| {
                                             LanguageServerLogKey::new(
                                                 key.kind.clone(),
                                                 state.server_id,
                                             )
-                                        })
-                                        .filter(|key| {
-                                            key.is_for_project(&weak_project, &weak_lsp_store)
                                         })
                                 }),
                         };

@@ -796,6 +796,7 @@ message StatusUpdate {
     ServerBinaryStatus binary = 2;
     ServerHealth health = 3;
   }
+  optional uint64 worktree_id = 4;
 }
 
 enum ServerHealth {

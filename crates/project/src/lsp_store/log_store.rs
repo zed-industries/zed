@@ -589,16 +589,21 @@ impl LogStore {
                                 log_store.remove_language_server(&server_key, cx);
                             }
                             crate::Event::SupplementaryLanguageServerRemoved(id) => {
-                                let server_key = LanguageServerLogKey::new(
+                                let supplementary_kind =
                                     LanguageServerKind::Supplementary {
                                         project: project.downgrade(),
-                                    },
+                                    };
+                                let server_key = LanguageServerLogKey::new(
+                                    supplementary_kind.clone(),
                                     *id,
                                 );
                                 log_store.remove_language_server(&server_key, cx);
                                 log_store
                                     .stopped_language_servers
-                                    .retain(|_, state| state.server_id != *id);
+                                    .retain(|key, state| {
+                                        !(key.kind == supplementary_kind
+                                            && state.server_id == *id)
+                                    });
                             }
                             crate::Event::LanguageServerLog(id, typ, message) => {
                                 let server_kind = server_kind_for_id(log_store, *id);

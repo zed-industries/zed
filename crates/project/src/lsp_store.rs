@@ -11572,16 +11572,23 @@ impl LspStore {
                         };
                         if let Some(binary_status) = binary_status
                             && let Some(name) = name.clone()
-                            && let Some(worktree_id) = lsp_store
-                                .language_server_statuses
-                                .get(&language_server_id)
-                                .and_then(|status| status.worktree)
                         {
-                            lsp_store.update_stopped_language_servers(
-                                name,
-                                worktree_id,
-                                &binary_status,
-                            );
+                            let worktree_id = status_update
+                                .worktree_id
+                                .map(WorktreeId::from_proto)
+                                .or_else(|| {
+                                    lsp_store
+                                        .language_server_statuses
+                                        .get(&language_server_id)
+                                        .and_then(|status| status.worktree)
+                                });
+                            if let Some(worktree_id) = worktree_id {
+                                lsp_store.update_stopped_language_servers(
+                                    name,
+                                    worktree_id,
+                                    &binary_status,
+                                );
+                            }
                         }
                     }
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
@@ -13052,6 +13059,7 @@ impl LspStore {
                         status: Some(proto::status_update::Status::Binary(
                             proto::ServerBinaryStatus::Stopping as i32,
                         )),
+                        worktree_id: None,
                     },
                 ),
             });
@@ -13077,23 +13085,24 @@ impl LspStore {
                                     &binary_status,
                                 );
                             }
+                            cx.emit(LspStoreEvent::LanguageServerUpdate {
+                                language_server_id: server_id,
+                                name: Some(name.clone()),
+                                message: proto::update_language_server::Variant::StatusUpdate(
+                                    proto::StatusUpdate {
+                                        message: None,
+                                        status: Some(proto::status_update::Status::Binary(
+                                            if retain_stopped_status {
+                                                proto::ServerBinaryStatus::Stopped as i32
+                                            } else {
+                                                proto::ServerBinaryStatus::None as i32
+                                            },
+                                        )),
+                                        worktree_id: Some(worktree_id.to_proto()),
+                                    },
+                                ),
+                            });
                         }
-                        cx.emit(LspStoreEvent::LanguageServerUpdate {
-                            language_server_id: server_id,
-                            name: Some(name),
-                            message: proto::update_language_server::Variant::StatusUpdate(
-                                proto::StatusUpdate {
-                                    message: None,
-                                    status: Some(proto::status_update::Status::Binary(
-                                        if retain_stopped_status {
-                                            proto::ServerBinaryStatus::Stopped as i32
-                                        } else {
-                                            proto::ServerBinaryStatus::None as i32
-                                        },
-                                    )),
-                                },
-                            ),
-                        });
                         cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
                         cx.notify();
                     })
@@ -15575,6 +15584,7 @@ fn subscribe_to_binary_statuses(
                                 status: Some(proto::status_update::Status::Binary(
                                     binary_status as i32,
                                 )),
+                                worktree_id: Some(binary_status_update.worktree_id.to_proto()),
                             },
                         ),
                     });

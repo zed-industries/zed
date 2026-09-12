@@ -7553,3 +7553,100 @@ async fn run_guest_semantic_tokens_document_selector_test(
         "expected the guest to decode tokens only when the applicable provider's legend is known",
     );
 }
+
+/// Test that when the host stops a language server, the guest sees the
+/// `stopped_language_servers` populated with the correct worktree.
+#[gpui::test]
+async fn test_stopped_status_propagated_to_collab_guest(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a
+        .language_registry()
+        .register_fake_lsp("Rust", Default::default());
+
+    client_a
+        .fs()
+        .insert_tree(path!("/a"), json!({ "a.rs": "let x = 1;" }))
+        .await;
+    let (project_a, _worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+
+    let _buffer = project_a
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/a/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut fake_server = fake_language_servers.next().await.unwrap();
+    fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+
+    let server_id = project_a.read_with(cx_a, |project, cx| {
+        project
+            .language_server_statuses(cx)
+            .next()
+            .map(|(id, _)| id)
+            .expect("expected the host to have a language server")
+    });
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    cx_a.executor().run_until_parked();
+
+    // Verify the guest sees the server.
+    let guest_statuses = project_b.read_with(cx_b, |project, cx| {
+        project
+            .language_server_statuses(cx)
+            .map(|(id, status)| (id, status.name.clone()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        guest_statuses.len(),
+        1,
+        "expected the guest to see one language server"
+    );
+
+    // Host stops the server.
+    project_a.update(cx_a, |project, cx| {
+        project.stop_language_servers_for_buffers(
+            Vec::new(),
+            HashSet::from_iter([lsp::LanguageServerSelector::Id(server_id)]),
+            cx,
+        )
+    });
+    cx_a.executor().run_until_parked();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    // The guest should see the server in `stopped_language_servers()`.
+    // Currently this fails because StatusUpdate(Stopped) is enqueued as a
+    // BufferOrderedMessage while LanguageServerRemoved is sent directly. The
+    // guest processes Removed first, clearing language_server_statuses, so when
+    // Stopped arrives the worktree lookup fails and
+    // update_stopped_language_servers is never called.
+    project_b.read_with(cx_b, |project, cx| {
+        let stopped = project.lsp_store().read(cx).stopped_language_servers();
+        assert!(
+            !stopped.is_empty(),
+            "guest should see stopped_language_servers after host stops server; \
+             got empty map instead. StatusUpdate(Stopped) should include worktree_id \
+             so the guest can track the stopped status independently of \
+             language_server_statuses"
+        );
+    });
+}
