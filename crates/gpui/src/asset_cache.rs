@@ -4,7 +4,7 @@ use futures::{Future, TryFutureExt};
 
 use std::cell::RefCell;
 use std::fmt::Debug;
-use std::hash::{BuildHasher, Hash};
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem;
 use std::path::{Path, PathBuf};
@@ -133,11 +133,6 @@ where
         let load = T::load(source, cx);
         load.inspect_err(|e| log::error!("Failed to load asset: {:?}", e))
     }
-}
-
-/// Use a quick, non-cryptographically secure hash function to get an identifier from data
-pub fn hash<T: Hash>(data: &T) -> u64 {
-    collections::FxBuildHasher.hash_one(data)
 }
 
 #[cfg(test)]

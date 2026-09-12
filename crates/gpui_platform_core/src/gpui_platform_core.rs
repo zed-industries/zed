@@ -13,6 +13,7 @@
 
 mod app;
 mod atlas;
+mod clipboard;
 mod cursor;
 mod dispatcher;
 mod display;
@@ -37,6 +38,7 @@ mod window;
 
 pub use app::*;
 pub use atlas::*;
+pub use clipboard::*;
 pub use cursor::*;
 pub use dispatcher::*;
 pub use display::*;

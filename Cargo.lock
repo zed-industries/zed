@@ -7717,8 +7717,11 @@ dependencies = [
  "parking",
  "scheduler",
  "schemars 1.0.4",
+ "seahash",
  "serde",
  "serde_json",
+ "smallvec",
+ "strum 0.28.0",
  "uuid",
  "waker-fn",
 ]
