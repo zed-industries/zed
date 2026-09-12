@@ -22,7 +22,7 @@ use crate::{
     TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1195,6 +1195,9 @@ pub struct Window {
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) button_layout_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
+    visibility: WindowVisibility,
+    pub(crate) visibility_observers:
+        SubscriberSet<(), Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
@@ -1568,6 +1571,7 @@ impl Window {
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let invalidator = WindowInvalidator::new(handle.window_id());
         let active = Rc::new(Cell::new(platform_window.is_active()));
+        let visibility = platform_window.visibility();
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
@@ -1895,6 +1899,23 @@ impl Window {
                     .log_err();
             }
         }));
+        platform_window.on_visibility_change(Box::new({
+            let mut cx = cx.to_async();
+            move |visibility| {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        if window.visibility == visibility {
+                            return;
+                        }
+                        window.visibility = visibility;
+                        window
+                            .visibility_observers
+                            .clone()
+                            .retain(&(), |callback| callback(visibility, window, cx));
+                    })
+                    .log_err();
+            }
+        }));
         platform_window.on_hover_status_change(Box::new({
             let mut cx = cx.to_async();
             move |active| {
@@ -2035,6 +2056,8 @@ impl Window {
             appearance_observers: SubscriberSet::new(),
             button_layout_observers: SubscriberSet::new(),
             active,
+            visibility,
+            visibility_observers: SubscriberSet::new(),
             hovered,
             needs_present,
             input_rate_tracker,
@@ -2126,6 +2149,37 @@ impl Window {
                 break;
             }
         }
+    }
+
+    /// Whether the platform is presenting this window's frames (see
+    /// [`WindowVisibility`]).
+    pub fn visibility(&self) -> WindowVisibility {
+        self.visibility
+    }
+
+    /// Whether frames drawn for this window will be shown.
+    ///
+    /// This is not the window's shown/hidden state: a shown window that is
+    /// fully behind another window, minimized, or on a sleeping display is not
+    /// visible here.
+    pub fn is_visible(&self) -> bool {
+        self.visibility.is_visible()
+    }
+
+    /// Registers a callback to be invoked when the window's visibility changes.
+    pub fn observe_window_visibility(
+        &self,
+        mut callback: impl FnMut(WindowVisibility, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.visibility_observers.insert(
+            (),
+            Box::new(move |visibility, window, cx| {
+                callback(visibility, window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
     }
 
     /// Registers a callback to be invoked when the window appearance changes.
@@ -7441,6 +7495,52 @@ mod tests {
         TestAppContext, TouchDragEvent, TouchEvent, TouchId, TouchPhase, Window, WindowAppearance,
         WindowOptions, canvas, div, point, px, size,
     };
+
+    /// Visibility transitions reach observers exactly once each, with the new
+    /// state already stored on the window, and never wake the platform for a
+    /// frame: the platform requests one itself when it resumes presenting.
+    #[gpui::test]
+    fn test_window_visibility(cx: &mut TestAppContext) {
+        use crate::WindowVisibility;
+
+        let window = cx.add_window(|_, _| EmptyView);
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = window
+            .update(cx, {
+                let observed = observed.clone();
+                move |_, window, _| {
+                    assert_eq!(window.visibility(), WindowVisibility::Visible);
+                    assert!(window.is_visible());
+                    window.observe_window_visibility(move |visibility, window, _| {
+                        assert_eq!(window.visibility(), visibility);
+                        observed.borrow_mut().push(visibility);
+                    })
+                }
+            })
+            .unwrap();
+        let test_window = cx.test_window(window.into());
+        let frame_wake_count = test_window.frame_wake_count();
+
+        test_window.simulate_visibility_change(WindowVisibility::Hidden);
+        assert_eq!(*observed.borrow(), [WindowVisibility::Hidden]);
+        window
+            .update(cx, |_, window, _| assert!(!window.is_visible()))
+            .unwrap();
+
+        // Platforms may report the same state again; observers only see changes.
+        test_window.simulate_visibility_change(WindowVisibility::Hidden);
+        assert_eq!(observed.borrow().len(), 1);
+
+        test_window.simulate_visibility_change(WindowVisibility::Visible);
+        assert_eq!(
+            *observed.borrow(),
+            [WindowVisibility::Hidden, WindowVisibility::Visible]
+        );
+        window
+            .update(cx, |_, window, _| assert!(window.is_visible()))
+            .unwrap();
+        assert_eq!(test_window.frame_wake_count(), frame_wake_count);
+    }
 
     #[gpui::test]
     fn test_fully_visible_bounds_preserve_layout_viewport(cx: &mut TestAppContext) {
