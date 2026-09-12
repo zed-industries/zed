@@ -14,6 +14,7 @@
 mod app;
 mod cursor;
 mod display;
+mod executor;
 mod keyboard;
 mod notification;
 mod prompt;
@@ -23,6 +24,7 @@ mod window;
 pub use app::*;
 pub use cursor::*;
 pub use display::*;
+pub use executor::*;
 pub use keyboard::*;
 pub use notification::*;
 pub use prompt::*;

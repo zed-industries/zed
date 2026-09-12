@@ -33,19 +33,19 @@ pub(crate) type PlatformScreenCaptureFrame = ();
 pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBuffer;
 
 use crate::{
-    Action, AnyWindowHandle, App, AppLifecyclePhase, AsyncWindowContext, BackgroundExecutor,
-    Bounds, BoundsExt, Capslock, CursorStyle, Decorations, DevicePixels, DispatchEventResult,
-    DisplayId, Edges, ExternalDragPayload, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
-    GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Modifiers, PathPromptOptions, Pixels,
-    PlatformDisplay, PlatformGestures, PlatformInput, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
-    RenderSvgParams, ResizeEdge, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SourceMetadata,
-    SvgRenderer, SystemNotification, SystemNotificationResponse, SystemWindowTab, Task,
-    ThermalState, Window, WindowAppearance, WindowBackgroundAppearance, WindowButtonLayout,
-    WindowControlArea, WindowControls, WindowDecorations, hash, point, px, size,
+    Action, ActivityGuard, AnyWindowHandle, App, AppLifecyclePhase, AsyncWindowContext,
+    BackgroundExecutor, Bounds, BoundsExt, Capslock, CursorStyle, Decorations, DevicePixels,
+    DispatchEventResult, DisplayId, Edges, ExternalDragPayload, Font, FontId, FontMetrics, FontRun,
+    ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Modifiers,
+    PathPromptOptions, Pixels, PlatformDisplay, PlatformGestures, PlatformInput,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, ResizeEdge, RunnableVariant, Scene,
+    ShapedGlyph, ShapedRun, SharedString, Size, SourceMetadata, SvgRenderer, SystemNotification,
+    SystemNotificationResponse, SystemWindowTab, Task, ThermalState, TimerResolutionGuard, Window,
+    WindowAppearance, WindowBackgroundAppearance, WindowButtonLayout, WindowControlArea,
+    WindowControls, WindowDecorations, hash, point, px, size,
 };
 use anyhow::{Context as _, Result};
-use async_task::Runnable;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use image::RgbaImage;
@@ -85,25 +85,6 @@ pub use threaded_dispatcher::ThreadedDispatcher;
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
-
-/// Keeps an operating system activity, such as an idle sleep inhibitor, alive until dropped.
-pub struct ActivityGuard {
-    _release: gpui_util::Deferred<Box<dyn FnOnce() + Send>>,
-}
-
-impl ActivityGuard {
-    /// Runs `release` when the guard is dropped.
-    pub fn new(release: impl FnOnce() + Send + 'static) -> Self {
-        Self {
-            _release: gpui_util::defer(Box::new(release)),
-        }
-    }
-
-    /// A guard for platforms without a corresponding activity.
-    pub fn noop() -> Self {
-        Self::new(|| {})
-    }
-}
 
 // TODO(jk): return an enum instead of a string
 /// Return which compositor we're guessing we'll use.
@@ -668,14 +649,6 @@ pub trait PlatformHeadlessRenderer {
     /// Returns the sprite atlas used by this renderer.
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 }
-
-/// Type alias for runnables with metadata.
-/// Previously an enum with a single variant, now simplified to a direct type alias.
-#[doc(hidden)]
-pub type RunnableVariant = Runnable<RunnableMeta>;
-
-#[doc(hidden)]
-pub type TimerResolutionGuard = gpui_util::Deferred<Box<dyn FnOnce() + Send>>;
 
 #[doc(hidden)]
 pub enum TasksIncluded {

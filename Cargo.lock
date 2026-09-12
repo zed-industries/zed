@@ -7703,9 +7703,12 @@ name = "gpui_platform_core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-task",
  "collections",
  "gpui_shared_string",
  "gpui_types",
+ "gpui_util",
+ "scheduler",
  "schemars 1.0.4",
  "serde",
  "uuid",
