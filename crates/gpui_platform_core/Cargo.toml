@@ -15,6 +15,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+gpui_shared_string.workspace = true
 gpui_types.workspace = true
 schemars.workspace = true
 serde.workspace = true

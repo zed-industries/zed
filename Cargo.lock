@@ -7704,6 +7704,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "gpui_shared_string",
  "gpui_types",
  "schemars 1.0.4",
  "serde",

@@ -15,10 +15,16 @@ mod app;
 mod cursor;
 mod display;
 mod keyboard;
+mod notification;
+mod prompt;
+mod screen_capture;
 mod window;
 
 pub use app::*;
 pub use cursor::*;
 pub use display::*;
 pub use keyboard::*;
+pub use notification::*;
+pub use prompt::*;
+pub use screen_capture::*;
 pub use window::*;
