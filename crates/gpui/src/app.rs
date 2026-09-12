@@ -1711,18 +1711,20 @@ impl App {
                     }
                 }
             } else {
-                #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-                for window in self
-                    .windows
-                    .values()
-                    .filter_map(|window| {
-                        let window = window.as_deref()?;
-                        window.invalidator.is_dirty().then_some(window.handle)
-                    })
-                    .collect::<Vec<_>>()
-                {
-                    self.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
-                        .unwrap();
+                #[cfg(any(test, feature = "test-support"))]
+                if matches!(self.mode, GpuiMode::Test { .. }) {
+                    for window in self
+                        .windows
+                        .values()
+                        .filter_map(|window| {
+                            let window = window.as_deref()?;
+                            window.invalidator.is_dirty().then_some(window.handle)
+                        })
+                        .collect::<Vec<_>>()
+                    {
+                        self.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+                            .unwrap();
+                    }
                 }
 
                 if self.pending_effects.is_empty() {
