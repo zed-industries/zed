@@ -13,6 +13,7 @@ pub fn make_suggestion_styles(cx: &App) -> EditPredictionStyles {
     }
 }
 
+#[derive(PartialEq)]
 pub(super) enum EditDisplayMode {
     TabAccept,
     DiffPopover,
@@ -596,7 +597,22 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.accept_partial_edit_prediction(EditPredictionGranularity::Full, window, cx);
+        // InlineOnly reveals a multi-line prediction a line at a time, so accepting
+        // takes the next line rather than the whole thing.
+        let granularity = if self.edit_predictions_mode_at_cursor(cx)
+            == Some(EditPredictionsMode::InlineOnly)
+        {
+            EditPredictionGranularity::Line
+        } else {
+            EditPredictionGranularity::Full
+        };
+        self.accept_partial_edit_prediction(granularity, window, cx);
+    }
+
+    fn edit_predictions_mode_at_cursor(&self, cx: &App) -> Option<EditPredictionsMode> {
+        let cursor = self.selections.newest_anchor().head();
+        let (buffer, _) = self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
+        Some(all_language_settings(buffer.read(cx).file(), cx).edit_predictions_mode())
     }
 
     pub fn has_active_edit_prediction(&self) -> bool {
@@ -995,6 +1011,15 @@ impl Editor {
             } else {
                 EditDisplayMode::DiffPopover
             };
+
+            // InlineOnly renders nothing but ghost text, and a replacement cannot be
+            // expressed as ghost text, so those predictions are skipped entirely.
+            if display_mode == EditDisplayMode::DiffPopover
+                && all_language_settings(buffer.read(cx).file(), cx).edit_predictions_mode()
+                    == EditPredictionsMode::InlineOnly
+            {
+                return None;
+            }
 
             let report_shown = match display_mode {
                 EditDisplayMode::DiffPopover | EditDisplayMode::Inline => {
