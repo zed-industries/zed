@@ -24,6 +24,7 @@ Open <http://localhost:8080/> to choose an example:
 | `/text-layout` | Alignment and decorations |
 | `/text-wrapper` | Wrapping and truncation |
 | `/input` | Text input and selection |
+| `/dynamic-fonts` | Download a font on missing-glyph notifications |
 | `/prime-sieve` | Background task demo |
 
 The server supports direct links and reloads at each path. Only the selected
@@ -40,6 +41,26 @@ The gallery builds separate Cargo binaries directly from the existing example
 sources. To add another browser-compatible example, register its binary in the
 gallery's `Cargo.toml`, add an auxiliary Rust asset in `index.html`, and add its
 gallery link with the corresponding `data-module` name.
+
+### Dynamic font loading
+
+Open `/dynamic-fonts` to see `App::on_missing_glyphs` fetch a versioned
+[Noto Sans Devanagari TTF](https://fonts.gstatic.com/s/notosansdevanagari/v30/TuGoUUFzXI5FBtUq5a8bjKYTZjtRU6Sgv3NaV_SNmI0b8QQCQmHn6B2OHjbL_08AlXQly-A.ttf)
+from Google Fonts' CDN. The 219 KB font is licensed under the
+[SIL Open Font License](https://github.com/google/fonts/blob/main/ofl/notosansdevanagari/OFL.txt).
+The CDN permits cross-origin requests and caches the font for one year.
+No sample text is sent to the host.
+
+The example bundles only IBM Plex Sans, downloads the fallback once on demand,
+calls `add_fonts`, and refreshes the windows to reshape the text. Emoji continues
+to use the default Canvas fallback. The page displays loading and failure states;
+use browser network throttling or block `fonts.gstatic.com` and reload to
+exercise them. Reload to retry a failed request.
+
+This is a small script-to-font mapping, not a general font discovery service.
+For production, host versioned font assets on your own CDN and choose an explicit
+coverage, caching, and retry policy. Use raw TTF/OTF assets rather than passing
+Google Fonts CSS or WOFF2 responses directly to `add_fonts`.
 
 ### Canvas font fallback
 

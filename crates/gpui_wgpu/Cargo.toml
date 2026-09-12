@@ -44,6 +44,7 @@ wgpu = { workspace = true, features = ["webgl"] }
 
 [dev-dependencies]
 criterion.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
 naga = { version = "29.0.4", features = ["wgsl-in"] }
 
 [[bench]]
