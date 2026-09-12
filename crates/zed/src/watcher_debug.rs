@@ -3,7 +3,7 @@ use editor::{Editor, MultiBufferOffset};
 use fs::fs_watcher::{WatchDiagnosticEvent, WatchRecording, WatchSnapshot};
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, Render, Task, TitlebarOptions,
-    Window, WindowBounds, WindowOptions, actions, px, size,
+    Window, WindowBounds, WindowBoundsExt, WindowOptions, actions, px, size,
 };
 use language::{LineEnding, language_settings::SoftWrap};
 use release_channel::AppVersion;

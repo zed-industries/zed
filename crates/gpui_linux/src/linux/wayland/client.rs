@@ -1049,7 +1049,7 @@ impl LinuxClient for WaylandClient {
                 let parent = state
                     .windows
                     .values()
-                    .find(|window| window.handle() == options.parent.window_id())
+                    .find(|window| window.handle() == options.parent)
                     .cloned()
                     .ok_or_else(|| anyhow::anyhow!("popup parent window not found"))?;
                 // A popup grab must reference a press event or the compositor declines it and

@@ -11,8 +11,8 @@ use gpui::{
     ParentElement as _, ProfilingCollector, Render, SerializedLocation, SerializedTaskTiming,
     SerializedThreadTaskTimings, SharedString, StatefulInteractiveElement, Styled, Task,
     TasksIncluded, ThreadTimingsDelta, TitlebarOptions, UniformListScrollHandle, WeakEntity,
-    WindowBounds, WindowOptions, div, prelude::FluentBuilder, profiler, px, relative, size,
-    uniform_list,
+    WindowBounds, WindowBoundsExt, WindowOptions, div, prelude::FluentBuilder, profiler, px,
+    relative, size, uniform_list,
 };
 use rpc::{AnyProtoClient, proto};
 use settings::{RegisterSetting, Settings, SettingsContent, SettingsStore};

@@ -23,8 +23,11 @@ mod font_fallbacks;
 mod font_features;
 mod gpu;
 mod keyboard;
+#[cfg(all(target_os = "linux", feature = "wayland"))]
+pub mod layer_shell;
 mod notification;
 mod platform_scheduler;
+pub mod popup;
 #[cfg(feature = "profiler")]
 pub mod profiler;
 mod prompt;

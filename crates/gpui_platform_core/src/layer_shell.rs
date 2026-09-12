@@ -1,7 +1,8 @@
-use bitflags::bitflags;
-use thiserror::Error;
+//! Wayland layer-shell window options shared by `gpui` and its platform backends.
 
-use crate::Pixels;
+use bitflags::bitflags;
+use gpui_types::Pixels;
+use thiserror::Error;
 
 /// The layer the surface is rendered on. Multiple surfaces can share a layer, and ordering within
 /// a single layer is undefined.

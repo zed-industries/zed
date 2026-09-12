@@ -1,7 +1,9 @@
-use bitflags::bitflags;
-use thiserror::Error;
+//! Parent-anchored popup window options shared by `gpui` and its platform backends.
 
-use crate::{AnyWindowHandle, Bounds, Pixels, Point};
+use crate::WindowId;
+use bitflags::bitflags;
+use gpui_types::{Bounds, Pixels, Point};
+use thiserror::Error;
 
 /// Options for a parent-anchored popup window such as a menu, dropdown, context menu or tooltip.
 ///
@@ -15,7 +17,7 @@ use crate::{AnyWindowHandle, Bounds, Pixels, Point};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PopupOptions {
     /// The window the popup is anchored to.
-    pub parent: AnyWindowHandle,
+    pub parent: WindowId,
 
     /// The rectangle the popup is positioned relative to, in the parent window's coordinate
     /// space (the same space element bounds are in). For example, a dropdown menu uses the

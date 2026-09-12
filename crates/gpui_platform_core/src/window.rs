@@ -1,6 +1,10 @@
 //! Window vocabulary shared by `gpui` and its platform backends.
 
-use gpui_types::{Edges, Pixels, Size, px, size};
+use gpui_shared_string::SharedString;
+use gpui_types::{Bounds, Edges, Pixels, Point, Size, px, size};
+use std::{sync::Arc, time::Duration};
+
+use crate::{DisplayId, popup::PopupOptions};
 
 /// Default window size used when no explicit size is provided.
 pub const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(1095.));
@@ -346,4 +350,245 @@ pub enum TextInputStateChange {
     SelectionChanged,
     /// The document content changed outside of platform-initiated edits.
     ContentChanged,
+}
+
+/// The variables that can be configured when creating a new window
+#[derive(Debug)]
+pub struct WindowOptions {
+    /// Specifies the state and bounds of the window in screen coordinates.
+    /// - `None`: Inherit the bounds.
+    /// - `Some(WindowBounds)`: Open a window with corresponding state and its restore size.
+    pub window_bounds: Option<WindowBounds>,
+
+    /// The titlebar configuration of the window
+    pub titlebar: Option<TitlebarOptions>,
+
+    /// Whether the window should be focused when created
+    pub focus: bool,
+
+    /// Whether the window should be shown when created
+    pub show: bool,
+
+    /// The kind of window to create
+    pub kind: WindowKind,
+
+    /// Whether the window can be moved by the user. When `false`, the user cannot drag
+    /// the window (on macOS this sets `NSWindow.isMovable`, which also disables the
+    /// Window-menu tiling items); programmatic moves are still allowed.
+    pub is_movable: bool,
+
+    /// Whether the application owns dragging of the (custom) titlebar, rather than
+    /// AppKit. Only has an effect on macOS.
+    ///
+    /// Set this to `true` for windows that draw their own titlebar and move the window
+    /// themselves via `Window::start_window_move`. It marks the whole content view as
+    /// app-owned titlebar content, so AppKit neither drags the window from the titlebar
+    /// nor delays titlebar clicks while disambiguating double-clicks (a delay first
+    /// observed on macOS 27). It is independent of `is_movable`, so such windows stay
+    /// user-movable (via their own drag) and keep the Window-menu tiling items enabled.
+    ///
+    /// Leave this `false` for windows that rely on AppKit's native titlebar dragging.
+    pub app_owns_titlebar_drag: bool,
+
+    /// The minimum interval between animation frames while the window is inactive.
+    ///
+    /// Set to `None` to disable inactive-window animation frame throttling.
+    pub inactive_frame_interval: Option<Duration>,
+
+    /// Whether the window should be resizable by the user
+    pub is_resizable: bool,
+
+    /// Whether the window should be minimized by the user
+    pub is_minimizable: bool,
+
+    /// The display to create the window on, if this is None,
+    /// the window will be created on the main display
+    pub display_id: Option<DisplayId>,
+
+    /// The appearance of the window background.
+    pub window_background: WindowBackgroundAppearance,
+
+    /// Application identifier of the window. Can by used by desktop environments to group applications together.
+    pub app_id: Option<String>,
+
+    /// Window minimum size
+    pub window_min_size: Option<Size<Pixels>>,
+
+    /// Whether to use client or server-side decorations on X11 and Wayland.
+    /// The platform may ignore requests it cannot satisfy.
+    pub window_decorations: Option<WindowDecorations>,
+
+    /// Icon image (X11 only)
+    pub icon: Option<Arc<image::RgbaImage>>,
+
+    /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
+    pub tabbing_identifier: Option<String>,
+}
+
+/// The variables that can be configured when creating a new window
+#[derive(Debug)]
+#[cfg_attr(
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    ),
+    allow(dead_code)
+)]
+#[allow(missing_docs)]
+pub struct WindowParams {
+    pub bounds: Bounds<Pixels>,
+
+    /// The titlebar configuration of the window
+    #[cfg_attr(feature = "wayland", allow(dead_code))]
+    pub titlebar: Option<TitlebarOptions>,
+
+    /// The kind of window to create
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    pub kind: WindowKind,
+
+    /// Whether the window should be movable by the user
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    pub is_movable: bool,
+
+    /// Whether the application owns dragging of the (custom) titlebar (macOS only)
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+        allow(dead_code)
+    )]
+    pub app_owns_titlebar_drag: bool,
+
+    /// Whether the window should be resizable by the user
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    pub is_resizable: bool,
+
+    /// Whether the window should be minimized by the user
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    pub is_minimizable: bool,
+
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+        allow(dead_code)
+    )]
+    pub focus: bool,
+
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    pub show: bool,
+
+    /// An image to set as the window icon (x11 only)
+    #[cfg_attr(feature = "wayland", allow(dead_code))]
+    pub icon: Option<Arc<image::RgbaImage>>,
+
+    #[cfg_attr(feature = "wayland", allow(dead_code))]
+    pub display_id: Option<DisplayId>,
+
+    #[cfg_attr(feature = "wayland", allow(dead_code))]
+    pub app_id: Option<String>,
+
+    pub window_min_size: Option<Size<Pixels>>,
+
+    #[cfg(target_os = "macos")]
+    pub tabbing_identifier: Option<String>,
+}
+
+/// Represents the status of how a window should be opened.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum WindowBounds {
+    /// Indicates that the window should open in a windowed state with the given bounds.
+    Windowed(Bounds<Pixels>),
+    /// Indicates that the window should open in a maximized state.
+    /// The bounds provided here represent the restore size of the window.
+    Maximized(Bounds<Pixels>),
+    /// Indicates that the window should open in fullscreen mode.
+    /// The bounds provided here represent the restore size of the window.
+    Fullscreen(Bounds<Pixels>),
+}
+
+impl Default for WindowBounds {
+    fn default() -> Self {
+        WindowBounds::Windowed(Bounds::default())
+    }
+}
+
+impl WindowBounds {
+    /// Retrieve the inner bounds
+    pub fn get_bounds(&self) -> Bounds<Pixels> {
+        match self {
+            WindowBounds::Windowed(bounds) => *bounds,
+            WindowBounds::Maximized(bounds) => *bounds,
+            WindowBounds::Fullscreen(bounds) => *bounds,
+        }
+    }
+}
+
+impl Default for WindowOptions {
+    fn default() -> Self {
+        Self {
+            window_bounds: None,
+            titlebar: Some(TitlebarOptions {
+                title: Default::default(),
+                appears_transparent: Default::default(),
+                traffic_light_position: Default::default(),
+            }),
+            focus: true,
+            show: true,
+            kind: WindowKind::Normal,
+            is_movable: true,
+            app_owns_titlebar_drag: false,
+            inactive_frame_interval: Some(Duration::from_micros(33_333)),
+            is_resizable: true,
+            is_minimizable: true,
+            display_id: None,
+            window_background: WindowBackgroundAppearance::default(),
+            icon: None,
+            app_id: None,
+            window_min_size: None,
+            window_decorations: None,
+            tabbing_identifier: None,
+        }
+    }
+}
+
+/// The options that can be configured for a window's titlebar
+#[derive(Debug, Default)]
+pub struct TitlebarOptions {
+    /// The initial title of the window
+    pub title: Option<SharedString>,
+
+    /// Should the default system titlebar be hidden to allow for a custom-drawn titlebar? (macOS and Windows only)
+    /// Refer to [`WindowOptions::window_decorations`] on Linux
+    pub appears_transparent: bool,
+
+    /// The position of the macOS traffic light buttons
+    pub traffic_light_position: Option<Point<Pixels>>,
+}
+
+/// The kind of window to create
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WindowKind {
+    /// A normal application window
+    Normal,
+
+    /// A window that appears above all other windows, usually used for alerts or popups
+    /// use sparingly!
+    PopUp,
+
+    /// A parent-anchored, platform-native popup window for menus, comboboxes, context menus and
+    /// tooltips. Unlike [`WindowKind::PopUp`], it is positioned relative to a parent window.
+    ///
+    /// The popup's size comes from [`WindowOptions::window_bounds`], whose origin is ignored.
+    /// See [`PopupOptions`] for the placement options. Platforms without a native
+    /// implementation reject it with [`PopupNotSupportedError`].
+    AnchoredPopup(PopupOptions),
+
+    /// A floating window that appears on top of its parent window
+    Floating,
+
+    /// A Wayland LayerShell window, used to draw overlays or backgrounds for applications such as
+    /// docks, notifications or wallpapers.
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    LayerShell(crate::layer_shell::LayerShellOptions),
+
+    /// A window that appears on top of its parent window and blocks interaction with it
+    /// until the modal window is closed
+    Dialog,
 }

@@ -33,9 +33,10 @@ bench-support = ["profiler", "dep:criterion", "gpui_platform_core/bench-support"
 bench = ["bench-support"]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
-wayland = []
+wayland = ["gpui_platform_core/wayland"]
 x11 = [
     "scap?/x11",
+    "gpui_platform_core/x11",
 ]
 screen-capture = [
     "scap",
