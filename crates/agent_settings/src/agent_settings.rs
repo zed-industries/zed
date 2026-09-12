@@ -16,10 +16,11 @@ use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockPosition, DockSide, IntoGpui, LanguageModelParameters, LanguageModelSelection,
-    NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
-    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file, update_settings_file_with_completion,
+    AgentNotificationStyle, DockPosition, DockSide, IntoGpui, LanguageModelParameters,
+    LanguageModelSelection, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting,
+    Settings, SettingsContent, SettingsStore, SidebarDockPosition, SidebarSide,
+    ThinkingBlockDisplay, ToolPermissionMode, update_settings_file,
+    update_settings_file_with_completion,
 };
 use util::ResultExt as _;
 
@@ -226,6 +227,7 @@ pub struct AgentSettings {
     pub profiles: IndexMap<AgentProfileId, AgentProfileSettings>,
 
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
+    pub terminal_notification_style: AgentNotificationStyle,
     pub play_sound_when_agent_done: PlaySoundWhenAgentDone,
     pub prevent_idle_sleep: bool,
     pub single_file_review: bool,
@@ -792,6 +794,7 @@ impl Settings for AgentSettings {
                 .collect(),
 
             notify_when_agent_waiting: agent.notify_when_agent_waiting.unwrap(),
+            terminal_notification_style: agent.terminal_notification_style.unwrap_or_default(),
             play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap_or_default(),
             prevent_idle_sleep: agent.prevent_idle_sleep.unwrap(),
             single_file_review: agent.single_file_review.unwrap(),
