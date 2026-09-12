@@ -78,15 +78,17 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   // and any other snippet of code.
   "agent_buffer_font_size": 12,
 
-  // Controls the font size for the markdown preview.
-  // If not specified, it falls back to the editor font size.
-  "markdown_preview_font_size": null,
-  // Controls the font family for the markdown preview.
-  // If not specified, it falls back to the UI font family.
-  "markdown_preview_font_family": null,
-  // Controls the font family for code blocks in the markdown preview.
-  // If not specified, it falls back to the editor font family.
-  "markdown_preview_code_font_family": null
+  "markdown_preview": {
+    // Controls the font size for the markdown preview.
+    // If not specified, it falls back to the editor font size.
+    "font_size": null,
+    // Controls the font family for the markdown preview.
+    // If not specified, it falls back to the UI font family.
+    "font_family": null,
+    // Controls the font family for code blocks in the markdown preview.
+    // If not specified, it falls back to the editor font family.
+    "code_font_family": null
+  }
 ```
 
 ### Font ligatures
@@ -358,7 +360,12 @@ TBD: Centered layout related settings
     // Show/hide a button that displays the buffer's character encoding.
     // If set to "non_utf8", the button is hidden only for UTF-8 without BOM.
     // Defaults to "non_utf8".
-    "active_encoding_button": "non_utf8"
+    "active_encoding_button": "non_utf8",
+    // Show/hide an indicator with a countdown while timed multi-stroke
+    // input is pending. Hovering it pauses the timeout. Unless the which-key
+    // menu is enabled, hovering also lists the bindings that could still match.
+    // Defaults to true.
+    "pending_keystrokes_indicator": true
   },
   "global_lsp_settings": {
     // Show/hide the LSP button in the status bar.

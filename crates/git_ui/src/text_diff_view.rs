@@ -3,7 +3,7 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{
-    Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyUnstagedDiffHunkDelegate,
+    Editor, EditorEvent, EditorSettings, HiddenUnstagedDiffHunkRenderer, MultiBuffer,
     SplittableEditor, ToPoint, actions::DiffClipboardWithSelectionData,
 };
 use futures::{FutureExt, select_biased};
@@ -117,12 +117,13 @@ impl TextDiffView {
             cx,
         );
         let diff_buffer = cx.new(|cx| {
-            BufferDiff::new_with_base_text_buffer(
+            let mut diff = BufferDiff::new_with_base_text_buffer(
                 &source_buffer_snapshot.text,
                 clipboard_buffer.clone(),
-                buffer_diff::DiffBaseKind::Custom,
                 cx,
-            )
+            );
+            diff.set_operations(Arc::new(buffer_diff::RestoreDiffOperations));
+            diff
         });
 
         let task = window.spawn(cx, async move |cx| {
@@ -185,8 +186,7 @@ impl TextDiffView {
                 window,
                 cx,
             );
-            splittable
-                .set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
+            splittable.set_diff_hunk_renderer(Some(Arc::new(HiddenUnstagedDiffHunkRenderer)), cx);
             splittable
         });
 

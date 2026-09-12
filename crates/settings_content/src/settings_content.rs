@@ -1278,6 +1278,22 @@ pub enum LineIndicatorFormat {
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
 pub struct MarkdownPreviewSettingsContent {
+    /// The name of a font to use for rendering in the markdown preview.
+    /// Falls back to the UI font if unset.
+    pub font_family: Option<FontFamilyName>,
+    /// The name of a font to use for code (code blocks and inline code) in the
+    /// markdown preview. Falls back to the buffer font if unset.
+    pub code_font_family: Option<FontFamilyName>,
+    /// The font size to use for rendering in the markdown preview.
+    /// Falls back to the UI font size if unset.
+    pub font_size: Option<FontSize>,
+    /// The theme to use for the markdown preview.
+    /// Falls back to the main editor theme if unset.
+    pub theme: Option<ThemeSelection>,
+    /// Whether to automatically open Markdown files in the preview.
+    ///
+    /// Default: false
+    pub open_markdown_files_in_preview: Option<bool>,
     /// Whether to limit the width of the rendered markdown content. When
     /// enabled, content is constrained to `max_width` and centered
     /// horizontally within the preview pane, for optimal readability.
@@ -1439,13 +1455,15 @@ pub struct ReplSettingsContent {
 /// Settings for configuring the which-key popup behaviour.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WhichKeySettingsContent {
-    /// Whether to show the which-key popup when holding down key combinations
+    /// Whether to show the which-key popup when holding down key combinations.
+    /// When enabled, the pending keystrokes indicator remains visible, but its binding preview
+    /// popover is disabled.
     ///
     /// Default: false
     pub enabled: Option<bool>,
     /// Delay in milliseconds before showing the which-key popup.
     ///
-    /// Default: 700
+    /// Default: 1000
     pub delay_ms: Option<u64>,
 }
 

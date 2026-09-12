@@ -1166,6 +1166,26 @@ mod tests {
     use super::*;
     use std::{cell::RefCell, rc::Rc};
 
+    #[test]
+    fn all_font_names_tracks_available_families() -> Result<()> {
+        let text_system = gpui::TextSystem::new(Arc::new(
+            CosmicTextSystem::new_without_system_fonts("IBM Plex Sans"),
+        ));
+        assert!(text_system.all_font_names().is_empty());
+
+        text_system.add_fonts(vec![Cow::Borrowed(include_bytes!(
+            "../../../assets/fonts/lilex/Lilex-Regular.ttf"
+        ))])?;
+        assert_eq!(text_system.all_font_names(), ["Lilex"]);
+
+        text_system.add_fonts(vec![
+            Cow::Borrowed(IBM_PLEX),
+            Cow::Borrowed(include_bytes!("../../../assets/fonts/lilex/Lilex-Bold.ttf")),
+        ])?;
+        assert_eq!(text_system.all_font_names(), ["IBM Plex Sans", "Lilex"]);
+        Ok(())
+    }
+
     fn fid(i: usize) -> FontId {
         FontId(i)
     }
