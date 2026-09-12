@@ -497,6 +497,11 @@ impl MetalRenderer {
         texture: &metal::TextureRef,
         viewport_size: Size<DevicePixels>,
     ) -> Result<metal::CommandBuffer> {
+        // Flush dynamic-texture uploads on their own command buffer. Committing
+        // here (rather than encoding into the frame command buffer) guarantees
+        // accepted updates survive a later frame-encoding error, while queue
+        // ordering still places them before the frame that samples the textures.
+        self.sprite_atlas.commit_pending_uploads();
         let mut writer = InstanceBufferWriter::new(
             &self.device,
             &self.instance_buffer_pool,
@@ -669,7 +674,6 @@ impl MetalRenderer {
     ) -> Result<metal::CommandBuffer> {
         let command_queue = self.command_queue.clone();
         let command_buffer = command_queue.new_command_buffer();
-        self.sprite_atlas.encode_pending_uploads(command_buffer);
         let alpha = if self.opaque { 1. } else { 0. };
 
         let mut command_encoder = new_command_encoder_for_texture(

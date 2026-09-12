@@ -57,6 +57,23 @@ impl MetalAtlas {
         self.0.lock().encode_pending_locked(command_buffer);
     }
 
+    /// Encodes and commits any queued uploads on their own command buffer.
+    ///
+    /// Uploads are consumed into a command buffer that is committed independently
+    /// of the frame render pass, so a later drawing error that drops the render
+    /// command buffer cannot lose already-accepted updates. Both command buffers
+    /// share the renderer's queue, so the uploads still execute before the frame
+    /// that samples the texture.
+    pub(crate) fn commit_pending_uploads(&self) {
+        if self.0.lock().pending_uploads.is_empty() {
+            return;
+        }
+        let command_queue = self.0.lock().command_queue.0.clone();
+        let command_buffer = command_queue.new_command_buffer().to_owned();
+        self.encode_pending_uploads(&command_buffer);
+        command_buffer.commit();
+    }
+
     #[cfg(test)]
     pub(crate) fn flush_pending_uploads(&self) {
         let command_queue = self.0.lock().command_queue.0.clone();

@@ -4,6 +4,7 @@ use parking_lot::Mutex;
 use windows::Win32::Graphics::{
     Direct3D11::{
         D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+        D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
         ID3D11Device, ID3D11DeviceContext, ID3D11ShaderResourceView, ID3D11Texture2D,
     },
     Dxgi::Common::*,
@@ -20,10 +21,24 @@ struct DirectXAtlasState {
     device: ID3D11Device,
     device_context: ID3D11DeviceContext,
     resource_generation: ResourceGeneration,
+    max_texture_size: i32,
     monochrome_textures: AtlasTextureList<DirectXAtlasTexture>,
     polychrome_textures: AtlasTextureList<DirectXAtlasTexture>,
     subpixel_textures: AtlasTextureList<DirectXAtlasTexture>,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
+}
+
+/// Maximum 2D texture dimension for the device's feature level.
+///
+/// Feature Level 11_0/11_1 supports 16384; Feature Level 10_0/10_1 only 8192.
+/// The device is always created with a 10_1 floor, so anything below that is
+/// treated conservatively as 8192.
+fn max_texture_dimension_for_feature_level(level: D3D_FEATURE_LEVEL) -> i32 {
+    match level {
+        D3D_FEATURE_LEVEL_11_1 | D3D_FEATURE_LEVEL_11_0 => 16384,
+        D3D_FEATURE_LEVEL_10_1 => 8192,
+        _ => 8192,
+    }
 }
 
 #[derive(Default)]
@@ -53,10 +68,13 @@ struct DirectXAtlasTexture {
 
 impl DirectXAtlas {
     pub(crate) fn new(device: &ID3D11Device, device_context: &ID3D11DeviceContext) -> Self {
+        let max_texture_size =
+            max_texture_dimension_for_feature_level(unsafe { device.GetFeatureLevel() });
         DirectXAtlas(Mutex::new(DirectXAtlasState {
             device: device.clone(),
             device_context: device_context.clone(),
             resource_generation: Default::default(),
+            max_texture_size,
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
             subpixel_textures: Default::default(),
@@ -159,11 +177,10 @@ impl PlatformAtlas for DirectXAtlas {
     }
 
     fn max_texture_size(&self) -> Option<Size<DevicePixels>> {
-        // D3D11 feature level 11 guarantees 16384x16384 2D textures.
-        const MAX: i32 = 16384;
+        let max = self.0.lock().max_texture_size;
         Some(Size {
-            width: DevicePixels(MAX),
-            height: DevicePixels(MAX),
+            width: DevicePixels(max),
+            height: DevicePixels(max),
         })
     }
 
@@ -211,15 +228,8 @@ impl DirectXAtlasState {
         size: Size<DevicePixels>,
         texture_kind: AtlasTextureKind,
     ) -> Option<AtlasTile> {
-        const MAX_ATLAS_SIZE: Size<DevicePixels> = Size {
-            width: DevicePixels(16384),
-            height: DevicePixels(16384),
-        };
-        if size.width.0 <= 0
-            || size.height.0 <= 0
-            || size.width > MAX_ATLAS_SIZE.width
-            || size.height > MAX_ATLAS_SIZE.height
-        {
+        let max = self.max_texture_size;
+        if size.width.0 <= 0 || size.height.0 <= 0 || size.width.0 > max || size.height.0 > max {
             return None;
         }
 
