@@ -38,12 +38,12 @@ use crate::{
     DispatchEventResult, DisplayId, Edges, ExternalDragPayload, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Modifiers,
     PathPromptOptions, Pixels, PlatformDisplay, PlatformGestures, PlatformInput,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, ResizeEdge, RunnableVariant, Scene,
-    ShapedGlyph, ShapedRun, SharedString, Size, SourceMetadata, SvgRenderer, SystemNotification,
-    SystemNotificationResponse, SystemWindowTab, Task, ThermalState, TimerResolutionGuard, Window,
-    WindowAppearance, WindowBackgroundAppearance, WindowButtonLayout, WindowControlArea,
-    WindowControls, WindowDecorations, hash, point, px, size,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, Point, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, ResizeEdge, Scene, ShapedGlyph, ShapedRun, SharedString,
+    Size, SourceMetadata, SvgRenderer, SystemNotification, SystemNotificationResponse,
+    SystemWindowTab, Task, ThermalState, Window, WindowAppearance, WindowBackgroundAppearance,
+    WindowButtonLayout, WindowControlArea, WindowControls, WindowDecorations, hash, point, px,
+    size,
 };
 use anyhow::{Context as _, Result};
 use futures::channel::oneshot;
@@ -52,7 +52,6 @@ use image::RgbaImage;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, DynamicImage, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use scheduler::Instant;
 pub use scheduler::RunnableMeta;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
@@ -78,10 +77,10 @@ pub use app_menu::*;
 pub(crate) use test::*;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
+pub use test::{TestScreenCaptureSource, TestScreenCaptureStream};
 
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-pub use threaded_dispatcher::ThreadedDispatcher;
+pub use threaded_dispatcher::{PlatformDispatcherExt, ThreadedDispatcher};
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
@@ -654,55 +653,6 @@ pub trait PlatformHeadlessRenderer {
 pub enum TasksIncluded {
     OnlyCompleted,
     CompletedAndRunning,
-}
-
-/// This type is public so that our test macro can generate and use it, but it should not
-/// be considered part of our public API.
-#[doc(hidden)]
-pub trait PlatformDispatcher: Send + Sync {
-    fn is_main_thread(&self) -> bool;
-    fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
-    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
-
-    fn dispatch_on_main_thread_when_idle(
-        &self,
-        runnable: RunnableVariant,
-        timeout: Option<Duration>,
-    ) {
-        let _ = timeout;
-        self.dispatch_on_main_thread(runnable, Priority::Low);
-    }
-
-    fn idle_time_remaining(&self) -> Option<Duration> {
-        None
-    }
-
-    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
-
-    fn now(&self) -> Instant {
-        Instant::now()
-    }
-
-    fn increase_timer_resolution(&self) -> TimerResolutionGuard {
-        gpui_util::defer(Box::new(|| {}))
-    }
-
-    fn prevent_app_nap(&self, _reason: &str) -> ActivityGuard {
-        ActivityGuard::noop()
-    }
-
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-    fn as_test(&self) -> Option<&TestDispatcher> {
-        None
-    }
-
-    // This cfg must match the `threaded_dispatcher` module's, which implements
-    // this method whenever it compiles.
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-    fn as_threaded(&self) -> Option<&ThreadedDispatcher> {
-        None
-    }
 }
 
 #[expect(missing_docs)]
@@ -2411,6 +2361,7 @@ mod image_tests {
 #[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
 mod tests {
     use super::*;
+    use crate::WindowButton;
     use std::collections::HashSet;
 
     #[test]

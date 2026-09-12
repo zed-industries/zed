@@ -13,20 +13,26 @@
 
 mod app;
 mod cursor;
+mod dispatcher;
 mod display;
 mod executor;
 mod keyboard;
 mod notification;
 mod prompt;
 mod screen_capture;
+#[cfg(any(test, feature = "test-support"))]
+mod test_dispatcher;
 mod window;
 
 pub use app::*;
 pub use cursor::*;
+pub use dispatcher::*;
 pub use display::*;
 pub use executor::*;
 pub use keyboard::*;
 pub use notification::*;
 pub use prompt::*;
 pub use screen_capture::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use test_dispatcher::*;
 pub use window::*;

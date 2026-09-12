@@ -12,6 +12,11 @@ workspace = true
 path = "src/gpui_platform_core.rs"
 doctest = false
 
+[features]
+default = []
+test-support = []
+bench-support = ["test-support"]
+
 [dependencies]
 anyhow.workspace = true
 async-task.workspace = true

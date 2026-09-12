@@ -21,13 +21,14 @@ default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
     "leak-detection",
     "collections/test-support",
+    "gpui_platform_core/test-support",
     "gpui_types/test-support",
     "http_client/test-support",
     "wayland",
     "x11",
     "proptest",
 ]
-bench-support = ["profiler", "dep:criterion"]
+bench-support = ["profiler", "dep:criterion", "gpui_platform_core/bench-support"]
 # Preserve the published feature name while consumers migrate to `bench-support`.
 bench = ["bench-support"]
 inspector = ["gpui_macros/inspector"]
@@ -145,6 +146,7 @@ backtrace.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
+gpui_platform_core = { workspace = true, features = ["test-support"] }
 gpui_util = { workspace = true }
 lyon = { version = "1.0", features = ["extra"] }
 rand.workspace = true

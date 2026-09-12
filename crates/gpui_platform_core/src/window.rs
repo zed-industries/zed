@@ -247,7 +247,6 @@ impl WindowButtonLayout {
     }
 
     /// Formats the layout back into a GNOME-style `button-layout` string.
-    #[cfg(test)]
     pub fn format(&self) -> String {
         fn format_side(buttons: &[Option<WindowButton>; MAX_BUTTONS_PER_SIDE]) -> String {
             buttons

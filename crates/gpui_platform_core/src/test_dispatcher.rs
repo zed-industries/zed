@@ -1,13 +1,16 @@
-use crate::{PlatformDispatcher, Priority, RunnableVariant};
-use scheduler::Instant;
-use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig, Yield};
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
+//! A deterministic [`PlatformDispatcher`] for tests and benchmarks.
+
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
 };
+use std::time::Duration;
+
+use scheduler::Instant;
+use scheduler::Priority;
+use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig, Yield};
+
+use crate::{PlatformDispatcher, RunnableVariant};
 
 /// TestDispatcher provides deterministic async execution for tests.
 ///
