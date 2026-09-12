@@ -19,6 +19,7 @@ mod executor;
 mod executor_runtime;
 mod font_fallbacks;
 mod font_features;
+mod gpu;
 mod keyboard;
 mod notification;
 mod platform_scheduler;
@@ -28,6 +29,7 @@ mod prompt;
 mod screen_capture;
 #[cfg(any(test, feature = "test-support"))]
 mod test_dispatcher;
+mod text_input;
 mod text_system;
 mod window;
 
@@ -39,6 +41,7 @@ pub use executor::*;
 pub use executor_runtime::*;
 pub use font_fallbacks::*;
 pub use font_features::*;
+pub use gpu::*;
 pub use keyboard::*;
 pub use notification::*;
 pub use platform_scheduler::*;
@@ -48,5 +51,6 @@ pub use prompt::*;
 pub use screen_capture::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_dispatcher::*;
+pub use text_input::*;
 pub use text_system::*;
 pub use window::*;

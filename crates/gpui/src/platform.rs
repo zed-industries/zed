@@ -35,14 +35,15 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 use crate::{
     Action, ActivityGuard, AnyWindowHandle, App, AppLifecyclePhase, AsyncWindowContext,
     BackgroundExecutor, Bounds, BoundsExt, Capslock, CursorStyle, Decorations, DevicePixels,
-    DispatchEventResult, DisplayId, Edges, ExternalDragPayload, ForegroundExecutor, GpuSpecs,
-    ImageSource, Keymap, Modifiers, PathPromptOptions, Pixels, PlatformDisplay, PlatformGestures,
-    PlatformInput, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, Point,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ResizeEdge, Scene,
-    SharedString, Size, SourceMetadata, SvgRenderer, SystemNotification,
-    SystemNotificationResponse, SystemWindowTab, Task, ThermalState, Window, WindowAppearance,
-    WindowBackgroundAppearance, WindowButtonLayout, WindowControlArea, WindowControls,
-    WindowDecorations, hash, px,
+    DispatchEventResult, DisplayId, ExternalDragPayload, ForegroundExecutor, GpuSpecs, ImageSource,
+    Keymap, Modifiers, PathPromptOptions, Pixels, PlatformDisplay, PlatformGestures, PlatformInput,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, Point, PromptButton,
+    PromptLevel, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    RequestFrameOptions, ResizeEdge, Scene, SharedString, Size, SourceMetadata, SvgRenderer,
+    SystemNotification, SystemNotificationResponse, SystemWindowTab, Task, TextInputConfiguration,
+    TextInputStateChange, ThermalState, Window, WindowAppearance, WindowBackgroundAppearance,
+    WindowButtonLayout, WindowControlArea, WindowControls, WindowDecorations, WindowInsets, hash,
+    px,
 };
 use anyhow::{Context as _, Result};
 use futures::channel::oneshot;
@@ -366,59 +367,6 @@ pub struct A11yCallbacks {
     pub action: Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>,
     /// Called when the adapter is deactivated (screen reader disconnects).
     pub deactivation: Box<dyn Fn() + Send + 'static>,
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
-#[expect(missing_docs)]
-pub struct RequestFrameOptions {
-    /// Whether a presentation is required.
-    pub require_presentation: bool,
-    /// Force refresh of all rendering states when true.
-    pub force_render: bool,
-}
-
-/// Regions of a window that are obscured or reserved by the system.
-///
-/// Mobile applications often share space in their window with system-specific
-/// geometry, from keyboards to camera notches. In GPUI, all this is abstracted
-/// into a single "inset" which should be overlaid on the window's bounds.
-/// It is up to the application develop to determine how to handle these cases.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct WindowInsets {
-    /// Regions covered by system UI or hardware: status bar, display
-    /// cutouts/notch, home indicator, navigation bars.
-    /// (iOS: `safeAreaInsets`. Android: `WindowInsets` of types
-    /// `systemBars() | displayCutout()`.)
-    pub safe_area: Edges<Pixels>,
-    /// The region covered by the keyboard, when present.
-    /// (iOS: derived from `keyboardWillShow`/frame-change notifications.
-    /// Android: `WindowInsets.Type.ime()`.)
-    pub ime: Edges<Pixels>,
-}
-
-impl WindowInsets {
-    /// The combined inset content should avoid.
-    pub fn effective(&self) -> Edges<Pixels> {
-        Edges {
-            top: self.safe_area.top.max(self.ime.top),
-            right: self.safe_area.right.max(self.ime.right),
-            bottom: self.safe_area.bottom.max(self.ime.bottom),
-            left: self.safe_area.left.max(self.ime.left),
-        }
-    }
-}
-
-/// A change in the state of the focused text input.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum TextInputStateChange {
-    /// The window changed from having no active text input to having one.
-    FocusGained,
-    /// The window no longer has an active text input.
-    FocusLost,
-    /// The selection or caret moved
-    SelectionChanged,
-    /// The document content changed outside of platform-initiated edits.
-    ContentChanged,
 }
 
 #[expect(missing_docs)]
@@ -1293,71 +1241,6 @@ pub trait InputHandler: 'static {
     }
 }
 
-/// Platform text-assistance preferences for the focused text region.
-///
-/// Returned by [`InputHandler::text_input_configuration`] and forwarded to the
-/// platform whenever it changes; the platform maps the fields onto its native
-/// input-session attributes (on web, DOM attributes of the hidden editable
-/// element such as `autocorrect` and `enterkeyhint`).
-///
-/// The default disables all text assistance and requests no particular action
-/// key presentation.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct TextInputConfiguration {
-    /// Whether the platform may automatically correct entered text.
-    pub autocorrect: bool,
-    /// How software keyboards automatically capitalize entered text.
-    pub autocapitalize: Autocapitalize,
-    /// Whether software keyboards may offer word suggestions and spellcheck.
-    pub suggestions: bool,
-    /// The action advertised on a software keyboard's confirm ("enter") key.
-    pub input_action: TextInputAction,
-}
-
-/// Automatic capitalization applied by software keyboards.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Autocapitalize {
-    /// No automatic capitalization.
-    #[default]
-    None,
-    /// Capitalize the first letter of each word.
-    Words,
-    /// Capitalize the first letter of each sentence.
-    Sentences,
-    /// Capitalize every letter.
-    Characters,
-}
-
-/// The action a software keyboard advertises on its confirm ("enter") key.
-///
-/// This affects only how the key is presented (icon or label); pressing it is
-/// still delivered as ordinary input.
-///
-/// The variants are the HTML `enterkeyhint` attribute's value set
-/// (<https://html.spec.whatwg.org/multipage/interaction.html#input-modalities:-the-enterkeyhint-attribute>),
-/// which also maps onto Android's `IME_ACTION_*` constants and iOS's
-/// `UIReturnKeyType`; [`TextInputAction::Unspecified`] means "emit no hint".
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum TextInputAction {
-    /// Let the platform choose its default presentation.
-    #[default]
-    Unspecified,
-    /// Inserting a line break.
-    Enter,
-    /// Committing the field's value.
-    Done,
-    /// Navigating to the typed target.
-    Go,
-    /// Moving to the next field.
-    Next,
-    /// Moving to the previous field.
-    Previous,
-    /// Executing a search.
-    Search,
-    /// Sending a message.
-    Send,
-}
-
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub struct WindowOptions {
@@ -1602,73 +1485,6 @@ pub enum WindowKind {
     /// A window that appears on top of its parent window and blocks interaction with it
     /// until the modal window is closed
     Dialog,
-}
-
-/// The options that can be configured for a file dialog prompt
-/// What kind of prompt styling to show
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum PromptLevel {
-    /// A prompt that is shown when the user should be notified of something
-    Info,
-
-    /// A prompt that is shown when the user needs to be warned of a potential problem
-    Warning,
-
-    /// A prompt that is shown when a critical problem has occurred
-    Critical,
-}
-
-/// Prompt Button
-#[derive(Clone, Debug, PartialEq)]
-pub enum PromptButton {
-    /// Ok button
-    Ok(SharedString),
-    /// Cancel button
-    Cancel(SharedString),
-    /// Other button
-    Other(SharedString),
-}
-
-impl PromptButton {
-    /// Create a button with label
-    pub fn new(label: impl Into<SharedString>) -> Self {
-        PromptButton::Other(label.into())
-    }
-
-    /// Create an Ok button
-    pub fn ok(label: impl Into<SharedString>) -> Self {
-        PromptButton::Ok(label.into())
-    }
-
-    /// Create a Cancel button
-    pub fn cancel(label: impl Into<SharedString>) -> Self {
-        PromptButton::Cancel(label.into())
-    }
-
-    /// Returns true if this button is a cancel button.
-    #[allow(dead_code)]
-    pub fn is_cancel(&self) -> bool {
-        matches!(self, PromptButton::Cancel(_))
-    }
-
-    /// Returns the label of the button
-    pub fn label(&self) -> &SharedString {
-        match self {
-            PromptButton::Ok(label) => label,
-            PromptButton::Cancel(label) => label,
-            PromptButton::Other(label) => label,
-        }
-    }
-}
-
-impl From<&str> for PromptButton {
-    fn from(value: &str) -> Self {
-        match value.to_lowercase().as_str() {
-            "ok" => PromptButton::Ok("OK".into()),
-            "cancel" => PromptButton::Cancel("Cancel".into()),
-            _ => PromptButton::Other(SharedString::from(value.to_owned())),
-        }
-    }
 }
 
 /// A clipboard item that should be copied to the clipboard
