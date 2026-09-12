@@ -236,7 +236,11 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_size_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+    fn handle_size_msg(self: &Rc<Self>, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        // Minimizing and restoring both arrive as `WM_SIZE`; the deferred report
+        // reads `IsIconic` at delivery, so one call covers both directions.
+        self.report_visibility();
+
         // Don't resize the renderer when the window is minimized, but record that it was minimized so
         // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
         if wparam.0 == SIZE_MINIMIZED as usize {
@@ -1261,11 +1265,40 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_window_visibility_changed(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
+    fn handle_window_visibility_changed(
+        self: &Rc<Self>,
+        handle: HWND,
+        wparam: WPARAM,
+    ) -> Option<isize> {
+        self.report_visibility();
         if wparam.0 == 1 {
             self.draw_window(handle, false);
         }
         None
+    }
+
+    // The window procedure can run while GPUI is updating this window (e.g.
+    // `ShowWindow` from an action handler), so deliver observers after that
+    // update completes, as activation does. The state is read at delivery so
+    // a burst of messages collapses to the final value.
+    fn report_visibility(self: &Rc<Self>) {
+        if self.state.last_visibility.get().is_none() {
+            return;
+        }
+        let this = self.clone();
+        self.executor
+            .spawn(async move {
+                let visibility = this.visibility();
+                if this.state.last_visibility.get() == Some(visibility) {
+                    return;
+                }
+                this.state.last_visibility.set(Some(visibility));
+                if let Some(mut callback) = this.state.callbacks.visibility_change.take() {
+                    callback(visibility);
+                    this.state.callbacks.visibility_change.set(Some(callback));
+                }
+            })
+            .detach();
     }
 
     fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
