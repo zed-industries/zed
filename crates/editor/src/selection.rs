@@ -541,22 +541,23 @@ impl Editor {
                         .text_for_range(selection.start..selection.end)
                         .collect::<String>();
                     let is_empty = query.is_empty();
-                    let select_state = SelectNextState {
-                        query: self.build_query(&[query.chars().rev().collect::<String>()], cx)?,
-                        wordwise: true,
-                        done: is_empty,
-                    };
+                    let select_state = self.build_select_state(
+                        &[query.chars().rev().collect::<String>()],
+                        cx,
+                        Some(true),
+                        is_empty,
+                    )?;
                     self.select_prev_state = Some(select_state);
                 } else {
                     self.select_prev_state = None;
                 }
             } else if let Some(selected_text) = selected_text {
-                self.select_prev_state = Some(SelectNextState {
-                    query: self
-                        .build_query(&[selected_text.chars().rev().collect::<String>()], cx)?,
-                    wordwise: false,
-                    done: false,
-                });
+                self.select_prev_state = Some(self.build_select_state(
+                    &[selected_text.chars().rev().collect::<String>()],
+                    cx,
+                    None,
+                    false,
+                )?);
                 self.select_previous(action, window, cx)?;
             }
         }
@@ -2284,21 +2285,15 @@ impl Editor {
                         .text_for_range(selection.start..selection.end)
                         .collect::<String>();
                     let is_empty = query.is_empty();
-                    let select_state = SelectNextState {
-                        query: self.build_query(&[query], cx)?,
-                        wordwise: true,
-                        done: is_empty,
-                    };
+                    let select_state =
+                        self.build_select_state(&[query], cx, Some(true), is_empty)?;
                     self.select_next_state = Some(select_state);
                 } else {
                     self.select_next_state = None;
                 }
             } else if let Some(selected_text) = selected_text {
-                self.select_next_state = Some(SelectNextState {
-                    query: self.build_query(&[selected_text], cx)?,
-                    wordwise: false,
-                    done: false,
-                });
+                self.select_next_state =
+                    Some(self.build_select_state(&[selected_text], cx, None, false)?);
                 self.select_next_match_internal(
                     display_map,
                     replace_newest,
@@ -2311,18 +2306,43 @@ impl Editor {
         Ok(())
     }
 
-    fn build_query<I, P>(&self, patterns: I, cx: &Context<Self>) -> Result<AhoCorasick, BuildError>
+    fn build_query<I, P>(
+        &self,
+        patterns: I,
+        case_sensitive: bool,
+    ) -> Result<AhoCorasick, BuildError>
     where
         I: IntoIterator<Item = P>,
         P: AsRef<[u8]>,
     {
-        let case_sensitive = self
-            .select_next_is_case_sensitive
-            .unwrap_or_else(|| EditorSettings::get_global(cx).search.case_sensitive);
-
         let mut builder = AhoCorasickBuilder::new();
         builder.ascii_case_insensitive(!case_sensitive);
         builder.build(patterns)
+    }
+
+    fn build_select_state<I, P>(
+        &self,
+        patterns: I,
+        cx: &mut Context<Self>,
+        wordwise: Option<bool>,
+        done: bool,
+    ) -> Result<SelectNextState, BuildError>
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<[u8]>,
+    {
+        let search_options = self.select_next_options.unwrap_or_else(|| {
+            let search_settings = EditorSettings::get_global(cx).search;
+            SelectSearchOptions {
+                case_sensitive: search_settings.case_sensitive,
+                whole_word: search_settings.whole_word,
+            }
+        });
+        Ok(SelectNextState {
+            query: self.build_query(patterns, search_options.case_sensitive)?,
+            wordwise: wordwise.unwrap_or(search_options.whole_word),
+            done,
+        })
     }
 
     fn find_syntax_node_boundary(
