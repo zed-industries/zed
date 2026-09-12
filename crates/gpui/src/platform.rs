@@ -32,13 +32,13 @@ use crate::{
     BoundsExt, Capslock, ClipboardItem, ClipboardReadError, CursorStyle, Decorations,
     DispatchEventResult, ExternalDragPayload, ForegroundExecutor, GpuSpecs, Image, ImageFormat,
     ImageSource, Keymap, Modifiers, PathPromptOptions, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformGestures, PlatformInput, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, Point, PromptButton, PromptLevel, RenderImage, RequestFrameOptions,
-    ResizeEdge, Scene, Size, SourceMetadata, SvgRenderer, SystemNotification,
-    SystemNotificationResponse, SystemWindowTab, Task, TextInputConfiguration,
-    TextInputStateChange, ThermalState, Window, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowButtonLayout, WindowControlArea, WindowControls, WindowDecorations,
-    WindowId, WindowInsets, WindowParams, px,
+    PlatformGestures, PlatformInput, PlatformInputHandler, PlatformInputHandlerDelegate,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, Point, PromptButton,
+    PromptLevel, RenderImage, RequestFrameOptions, ResizeEdge, Scene, Size, SourceMetadata,
+    SvgRenderer, SystemNotification, SystemNotificationResponse, SystemWindowTab, Task,
+    TextInputConfiguration, TextInputStateChange, ThermalState, UTF16Selection, Window,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowButtonLayout,
+    WindowControlArea, WindowControls, WindowDecorations, WindowId, WindowInsets, WindowParams,
 };
 use anyhow::{Context as _, Result};
 use futures::channel::oneshot;
@@ -52,7 +52,6 @@ use smallvec::SmallVec;
 use std::io::Cursor;
 use std::{
     ffi::OsString,
-    fmt::Debug,
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
@@ -569,26 +568,14 @@ pub enum TasksIncluded {
     CompletedAndRunning,
 }
 
-#[expect(missing_docs)]
-pub struct PlatformInputHandler {
+/// The gpui-backed implementation of [`PlatformInputHandlerDelegate`].
+struct GpuiInputHandler {
     cx: AsyncWindowContext,
     handler: Box<dyn InputHandler>,
 }
 
-#[expect(missing_docs)]
-#[cfg_attr(
-    all(
-        any(target_os = "linux", target_os = "freebsd"),
-        not(any(feature = "x11", feature = "wayland"))
-    ),
-    allow(dead_code)
-)]
-impl PlatformInputHandler {
-    pub fn new(cx: AsyncWindowContext, handler: Box<dyn InputHandler>) -> Self {
-        Self { cx, handler }
-    }
-
-    pub fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
+impl PlatformInputHandlerDelegate for GpuiInputHandler {
+    fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
         self.cx
             .update(|window, cx| {
                 self.handler
@@ -598,19 +585,14 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    #[cfg_attr(target_os = "windows", allow(dead_code))]
-    pub fn marked_text_range(&mut self) -> Option<Range<usize>> {
+    fn marked_text_range(&mut self) -> Option<Range<usize>> {
         self.cx
             .update(|window, cx| self.handler.marked_text_range(window, cx))
             .ok()
             .flatten()
     }
 
-    #[cfg_attr(
-        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
-        allow(dead_code)
-    )]
-    pub fn text_for_range(
+    fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
         adjusted: &mut Option<Range<usize>>,
@@ -624,7 +606,7 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    pub fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
+    fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
         self.cx
             .update(|window, cx| {
                 self.handler
@@ -633,7 +615,7 @@ impl PlatformInputHandler {
             .ok();
     }
 
-    pub fn replace_and_mark_text_in_range(
+    fn replace_and_mark_text_in_range(
         &mut self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,
@@ -652,96 +634,37 @@ impl PlatformInputHandler {
             .ok();
     }
 
-    #[cfg_attr(target_os = "windows", allow(dead_code))]
-    pub fn unmark_text(&mut self) {
+    fn unmark_text(&mut self) {
         self.cx
             .update(|window, cx| self.handler.unmark_text(window, cx))
             .ok();
     }
 
-    pub fn paste(&mut self, item: ClipboardItem) {
+    fn paste(&mut self, item: ClipboardItem) {
         self.cx
             .update(|window, cx| self.handler.paste(item, window, cx))
             .ok();
     }
 
-    pub fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
+    fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
         self.cx
             .update(|window, cx| self.handler.bounds_for_range(range_utf16, window, cx))
             .ok()
             .flatten()
     }
 
-    #[allow(dead_code)]
-    pub fn apple_press_and_hold_enabled(&mut self) -> bool {
+    fn apple_press_and_hold_enabled(&mut self) -> bool {
         self.handler.apple_press_and_hold_enabled()
     }
 
-    pub fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
-        self.handler.replace_text_in_range(None, input, window, cx);
-    }
-
-    pub fn compute_ime_candidate_bounds(
-        marked_range: Option<Range<usize>>,
-        selection: &UTF16Selection,
-        mut bounds_for_range: impl FnMut(Range<usize>) -> Option<Bounds<Pixels>>,
-    ) -> Option<Bounds<Pixels>> {
-        if let Some(marked_range) = marked_range {
-            // Default to the start of the marked (composing) range.
-            let mut line_start = marked_range.start;
-
-            // Walk backward from the caret looking for a line break. A change in
-            // the Y coordinate means we crossed into the previous visual line, so
-            // the line start is one position after the break point.
-            let caret = selection.range.end;
-            if let Some(caret_bounds) = bounds_for_range(caret..caret) {
-                for i in (marked_range.start..caret).rev() {
-                    if let Some(b) = bounds_for_range(i..i) {
-                        if (b.origin.y - caret_bounds.origin.y).abs() > px(0.1) {
-                            line_start = i + 1;
-                            break;
-                        }
-                    }
-                }
-            }
-            bounds_for_range(line_start..line_start)
-        } else {
-            // No active composition — use the selection endpoint.
-            let offset = if selection.reversed {
-                selection.range.start
-            } else {
-                selection.range.end
-            };
-            bounds_for_range(offset..offset)
-        }
-    }
-
-    pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
-        let marked_range = self.handler.marked_text_range(window, cx);
-        let selection = self.handler.selected_text_range(true, window, cx)?;
-        Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
-            self.handler.bounds_for_range(range, window, cx)
-        })
-    }
-
-    pub fn ime_candidate_bounds(&mut self) -> Option<Bounds<Pixels>> {
-        let marked_range = self.marked_text_range();
-        let selection = self.selected_text_range(true)?;
-        Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
-            self.bounds_for_range(range)
-        })
-    }
-
-    #[allow(unused)]
-    pub fn character_index_for_point(&mut self, point: Point<Pixels>) -> Option<usize> {
+    fn character_index_for_point(&mut self, point: Point<Pixels>) -> Option<usize> {
         self.cx
             .update(|window, cx| self.handler.character_index_for_point(point, window, cx))
             .ok()
             .flatten()
     }
 
-    /// See [`InputHandler::set_selected_text_range`].
-    pub fn set_selected_text_range(&mut self, range_utf16: Range<usize>) {
+    fn set_selected_text_range(&mut self, range_utf16: Range<usize>) {
         self.cx
             .update(|window, cx| {
                 self.handler
@@ -750,40 +673,27 @@ impl PlatformInputHandler {
             .ok();
     }
 
-    /// See [`InputHandler::element_bounds`].
-    pub fn element_bounds(&mut self) -> Option<Bounds<Pixels>> {
+    fn element_bounds(&mut self) -> Option<Bounds<Pixels>> {
         self.cx
             .update(|window, cx| self.handler.element_bounds(window, cx))
             .ok()
             .flatten()
     }
 
-    /// See [`InputHandler::text_length_utf16`].
-    pub fn text_length_utf16(&mut self) -> Option<usize> {
+    fn text_length_utf16(&mut self) -> Option<usize> {
         self.cx
             .update(|window, cx| self.handler.text_length_utf16(window, cx))
             .ok()
             .flatten()
     }
 
-    #[allow(dead_code)]
-    pub fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
-        self.handler.accepts_text_input(window, cx)
-    }
-
-    #[allow(dead_code)]
-    pub fn query_accepts_text_input(&mut self) -> bool {
+    fn query_accepts_text_input(&mut self) -> bool {
         self.cx
             .update(|window, cx| self.handler.accepts_text_input(window, cx))
             .unwrap_or(true)
     }
 
-    /// See [`InputHandler::prefers_ime_for_printable_keys`].
-    ///
-    /// This is not a pure delegation to the handler: while a multi-stroke binding is pending this
-    /// returns `false` regardless of the handler's preference, because the next printable key may
-    /// complete a binding whose prefix already bypassed the IME.
-    pub fn query_prefers_ime_for_printable_keys(&mut self) -> bool {
+    fn query_prefers_ime_for_printable_keys(&mut self) -> bool {
         self.cx
             .update(|window, cx| {
                 // The next printable key may complete a chord whose prefix bypassed the IME.
@@ -793,34 +703,82 @@ impl PlatformInputHandler {
             .unwrap_or(false)
     }
 
-    /// See [`InputHandler::text_input_configuration`].
-    pub fn text_input_configuration(
-        &mut self,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> TextInputConfiguration {
-        self.handler.text_input_configuration(window, cx)
-    }
-
-    /// See [`InputHandler::text_input_editable_range`].
-    pub fn text_input_editable_range(&mut self) -> Option<Range<usize>> {
+    fn text_input_editable_range(&mut self) -> Option<Range<usize>> {
         self.cx
             .update(|window, cx| self.handler.text_input_editable_range(window, cx))
             .ok()
             .flatten()
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
-/// A struct representing a selection in a text buffer, in UTF16 characters.
-/// This is different from a range because the head may be before the tail.
-#[derive(Debug)]
-pub struct UTF16Selection {
-    /// The range of text in the document this selection corresponds to
-    /// in UTF16 characters.
-    pub range: Range<usize>,
-    /// Whether the head of this selection is at the start (true), or end (false)
-    /// of the range
-    pub reversed: bool,
+/// Creates a [`PlatformInputHandler`] backed by the given gpui [`InputHandler`].
+pub fn new_platform_input_handler(
+    cx: AsyncWindowContext,
+    handler: Box<dyn InputHandler>,
+) -> PlatformInputHandler {
+    PlatformInputHandler::from_delegate(Box::new(GpuiInputHandler { cx, handler }))
+}
+
+/// The [`PlatformInputHandler`] operations that need the owning window.
+pub trait PlatformInputHandlerExt {
+    /// Applies text input directly to the focused input, bypassing the IME.
+    fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App);
+    /// Bounds of the current IME candidate region.
+    fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>>;
+    /// Whether the focused input currently accepts text.
+    fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool;
+    /// The text input configuration of the focused input.
+    fn text_input_configuration(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> TextInputConfiguration;
+}
+
+impl PlatformInputHandlerExt for PlatformInputHandler {
+    fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
+        if let Some(delegate) = self
+            .delegate_as_any_mut()
+            .downcast_mut::<GpuiInputHandler>()
+        {
+            delegate
+                .handler
+                .replace_text_in_range(None, input, window, cx);
+        }
+    }
+
+    fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
+        let delegate = self
+            .delegate_as_any_mut()
+            .downcast_mut::<GpuiInputHandler>()?;
+        let marked_range = delegate.handler.marked_text_range(window, cx);
+        let selection = delegate.handler.selected_text_range(true, window, cx)?;
+        PlatformInputHandler::compute_ime_candidate_bounds(marked_range, &selection, |range| {
+            delegate.handler.bounds_for_range(range, window, cx)
+        })
+    }
+
+    fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        self.delegate_as_any_mut()
+            .downcast_mut::<GpuiInputHandler>()
+            .map(|delegate| delegate.handler.accepts_text_input(window, cx))
+            .unwrap_or(false)
+    }
+
+    fn text_input_configuration(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> TextInputConfiguration {
+        self.delegate_as_any_mut()
+            .downcast_mut::<GpuiInputHandler>()
+            .map(|delegate| delegate.handler.text_input_configuration(window, cx))
+            .unwrap_or_default()
+    }
 }
 
 /// Zed's interface for handling text input from the platform's IME system

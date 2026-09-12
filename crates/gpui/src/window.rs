@@ -22,8 +22,8 @@ use crate::{
     TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
     TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowDecorations, WindowId, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*,
-    px, rems, size, transparent_black,
+    WindowDecorations, WindowId, WindowOptions, WindowParams, WindowTextSystem,
+    new_platform_input_handler, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::TouchEvent;
@@ -5022,7 +5022,10 @@ impl Window {
             let cx = self.to_async(cx);
             self.next_frame
                 .input_handlers
-                .push(Some(PlatformInputHandler::new(cx, Box::new(input_handler))));
+                .push(Some(new_platform_input_handler(
+                    cx,
+                    Box::new(input_handler),
+                )));
         }
     }
 
