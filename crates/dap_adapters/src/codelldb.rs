@@ -287,6 +287,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             "allOf": [
                 {
                     "if": {
+                        "required": ["request"],
                         "properties": {
                             "request": {
                                 "enum": ["launch"]
@@ -306,6 +307,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 },
                 {
                     "if": {
+                        "required": ["request"],
                         "properties": {
                             "request": {
                                 "enum": ["attach"]
