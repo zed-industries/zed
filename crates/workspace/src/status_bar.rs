@@ -73,6 +73,7 @@ trait StatusItemViewHandle: Send {
 #[derive(Default)]
 struct SidebarStatus {
     open: bool,
+    visible: bool,
     side: SidebarSide,
     has_notifications: bool,
     show_toggle: bool,
@@ -86,9 +87,11 @@ impl SidebarStatus {
             .map(|mw| {
                 let mw = mw.read(cx);
                 let enabled = mw.multi_workspace_enabled(cx);
+                let sidebar = mw.sidebar_render_state(cx);
                 Self {
-                    open: mw.sidebar_open() && enabled,
-                    side: mw.sidebar_side(cx),
+                    open: sidebar.open,
+                    visible: sidebar.visible,
+                    side: sidebar.side,
                     has_notifications: mw.sidebar_has_notifications(cx),
                     show_toggle: enabled,
                 }
@@ -157,12 +160,12 @@ impl Render for StatusBar {
                 Decorations::Client { tiling, .. } => el
                     .when(
                         !(tiling.bottom || tiling.right)
-                            && !(sidebar.open && sidebar.side == SidebarSide::Right),
+                            && !(sidebar.visible && sidebar.side == SidebarSide::Right),
                         |el| el.rounded_br(CLIENT_SIDE_DECORATION_ROUNDING),
                     )
                     .when(
                         !(tiling.bottom || tiling.left)
-                            && !(sidebar.open && sidebar.side == SidebarSide::Left),
+                            && !(sidebar.visible && sidebar.side == SidebarSide::Left),
                         |el| el.rounded_bl(CLIENT_SIDE_DECORATION_ROUNDING),
                     )
                     // This border is to avoid a transparent gap in the rounded corners

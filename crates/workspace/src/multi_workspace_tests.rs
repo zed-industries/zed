@@ -118,6 +118,46 @@ async fn test_sidebar_disabled_when_disable_ai_is_enabled(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn test_sidebar_is_hidden_while_workspace_is_zoomed(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let (multi_workspace, cx) = setup_multi_workspace(&[project], cx);
+
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, cx| {
+        let sidebar = multi_workspace.sidebar_render_state(cx);
+        assert!(sidebar.open);
+        assert!(sidebar.visible);
+        multi_workspace.workspace().clone()
+    });
+    let pane = workspace.read_with(cx, |workspace, _cx| workspace.active_pane().clone());
+
+    workspace.update_in(cx, |workspace, window, cx| {
+        let item = cx.new(TestItem::new);
+        workspace.add_item(pane.clone(), Box::new(item), None, true, true, window, cx);
+    });
+    pane.update_in(cx, |pane, window, cx| {
+        pane.zoom_in(&crate::ZoomIn, window, cx);
+    });
+
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        let sidebar = multi_workspace.sidebar_render_state(cx);
+        assert!(sidebar.open);
+        assert!(!sidebar.visible);
+    });
+
+    pane.update_in(cx, |pane, window, cx| {
+        pane.zoom_out(&crate::ZoomOut, window, cx);
+    });
+
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        let sidebar = multi_workspace.sidebar_render_state(cx);
+        assert!(sidebar.open);
+        assert!(sidebar.visible);
+    });
+}
+
+#[gpui::test]
 async fn test_multi_workspace_collapses_when_agent_is_disabled(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());
