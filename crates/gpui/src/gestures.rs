@@ -18,9 +18,9 @@ use scheduler::Instant;
 use smallvec::SmallVec;
 
 use crate::{
-    Axis, GestureEvent, InputEvent, IsZero, Modifiers, MouseButton, MouseDownEvent, MouseEvent,
-    MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchEvent, TouchId,
-    TouchPhase, point, px, seal::Sealed,
+    Axis, GestureEvent, InputEvent, IsZero, LongPressEvent, Modifiers, MouseButton, MouseDownEvent,
+    MouseEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
+    TouchDragEvent, TouchEvent, TouchId, TouchPhase, point, px, seal::Sealed,
 };
 pub use crate::{GestureTuning, ScrollPhysics};
 
@@ -264,18 +264,6 @@ mod friction_spline {
     }
 }
 
-/// A direct touch drag claimed by an element before touch input becomes a tap,
-/// long press, or scrolling gesture.
-#[derive(Clone, Debug)]
-pub struct TouchDragEvent {
-    /// The phase of the touch drag.
-    pub phase: TouchPhase,
-    /// The position where the touch started.
-    pub start_position: Point<Pixels>,
-    /// The touch's current position.
-    pub position: Point<Pixels>,
-}
-
 impl Sealed for TouchDragEvent {}
 impl InputEvent for TouchDragEvent {
     fn to_platform_input(self) -> PlatformInput {
@@ -284,27 +272,6 @@ impl InputEvent for TouchDragEvent {
 }
 impl GestureEvent for TouchDragEvent {}
 impl MouseEvent for TouchDragEvent {}
-
-/// A phased long-press gesture recognized from a touch.
-#[derive(Clone, Debug)]
-pub struct LongPressEvent {
-    /// The phase of the long press.
-    pub phase: TouchPhase,
-    /// The position where the touch started.
-    pub start_position: Point<Pixels>,
-    /// The touch's current position.
-    pub position: Point<Pixels>,
-}
-
-impl Default for LongPressEvent {
-    fn default() -> Self {
-        Self {
-            phase: TouchPhase::Started,
-            start_position: Point::default(),
-            position: Point::default(),
-        }
-    }
-}
 
 impl Sealed for LongPressEvent {}
 impl InputEvent for LongPressEvent {

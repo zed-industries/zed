@@ -24,6 +24,7 @@ mod font_fallbacks;
 mod font_features;
 mod gestures;
 mod gpu;
+mod input;
 mod keyboard;
 #[cfg(all(target_os = "linux", feature = "wayland"))]
 pub mod layer_shell;
@@ -55,6 +56,7 @@ pub use font_fallbacks::*;
 pub use font_features::*;
 pub use gestures::*;
 pub use gpu::*;
+pub use input::*;
 pub use keyboard::*;
 pub use notification::*;
 pub use platform_scheduler::*;

@@ -26,8 +26,8 @@ use crate::{
     px, rems, size, transparent_black,
 };
 
+use crate::TouchEvent;
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
-use crate::interactive::TouchEvent;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
