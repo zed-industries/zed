@@ -5287,10 +5287,34 @@ impl BackgroundScanner {
         }
 
         let progress_update_count = AtomicUsize::new(0);
+        // Nothing is sent on this channel; it closes when the last worker drops its
+        // clone, the one completion signal an early worker exit cannot skip.
+        let (scan_complete_tx, scan_complete_rx) = async_channel::bounded::<()>(1);
         self.executor
             .scoped_priority(Priority::Low, |scope| {
+                // Workers only reach their `select_biased!` between directory jobs, so
+                // while they are all inside `scan_dir` none can accept a refresh request.
+                scope.spawn(async {
+                    loop {
+                        select_biased! {
+                            // Before requests, so a backlog cannot outlive the scan.
+                            _ = scan_complete_rx.recv().fuse() => break,
+
+                            request = self.next_scan_request().fuse() => {
+                                let Ok(request) = request else { break };
+                                if !self.process_scan_request(request, true).await {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                });
+
                 for _ in 0..self.executor.num_cpus() {
+                    let scan_complete_tx = scan_complete_tx.clone();
                     scope.spawn(async {
+                        let _scan_complete_tx = scan_complete_tx;
+
                         let mut last_progress_update_count = 0;
                         let progress_update_timer = self.progress_timer(enable_progress_updates).fuse();
                         futures::pin_mut!(progress_update_timer);
@@ -5340,6 +5364,8 @@ impl BackgroundScanner {
                         }
                     });
                 }
+
+                drop(scan_complete_tx);
             })
             .await;
     }

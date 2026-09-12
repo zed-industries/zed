@@ -1456,6 +1456,7 @@ struct FakeFsState {
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
     read_dir_call_count: usize,
+    metadata_pauses: std::collections::HashMap<PathBuf, FakeFsMetadataPauseState>,
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     trash: Mutex<SlotMap<TrashId, (TrashedEntry, FakeFsEntry)>>,
@@ -1472,6 +1473,35 @@ struct FakeWatches {
     registered_paths: Vec<PathBuf>,
     watch_calls: Vec<PathBuf>,
     event_sink: Option<Box<dyn Fn(notify::Result<notify::Event>) + Send + Sync>>,
+}
+
+#[cfg(feature = "test-support")]
+struct FakeFsMetadataPauseState {
+    started: async_channel::Sender<()>,
+    release: async_channel::Receiver<()>,
+}
+
+#[cfg(feature = "test-support")]
+pub struct FakeFsMetadataPause {
+    started: async_channel::Receiver<()>,
+    release: async_channel::Sender<()>,
+}
+
+#[cfg(feature = "test-support")]
+impl FakeFsMetadataPause {
+    pub async fn wait_until_paused(&self) -> Result<()> {
+        self.started
+            .recv()
+            .await
+            .context("metadata operation ended before pausing")
+    }
+
+    pub async fn release(self) -> Result<()> {
+        self.release
+            .send(())
+            .await
+            .context("metadata operation ended before it was released")
+    }
 }
 
 #[cfg(feature = "test-support")]
@@ -1826,6 +1856,7 @@ impl FakeFs {
             events_paused: false,
             read_dir_call_count: 0,
             metadata_call_count: 0,
+            metadata_pauses: Default::default(),
             path_write_counts: Default::default(),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
             trash: Mutex::new(SlotMap::with_key()),
@@ -2740,6 +2771,23 @@ impl FakeFs {
         self.state.lock().metadata_call_count
     }
 
+    pub fn pause_metadata(&self, path: impl AsRef<Path>) -> FakeFsMetadataPause {
+        let path = normalize_path(path.as_ref());
+        let (started_tx, started_rx) = async_channel::bounded(1);
+        let (release_tx, release_rx) = async_channel::bounded(1);
+        self.state.lock().metadata_pauses.insert(
+            path,
+            FakeFsMetadataPauseState {
+                started: started_tx,
+                release: release_rx,
+            },
+        );
+        FakeFsMetadataPause {
+            started: started_rx,
+            release: release_tx,
+        }
+    }
+
     /// How many write operations have been issued for a specific path.
     pub fn write_count_for_path(&self, path: impl AsRef<Path>) -> usize {
         let path = path.as_ref().to_path_buf();
@@ -3269,8 +3317,25 @@ impl Fs for FakeFs {
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
+        let metadata_pause = {
+            let mut state = self.state.lock();
+            state.metadata_call_count += 1;
+            state.metadata_pauses.remove(&path)
+        };
+        if let Some(metadata_pause) = metadata_pause {
+            metadata_pause
+                .started
+                .send(())
+                .await
+                .context("metadata pause observer was dropped")?;
+            metadata_pause
+                .release
+                .recv()
+                .await
+                .context("metadata pause was dropped without being released")?;
+        }
+
         let mut state = self.state.lock();
-        state.metadata_call_count += 1;
         if let Some((mut entry, _)) = state.try_entry(&path, false) {
             let is_symlink = entry.is_symlink();
             if is_symlink {

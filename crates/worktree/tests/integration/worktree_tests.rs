@@ -2966,6 +2966,101 @@ async fn test_create_file_in_expanded_gitignored_dir(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_load_file_is_not_blocked_by_directory_scan(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.background_executor.set_num_cpus(1);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "first.txt": "first",
+            "second.txt": "second",
+            "blocked": {
+                "child.txt": "child",
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let metadata_pause = fs.pause_metadata("/root/blocked/child.txt");
+    fs.emit_fs_event("/root/blocked", Some(PathEventKind::Changed));
+    metadata_pause.wait_until_paused().await.unwrap();
+
+    let first_load = tree.update(cx, |tree, cx| tree.load_file(rel_path("first.txt"), cx));
+    let second_load = tree.update(cx, |tree, cx| tree.load_file(rel_path("second.txt"), cx));
+    let (first_file, second_file) = futures::future::join(first_load, second_load).await;
+
+    assert_eq!(first_file.unwrap().text.to_string(), "first");
+    assert_eq!(second_file.unwrap().text.to_string(), "second");
+
+    metadata_pause.release().await.unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+}
+
+#[gpui::test]
+async fn test_drop_worktree_with_blocked_scan_request(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.background_executor.set_num_cpus(1);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "known.txt": "known",
+            "blocked": {
+                "child.txt": "child",
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let directory_metadata_pause = fs.pause_metadata("/root/blocked/child.txt");
+    fs.emit_fs_event("/root/blocked", Some(PathEventKind::Changed));
+    directory_metadata_pause.wait_until_paused().await.unwrap();
+
+    let request_metadata_pause = fs.pause_metadata("/root/known.txt");
+    let mut refresh = tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .manually_refresh_entries_for_paths(vec![rel_path("known.txt").into()])
+    });
+    request_metadata_pause.wait_until_paused().await.unwrap();
+
+    drop(tree);
+    drop(request_metadata_pause);
+    drop(directory_metadata_pause);
+    refresh.recv().await;
+}
+
+#[gpui::test]
 async fn test_fs_event_for_gitignored_dir_does_not_lose_contents(cx: &mut TestAppContext) {
     // Tests the behavior of our worktree refresh when a directory modification for a gitignored directory
     // is triggered.
