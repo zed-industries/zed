@@ -14,7 +14,7 @@ use collections::HashMap;
 use parking_lot::Mutex;
 use uuid::Uuid;
 
-use gpui::{
+use gpui_platform_core::{
     AtlasKey, AtlasTextureId, AtlasTile, Bounds, Capslock, DevicePixels, DispatchEventResult,
     DisplayId, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,

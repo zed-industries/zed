@@ -3,7 +3,7 @@ use x11rb::protocol::{
     xproto::{self, ModMask},
 };
 
-use gpui::{Modifiers, MouseButton, NavigationDirection};
+use gpui_platform_core::{Modifiers, MouseButton, NavigationDirection};
 
 pub(crate) enum ButtonOrScroll {
     Button(MouseButton),

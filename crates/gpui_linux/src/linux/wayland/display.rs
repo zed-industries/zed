@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use uuid::Uuid;
 use wayland_backend::client::ObjectId;
 
-use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay};
+use gpui_platform_core::{Bounds, DisplayId, Pixels, PlatformDisplay};
 
 #[derive(Debug, Clone)]
 pub(crate) struct WaylandDisplay {

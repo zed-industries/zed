@@ -13,7 +13,7 @@ pub(crate) use client::*;
 
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
 
-use gpui::CursorStyle;
+use gpui_platform_core::CursorStyle;
 
 pub(super) fn to_shape(style: CursorStyle) -> Shape {
     match style {

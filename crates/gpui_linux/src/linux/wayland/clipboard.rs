@@ -14,7 +14,7 @@ use crate::linux::{
     WaylandClientStatePtr,
     platform::{PIPE_READ_TIMEOUT, read_fd_with_timeout},
 };
-use gpui::{ClipboardEntry, ClipboardItem, Image, ImageFormat, hash};
+use gpui_platform_core::{ClipboardEntry, ClipboardItem, Image, ImageFormat, hash};
 
 /// Text mime types that we'll offer to other programs.
 pub(crate) const TEXT_MIME_TYPES: [&str; 3] =

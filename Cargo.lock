@@ -7600,6 +7600,7 @@ dependencies = [
  "filedescriptor",
  "futures 0.3.34",
  "gpui",
+ "gpui_platform_core",
  "gpui_types",
  "gpui_util",
  "gpui_wgpu",

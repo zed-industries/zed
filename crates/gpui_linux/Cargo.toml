@@ -13,7 +13,7 @@ path = "src/gpui_linux.rs"
 
 [features]
 default = ["wayland", "x11"]
-test-support = ["gpui/test-support"]
+test-support = ["gpui_platform_core/test-support"]
 wayland = [
     "bitflags",
     "gpui_wgpu",
@@ -29,7 +29,7 @@ wayland = [
     "filedescriptor",
     "xkbcommon/wayland",
     "open",
-    "gpui/wayland",
+    "gpui_platform_core/wayland",
 ]
 x11 = [
     "gpui_wgpu",
@@ -45,7 +45,7 @@ x11 = [
     "scap?/x11",
 ]
 screen-capture = [
-    "gpui/screen-capture",
+    "gpui_platform_core/screen-capture",
     "scap",
 ]
 
@@ -57,7 +57,7 @@ anyhow.workspace = true
 bytemuck = "1"
 collections.workspace = true
 futures.workspace = true
-gpui.workspace = true
+gpui_platform_core.workspace = true
 gpui_types.workspace = true
 gpui_util.workspace = true
 gpui_wgpu = { workspace = true, optional = true, features = ["font-kit"] }
