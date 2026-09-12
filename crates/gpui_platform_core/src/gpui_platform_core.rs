@@ -35,7 +35,6 @@ mod platform;
 mod platform_scheduler;
 mod platform_window;
 pub mod popup;
-#[cfg(feature = "profiler")]
 pub mod profiler;
 mod prompt;
 #[cfg(any(
@@ -83,8 +82,9 @@ pub use notification::*;
 pub use platform::*;
 pub use platform_scheduler::*;
 pub use platform_window::*;
-#[cfg(feature = "profiler")]
-pub use profiler::*;
+pub use profiler::{
+    ForegroundRunnableCounter, foreground_runnable_counter, foreground_runnable_finished,
+};
 pub use prompt::*;
 #[cfg(any(
     test,

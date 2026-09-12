@@ -778,6 +778,7 @@ impl App {
             background_executor.is_main_thread(),
             "must construct App on main thread"
         );
+        crate::profiler::install_profiler_hooks();
         #[cfg(feature = "profiler")]
         let foreground_journal = crate::profiler::journal::install_foreground_journal();
         let synced_animation_epoch = background_executor.now();
