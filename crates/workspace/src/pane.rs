@@ -2632,20 +2632,22 @@ impl Pane {
         });
     }
 
-    fn update_status_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn update_status_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
         let pane = cx.entity();
 
         window.defer(cx, move |window, cx| {
-            let Ok(status_bar) =
-                workspace.read_with(cx, |workspace, _| workspace.status_bar.clone())
-            else {
+            let Ok((status_bar, is_active)) = workspace.read_with(cx, |workspace, _| {
+                (workspace.status_bar.clone(), workspace.active_pane() == &pane)
+            }) else {
                 return;
             };
 
-            status_bar.update(cx, move |status_bar, cx| {
-                status_bar.set_active_pane(&pane, window, cx);
-            });
+            if is_active {
+                status_bar.update(cx, move |status_bar, cx| {
+                    status_bar.set_active_pane(&pane, window, cx);
+                });
+            }
         });
     }
 

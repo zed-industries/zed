@@ -439,11 +439,18 @@ impl StatusBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.active_pane = active_pane.clone();
-        self._observe_active_pane = cx.observe_in(active_pane, window, |this, _, window, cx| {
-            this.update_active_pane_item(window, cx)
-        });
+        if self.active_pane != *active_pane {
+            self.active_pane = active_pane.clone();
+            self._observe_active_pane = cx.observe_in(active_pane, window, |this, _, window, cx| {
+                this.update_active_pane_item(window, cx)
+            });
+        }
         self.update_active_pane_item(window, cx);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn active_pane(&self) -> &Entity<Pane> {
+        &self.active_pane
     }
 
     fn update_active_pane_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
