@@ -41,7 +41,7 @@ screen-capture = [
     "scap",
 ]
 windows-manifest = ["dep:embed-resource"]
-profiler = ["dep:hdrhistogram"]
+profiler = ["dep:hdrhistogram", "gpui_platform_core/profiler"]
 stacker = ["dep:stacksafe"]
 
 [lib]

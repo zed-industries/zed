@@ -7704,14 +7704,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-task",
+ "chrono",
  "collections",
+ "futures 0.3.34",
  "gpui_shared_string",
  "gpui_types",
  "gpui_util",
+ "log",
+ "num_cpus",
+ "parking",
  "scheduler",
  "schemars 1.0.4",
  "serde",
  "uuid",
+ "waker-fn",
 ]
 
 [[package]]

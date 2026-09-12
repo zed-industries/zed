@@ -16,15 +16,22 @@ doctest = false
 default = []
 test-support = []
 bench-support = ["test-support"]
+profiler = []
 
 [dependencies]
 anyhow.workspace = true
 async-task.workspace = true
+chrono.workspace = true
 collections.workspace = true
+futures.workspace = true
 gpui_shared_string.workspace = true
 gpui_types.workspace = true
 gpui_util.workspace = true
+log.workspace = true
+num_cpus = "1.13"
+parking = "2.0.0"
 scheduler.workspace = true
 schemars.workspace = true
 serde.workspace = true
 uuid.workspace = true
+waker-fn = "1.2.0"

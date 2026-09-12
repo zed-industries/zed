@@ -16,8 +16,12 @@ mod cursor;
 mod dispatcher;
 mod display;
 mod executor;
+mod executor_runtime;
 mod keyboard;
 mod notification;
+mod platform_scheduler;
+#[cfg(feature = "profiler")]
+pub mod profiler;
 mod prompt;
 mod screen_capture;
 #[cfg(any(test, feature = "test-support"))]
@@ -29,8 +33,12 @@ pub use cursor::*;
 pub use dispatcher::*;
 pub use display::*;
 pub use executor::*;
+pub use executor_runtime::*;
 pub use keyboard::*;
 pub use notification::*;
+pub use platform_scheduler::*;
+#[cfg(feature = "profiler")]
+pub use profiler::*;
 pub use prompt::*;
 pub use screen_capture::*;
 #[cfg(any(test, feature = "test-support"))]
