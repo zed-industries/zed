@@ -115,6 +115,19 @@ impl CosmicTextSystem {
         Ok((gpui::FontWeight(face.weight.0 as f32), style))
     }
 
+    /// Builds reports for unresolved source indices after an outer text system
+    /// has applied its own fallback.
+    pub fn missing_glyphs(
+        &self,
+        text: &str,
+        font_runs: &[FontRun],
+        missing_text_indices: impl IntoIterator<Item = usize>,
+    ) -> Vec<MissingGlyph> {
+        self.0
+            .read()
+            .missing_glyphs(text, font_runs, missing_text_indices)
+    }
+
     pub fn new(system_font_fallback: &str) -> Self {
         let font_system = FontSystem::new();
 

@@ -30,6 +30,10 @@ path = "../../../gpui/examples/text_wrapper.rs"
 name = "input"
 path = "../../../gpui/examples/input.rs"
 
+[[bin]]
+name = "font_fallback_test"
+path = "font_fallback_test.rs"
+
 [dependencies]
 gpui = { path = "../../../gpui" }
 gpui_platform = { path = "../../../gpui_platform" }
