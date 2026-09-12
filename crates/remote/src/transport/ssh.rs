@@ -999,7 +999,11 @@ impl SshRemoteConnection {
             .socket
             .run_command(
                 self.ssh_shell_kind,
-                "curl",
+                if self.ssh_platform.os.is_windows() {
+                    "curl.exe" // non-.exe curl is an alias for Invoke-WebRequest
+                } else {
+                    "curl"
+                },
                 &[
                     "-f",
                     "-L",
