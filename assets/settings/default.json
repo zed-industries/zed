@@ -1375,6 +1375,12 @@
     //
     // Default: true
     "show_merge_conflict_indicator": true,
+    // Whether to automatically generate a title for agent threads using the
+    // summary model. When disabled, titles are only created when manually
+    // requested (e.g. via the thread's "Generate Title" action).
+    //
+    // Default: true
+    "auto_generate_thread_titles": true,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,

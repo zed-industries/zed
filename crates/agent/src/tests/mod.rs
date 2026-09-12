@@ -3957,6 +3957,55 @@ async fn test_title_generation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_title_generation_disabled_by_settings(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.auto_generate_thread_titles = false;
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let summary_model = Arc::new(FakeLanguageModel::default());
+    thread.update(cx, |thread, cx| {
+        thread.set_summarization_model(Some(summary_model.clone()), cx)
+    });
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Hey!");
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // Automatic title generation is disabled, so the summary model is not
+    // invoked for the title.
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
+    assert_eq!(summary_model.pending_completions(), Vec::new());
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
+
+    // Manual title generation still works when automatic generation is
+    // disabled.
+    thread.update(cx, |thread, cx| {
+        assert!(thread.regenerate_title(cx));
+    });
+    cx.run_until_parked();
+    summary_model.send_last_completion_stream_text_chunk("Manual title\n");
+    summary_model.end_last_completion_stream();
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Manual title".into()))
+    });
+}
+
+#[gpui::test]
 async fn test_stream_thread_title_keeps_only_first_line(cx: &mut TestAppContext) {
     let model = Arc::new(FakeLanguageModel::default());
     let request = LanguageModelRequest::default();

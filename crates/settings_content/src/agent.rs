@@ -345,6 +345,12 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub show_merge_conflict_indicator: Option<bool>,
+    /// Whether to automatically generate a title for agent threads using the
+    /// summary model. When disabled, titles are only created when manually
+    /// requested (e.g. via the thread's "Generate Title" action).
+    ///
+    /// Default: true
+    pub auto_generate_thread_titles: Option<bool>,
     /// Per-tool permission rules for granular control over which tool actions
     /// require confirmation.
     ///
