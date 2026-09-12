@@ -1362,6 +1362,86 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_deploy_at_preserves_nested_active_repository(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {
+                    "modules": {
+                        "nested": {},
+                    },
+                },
+                "parent.txt": "changed parent\n",
+                "nested": {
+                    ".git": "gitdir: ../.git/modules/nested\n",
+                    "nested.txt": "changed nested\n",
+                },
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("parent.txt", "original parent\n".to_string())],
+        );
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/nested/.git")),
+            &[("nested.txt", "original nested\n".to_string())],
+        );
+
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let (parent_repository, nested_repository) = project.read_with(cx, |project, cx| {
+            let mut repositories = project
+                .git_store()
+                .read(cx)
+                .repositories()
+                .values()
+                .cloned()
+                .collect::<Vec<_>>();
+            repositories
+                .sort_by_key(|repository| repository.read(cx).work_directory_abs_path.clone());
+            (repositories[0].clone(), repositories[1].clone())
+        });
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.run_until_parked();
+
+        parent_repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+        cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                ProjectDiff::deploy_at(workspace, None, window, cx)
+            });
+        });
+        cx.run_until_parked();
+
+        cx.focus(&workspace);
+        nested_repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+        cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                ProjectDiff::deploy_at(workspace, None, window, cx)
+            });
+        });
+        cx.run_until_parked();
+
+        let active_repository = project
+            .read_with(cx, |project, cx| project.active_repository(cx))
+            .expect("project should have an active repository");
+        assert_eq!(
+            active_repository.entity_id(),
+            nested_repository.entity_id(),
+            "opening a nested repository diff must preserve the explicit repository selection"
+        );
+    }
+
+    #[gpui::test]
     async fn test_project_diff_actions_filter_mixed_staged_and_unstaged_hunks(
         cx: &mut TestAppContext,
     ) {
