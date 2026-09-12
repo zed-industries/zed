@@ -138,8 +138,8 @@ pub enum Model {
     // -- OpenAI Chat Completions protocol models --
     #[serde(rename = "deepseek-v4-pro")]
     DeepSeekV4Pro,
-    #[serde(rename = "deepseek-v4-flash")]
-    DeepSeekV4Flash,
+    #[serde(rename = "deepseek-flash")]
+    DeepSeekV4_1Flash,
     #[serde(rename = "minimax-m2.5")]
     MiniMaxM2_5,
     #[serde(rename = "glm-5")]
@@ -226,7 +226,6 @@ impl Model {
             | Self::MiniMaxM2_7
             | Self::MiniMaxM3
             | Self::DeepSeekV4Pro
-            | Self::DeepSeekV4Flash
             | Self::Gpt5_6Luna
             | Self::Qwen3_6Plus => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
 
@@ -237,6 +236,7 @@ impl Model {
             | Self::Qwen3_7Plus
             | Self::Qwen3_7Max
             | Self::Qwen3_8Max
+            | Self::DeepSeekV4_1Flash
             | Self::Hy3 => &[OpenCodeSubscription::Go],
 
             // Deprecated on Go (per models.dev); still offered on Zen
@@ -295,7 +295,7 @@ impl Model {
             Self::Gemini3_7Flash => "gemini-3.7-flash",
 
             Self::DeepSeekV4Pro => "deepseek-v4-pro",
-            Self::DeepSeekV4Flash => "deepseek-v4-flash",
+            Self::DeepSeekV4_1Flash => "deepseek-flash",
             Self::MiniMaxM2_5 => "minimax-m2.5",
             Self::Glm5 => "glm-5",
             Self::Glm5_1 => "glm-5.1",
@@ -367,7 +367,7 @@ impl Model {
             Self::Gemini3_7Flash => "Gemini 3.7 Flash",
 
             Self::DeepSeekV4Pro => "DeepSeek V4 Pro",
-            Self::DeepSeekV4Flash => "DeepSeek V4 Flash",
+            Self::DeepSeekV4_1Flash => "DeepSeek V4.1 Flash",
             Self::MiniMaxM2_5 => "MiniMax M2.5",
             Self::Glm5 => "GLM 5",
             Self::Glm5_1 => "GLM 5.1",
@@ -468,7 +468,7 @@ impl Model {
             | Self::MimoV2_5Pro
             | Self::MimoV2_5
             | Self::DeepSeekV4Pro
-            | Self::DeepSeekV4Flash
+            | Self::DeepSeekV4_1Flash
             | Self::Hy3 => ApiProtocol::OpenAiChat,
 
             Self::Grok4_6 | Self::Grok4_5 | Self::MuseSpark1_2 => ApiProtocol::OpenAiResponses,
@@ -480,7 +480,7 @@ impl Model {
     pub fn interleaved_reasoning(&self) -> bool {
         match self {
             Self::DeepSeekV4Pro
-            | Self::DeepSeekV4Flash
+            | Self::DeepSeekV4_1Flash
             | Self::KimiK2_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
@@ -571,7 +571,7 @@ impl Model {
             }
             Self::Qwen3_8Max | Self::Qwen3_7Max | Self::Qwen3_7Plus => 1_000_000,
             Self::Hy3 => 256_000,
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 1_000_000,
+            Self::DeepSeekV4Pro | Self::DeepSeekV4_1Flash => 1_000_000,
 
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -655,7 +655,7 @@ impl Model {
                 Some(65_536)
             }
             Self::Qwen3_8Max => Some(131_072),
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
+            Self::DeepSeekV4Pro | Self::DeepSeekV4_1Flash => Some(384_000),
             Self::MimoV2_5Pro | Self::MimoV2_5 => Some(128_000),
             Self::Hy3 => Some(64_000),
 
@@ -730,7 +730,8 @@ impl Model {
             | Self::Qwen3_6Plus
             | Self::Qwen3_7Plus
             | Self::Qwen3_8Max
-            | Self::MiniMaxM3 => true,
+            | Self::MiniMaxM3
+            | Self::DeepSeekV4_1Flash => true,
 
             // OpenAI-compatible models without image support
             Self::MiniMaxM2_5
@@ -741,7 +742,6 @@ impl Model {
             | Self::MiniMaxM2_7
             | Self::MimoV2_5Pro
             | Self::DeepSeekV4Pro
-            | Self::DeepSeekV4Flash
             | Self::Qwen3_7Max
             | Self::Hy3 => false,
 
@@ -857,7 +857,7 @@ impl Model {
             ]),
 
             // DeepSeek models
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(vec![
+            Self::DeepSeekV4Pro | Self::DeepSeekV4_1Flash => Some(vec![
                 // OpenCode also supports Low&Medium but as per DeepSeek those are mapped to High
                 ReasoningEffort::High,
                 ReasoningEffort::Max,

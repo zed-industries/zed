@@ -166,7 +166,7 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = IndexMap::default();
 
-        models.insert("deepseek-v4-flash", deepseek::Model::V4Flash);
+        models.insert("deepseek-flash", deepseek::Model::V4_1Flash);
         models.insert("deepseek-v4-pro", deepseek::Model::V4Pro);
 
         for available_model in &Self::settings(cx).available_models {
@@ -284,7 +284,7 @@ impl LanguageModel for DeepSeekLanguageModel {
     fn supports_thinking(&self) -> bool {
         matches!(
             self.model,
-            deepseek::Model::V4Flash | deepseek::Model::V4Pro
+            deepseek::Model::V4_1Flash | deepseek::Model::V4Pro
         )
     }
 
@@ -512,7 +512,7 @@ fn deepseek_thinking(
     thinking_allowed: bool,
 ) -> Option<deepseek::Thinking> {
     let kind = match model {
-        deepseek::Model::V4Flash | deepseek::Model::V4Pro => {
+        deepseek::Model::V4_1Flash | deepseek::Model::V4Pro => {
             if thinking_allowed {
                 deepseek::ThinkingType::Enabled
             } else {

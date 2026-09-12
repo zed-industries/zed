@@ -50,8 +50,8 @@ impl From<Role> for String {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum Model {
-    #[serde(rename = "deepseek-v4-flash")]
-    V4Flash,
+    #[serde(rename = "deepseek-flash")]
+    V4_1Flash,
     #[serde(rename = "deepseek-v4-pro")]
     #[default]
     V4Pro,
@@ -67,12 +67,12 @@ pub enum Model {
 
 impl Model {
     pub fn default_fast() -> Self {
-        Model::V4Flash
+        Model::V4_1Flash
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
-            "deepseek-v4-flash" => Ok(Self::V4Flash),
+            "deepseek-flash" => Ok(Self::V4_1Flash),
             "deepseek-v4-pro" => Ok(Self::V4Pro),
             _ => anyhow::bail!("invalid model id {id}"),
         }
@@ -80,7 +80,7 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Self::V4Flash => "deepseek-v4-flash",
+            Self::V4_1Flash => "deepseek-flash",
             Self::V4Pro => "deepseek-v4-pro",
             Self::Custom { name, .. } => name,
         }
@@ -88,7 +88,7 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::V4Flash => "DeepSeek V4 Flash",
+            Self::V4_1Flash => "DeepSeek V4.1 Flash",
             Self::V4Pro => "DeepSeek V4 Pro",
             Self::Custom {
                 name, display_name, ..
@@ -98,14 +98,14 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::V4Flash | Self::V4Pro => 1_000_000,
+            Self::V4_1Flash | Self::V4Pro => 1_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
-            Self::V4Flash | Self::V4Pro => Some(384_000),
+            Self::V4_1Flash | Self::V4Pro => Some(384_000),
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
