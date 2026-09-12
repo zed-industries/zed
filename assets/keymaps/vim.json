@@ -551,6 +551,7 @@
       "space w q": "pane::CloseActiveItem",
       "space w r": "pane::SplitRight", // not a helix default
       "space w d": "pane::SplitDown", // not a helix default
+      "space w t": "pane::TransposePaneGroup",
 
       // Space mode
       "space b": "tab_switcher::ToggleAll",
@@ -964,6 +965,8 @@
       "ctrl-w ctrl-g t": "pane::ActivateNextItem",
       "ctrl-w g shift-t": "pane::ActivatePreviousItem",
       "ctrl-w ctrl-g shift-t": "pane::ActivatePreviousItem",
+      "ctrl-w t": "pane::TransposePaneGroup",
+      "ctrl-w ctrl-t": "pane::TransposePaneGroup",
       "ctrl-w w": "workspace::ActivateNextPane",
       "ctrl-w ctrl-w": "workspace::ActivateNextPane",
       "ctrl-w p": "workspace::ActivatePreviousPane",
