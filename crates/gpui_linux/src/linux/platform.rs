@@ -899,9 +899,13 @@ pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bo
     diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
 }
 
+/// Creates an XKB context for keymaps supplied by Wayland or X11.
+///
+/// Server keymaps are already resolved and need no local keyboard definitions.
+/// Loading default include paths can fail on systems without those files.
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) fn new_xkb_context() -> anyhow::Result<xkb::Context> {
-    validate_xkb_context(xkb::Context::new(xkb::CONTEXT_NO_FLAGS))
+    validate_xkb_context(xkb::Context::new(xkb::CONTEXT_NO_DEFAULT_INCLUDES))
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
