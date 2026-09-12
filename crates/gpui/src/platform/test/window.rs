@@ -444,12 +444,16 @@ impl PlatformWindow for TestWindow {
     }
 
     fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
-        // Recording invocations (rather than delivering a frame) lets tests
-        // assert the wake protocol without coupling to frame timing; tests
-        // deliver frames explicitly via `simulate_frame_request`.
+        // Tests can inspect wakes without delivering a frame synchronously.
         let frame_wake_count = self.0.lock().frame_wake_count.clone();
+        #[cfg(feature = "bench-support")]
+        let window = Rc::downgrade(&self.0);
         Some(Rc::new(move || {
             frame_wake_count.set(frame_wake_count.get() + 1);
+            #[cfg(feature = "bench-support")]
+            if let Some(window) = window.upgrade() {
+                TestWindow(window).schedule_frame();
+            }
         }))
     }
 

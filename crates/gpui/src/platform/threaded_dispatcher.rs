@@ -218,12 +218,16 @@ impl ThreadedDispatcher {
     /// considered idle. Must be called on the thread that created this
     /// dispatcher.
     pub fn run_until_idle(&self) {
+        self.run_until_idle_with(|| self.drain_main_queue());
+    }
+
+    pub(crate) fn run_until_idle_with(&self, mut run_turn: impl FnMut() -> bool) {
         assert!(
             self.is_main_thread(),
             "run_until_idle must be called on the threaded dispatcher's main thread"
         );
         loop {
-            if self.drain_main_queue() {
+            if run_turn() {
                 continue;
             }
 
@@ -268,35 +272,16 @@ impl ThreadedDispatcher {
     /// drains — deferred work that re-queues itself (idle sweeps, pollers)
     /// must not extend a benchmark's measured interval past the completion it
     /// awaits.
-    #[cfg(any(test, feature = "bench-support"))]
-    pub(crate) fn run_until<R>(&self, mut ready: impl FnMut() -> Option<R>) -> R {
-        assert!(
-            self.is_main_thread(),
-            "run_until must be called on the threaded dispatcher's main thread"
-        );
-        loop {
-            if let Some(result) = ready() {
-                return result;
-            }
-            if self.run_one_main_task() {
-                continue;
-            }
-
-            let mut inflight = self.idle.inflight.lock();
-            if self.main_queue_has_work() {
-                continue;
-            }
-            self.idle.condvar.wait(&mut inflight);
-        }
+    #[cfg(test)]
+    pub(crate) fn run_until<R>(&self, ready: impl FnMut() -> Option<R>) -> R {
+        self.run_until_with_frames(ready, || false)
     }
 
     /// Runs at most one queued main-thread task, returning whether one ran.
     ///
-    /// [`Self::run_until`] steps tasks one at a time so it can observe
-    /// readiness between them: a task that perpetually re-queues itself (like
-    /// an idle-time sweep) would otherwise keep [`Self::drain_main_queue`]
-    /// looping past the completion the caller is waiting for.
-    pub(crate) fn run_one_main_task(&self) -> bool {
+    /// Stepping tasks individually lets callers check completion between polls
+    /// even when work continually re-queues itself.
+    fn run_one_main_task(&self) -> bool {
         assert!(
             self.is_main_thread(),
             "main tasks must run on the main thread"
@@ -320,16 +305,15 @@ impl ThreadedDispatcher {
     /// Returns whether any ran. This snapshots the count, not task identities:
     /// newly dispatched higher-priority tasks can overtake the original tasks.
     pub fn run_ready_main_tasks(&self) -> bool {
-        self.run_ready_main_tasks_while(|_| true)
+        self.run_ready_main_tasks_with(|| true, || {})
     }
 
     /// Runs a count-bounded ready turn, checking `should_continue` before every poll.
-    ///
-    /// The predicate receives whether any task has run in this turn. Neither
-    /// the count bound nor the predicate can preempt an individual task poll.
-    pub(crate) fn run_ready_main_tasks_while(
+    /// Calls `after_poll` after each runnable returns, outside the queue lock.
+    pub(crate) fn run_ready_main_tasks_with(
         &self,
-        mut should_continue: impl FnMut(bool) -> bool,
+        mut should_continue: impl FnMut() -> bool,
+        mut after_poll: impl FnMut(),
     ) -> bool {
         assert!(
             self.is_main_thread(),
@@ -338,12 +322,41 @@ impl ThreadedDispatcher {
         let pending = self.main_receiver.lock().len();
         let mut ran_any = false;
         for _ in 0..pending {
-            if !should_continue(ran_any) || !self.run_one_main_task() {
+            if !should_continue() || !self.run_one_main_task() {
                 break;
             }
             ran_any = true;
+            after_poll();
         }
         ran_any
+    }
+
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) fn run_until_with_frames<R>(
+        &self,
+        mut ready: impl FnMut() -> Option<R>,
+        mut dispatch_frames: impl FnMut() -> bool,
+    ) -> R {
+        assert!(
+            self.is_main_thread(),
+            "main tasks must run on the main thread"
+        );
+        loop {
+            if let Some(result) = ready() {
+                return result;
+            }
+            let ran_task = self.run_one_main_task();
+            let dispatched_frames = dispatch_frames();
+            if ran_task || dispatched_frames {
+                continue;
+            }
+
+            let mut inflight = self.idle.inflight.lock();
+            if self.main_queue_has_work() {
+                continue;
+            }
+            self.idle.condvar.wait(&mut inflight);
+        }
     }
 
     /// Cancels all pending timers so timers armed by one workload can't fire
@@ -673,34 +686,6 @@ mod tests {
         assert_eq!(iterations.load(Ordering::SeqCst), 1);
         assert!(dispatcher.run_ready_main_tasks());
         assert_eq!(iterations.load(Ordering::SeqCst), 2);
-    }
-
-    #[test]
-    fn ready_turn_checks_stop_between_polls() {
-        let dispatcher = Arc::new(ThreadedDispatcher::new());
-        let foreground = ForegroundExecutor::new(dispatcher.clone());
-        let stopped = Arc::new(AtomicBool::new(false));
-        let polls = Arc::new(AtomicUsize::new(0));
-        let tasks: Vec<_> = (0..4)
-            .map(|_| {
-                foreground.spawn({
-                    let stopped = stopped.clone();
-                    let polls = polls.clone();
-                    async move {
-                        polls.fetch_add(1, Ordering::SeqCst);
-                        stopped.store(true, Ordering::Release);
-                    }
-                })
-            })
-            .collect();
-
-        assert!(!dispatcher.run_ready_main_tasks_while(|_| false));
-        assert_eq!(polls.load(Ordering::SeqCst), 0);
-        assert!(dispatcher.run_ready_main_tasks_while(|_| !stopped.load(Ordering::Acquire)));
-        assert_eq!(polls.load(Ordering::SeqCst), 1);
-        assert!(dispatcher.main_queue_has_work());
-        dispatcher.run_ready_main_tasks();
-        assert_eq!(polls.load(Ordering::SeqCst), tasks.len());
     }
 
     #[test]

@@ -3283,11 +3283,7 @@ impl Window {
     }
 
     /// Presents the most recently drawn frame if it hasn't been presented yet.
-    ///
-    /// Explicit synchronous callers can submit an already drawn scene. Renderer
-    /// benchmarks instead drive the platform frame callback, which owns both
-    /// drawing and presentation.
-    #[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
+    #[cfg(all(test, feature = "profiler"))]
     pub fn present_if_needed(&mut self) {
         if self.needs_present.get() {
             self.present();
